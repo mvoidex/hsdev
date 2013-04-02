@@ -3,7 +3,7 @@
 
 name:                hsdev
 version:             0.1.0.0
-synopsis:            Haskell development tool with support of autocompletion, symbol info, go to declaration, find references etc.
+synopsis:            Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references etc.
 -- description:         
 homepage:            https://github.com/mvoidex/hsdev
 license:             BSD3
