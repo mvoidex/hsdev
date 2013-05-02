@@ -1,8 +1,22 @@
 module HsDev.Database (
-	Database(..)
+	Database(..),
+	createIndexes,
+	moduleDatabase,
+	projectModules,
+	removeIndexes,
+	setIndexes,
+	removeModule,
+	addModule,
+	removeFile,
+	addFile
 	) where
 
+import Control.Arrow
+import Control.Monad
+import Data.List
 import Data.Map (Map)
+import Data.Maybe
+import Data.Monoid
 import qualified Data.Map as M
 
 import HsDev.Symbols
@@ -13,7 +27,33 @@ data Database = Database {
 	databaseFiles :: Map FilePath (Symbol Module),
 	databaseModules :: Map String [Symbol Module],
 	databaseSymbols :: Map String [Symbol Declaration] }
-		deriving (Eq, Ord, Read, Show)
+		deriving (Eq, Ord)
+
+instance Monoid Database where
+	mempty = Database mempty mempty mempty mempty
+	mappend l r = Database {
+		databaseCabalModules = M.unionWith M.union (databaseCabalModules l) (databaseCabalModules r),
+		databaseFiles = M.union (databaseFiles l) (databaseFiles r),
+		databaseModules = M.map nub $ M.unionWith (++) (databaseModules l) (databaseModules r),
+		databaseSymbols = M.map nub $ M.unionWith (++) (databaseSymbols l) (databaseSymbols r) }
+
+-- | Create indexes
+createIndexes :: Database -> Database
+createIndexes db = db {
+	databaseModules = M.unionsWith (++) $ map (\m -> M.singleton (symbolName m) [m]) ms,
+	databaseSymbols = M.unionsWith (++) $ map (M.map return . moduleDeclarations . symbol) ms }
+	where
+		ms = concatMap M.elems (M.elems (databaseCabalModules db)) ++ M.elems (databaseFiles db)
+
+-- | Make database for one module
+moduleDatabase :: Symbol Module -> Database
+moduleDatabase m = fromMaybe (error "Module must specify source file or cabal") $ inSource `mplus` inCabal where
+	inSource = do
+		loc <- symbolLocation m
+		return $ createIndexes $ Database mempty (M.singleton (locationFile loc) m) mempty mempty
+	inCabal = do
+		cabal <- moduleCabal $ symbol m
+		return $ createIndexes $ Database (M.singleton cabal (M.singleton (symbolName m) m)) mempty mempty mempty
 
 -- Modules for project specified
 projectModules :: String -> Database -> Map FilePath (Symbol Module)

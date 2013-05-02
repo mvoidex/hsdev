@@ -23,11 +23,13 @@ library
     HsDev.Database
     HsDev.Tools.Base
     HsDev.Tools.GhcMod
+    HsDev.Cabal
   build-depends:
     base == 4.6.*,
     containers == 0.5.*,
     mtl == 2.1.*,
     process == 1.1.*,
+    regexpr == 0.5.*,
     time == 1.4.*
 
 executable hsdev

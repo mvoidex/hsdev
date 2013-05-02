@@ -1,4 +1,4 @@
-{-# LANGUAGE  TypeSynonymInstances #-}
+{-# LANGUAGE  TypeSynonymInstances, FlexibleInstances #-}
 
 module HsDev.Symbols (
 	Location(..),
@@ -9,6 +9,7 @@ module HsDev.Symbols (
 	TypeInfo(..),
 	Declaration(..),
 
+	mkSymbol,
 	position,
 	symbolQualifiedName,
 	mkLocation,
@@ -22,6 +23,7 @@ import Control.Arrow
 import Data.Function (fix)
 import Data.List
 import Data.Map (Map)
+import Data.Maybe
 import qualified Data.Map as M
 import Data.Time.Clock.POSIX
 
@@ -32,17 +34,23 @@ data Location = Location {
 	locationColumn :: Int,
 	locationProject :: Maybe String,
 	locationModifiedTime :: Maybe POSIXTime }
-		deriving (Eq, Ord, Read, Show)
+		deriving (Eq, Ord)
 
 instance Read POSIXTime where
 	readsPrec i = map (first fromIntegral) . readsPrec i
+
+instance Show Location where
+	show loc = intercalate ":" [locationFile loc, show $ locationLine loc, show $ locationColumn loc] ++ maybe "" (" in " ++) (locationProject loc)
 
 -- | Module import
 data Import = Import {
 	importModuleName :: String,
 	importIsQualified :: Bool,
 	importAs :: Maybe String }
-		deriving (Eq, Ord, Read, Show)
+		deriving (Eq, Ord)
+
+instance Show Import where
+	show i = "import " ++ if importIsQualified i then "qualified " else "" ++ importModuleName i ++ maybe "" (" as " ++) (importAs i)
 
 -- | Symbol
 data Symbol a = Symbol {
@@ -52,7 +60,7 @@ data Symbol a = Symbol {
 	symbolLocation :: Maybe Location,
 	symbolTags :: [String],
 	symbol :: a }
-		deriving (Ord, Read, Show)
+		deriving (Ord)
 
 instance Functor Symbol where
 	fmap f s = s { symbol = f (symbol s) }
@@ -64,8 +72,39 @@ instance Eq a => Eq (Symbol a) where
 		symbolLocation l == symbolLocation r,
 		symbol l == symbol r]
 
+instance Show (Symbol Module) where
+	show m = unlines [
+		"module " ++ symbolName m,
+		"\texports: " ++ intercalate ", " (moduleExports $ symbol m),
+		"\timports:",
+		unlines $ map (tab 2 . show) $ M.elems (moduleImports $ symbol m),
+		"\tdeclarations:",
+		unlines $ map (tabs 2 . show) $ M.elems (moduleDeclarations $ symbol m),
+		"\tcabal: " ++ show (moduleCabal $ symbol m),
+		"\tdocs: " ++ fromMaybe "" (symbolDocs m),
+		"\tlocation: " ++ show (symbolLocation m)]
+
+instance Show (Symbol Declaration) where
+	show d = unlines [
+		title,
+		"\tmodule: " ++ maybe "" symbolName (symbolModule d),
+		"\tdocs: " ++ fromMaybe "" (symbolDocs d),
+		"\tlocation:" ++ show (symbolLocation d)]
+		where
+			title = case symbol d of
+				Function t -> symbolName d ++ " :: " ++ t
+				Type ti -> title' "type" ti
+				NewType ti -> title' "newtype" ti
+				Data ti -> title' "data" ti
+				Class ti -> title' "class" ti
+			title' n ti = n ++ " " ++ maybe "" (++ " => ") (typeInfoContext ti) ++ symbolName d ++ " " ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
+
 -- | Cabal or cabal-dev
-data Cabal = Cabal | CabalDev FilePath deriving (Eq, Ord, Read, Show)
+data Cabal = Cabal | CabalDev FilePath deriving (Eq, Ord)
+
+instance Show Cabal where
+	show Cabal = "<cabal>"
+	show (CabalDev path) = path
 
 -- | Module
 data Module = Module {
@@ -73,17 +112,26 @@ data Module = Module {
 	moduleImports :: Map String Import,
 	moduleDeclarations :: Map String (Symbol Declaration),
 	moduleCabal :: Maybe Cabal }
-		deriving (Ord, Read, Show)
+		deriving (Ord)
 
 instance Eq Module where
 	l == r = moduleCabal l == moduleCabal r
 
+tab :: Int -> String -> String
+tab n s = replicate n '\t' ++ s
+
+tabs :: Int -> String -> String
+tabs n = unlines . map (tab n) . lines
+
 -- | Common info for type/newtype/data/class
 data TypeInfo = TypeInfo {
-	typeInfoContext :: String,
+	typeInfoContext :: Maybe String,
 	typeInfoArgs :: [String],
-	typeInfoDefinition :: String }
+	typeInfoDefinition :: Maybe String }
 		deriving (Eq, Ord, Read, Show)
+
+showTypeInfo :: TypeInfo -> String -> String -> String
+showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
 
 -- | Declaration
 data Declaration =
@@ -92,7 +140,7 @@ data Declaration =
 	NewType { newTypeInfo :: TypeInfo } |
 	Data { dataInfo :: TypeInfo } |
 	Class { classInfo :: TypeInfo }
-		deriving (Ord, Read, Show)
+		deriving (Ord)
 
 instance Eq Declaration where
 	(Function l) == (Function r) = l == r
@@ -101,6 +149,10 @@ instance Eq Declaration where
 	(Data _) == (Data _) = True
 	(Class _) == (Class _) = True
 	_ == _ = False
+
+-- | Make symbol by name and data
+mkSymbol :: String -> a -> Symbol a
+mkSymbol name d = Symbol name Nothing Nothing Nothing [] d
 
 -- | Returns `filename:line:column`
 position :: Location -> String

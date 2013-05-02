@@ -1,9 +1,24 @@
 module HsDev.Tools.GhcMod (
-	ghcmod
+	ghcmod,
+	package_db,
+	include_path,
+	ghc_opts,
+	Config(..),
+	config,
+	GhcMod,
+	withConfig,
+	ghcmod_,
+	list,
+	browse,
+	info,
+	inferType
 	) where
 
 import Control.Arrow
 import Control.Monad.Error
+import Control.Monad.Reader
+import Data.Char
+import Data.Maybe
 import qualified Data.Map as M
 import System.Process
 
@@ -15,11 +30,41 @@ ghcmod args = do
 	r <- liftIO $ runWait "ghc-mod" args ""
 	either throwError return r
 
-list :: ErrorT String IO [String]
-list = fmap lines $ ghcmod ["list"]
+package_db :: Cabal -> [String]
+package_db Cabal = []
+package_db (CabalDev p) = ["-package-db " ++ p]
 
-browse :: String -> ErrorT String IO (Symbol Module)
-browse moduleName = fmap toModule $ ghcmod ["browse", "-d", moduleName] where
+include_path :: FilePath -> [String]
+include_path path = ["-i " ++ path]
+
+ghc_opts :: [String] -> [String]
+ghc_opts = concatMap (\opt -> ["-g", opt])
+
+data Config = Config {
+	configCabal :: Cabal,
+	configInclude :: Maybe FilePath,
+	configOpts :: [String] }
+
+config :: Config
+config = Config Cabal Nothing []
+
+type GhcMod a = ReaderT Config (ErrorT String IO) a
+
+withConfig :: Config -> GhcMod a -> ErrorT String IO a
+withConfig cfg action = runReaderT action cfg
+
+ghcmod_ :: [String] -> GhcMod String
+ghcmod_ args = do
+	db' <- asks (package_db . configCabal)
+	i' <- asks (maybe [] include_path . configInclude)
+	opts' <- asks (ghc_opts . configOpts)
+	lift $ ghcmod (args ++ db' ++ i' ++ opts')
+
+list :: GhcMod [String]
+list = fmap lines $ ghcmod_ ["list"]
+
+browse :: String -> GhcMod (Symbol Module)
+browse moduleName = fmap toModule $ ghcmod_ ["browse", "-d", moduleName] where
 	toModule str = setModuleReferences $ Symbol {
 		symbolName = moduleName,
 		symbolModule = Nothing,
@@ -32,7 +77,39 @@ browse moduleName = fmap toModule $ ghcmod ["browse", "-d", moduleName] where
 			moduleDeclarations = decls,
 			moduleCabal = Just Cabal } }
 		where
-			decls = M.fromList $ map (symbolName &&& id) $ fmap toDecl $ lines str
-			toDecl s = undefined
-			functionRegex = "(\\w+)\\s+::\\s+(.*)"
-			typeRegex = "(class|type|data|newtype)\\s+(\\w+)(\\s+(\\w+(\\s+\\w+)*))?"
+			decls = M.fromList $ map (symbolName &&& id) $ mapMaybe parseDecl $ lines str
+			parseFunction s = do
+				groups <- match "(\\w+)\\s+::\\s+(.*)" s
+				return $ mkSymbol (groups `at` 1) (Function $ groups `at` 2)
+			parseType s = do
+				groups <- match "(class|type|data|newtype)\\s+(\\w+)(\\s+(\\w+(\\s+\\w+)*))?" s
+				let
+					args = maybe [] words $ groups 3
+				return $ mkSymbol (groups `at` 2) (ctor (groups `at` 1) $ TypeInfo Nothing args Nothing)
+			parseDecl s = parseFunction s `mplus` parseType s
+
+info :: FilePath -> String -> String -> Cabal -> GhcMod (Symbol Declaration)
+info file moduleName symbolName cabal = ghcmod_ ["info", file, moduleName, symbolName] >>= toDecl where
+	toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
+	parseFunction s = do
+		groups <- match (symbolName ++ "\\s+::\\s+(.*?)(\\s+--(.*))?$") s
+		return $ mkSymbol symbolName (Function $ groups `at` 1)
+	parseData s = do
+		groups <- match "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined)?" s
+		let
+			args = maybe [] words $ groups 5
+			ctx = fmap trim $ groups 3
+			def = groups 8
+		return $ mkSymbol symbolName $ ctor (groups `at` 1) $ TypeInfo ctx args def
+	trim = p . p where
+		p = reverse . dropWhile isSpace
+
+inferType :: FilePath -> String -> Int -> Int -> Cabal -> GhcMod String
+inferType file moduleName line column cabal = ghcmod_ ["type", file, moduleName, show line, show column]
+
+ctor :: String -> TypeInfo -> Declaration
+ctor "type" = Type
+ctor "newtype" = NewType
+ctor "data" = Data
+ctor "class" = Class
+ctor n = error $ "HsDev.Tools.GhcMod.ctor: unknown keyword '" ++ n ++ "'"
