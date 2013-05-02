@@ -15,4 +15,4 @@ scan cabal = withConfig (config { configCabal = cabal }) $ do
 	ms <- list
 	fmap mconcat $ mapM loadModule ms
 	where
-		loadModule s = catchError (fmap moduleDatabase $ browse s) (const $ return mempty)
+		loadModule s = catchError (fmap fromModule $ browse s) (const $ return mempty)

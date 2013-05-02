@@ -18,9 +18,13 @@ import Control.Arrow
 import Control.Monad.Error
 import Control.Monad.Reader
 import Data.Char
+import Data.List
 import Data.Maybe
 import qualified Data.Map as M
+import System.Directory
+import System.FilePath
 import System.Process
+import Text.RegexPR
 
 import HsDev.Symbols
 import HsDev.Tools.Base
@@ -30,9 +34,14 @@ ghcmod args = do
 	r <- liftIO $ runWait "ghc-mod" args ""
 	either throwError return r
 
-package_db :: Cabal -> [String]
-package_db Cabal = []
-package_db (CabalDev p) = ["-package-db " ++ p]
+package_db :: Cabal -> ErrorT String IO [String]
+package_db Cabal = return []
+package_db (CabalDev p) = do
+	cts <- liftIO $ getDirectoryContents p
+	maybe notFound mkArg $ find (isJust . matchRegexPR "packages-(.*)\\.conf") cts
+	where
+		notFound = throwError $ "Cabal-dev sandbox is not found in " ++ p
+		mkArg name = return ["-package-db " ++ p </> name]
 
 include_path :: FilePath -> [String]
 include_path path = ["-i " ++ path]
@@ -55,7 +64,7 @@ withConfig cfg action = runReaderT action cfg
 
 ghcmod_ :: [String] -> GhcMod String
 ghcmod_ args = do
-	db' <- asks (package_db . configCabal)
+	db' <- asks configCabal >>= lift . package_db
 	i' <- asks (maybe [] include_path . configInclude)
 	opts' <- asks (ghc_opts . configOpts)
 	lift $ ghcmod (args ++ db' ++ i' ++ opts')
