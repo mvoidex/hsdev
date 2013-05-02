@@ -5,7 +5,10 @@ module HsDev.Database (
 	projectModules,
 
 	lookupModule,
-	lookupFile
+	lookupFile,
+
+	append,
+	remove
 	) where
 
 import Control.Arrow
@@ -81,3 +84,9 @@ lookupModule cabal name db = do
 
 lookupFile :: FilePath -> Database -> Maybe (Symbol Module)
 lookupFile file db = M.lookup file (databaseFiles db)
+
+append :: Database -> Database -> Database
+append = add
+
+remove :: Database -> Database -> Database
+remove = sub

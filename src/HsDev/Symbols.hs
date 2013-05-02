@@ -60,7 +60,14 @@ data Symbol a = Symbol {
 	symbolLocation :: Maybe Location,
 	symbolTags :: [String],
 	symbol :: a }
-		deriving (Ord)
+
+instance Ord a => Ord (Symbol a) where
+	compare l r = compare (asTuple l) (asTuple r) where
+		asTuple s = (
+			symbolName s,
+			maybe "" symbolName (symbolModule s),
+			symbolLocation s,
+			symbol s)
 
 instance Functor Symbol where
 	fmap f s = s { symbol = f (symbol s) }
