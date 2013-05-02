@@ -18,8 +18,17 @@ cabal-version:       >=1.8
 library
   hs-source-dirs: src
   exposed-modules:
+    HsDev.Symbols
+    HsDev.Symbols.Util
+    HsDev.Database
+    HsDev.Tools.Base
+    HsDev.Tools.GhcMod
   build-depends:
-    base == 4.6.*
+    base == 4.6.*,
+    containers == 0.5.*,
+    mtl == 2.1.*,
+    process == 1.1.*,
+    time == 1.4.*
 
 executable hsdev
   main-is: hsdev.hs
@@ -27,3 +36,14 @@ executable hsdev
   -- other-modules:
   build-depends:
     base == 4.6.*
+
+test-suite test
+  main-is: Test.hs
+  hs-source-dirs: tests
+  type: exitcode-stdio-1.0
+  build-depends:
+    base == 4.6.*
+
+source-repository head
+  type: git
+  location: git://github.com/mvoidex/hsdev
