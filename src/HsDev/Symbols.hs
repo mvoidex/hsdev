@@ -11,7 +11,11 @@ module HsDev.Symbols (
 
 	position,
 	symbolQualifiedName,
-	
+	mkLocation,
+	moduleLocation,
+	setModuleReferences,
+	addDeclaration,
+	unalias
 	) where
 
 import Control.Arrow
