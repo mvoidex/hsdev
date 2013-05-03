@@ -102,7 +102,7 @@ identOfName name = case name of
 	H.Symbol s -> s
 
 toLocation :: H.SrcLoc -> Location
-toLocation (H.SrcLoc fname l c) = Location fname l c
+toLocation (H.SrcLoc fname l c) = Location fname l c Nothing
 
 setLocation :: H.SrcLoc -> Symbol a -> Symbol a
 setLocation loc s = s { symbolLocation = Just (toLocation loc) }
@@ -168,6 +168,7 @@ inspectFile file = do
 	let
 		noReturn :: E.SomeException -> IO [Doc.Interface]
 		noReturn e = return []
+	p <- liftIO $ locateProject file
 	source <- liftIO $ readFileUtf8 file
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
@@ -175,9 +176,10 @@ inspectFile file = do
 		forM is $ \i -> do
 			moduleFile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 			return (moduleFile, i)
-	either throwError (return . setLoc file . maybe id addDocs docsMap) $ analyzeModule source
+	either throwError (return . setModuleReferences . fmap (setProject p) . setLoc file p . maybe id addDocs docsMap) $ analyzeModule source
 	where
-		setLoc f s = s { symbolLocation = Just (moduleLocation f) }
+		setLoc f p s = s { symbolLocation = Just ((moduleLocation f) { locationProject = p }) }
+		setProject p m = m { moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationProject = p }) (symbolLocation decl) }) (moduleDeclarations m) }
 
 -- | Inspect project
 inspectProject :: Project -> ErrorT String IO (Project, [Symbol Module])

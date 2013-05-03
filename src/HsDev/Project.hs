@@ -19,7 +19,13 @@ data Project = Project {
 	projectPath :: FilePath,
 	projectCabal :: FilePath,
 	projectDescription :: Maybe ProjectDescription }
-		deriving (Eq, Ord, Read, Show)
+		deriving (Read, Show)
+
+instance Eq Project where
+	l == r = projectCabal l == projectCabal r
+
+instance Ord Project where
+	compare l r = compare (projectName l, projectCabal l) (projectName r, projectCabal r)
 
 data ProjectDescription = ProjectDescription {
 	projectLibrary :: Maybe Library,

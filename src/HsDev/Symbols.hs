@@ -27,11 +27,14 @@ import Data.Maybe
 import qualified Data.Map as M
 import Data.Time.Clock.POSIX
 
+import HsDev.Project
+
 -- | Location of symbol
 data Location = Location {
 	locationFile :: FilePath,
 	locationLine :: Int,
-	locationColumn :: Int }
+	locationColumn :: Int,
+	locationProject :: Maybe Project }
 		deriving (Eq, Ord)
 
 instance Read POSIXTime where
@@ -172,7 +175,7 @@ mkLocation :: Location -> IO Location
 mkLocation loc = undefined
 
 moduleLocation :: FilePath -> Location
-moduleLocation fname = Location fname 1 1
+moduleLocation fname = Location fname 1 1 Nothing
 
 -- | Set module references
 setModuleReferences :: Symbol Module -> Symbol Module
