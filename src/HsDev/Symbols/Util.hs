@@ -30,7 +30,7 @@ withinProject project s = (Just project) == project' where
 withinCabal :: Cabal -> Symbol Module -> Bool
 withinCabal cabal m = moduleCabal (symbol m) == Just cabal
 
-bySources :: Symbol Module -> Bool
+bySources :: Symbol a -> Bool
 bySources = isJust . symbolLocation
 
 sourceModule :: Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
