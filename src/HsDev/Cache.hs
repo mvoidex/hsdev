@@ -31,15 +31,22 @@ instance ToJSON Location where
 	toJSON loc = object [
 		"file" .= locationFile loc,
 		"line" .= locationLine loc,
-		"column" .= locationColumn loc]
+		"column" .= locationColumn loc,
+		"project" .= locationProject loc]
 
 instance FromJSON Location where
 	parseJSON (Object v) = Location <$>
 		v .: "file" <*>
 		v .: "line" <*>
 		v .: "column" <*>
-		pure Nothing
+		v .: "project"
 	parseJSON _ = mzero
+
+instance ToJSON Project where
+	toJSON p = toJSON (projectCabal p)
+
+instance FromJSON Project where
+	parseJSON v = fmap project $ parseJSON v
 
 instance ToJSON Import where
 	toJSON i = object [
@@ -162,7 +169,7 @@ dump file = BS.writeFile file . encodePretty
 load :: FilePath -> IO (Map String (Symbol Module))
 load file = do
 	cts <- BS.readFile file
-	return $ fromMaybe M.empty $ decode cts
+	return $ maybe M.empty (M.map setModuleReferences) $ decode cts
 
 toDatabase :: Map String (Symbol Module) -> Database
 toDatabase = mconcat . map fromModule . M.elems
