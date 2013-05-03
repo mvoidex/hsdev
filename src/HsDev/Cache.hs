@@ -1,14 +1,30 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Cache (
+	escapePath,
+	cabalCache,
+	projectCache,
+	dump,
+	load,
+	toDatabase
 	) where
 
 import Control.Applicative
 import Control.Monad (mzero)
 import Data.Aeson
+import qualified Data.ByteString.Lazy as BS
+import Data.Char
+import Data.List
+import Data.Maybe
+import Data.Map (Map)
+import Data.Monoid
+import qualified Data.Map as M
+import System.Directory
+import System.FilePath
 
 import HsDev.Symbols
 import HsDev.Project
+import HsDev.Database
 
 instance ToJSON Location where
 	toJSON loc = object [
@@ -120,3 +136,28 @@ instance FromJSON Declaration where
 				_ -> error "Invalid data"
 		return $ ctor i
 	parseJSON _ = mzero
+
+escapePath :: FilePath -> FilePath
+escapePath = intercalate "." . map (filter (\c -> isAlpha c || isDigit c)) . splitDirectories
+
+-- | Name of cache file for cabal
+cabalCache :: Cabal -> FilePath
+cabalCache Cabal = "cabal.json"
+cabalCache (CabalDev p) = escapePath p ++ ".json"
+
+-- | Name of cache file for projects
+projectCache :: Project -> FilePath
+projectCache p = escapePath (projectCabal p) ++ ".json"
+
+-- | Dump cache data to file
+dump :: FilePath -> Map String (Symbol Module) -> IO ()
+dump file = BS.writeFile file . encode
+
+-- | Load cache from file
+load :: FilePath -> IO (Map String (Symbol Module))
+load file = do
+	cts <- BS.readFile file
+	return $ fromMaybe M.empty $ decode cts
+
+toDatabase :: Map String (Symbol Module) -> Database
+toDatabase = mconcat . map fromModule . M.elems

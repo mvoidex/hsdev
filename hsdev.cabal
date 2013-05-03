@@ -35,6 +35,7 @@ library
   build-depends:
     base == 4.6.*,
     aeson == 0.6.*,
+    bytestring == 0.10.*,
     Cabal == 1.16.*,
     containers == 0.5.*,
     directory == 1.2.*,
