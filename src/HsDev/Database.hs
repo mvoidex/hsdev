@@ -2,6 +2,7 @@ module HsDev.Database (
 	Database(..),
 	createIndexes,
 	fromModule,
+	fromProject,
 	--projectModules,
 
 	lookupModule,
@@ -74,13 +75,18 @@ fromModule m = fromMaybe (error "Module must specify source file or cabal") $ in
 		cabal <- moduleCabal $ symbol m
 		return $ createIndexes $ Database (M.singleton cabal (M.singleton (symbolName m) m)) mempty mempty zero zero
 
+-- | Make database from project
+fromProject :: Project -> Database
+fromProject p = zero {
+	databaseProjects = M.singleton (projectName p) p }
+
 -- Modules for project specified
 --projectModules :: String -> Database -> Map FilePath (Symbol Module)
 --projectModules project = M.filter thisProject . databaseFiles where
 --	thisProject m = maybe False (== project) $ do
 --		loc <- symbolLocation m
 --		locationProject loc
-
+		
 lookupModule :: Cabal -> String -> Database -> Maybe (Symbol Module)
 lookupModule cabal name db = do
 	c <- M.lookup cabal $ databaseCabalModules db

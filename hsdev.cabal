@@ -24,7 +24,7 @@ library
     HsDev.Tools.Base
     HsDev.Tools.GhcMod
     HsDev.Util
-    HsDev.Cabal
+    HsDev.Scan
     HsDev.Inspect
     HsDev.Project
   other-modules:

@@ -1,6 +1,7 @@
 module HsDev.Inspect (
 	analyzeModule,
-	inspect
+	inspectFile,
+	inspectProject
 	) where
 
 import Control.Arrow
@@ -15,6 +16,7 @@ import qualified Language.Haskell.Exts as H
 import qualified Documentation.Haddock as Doc
 import qualified System.Directory as Dir
 import System.IO
+import System.FilePath
 
 import qualified Name (Name, getOccString, occNameString)
 import qualified Module (moduleNameString)
@@ -23,6 +25,8 @@ import qualified HsDecls
 import qualified HsBinds
 
 import HsDev.Symbols
+import HsDev.Project
+import HsDev.Util
 
 -- | Analize source contents
 analyzeModule :: String -> Either String (Symbol Module)
@@ -159,8 +163,8 @@ addDocs docsMap info = fmap addDocs' info where
 	addDocs' m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDeclarations m) }
 
 -- | Inspect file
-inspect :: FilePath -> ErrorT String IO (Symbol Module)
-inspect file = do
+inspectFile :: FilePath -> ErrorT String IO (Symbol Module)
+inspectFile file = do
 	let
 		noReturn :: E.SomeException -> IO [Doc.Interface]
 		noReturn e = return []
@@ -171,7 +175,21 @@ inspect file = do
 		forM is $ \i -> do
 			moduleFile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 			return (moduleFile, i)
-	either throwError (return . maybe id addDocs docsMap) $ analyzeModule source
+	either throwError (return . setLoc file . maybe id addDocs docsMap) $ analyzeModule source
+	where
+		setLoc f s = s { symbolLocation = Just (moduleLocation f) }
+
+-- | Inspect project
+inspectProject :: Project -> ErrorT String IO (Project, [Symbol Module])
+inspectProject p = do
+	p' <- readProject (projectCabal p)
+	let
+		dirs = maybe [] (map (projectPath p' </>) . sourceDirs) $ projectDescription p'
+	sourceFiles <- liftIO $ liftM (filter ((== ".hs") . takeExtension) . concat) $ mapM traverseDirectory dirs
+	modules <- liftM concat $ mapM inspectFile' sourceFiles
+	return (p', modules)
+	where
+		inspectFile' f = catchError (liftM return $ inspectFile f) (const $ return [])
 
 -- | Read file in UTF8
 readFileUtf8 :: FilePath -> IO String
