@@ -2,14 +2,14 @@ module Main (
 	main
 	) where
 
-import Control.Arrow
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.IO.Class
-import Data.Char
 import Data.Monoid
+import qualified Data.Map as M
 import System.Args
 import System.Environment
+import System.Directory (canonicalizePath)
 
 import HsDev.Scan as HsDev
 import HsDev.Symbols as HsDev
@@ -53,6 +53,15 @@ run db = do
 			rs <- runAction (HsDev.goToDeclaration db (force $ argN 1 cmd) (try $ arg "qualified" cmd) (force $ argN 2 cmd))
 			print rs
 			run db
+		Right "complete" -> do
+			file <- canonicalizePath $ force $ argN 1 cmd
+			rs <- runAction (HsDev.completions db file (try $ arg "qualified" cmd) (force $ argN 2 cmd))
+			mapM_ putStrLn rs
+			run db
+		Right "dump" -> do
+			forM_ (M.assocs $ M.map symbolName $ HsDev.databaseFiles db) $ \(fname, mname) ->
+				putStrLn $ mname ++ " in " ++ fname
+			run db
 		Right "help" -> printUsage >> run db
 		Right _ -> putStrLn "Unknown command" >> run db
 
@@ -74,20 +83,7 @@ printUsage = mapM_ putStrLn [
 	"\tscan -file file -- scan source file",
 	"\tscan -project path-or-cabal-file -- scan project (.cabal and all source files)",
 	"\tgoto file [-qualified prefix] name -- go to declaration from file specified",
+	"\tcomplete file [-qualified prefix] input -- autocompletion",
+	"\tdump -files -- dump file names, that are loaded in database",
 	"\thelp -- this command",
 	"\texit -- exit"]
-
-split :: String -> [String]
-split "" = []
-split (c:cs)
-	| isSpace c = split cs
-	| c == '"' = let (w, cs') = readQuote cs in w : split cs'
-	| otherwise = let (ws, tl) = break isSpace cs in (c:ws) : split tl
-	where
-		readQuote :: String -> (String, String)
-		readQuote "" = ("", "")
-		readQuote ('\\':ss)
-			| null ss = ("\\", "")
-			| otherwise = first (head ss :) $ readQuote (tail ss)
-		readQuote ('"':ss) = ("", ss)
-		readQuote (s:ss) = first (s:) $ readQuote ss

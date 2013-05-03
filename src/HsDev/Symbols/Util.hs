@@ -3,9 +3,9 @@ module HsDev.Symbols.Util (
 	withinProject,
 	withinCabal,
 	bySources,
-	sourceModules,
-	visibleModules,
-	preferredModules,
+	sourceModule,
+	visibleModule,
+	preferredModule,
 	isImportedModule
 	) where
 
@@ -33,16 +33,16 @@ withinCabal cabal m = moduleCabal (symbol m) == Just cabal
 bySources :: Symbol Module -> Bool
 bySources = isJust . symbolLocation
 
-sourceModules :: Maybe Project -> [Symbol Module] -> Symbol Module
-sourceModules project ms = head $ inProject ++ filter bySources ms where
+sourceModule :: Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
+sourceModule project ms = listToMaybe $ inProject ++ filter bySources ms where
 	inProject = maybe [] (\p -> filter (withinProject p) ms) project
 
-visibleModules :: Cabal -> Maybe Project -> [Symbol Module] -> Symbol Module
-visibleModules cabal project ms = head $ inProject ++ filter (withinCabal cabal) ms where
+visibleModule :: Cabal -> Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
+visibleModule cabal project ms = listToMaybe $ inProject ++ filter (withinCabal cabal) ms where
 	inProject = maybe [] (\p -> filter (withinProject p) ms) project
 
-preferredModules :: Cabal -> Maybe Project -> [Symbol Module] -> Symbol Module
-preferredModules cabal project ms = head $ concat [
+preferredModule :: Cabal -> Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
+preferredModule cabal project ms = listToMaybe $ concat [
 	maybe [] (\p -> filter (withinProject p) ms) project,
 	filter (withinCabal cabal) ms,
 	filter bySources ms,

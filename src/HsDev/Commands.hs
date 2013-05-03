@@ -1,5 +1,6 @@
 module HsDev.Commands (
-	goToDeclaration
+	goToDeclaration,
+	completions
 	) where
 
 import Control.Arrow
@@ -29,3 +30,17 @@ goToDeclaration db file qualifier ident = do
 			filter (\m -> isImportedModule curModule m qualifier) modules,
 			modules]
 	return candidates
+
+completions :: Database -> FilePath -> Maybe String -> String -> ErrorT String IO [String]
+completions db file qualifier prefix = return result where
+	qualifiedPrefix = maybe "" (++ ".") qualifier ++ prefix
+	result = maybe [] completions' $ M.lookup file (databaseFiles db)
+	completions' curModule = maybe useAllModules useQualifiedModule qualifier where
+		useAllModules = concat [
+			completionsFor curModule,
+			concatMap completionsForName ("Prelude" : (map importModuleName $ filter (not . importIsQualified) $ M.elems $ moduleImports (symbol curModule)))]
+		useQualifiedModule name = concatMap completionsForName (name : (map importModuleName $ filter ((== Just name) . importAs) $ M.elems $ moduleImports (symbol curModule)))
+		completionsFor m = filter (prefix `isPrefixOf`) $ M.keys $ moduleDeclarations (symbol m)
+		completionsForName moduleName = maybe [] completionsFor $
+			visibleModule Cabal project' (maybe [] S.toList $ M.lookup moduleName (databaseModules db))
+		project' = symbolLocation curModule >>= locationProject

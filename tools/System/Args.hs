@@ -1,9 +1,12 @@
 module System.Args (
 	args,
 	arg, argN, flag,
-	parse, force, try
+	parse, force, try,
+	split
 	) where
 
+import Control.Arrow (first)
+import Data.Char (isSpace)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Monoid
@@ -54,3 +57,19 @@ force = either error id
 -- | Convert to maybe
 try :: Either String a -> Maybe a
 try = either (const Nothing) Just
+
+-- | Split string to words
+split :: String -> [String]
+split "" = []
+split (c:cs)
+	| isSpace c = split cs
+	| c == '"' = let (w, cs') = readQuote cs in w : split cs'
+	| otherwise = let (ws, tl) = break isSpace cs in (c:ws) : split tl
+	where
+		readQuote :: String -> (String, String)
+		readQuote "" = ("", "")
+		readQuote ('\\':ss)
+			| null ss = ("\\", "")
+			| otherwise = first (head ss :) $ readQuote (tail ss)
+		readQuote ('"':ss) = ("", ss)
+		readQuote (s:ss) = first (s:) $ readQuote ss
