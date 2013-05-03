@@ -5,6 +5,7 @@ module HsDev.Symbols.Util (
 	inCabal,
 	bySources,
 	isImported,
+	isReachable,
 	isVisible,
 
 	sourceModule,
@@ -40,8 +41,14 @@ bySources = isJust . symbolLocation
 
 isImported :: Symbol Module -> Maybe String -> Symbol Module -> Bool
 isImported m Nothing imported = maybe (symbolName imported == "Prelude") (not . importIsQualified) $ M.lookup (symbolName imported) (moduleImports $ symbol m)
-isImported m (Just q) imported = maybe False qualifiedImport $ M.lookup (symbolName imported) (moduleImports $ symbol m) where
+isImported m (Just q) imported = maybe prelude qualifiedImport $ M.lookup (symbolName imported) (moduleImports $ symbol m) where
 	qualifiedImport i = q == importModuleName i || Just q == importAs i
+	prelude = symbolName imported == "Prelude" && q == "Prelude"
+
+isReachable :: Symbol Module -> Maybe String -> Symbol Module -> Bool
+isReachable m q imported
+	| m == imported && (q == Nothing || q == Just (symbolName m)) = True
+	| otherwise = isImported m q imported
 
 isVisible :: Cabal -> Maybe Project -> Symbol Module -> Bool
 isVisible cabal project = liftM2 (||) (inCabal cabal) (maybe (const False) inProject project)

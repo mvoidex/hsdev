@@ -59,14 +59,18 @@ run db = flip catch onError $ do
 					maybe (throwError $ "Project " ++ proj ++ " not found") HsDev.scanProject proj')]
 			run (mappend db r)
 		Right "find" -> do
-			(decls, modules) <- runAction (HsDev.findSymbol db (force $ argN 1 cmd) (force $ argN 2 cmd))
+			(decls, modules) <- runAction (HsDev.findSymbol db (force $ argN 1 cmd))
 			print decls
 			printModules modules
 			run db
 		Right "goto" -> do
-			(decls, modules) <- runAction (HsDev.goToDeclaration db (force $ argN 1 cmd) (force $ argN 2 cmd))
+			(decls, modules) <- runAction (HsDev.goToDeclaration db (try $ arg "file" cmd) (force $ argN 1 cmd))
 			print decls
 			printModules modules
+			run db
+		Right "info" -> do
+			str <- runAction (HsDev.symbolInfo db (try $ arg "file" cmd) (force $ argN 1 cmd))
+			putStrLn str
 			run db
 		Right "complete" -> do
 			file <- canonicalizePath $ force $ argN 1 cmd
@@ -115,8 +119,9 @@ printUsage = mapM_ putStrLn [
 	"\tscan -cabal [path-to-cabal-dev] -- scan modules installed in cabal or cabal-dev sandbox",
 	"\tscan -file file -- scan source file",
 	"\tscan -project path-or-cabal-file -- scan project (.cabal and all source files)",
-	"\tfind file name -- find specified symbol in context of file",
-	"\tgoto file name -- find symbol declaration",
+	"\tfind name -- find specified symbol in context of file",
+	"\tgoto name [-file file] -- find symbol declaration",
+	"\tinfo name [-file file] -- get info for symbol `name`, available from `file`",
 	"\tcomplete file input -- autocompletion",
 	"\tdump -files -- dump file names, that are loaded in database",
 	"\tdump -file filename -- dump contents of file",

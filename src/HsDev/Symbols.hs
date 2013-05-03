@@ -16,7 +16,10 @@ module HsDev.Symbols (
 	moduleLocation,
 	setModuleReferences,
 	addDeclaration,
-	unalias
+	unalias,
+	brief,
+	detailed,
+	moduleContents
 	) where
 
 import Control.Arrow
@@ -76,7 +79,7 @@ instance Functor Symbol where
 instance Eq a => Eq (Symbol a) where
 	l == r = and [
 		symbolName l == symbolName r,
-		symbolModule l == symbolModule r,
+		fmap symbolName (symbolModule l) == fmap symbolName (symbolModule r),
 		symbolLocation l == symbolLocation r,
 		symbol l == symbol r]
 
@@ -139,7 +142,7 @@ data TypeInfo = TypeInfo {
 		deriving (Eq, Ord, Read, Show)
 
 showTypeInfo :: TypeInfo -> String -> String -> String
-showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
+showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ " " ++ name ++ " " ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
 
 -- | Declaration
 data Declaration =
@@ -194,3 +197,32 @@ addDeclaration decl m = setModuleReferences $ fmap setDecls m where
 -- Unalias import name
 unalias :: Symbol Module -> String -> [String]
 unalias m alias = [importModuleName i | i <- M.elems (moduleImports (symbol m)), importAs i == Just alias]
+
+-- | Brief of declaration
+brief :: Symbol Declaration -> String
+brief s = case symbol s of
+	Function t -> symbolName s ++ maybe "" (" :: " ++) t
+	Type t -> showTypeInfo t "type" (symbolName s)
+	NewType t -> showTypeInfo t "newtype" (symbolName s)
+	Data t -> showTypeInfo t "data" (symbolName s)
+	Class t -> showTypeInfo t "class" (symbolName s)
+
+-- | Detailed info about declaration
+detailed :: Symbol Declaration -> String
+detailed s = unlines $ header ++ docs ++ loc where
+	header = [
+		brief s,
+		"",
+		maybe "" symbolName $ symbolModule s]
+	docs = maybe [] return $ symbolDocs s
+	loc = maybe [] (return . showLoc) $ symbolLocation s where
+		showLoc l = "Defined at " ++ position l
+
+-- | Module contents
+moduleContents :: Symbol Module -> String
+moduleContents s = unlines $ header ++ cts where
+	header = [
+		"module " ++ symbolName s,
+		""]
+	cts = map showDecl (M.elems $ moduleDeclarations $ symbol s)
+	showDecl d = brief d ++ maybe "" (" -- " ++) (symbolDocs d)

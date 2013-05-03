@@ -1,6 +1,7 @@
 module HsDev.Commands (
 	findSymbol,
 	goToDeclaration,
+	symbolInfo,
 	completions
 	) where
 
@@ -18,23 +19,39 @@ import HsDev.Database
 import HsDev.Symbols
 import HsDev.Symbols.Util
 
-findSymbol :: Database -> FilePath -> String -> ErrorT String IO ([Symbol Declaration], [Symbol Module])
-findSymbol db file ident = fmap go $ liftIO (canonicalizePath file) where
-	go fileName = (candidates, moduleCandidates) where
-		candidates = maybe [] S.toList $ M.lookup identName (databaseSymbols db)
-		moduleCandidates = maybe [] S.toList $ M.lookup ident (databaseModules db)
+findSymbol :: Database -> String -> ErrorT String IO ([Symbol Declaration], [Symbol Module])
+findSymbol db ident = return (candidates, moduleCandidates) where
+	candidates = maybe [] S.toList $ M.lookup identName (databaseSymbols db)
+	moduleCandidates = maybe [] S.toList $ M.lookup ident (databaseModules db)
 	(_, identName) = splitIdentifier ident
 
-goToDeclaration :: Database -> FilePath -> String -> ErrorT String IO ([Symbol Declaration], [Symbol Module])
+goToDeclaration :: Database -> Maybe FilePath -> String -> ErrorT String IO ([Symbol Declaration], [Symbol Module])
 goToDeclaration db file ident = do
-	fileName <- liftIO $ canonicalizePath file
-	(decls, modules) <- findSymbol db fileName ident
+	fileName <- maybe (return "") (liftIO . canonicalizePath) file
+	(decls, modules) <- findSymbol db ident
 	return (filter (maybe False (reachable qualifiedName fileName) . symbolModule) decls, filter (reachable (Just ident) fileName) modules)
 	where
-		reachable qnm f m = bySources m && maybe True reachableFrom (M.lookup f (databaseFiles db)) where
-			reachableFrom cur = isImported cur qnm m || reachableFromSelf where
-				reachableFromSelf = cur == m && (qnm == Nothing || qnm == Just (symbolName cur))
+		reachable qnm f m = bySources m && maybe (maybe True (== symbolName m) qnm) (\cur -> isReachable cur qnm m) thisModule where
+			thisModule = M.lookup f (databaseFiles db)
 		(qualifiedName, identName) = splitIdentifier ident
+
+symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO String
+symbolInfo db file ident = do
+	fileName <- maybe (return "") (liftIO . canonicalizePath) file
+	project <- maybe (return Nothing) (const $ liftIO $ locateProject fileName) file
+	(decls, _) <- findSymbol db ident
+	let
+		filterFunction qname = maybe (\m -> maybe True (== symbolName m) qname) (\cur -> isReachable cur qname) $ M.lookup fileName (databaseFiles db)
+		decls' = groupize [inProject_ project, notPrelude] $ filter (maybe False (filterFunction qualifiedName) . symbolModule) decls
+		resultDecls = fromMaybe [] $ listToMaybe $ dropWhile null decls'
+		notPrelude m = maybe True ((/= "Prelude") . symbolName) $ symbolModule m
+	case length resultDecls of
+		0 -> throwError $ "Symbol '" ++ ident ++ "' not found"
+		1 -> return $ detailed (head resultDecls)
+		_ -> throwError $ "Ambiguous symbols: " ++ intercalate ", " (map put resultDecls)
+	where
+		(qualifiedName, identName) = splitIdentifier ident
+		put s = maybe "" ((++ ".") . symbolName) (symbolModule s) ++ symbolName s
 
 completions :: Database -> FilePath -> String -> ErrorT String IO [String]
 completions db file prefix = fmap nub $ do
@@ -70,3 +87,8 @@ splitIdentifier name = (qname, name') where
 	prefix' = dropWhileEnd (== '.') prefix
 	qname = if null prefix' then Nothing else Just prefix'
 	name' = fromMaybe (error "Impossible happened") $ stripPrefix prefix name
+
+groupize :: [a -> Bool] -> [a] -> [[a]]
+groupize [] l = [l]
+groupize (p:ps) l = p' : groupize ps tl where
+	(p', tl) = partition p l
