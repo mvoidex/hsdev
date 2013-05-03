@@ -36,7 +36,7 @@ foldl
 foldl1
 foldr
 foldr1
-complete src\HsDev\Commands.hs -qualified M fro
+complete src\HsDev\Commands.hs M.fro
 Ok
 fromAscList
 fromAscListWith
