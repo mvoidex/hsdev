@@ -23,12 +23,15 @@ library
     HsDev.Database
     HsDev.Tools.Base
     HsDev.Tools.GhcMod
+    HsDev.Util
     HsDev.Cabal
     HsDev.Inspect
+    HsDev.Project
   other-modules:
     Data.Group
   build-depends:
     base == 4.6.*,
+    Cabal == 1.16.*,
     containers == 0.5.*,
     directory == 1.2.*,
     filepath == 1.3.*,
