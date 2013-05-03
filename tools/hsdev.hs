@@ -70,10 +70,6 @@ run db = do
 					file <- canonicalizePath $ force $ arg "file" cmd
 					maybe (putStrLn "File not found") print $ M.lookup file (HsDev.databaseFiles db))]
 			run db
-		Right "dump" -> do
-			forM_ (M.assocs $ M.map symbolName $ HsDev.databaseFiles db) $ \(fname, mname) ->
-				putStrLn $ mname ++ " in " ++ fname
-			run db
 		Right "help" -> printUsage >> run db
 		Right _ -> putStrLn "Unknown command" >> run db
 
