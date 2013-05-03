@@ -51,7 +51,7 @@ data Import = Import {
 		deriving (Eq, Ord)
 
 instance Show Import where
-	show i = "import " ++ if importIsQualified i then "qualified " else "" ++ importModuleName i ++ maybe "" (" as " ++) (importAs i)
+	show i = "import " ++ (if importIsQualified i then "qualified " else "") ++ importModuleName i ++ maybe "" (" as " ++) (importAs i)
 
 -- | Symbol
 data Symbol a = Symbol {

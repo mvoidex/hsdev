@@ -3,7 +3,8 @@ module HsDev.Database (
 	createIndexes,
 	fromModule,
 	fromProject,
-	--projectModules,
+	projectModules,
+	cabalModules,
 
 	lookupModule,
 	lookupFile,
@@ -81,11 +82,15 @@ fromProject p = zero {
 	databaseProjects = M.singleton (projectName p) p }
 
 -- Modules for project specified
---projectModules :: String -> Database -> Map FilePath (Symbol Module)
---projectModules project = M.filter thisProject . databaseFiles where
---	thisProject m = maybe False (== project) $ do
---		loc <- symbolLocation m
---		locationProject loc
+projectModules :: Project -> Database -> Map FilePath (Symbol Module)
+projectModules project = M.filter thisProject . databaseFiles where
+	thisProject m = maybe False (== project) $ do
+		loc <- symbolLocation m
+		locationProject loc
+
+-- | Modules for cabal specified
+cabalModules :: Cabal -> Database -> Map String (Symbol Module)
+cabalModules cabal db = fromMaybe M.empty $ M.lookup cabal $ databaseCabalModules db
 		
 lookupModule :: Cabal -> String -> Database -> Maybe (Symbol Module)
 lookupModule cabal name db = do

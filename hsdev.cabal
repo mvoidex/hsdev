@@ -19,20 +19,22 @@ library
   hs-source-dirs: src
   exposed-modules:
     HsDev
+    HsDev.Cache
+    HsDev.Commands
+    HsDev.Database
+    HsDev.Inspect
+    HsDev.Project
+    HsDev.Scan
     HsDev.Symbols
     HsDev.Symbols.Util
-    HsDev.Database
     HsDev.Tools.Base
     HsDev.Tools.GhcMod
     HsDev.Util
-    HsDev.Scan
-    HsDev.Inspect
-    HsDev.Project
-    HsDev.Commands
   other-modules:
     Data.Group
   build-depends:
     base == 4.6.*,
+    aeson == 0.6.*,
     Cabal == 1.16.*,
     containers == 0.5.*,
     directory == 1.2.*,
