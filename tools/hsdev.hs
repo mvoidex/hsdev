@@ -14,6 +14,8 @@ import System.Environment
 import HsDev.Scan as HsDev
 import HsDev.Symbols as HsDev
 import HsDev.Util as HsDev
+import HsDev.Database as HsDev
+import HsDev.Commands as HsDev
 
 main :: IO ()
 main = do
@@ -23,13 +25,13 @@ main = do
 	case argN 0 params of
 		Right "help" -> printUsage
 		Right _ -> putStrLn "Unknown command" >> printUsage
-		Left _ -> run
+		Left _ -> run mempty
 
-run :: IO ()
-run = do
+run :: HsDev.Database -> IO ()
+run db = do
 	cmd <- liftM (args [] . split) getLine
 	case argN 0 cmd of
-		Left _ -> run
+		Left _ -> run db
 		Right "exit" -> return ()
 		Right "scan" -> do
 			let
@@ -45,12 +47,23 @@ run = do
 						return (do
 							proj' <- liftIO $ locateProject proj
 							maybe (throwError $ "Project " ++ proj ++ " not found") HsDev.scanProject proj')]
-			either (const $ putStrLn "Invalid arguments") runAction action
-			run
-		Right _ -> putStrLn "Unknown command" >> run
+			r <- either (\_ -> putStrLn "Invalid arguments" >> return mempty) runAction action
+			run (mappend db r)
+		Right "goto" -> do
+			rs <- runAction (HsDev.goToDeclaration db (force $ argN 1 cmd) (try $ arg "qualified" cmd) (force $ argN 2 cmd))
+			print rs
+			run db
+		Right "help" -> printUsage >> run db
+		Right _ -> putStrLn "Unknown command" >> run db
 
-runAction :: ErrorT String IO a -> IO ()
-runAction act = runErrorT act >>= either (putStrLn . ("Error: " ++)) (const $ putStrLn "Ok")
+runAction :: Monoid a => ErrorT String IO a -> IO a
+runAction act = runErrorT act >>= either onError onOk where
+	onError msg = do
+		putStrLn $ "Error: " ++ msg
+		return mempty
+	onOk r = do
+		putStrLn "Ok"
+		return r
 
 printUsage :: IO ()
 printUsage = mapM_ putStrLn [
@@ -60,6 +73,8 @@ printUsage = mapM_ putStrLn [
 	"\tscan -cabal [path-to-cabal-dev] -- scan modules installed in cabal or cabal-dev sandbox",
 	"\tscan -file file -- scan source file",
 	"\tscan -project path-or-cabal-file -- scan project (.cabal and all source files)",
+	"\tgoto file [-qualified prefix] name -- go to declaration from file specified",
+	"\thelp -- this command",
 	"\texit -- exit"]
 
 split :: String -> [String]

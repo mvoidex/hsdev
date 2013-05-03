@@ -28,6 +28,7 @@ library
     HsDev.Scan
     HsDev.Inspect
     HsDev.Project
+    HsDev.Commands
   other-modules:
     Data.Group
   build-depends:

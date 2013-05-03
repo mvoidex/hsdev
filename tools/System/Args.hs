@@ -1,7 +1,7 @@
 module System.Args (
 	args,
 	arg, argN, flag,
-	parse, force
+	parse, force, try
 	) where
 
 import Data.Map (Map)
@@ -50,3 +50,7 @@ parse (Right s) = maybe (Left $ "Can't parse: '" ++ s ++ "'") Right $ readMaybe 
 -- | Force argument
 force :: Either String a -> a
 force = either error id
+
+-- | Convert to maybe
+try :: Either String a -> Maybe a
+try = either (const Nothing) Just

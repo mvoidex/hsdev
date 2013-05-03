@@ -2,7 +2,7 @@ module HsDev.Project (
 	Project(..),
 	ProjectDescription(..), Library(..), Executable(..), Test(..),
 	readProject,
-	projectByCabal,
+	project,
 	sourceDirs
 	) where
 
@@ -78,12 +78,12 @@ readProject file = do
 	source <- liftIO $ readFile file
 	either throwError (return . mkProject) $ analyzeCabal source
 	where
-		mkProject desc = (projectByCabal file) {
+		mkProject desc = (project file) {
 			projectDescription = Just desc }
 
 -- | Make project by .cabal file
-projectByCabal :: FilePath -> Project
-projectByCabal file = Project {
+project :: FilePath -> Project
+project file = Project {
 	projectName = takeBaseName (takeDirectory file),
 	projectPath = takeDirectory file,
 	projectCabal = file,

@@ -18,12 +18,12 @@ locateProject file = do
 	where
 		locateHere = do
 			cts <- getDirectoryContents file
-			return $ fmap projectByCabal $ find ((== ".cabal") . takeExtension) cts
+			return $ fmap project $ find ((== ".cabal") . takeExtension) cts
 		locateParent dir = do
 			cts <- getDirectoryContents dir
 			case find ((== ".cabal") . takeExtension) cts of
 				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
-				Just cabalFile -> return $ Just $ projectByCabal cabalFile
+				Just cabalFile -> return $ Just $ project cabalFile
 
 traverseDirectory :: FilePath -> IO [FilePath]
 traverseDirectory path = do
