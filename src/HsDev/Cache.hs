@@ -159,7 +159,7 @@ cabalCache (CabalDev p) = escapePath p ++ ".json"
 
 -- | Name of cache file for projects
 projectCache :: Project -> FilePath
-projectCache p = escapePath (projectCabal p) ++ ".json"
+projectCache p = escapePath (projectPath p) ++ ".json"
 
 -- | Dump cache data to file
 dump :: FilePath -> Map String (Symbol Module) -> IO ()

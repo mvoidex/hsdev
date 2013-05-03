@@ -22,6 +22,7 @@ import HsDev.Database as HsDev
 import HsDev.Project as HsDev
 import HsDev.Scan as HsDev
 import HsDev.Symbols as HsDev
+import HsDev.Symbols.Util as HsDev
 import HsDev.Util as HsDev
 
 main :: IO ()
@@ -57,13 +58,19 @@ run db = flip catch onError $ do
 					proj' <- liftIO $ locateProject proj
 					maybe (throwError $ "Project " ++ proj ++ " not found") HsDev.scanProject proj')]
 			run (mappend db r)
+		Right "find" -> do
+			(decls, modules) <- runAction (HsDev.findSymbol db (force $ argN 1 cmd) (force $ argN 2 cmd))
+			print decls
+			printModules modules
+			run db
 		Right "goto" -> do
-			rs <- runAction (HsDev.goToDeclaration db (force $ argN 1 cmd) (try $ arg "qualified" cmd) (force $ argN 2 cmd))
-			print rs
+			(decls, modules) <- runAction (HsDev.goToDeclaration db (force $ argN 1 cmd) (force $ argN 2 cmd))
+			print decls
+			printModules modules
 			run db
 		Right "complete" -> do
 			file <- canonicalizePath $ force $ argN 1 cmd
-			rs <- runAction (HsDev.completions db file (try $ arg "qualified" cmd) (force $ argN 2 cmd))
+			rs <- runAction (HsDev.completions db file (force $ argN 2 cmd))
 			mapM_ putStrLn rs
 			run db
 		Right "dump" -> do
@@ -85,6 +92,11 @@ run db = flip catch onError $ do
 		onError e = do
 			putStrLn $ "Exception: " ++ show e
 			run db
+		printModules [] = return ()
+		printModules ms = putStrLn "Modules:" >> forM_ ms printModule where
+			printModule m
+				| HsDev.bySources m = putStrLn $ symbolName m ++ " in " ++ maybe "" locationFile (symbolLocation m)
+				| otherwise = putStrLn $ symbolName m ++ " in " ++ maybe "" show (moduleCabal (symbol m))
 
 runAction :: Monoid a => ErrorT String IO a -> IO a
 runAction act = runErrorT act >>= either onError onOk where
@@ -103,8 +115,9 @@ printUsage = mapM_ putStrLn [
 	"\tscan -cabal [path-to-cabal-dev] -- scan modules installed in cabal or cabal-dev sandbox",
 	"\tscan -file file -- scan source file",
 	"\tscan -project path-or-cabal-file -- scan project (.cabal and all source files)",
-	"\tgoto file [-qualified prefix] name -- go to declaration from file specified",
-	"\tcomplete file [-qualified prefix] input -- autocompletion",
+	"\tfind file name -- find specified symbol in context of file",
+	"\tgoto file name -- find symbol declaration",
+	"\tcomplete file input -- autocompletion",
 	"\tdump -files -- dump file names, that are loaded in database",
 	"\tdump -file filename -- dump contents of file",
 	"\tcache -dump -cabal [path-to-cabal-dev] -- dump cache of cabal packages",
