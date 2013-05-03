@@ -68,7 +68,7 @@ createIndexes db = db {
 
 -- | Make database from module
 fromModule :: Symbol Module -> Database
-fromModule m = fromMaybe (error "Module must specify source file or cabal") $ inSource `mplus` inCabal where
+fromModule m = fromMaybe (error "Module must specify source file or cabal") (inSource `mplus` inCabal) where
 	inSource = do
 		loc <- symbolLocation m
 		return $ createIndexes $ Database mempty (M.singleton (locationFile loc) m) mempty zero zero

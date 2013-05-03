@@ -2,7 +2,7 @@ module System.Args (
 	Args(..),
 	args,
 	arg, argN, flag,
-	parse, force, try,
+	parse, force, try, exists,
 	split
 	) where
 
@@ -30,7 +30,7 @@ args _ [] = Args M.empty [] []
 args flags (('-':key):tl)
 	| key `elem` flags = mappend (Args M.empty [key] []) (args flags tl)
 	| not (null tl) && (head (head tl) /= '-') = mappend (Args (M.singleton key (head tl)) [] []) (args flags $ tail tl)
-	| otherwise = Args (M.singleton key "") [] []
+	| otherwise = mappend (Args (M.singleton key "") [] []) (args flags tl)
 args flags (a:as) = mappend (Args M.empty [] [a]) (args flags as)
 
 -- | Get named argument
@@ -58,6 +58,10 @@ force = either error id
 -- | Convert to maybe
 try :: Either String a -> Maybe a
 try = either (const Nothing) Just
+
+-- | Check whether argument exists
+exists :: Either String a -> Bool
+exists = either (const False) (const True)
 
 -- | Split string to words
 split :: String -> [String]

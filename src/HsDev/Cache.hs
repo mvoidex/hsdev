@@ -12,6 +12,7 @@ module HsDev.Cache (
 import Control.Applicative
 import Control.Monad (mzero)
 import Data.Aeson
+import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Lazy as BS
 import Data.Char
 import Data.List
@@ -71,12 +72,15 @@ instance FromJSON a => FromJSON (Symbol a) where
 	parseJSON _ = mzero
 
 instance ToJSON Cabal where
-	toJSON x = toJSON $ case x of
-		Cabal -> Nothing
-		CabalDev p -> Just p
+	toJSON Cabal = toJSON ("<cabal>" :: String)
+	toJSON (CabalDev p) = toJSON p
 
 instance FromJSON Cabal where
-	parseJSON = fmap (maybe Cabal CabalDev) . parseJSON
+	parseJSON v = do
+		p <- parseJSON v
+		if p == "<cabal>"
+			then return Cabal
+			else return (CabalDev p)
 
 instance ToJSON Module where
 	toJSON m = object [
@@ -124,17 +128,18 @@ instance ToJSON Declaration where
 		"info" .= i]
 
 instance FromJSON Declaration where
-	parseJSON (Object v) = do
-		w <- fmap (id :: String -> String) $ v .: "what"
-		i <- v .: "info"
-		let
-			ctor = case w of
-				"type" -> Type
-				"newtype" -> NewType
-				"data" -> Data
-				"class" -> Class
-				_ -> error "Invalid data"
-		return $ ctor i
+	parseJSON (Object v) = (Function <$> v .: "type") <|> parseType where
+		parseType = do
+			w <- fmap (id :: String -> String) $ v .: "what"
+			i <- v .: "info"
+			let
+				ctor = case w of
+					"type" -> Type
+					"newtype" -> NewType
+					"data" -> Data
+					"class" -> Class
+					_ -> error "Invalid data"
+			return $ ctor i
 	parseJSON _ = mzero
 
 escapePath :: FilePath -> FilePath
@@ -151,7 +156,7 @@ projectCache p = escapePath (projectCabal p) ++ ".json"
 
 -- | Dump cache data to file
 dump :: FilePath -> Map String (Symbol Module) -> IO ()
-dump file = BS.writeFile file . encode
+dump file = BS.writeFile file . encodePretty
 
 -- | Load cache from file
 load :: FilePath -> IO (Map String (Symbol Module))
