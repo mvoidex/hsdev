@@ -89,7 +89,7 @@ browse moduleName = fmap toModule $ ghcmod_ ["browse", "-d", moduleName] where
 			decls = M.fromList $ map (symbolName &&& id) $ mapMaybe parseDecl $ lines str
 			parseFunction s = do
 				groups <- match "(\\w+)\\s+::\\s+(.*)" s
-				return $ mkSymbol (groups `at` 1) (Function $ groups `at` 2)
+				return $ mkSymbol (groups `at` 1) (Function $ Just $ groups `at` 2)
 			parseType s = do
 				groups <- match "(class|type|data|newtype)\\s+(\\w+)(\\s+(\\w+(\\s+\\w+)*))?" s
 				let
@@ -102,7 +102,7 @@ info file moduleName symbolName cabal = ghcmod_ ["info", file, moduleName, symbo
 	toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
 	parseFunction s = do
 		groups <- match (symbolName ++ "\\s+::\\s+(.*?)(\\s+--(.*))?$") s
-		return $ mkSymbol symbolName (Function $ groups `at` 1)
+		return $ mkSymbol symbolName (Function $ Just $ groups `at` 1)
 	parseData s = do
 		groups <- match "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined)?" s
 		let

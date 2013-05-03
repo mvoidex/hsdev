@@ -31,16 +31,14 @@ import Data.Time.Clock.POSIX
 data Location = Location {
 	locationFile :: FilePath,
 	locationLine :: Int,
-	locationColumn :: Int,
-	locationProject :: Maybe String,
-	locationModifiedTime :: Maybe POSIXTime }
+	locationColumn :: Int }
 		deriving (Eq, Ord)
 
 instance Read POSIXTime where
 	readsPrec i = map (first fromIntegral) . readsPrec i
 
 instance Show Location where
-	show loc = intercalate ":" [locationFile loc, show $ locationLine loc, show $ locationColumn loc] ++ maybe "" (" in " ++) (locationProject loc)
+	show loc = intercalate ":" [locationFile loc, show $ locationLine loc, show $ locationColumn loc]
 
 -- | Module import
 data Import = Import {
@@ -99,7 +97,7 @@ instance Show (Symbol Declaration) where
 		"\tlocation:" ++ show (symbolLocation d)]
 		where
 			title = case symbol d of
-				Function t -> symbolName d ++ " :: " ++ t
+				Function t -> symbolName d ++ maybe "" (" :: " ++) t
 				Type ti -> title' "type" ti
 				NewType ti -> title' "newtype" ti
 				Data ti -> title' "data" ti
@@ -142,7 +140,7 @@ showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ un
 
 -- | Declaration
 data Declaration =
-	Function { functionType :: String } |
+	Function { functionType :: Maybe String } |
 	Type { typeInfo :: TypeInfo } |
 	NewType { newTypeInfo :: TypeInfo } |
 	Data { dataInfo :: TypeInfo } |
@@ -174,16 +172,15 @@ mkLocation :: Location -> IO Location
 mkLocation loc = undefined
 
 moduleLocation :: FilePath -> Location
-moduleLocation fname = Location fname 1 1 Nothing Nothing
+moduleLocation fname = Location fname 1 1
 
 -- | Set module references
 setModuleReferences :: Symbol Module -> Symbol Module
 setModuleReferences m = fix setRefs where
-	setRefs m' = fmap setRefs' m where
+	setRefs m' = setModule $ fmap setRefs' m where
 		setRefs' m'' = m'' {
 			moduleDeclarations = M.map setModule (moduleDeclarations $ symbol m) }
-			where
-				setModule s = s { symbolModule = Just m' }
+		setModule s = s { symbolModule = Just m' }
 
 -- | Add declaration to module
 addDeclaration :: Symbol Declaration -> Symbol Module -> Symbol Module

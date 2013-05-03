@@ -10,7 +10,8 @@ withinProject :: String -> Symbol a -> Bool
 withinProject project s = (Just project) == project' where
 	project' = do
 		loc <- symbolLocation s
-		locationProject loc
+		undefined
+		--locationProject loc
 
 withinCabal :: Cabal -> Symbol Module -> Bool
 withinCabal cabal m = moduleCabal (symbol m) == Just cabal
