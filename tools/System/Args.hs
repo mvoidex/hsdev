@@ -1,4 +1,5 @@
 module System.Args (
+	Args(..),
 	args,
 	arg, argN, flag,
 	parse, force, try,

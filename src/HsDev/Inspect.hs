@@ -176,10 +176,10 @@ inspectFile file = do
 		forM is $ \i -> do
 			moduleFile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 			return (moduleFile, i)
-	either throwError (return . setModuleReferences . fmap (setLocations p) . setLoc file p . maybe id addDocs docsMap) $ analyzeModule source
+	either throwError (return . setModuleReferences . fmap (setLocations absFilename p) . setLoc absFilename p . maybe id addDocs docsMap) $ analyzeModule source
 	where
 		setLoc f p s = s { symbolLocation = Just ((moduleLocation f) { locationProject = p }) }
-		setLocations p m = m { moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = file, locationProject = p }) (symbolLocation decl) }) (moduleDeclarations m) }
+		setLocations f p m = m { moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = f, locationProject = p }) (symbolLocation decl) }) (moduleDeclarations m) }
 
 -- | Inspect project
 inspectProject :: Project -> ErrorT String IO (Project, [Symbol Module])
