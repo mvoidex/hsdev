@@ -50,10 +50,6 @@ goto src\HsDev\Commands.hs locateProject
 Ok
 [locateProject :: FilePath -> IO (Maybe Project)
         module:
-        docs:
-        location:Nothing
-,locateProject :: FilePath -> IO (Maybe Project)
-        module:
         docs: Find project file is related to
 
         location:Just E:\users\voidex\Documents\Projects\hsdev\src\HsDev\Util.hs:14:1
