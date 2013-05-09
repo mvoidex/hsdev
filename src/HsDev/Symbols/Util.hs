@@ -2,6 +2,8 @@ module HsDev.Symbols.Util (
 	sameProject,
 	inProject,
 	inProject_,
+	inFile,
+	inModule,
 	inCabal,
 	bySources,
 	isImported,
@@ -10,13 +12,16 @@ module HsDev.Symbols.Util (
 
 	sourceModule,
 	visibleModule,
-	preferredModule
+	preferredModule,
+
+	satisfy
 	) where
 
 import Control.Monad
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
+import System.FilePath
 
 import HsDev.Symbols
 import HsDev.Project
@@ -33,8 +38,14 @@ inProject_ :: Maybe Project -> Symbol a -> Bool
 inProject_ Nothing _ = False
 inProject_ (Just p) s = inProject p s
 
-inCabal :: Cabal -> Symbol Module -> Bool
-inCabal cabal m = moduleCabal (symbol m) == Just cabal
+inFile :: FilePath -> Symbol a -> Bool
+inFile f s = Just (normalise f) == fmap locationFile (symbolLocation s)
+
+inModule :: String -> Symbol a -> Bool
+inModule moduleName = maybe False ((== moduleName) . symbolName) . symbolModule
+
+inCabal :: Cabal -> Symbol a -> Bool
+inCabal cabal = maybe False ((== Just cabal) . moduleCabal . symbol) . symbolModule
 
 bySources :: Symbol a -> Bool
 bySources = isJust . symbolLocation
@@ -66,3 +77,6 @@ preferredModule cabal project ms = listToMaybe $ concatMap (`filter` ms) order w
 		inCabal cabal,
 		bySources,
 		const True]
+
+satisfy :: [a -> Bool] -> a -> Bool
+satisfy ps x = all ($ x) ps

@@ -35,7 +35,7 @@ instance ToJSON Location where
 		"project" .= locationProject loc]
 
 instance FromJSON Location where
-	parseJSON (Object v) = Location <$>
+	parseJSON (Object v) = location <$>
 		v .: "file" <*>
 		v .: "line" <*>
 		v .: "column" <*>

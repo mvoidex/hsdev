@@ -29,78 +29,117 @@ main :: IO ()
 main = do
 	hSetEncoding stdout utf8
 	args' <- getArgs
-	let
-		params = args [] args'
-	case argN 0 params of
-		Right "help" -> printUsage
-		Right _ -> putStrLn "Unknown command" >> printUsage
-		Left _ -> run mempty
+	case args' of
+		["help"] -> printUsage
+		[] -> run mempty
+		_ -> putStrLn "Unknown command" >> printUsage
+
+commands :: [Command]
+commands = [
+	cmd "scan" "scan modules installed in cabal" [
+		"-cabal [sandbox]" $= "path to sandbox"],
+	cmd "scan" "scan project" [
+		"-project p" $= "path to project .cabal file"],
+	cmd "scan" "scan file" [
+		"-file f" $= "file to scan"],
+	cmd "find" "find symbol" [
+		"name" $= "",
+		"[-project p]" $= "symbol in project",
+		"[-file [f]]" $= "symbol in file",
+		"[-module m]" $= "module of symbol",
+		"[-cabal [sandbox]]" $= "sandbox of module, where symbol defined"],
+	cmd "goto" "find symbol declaration" [
+		"name" $= "",
+		"[-file f]" $= "context source file"],
+	cmd "info" "get info for symbol" [
+		"name" $= "",
+		"[-file f]" $= "context source file"],
+	cmd "complete" "autocompletion" [
+		"file" $= "context source file",
+		"input" $= "string to complete"],
+	cmd "dump" "dump file names, that are loaded in database" ["-files" $= ""],
+	cmd "dump" "dump module contents" ["-file f" $= "file to dump"],
+	cmd "cache" "dump cache of cabal packages" ["-dump" $= "", "-cabal [sandbox]" $= ""],
+	cmd "cache" "dump cache of project" ["-dump" $= "", "-project p" $= ""],
+	cmd "cache" "load cache of cabal packages" ["-load" $= "", "-cabal [sandbox]" $= ""],
+	cmd "cache" "load cache of project" ["-load" $= "", "-project p" $= ""],
+	cmd "cache" "load cache from file" ["-load" $= "", "-file cache-file" $= ""],
+	cmd "help" "this command" [],
+	cmd "exit" "exit" []]
 
 run :: HsDev.Database -> IO ()
 run db = flip catch onError $ do
-	cmd <- liftM (args [] . split) getLine
-	case argN 0 cmd of
-		Left _ -> run db
-		Right "exit" -> return ()
-		Right "scan" -> do
-			r <- runAction $ dispatch cmd (liftIO (putStrLn "Invalid arguments") >> return mempty) [
-				("cabal", do
-					let
-						cabalPath = force $ arg "cabal" cmd
-					HsDev.scanCabal (if null cabalPath then HsDev.Cabal else HsDev.CabalDev cabalPath)),
-				("file", do
-					let
-						file = force $ arg "file" cmd
-					HsDev.scanFile file),
-				("project", do
-					let
-						proj = force $ arg "project" cmd
-					proj' <- liftIO $ locateProject proj
-					maybe (throwError $ "Project " ++ proj ++ " not found") HsDev.scanProject proj')]
-			run (mappend db r)
-		Right "find" -> do
-			(decls, modules) <- runAction (HsDev.findSymbol db (force $ argN 1 cmd))
-			print decls
-			printModules modules
-			run db
-		Right "goto" -> do
-			(decls, modules) <- runAction (HsDev.goToDeclaration db (try $ arg "file" cmd) (force $ argN 1 cmd))
-			print decls
-			printModules modules
-			run db
-		Right "info" -> do
-			str <- runAction (HsDev.symbolInfo db (try $ arg "file" cmd) (force $ argN 1 cmd))
-			putStrLn str
-			run db
-		Right "complete" -> do
-			file <- canonicalizePath $ force $ argN 1 cmd
-			rs <- runAction (HsDev.completions db file (force $ argN 2 cmd))
-			mapM_ putStrLn rs
-			run db
-		Right "dump" -> do
-			dispatch cmd (putStrLn "Invalid arguments") [
-				("files", do
-					forM_ (M.assocs $ M.map symbolName $ HsDev.databaseFiles db) $ \(fname, mname) ->
-						putStrLn $ mname ++ " in " ++ fname),
-				("file", do
-					file <- canonicalizePath $ force $ arg "file" cmd
-					maybe (putStrLn "File not found") print $ M.lookup file (HsDev.databaseFiles db))]
-			run db
-		Right "cache" -> do
-			db' <- cache cmd db
-			run (mappend db db')
-		Right "help" -> printUsage >> run db
-		Right _ -> putStrLn "Unknown command" >> run db
+	cmd <- liftM split getLine
+	case parseCommand commands cmd of
+		Left e -> putStrLn e >> run db
+		Right (name, cmdArgs) -> case name of
+			"exit" -> return ()
+			"help" -> printUsage >> run db
+			"scan" -> do
+				r <- runAction $ runMaybeT $ msum [
+					do
+						cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
+						lift $ scanCabal (if null cabalPath then HsDev.Cabal else HsDev.CabalDev cabalPath),
+					do
+						file <- MaybeT $ return $ arg "file" cmdArgs
+						lift $ scanFile file,
+					do
+						proj <- MaybeT $ return $ arg "project" cmdArgs
+						proj' <- liftIO $ locateProject proj
+						maybe (throwError $ "Project " ++ proj ++ " not found") (lift . scanProject) proj']
+				run $ maybe db (mappend db) r
+			"find" -> do
+				rs <- runAction (findSymbol db (fromJust $ at 0 cmdArgs))
+				file' <- maybe (return Nothing) (\f -> if null f then return Nothing else fmap Just (canonicalizePath f)) $ arg "file" cmdArgs
+				let
+					filters :: Symbol a -> Bool
+					filters = satisfy $ catMaybes [
+						fmap (inProject . project) $ arg "project" cmdArgs,
+						fmap inFile file',
+						if has "file" cmdArgs then Just bySources else Nothing,
+						fmap inModule $ arg "module" cmdArgs,
+						fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
+					asCabal "" = Cabal
+					asCabal p = CabalDev p
+				printResults $ filter (filterResult filters) rs
+				run db
+			"goto" -> do
+				rs <- runAction (goToDeclaration db (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
+				printResults rs
+				run db
+			"info" -> do
+				str <- runAction (symbolInfo db (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
+				putStrLn str
+				run db
+			"complete" -> do
+				file <- canonicalizePath $ fromJust $ at 0 cmdArgs
+				rs <- runAction (completions db file (fromJust $ at 1 cmdArgs))
+				mapM_ putStrLn rs
+				run db
+			"dump" -> do
+				runMaybeT $ msum [
+					when (has "files" cmdArgs) $ do
+						forM_  (M.assocs $ M.map symbolName $ databaseFiles db) $ \(fname, mname) ->
+							liftIO (putStrLn (mname ++ " in " ++ fname)),
+					do
+						file <- MaybeT $ return $ arg "file" cmdArgs
+						maybe (liftIO $ putStrLn "File not found") (liftIO . print) $ M.lookup file (databaseFiles db)]
+				run db
+			"cache" -> do
+				db' <- cache cmdArgs db
+				run (mappend db db')
+			_ -> putStrLn "Unknown command" >> run db
 	where
 		onError :: SomeException -> IO ()
 		onError e = do
 			putStrLn $ "Exception: " ++ show e
 			run db
-		printModules [] = return ()
-		printModules ms = putStrLn "Modules:" >> forM_ ms printModule where
-			printModule m
-				| HsDev.bySources m = putStrLn $ symbolName m ++ " in " ++ maybe "" locationFile (symbolLocation m)
-				| otherwise = putStrLn $ symbolName m ++ " in " ++ maybe "" show (moduleCabal (symbol m))
+		printResults [] = putStrLn "Nothing found"
+		printResults rs = mapM_ printResult rs where
+			printResult (ResultDeclaration d) = print d
+			printResult (ResultModule m)
+				| HsDev.bySources m = putStrLn $ "module " ++ symbolName m ++ " from " ++ maybe "" locationFile (symbolLocation m)
+				| otherwise = putStrLn $ "module " ++ symbolName m ++ " from " ++ maybe "" show (moduleCabal $ symbol m)
 
 runAction :: Monoid a => ErrorT String IO a -> IO a
 runAction act = runErrorT act >>= either onError onOk where
@@ -112,37 +151,15 @@ runAction act = runErrorT act >>= either onError onOk where
 		return r
 
 printUsage :: IO ()
-printUsage = mapM_ putStrLn [
-	"hsdev",
-	"",
-	"run hsdev and input commands:",
-	"\tscan -cabal [path-to-cabal-dev] -- scan modules installed in cabal or cabal-dev sandbox",
-	"\tscan -file file -- scan source file",
-	"\tscan -project path-or-cabal-file -- scan project (.cabal and all source files)",
-	"\tfind name -- find specified symbol in context of file",
-	"\tgoto name [-file file] -- find symbol declaration",
-	"\tinfo name [-file file] -- get info for symbol `name`, available from `file`",
-	"\tcomplete file input -- autocompletion",
-	"\tdump -files -- dump file names, that are loaded in database",
-	"\tdump -file filename -- dump contents of file",
-	"\tcache -dump -cabal [path-to-cabal-dev] -- dump cache of cabal packages",
-	"\tcache -dump -project project-cabal -- dump cache of project",
-	"\tcache -load -cabal [path-to-cabal-dev] -- load cache of cabal packages",
-	"\tcache -load -project project-cabal -- load cache of project",
-	"\tcache -load -file cache-file -- load any cache",
-	"\thelp -- this command",
-	"\texit -- exit"]
+printUsage = mapM_ print commands
 
-dispatch :: Args -> a -> [(String, a)] -> a
-dispatch cmds def vars = maybe def snd $ find (\v -> either (const False) (const True) (arg (fst v) cmds)) vars
-
-cache :: Args -> Database -> IO Database
+cache :: Args String -> Database -> IO Database
 cache as db
-	| exists (arg "dump" as) = do
+	| has "dump" as = do
 		r <- runMaybeT $ msum [cabalSave, projectSave]
 		maybe (putStrLn "Invalid arguments") (const $ putStrLn "Ok") r
 		return mempty
-	| exists (arg "load" as) = do
+	| has "load" as = do
 		r <- runMaybeT $ msum [cabalLoad, projectLoad]
 		maybe (putStrLn "Invalid arguments" >> return mempty) return r
 	| otherwise = putStrLn "Invalid arguments" >> return mempty
@@ -160,10 +177,10 @@ cache as db
 			proj <- projectArg
 			liftIO $ fmap HsDev.toDatabase $ HsDev.load (HsDev.projectCache proj)
 		cabalArg = do
-			c <- MaybeT $ return $ try $ arg "cabal" as
+			c <- MaybeT $ return $ arg "cabal" as
 			if null c
 				then return HsDev.Cabal
 				else do
 					c' <- liftIO $ canonicalizePath c
 					return $ HsDev.CabalDev c'
-		projectArg = fmap (HsDev.project) $ (MaybeT $ return $ try $ arg "project" as) >>= liftIO . canonicalizePath
+		projectArg = fmap (HsDev.project) $ (MaybeT $ return $ arg "project" as) >>= liftIO . canonicalizePath

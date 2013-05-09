@@ -102,7 +102,7 @@ identOfName name = case name of
 	H.Symbol s -> s
 
 toLocation :: H.SrcLoc -> Location
-toLocation (H.SrcLoc fname l c) = Location fname l c Nothing
+toLocation (H.SrcLoc fname l c) = location fname l c Nothing
 
 setLocation :: H.SrcLoc -> Symbol a -> Symbol a
 setLocation loc s = s { symbolLocation = Just (toLocation loc) }

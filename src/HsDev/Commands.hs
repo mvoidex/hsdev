@@ -1,4 +1,9 @@
+{-# LANGUAGE RankNTypes #-}
+
 module HsDev.Commands (
+	SearchResult(..), searchResult,
+	filterDeclaration, filterModule, filterResult,
+	isDeclaration, isModule,
 	findSymbol,
 	goToDeclaration,
 	symbolInfo,
@@ -19,18 +24,45 @@ import HsDev.Database
 import HsDev.Symbols
 import HsDev.Symbols.Util
 
-findSymbol :: Database -> String -> ErrorT String IO ([Symbol Declaration], [Symbol Module])
-findSymbol db ident = return (candidates, moduleCandidates) where
+-- | Declaration of module
+data SearchResult = ResultDeclaration (Symbol Declaration) | ResultModule (Symbol Module)
+
+-- | Fold result
+searchResult :: (Symbol Declaration -> a) -> (Symbol Module -> a) -> SearchResult -> a
+searchResult l _ (ResultDeclaration s) = l s
+searchResult _ r (ResultModule m) = r m
+
+-- | Filter only declaration
+filterDeclaration :: (Symbol Declaration -> Bool) -> SearchResult -> Bool
+filterDeclaration p = searchResult p (const True)
+
+-- | Filter only module
+filterModule :: (Symbol Module -> Bool) -> SearchResult -> Bool
+filterModule p = searchResult (const True) p
+
+-- | Filter both
+filterResult :: (forall a. Symbol a -> Bool) -> SearchResult -> Bool
+filterResult p = searchResult p p
+
+isDeclaration :: SearchResult -> Bool
+isDeclaration = searchResult (const True) (const False)
+
+isModule :: SearchResult -> Bool
+isModule = searchResult (const False) (const True)
+
+findSymbol :: Database -> String -> ErrorT String IO [SearchResult]
+findSymbol db ident = return $ map ResultDeclaration candidates ++ map ResultModule moduleCandidates where
 	candidates = maybe [] S.toList $ M.lookup identName (databaseSymbols db)
 	moduleCandidates = maybe [] S.toList $ M.lookup ident (databaseModules db)
 	(_, identName) = splitIdentifier ident
 
-goToDeclaration :: Database -> Maybe FilePath -> String -> ErrorT String IO ([Symbol Declaration], [Symbol Module])
+goToDeclaration :: Database -> Maybe FilePath -> String -> ErrorT String IO [SearchResult]
 goToDeclaration db file ident = do
 	fileName <- maybe (return "") (liftIO . canonicalizePath) file
-	(decls, modules) <- findSymbol db ident
-	return (filter (maybe False (reachable qualifiedName fileName) . symbolModule) decls, filter (reachable (Just ident) fileName) modules)
+	liftM (filter (filterDeclaration $ fdecl' fileName) . filter (filterModule $ fmod' fileName)) $ findSymbol db ident
 	where
+		fdecl' f = maybe False (reachable qualifiedName f) . symbolModule
+		fmod' f = reachable (Just ident) f
 		reachable qnm f m = bySources m && maybe (maybe True (== symbolName m) qnm) (\cur -> isReachable cur qnm m) thisModule where
 			thisModule = M.lookup f (databaseFiles db)
 		(qualifiedName, identName) = splitIdentifier ident
@@ -39,7 +71,7 @@ symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO String
 symbolInfo db file ident = do
 	fileName <- maybe (return "") (liftIO . canonicalizePath) file
 	project <- maybe (return Nothing) (const $ liftIO $ locateProject fileName) file
-	(decls, _) <- findSymbol db ident
+	decls <- liftM (mapMaybe (searchResult Just (const Nothing))) $ findSymbol db ident
 	let
 		filterFunction qname = maybe (\m -> maybe True (== symbolName m) qname) (\cur -> isReachable cur qname) $ M.lookup fileName (databaseFiles db)
 		decls' = groupize [inProject_ project, notPrelude] $ filter (maybe False (filterFunction qualifiedName) . symbolModule) decls

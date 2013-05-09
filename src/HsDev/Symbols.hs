@@ -1,7 +1,7 @@
 {-# LANGUAGE  TypeSynonymInstances, FlexibleInstances #-}
 
 module HsDev.Symbols (
-	Location(..),
+	Location, locationFile, locationLine, locationColumn, locationProject,
 	Import(..),
 	Symbol(..),
 	Cabal(..),
@@ -13,6 +13,7 @@ module HsDev.Symbols (
 	position,
 	symbolQualifiedName,
 	mkLocation,
+	location,
 	moduleLocation,
 	setModuleReferences,
 	addDeclaration,
@@ -23,14 +24,17 @@ module HsDev.Symbols (
 	) where
 
 import Control.Arrow
-import Data.Function (fix)
+import Data.Function (fix, on)
 import Data.List
 import Data.Map (Map)
 import Data.Maybe
 import qualified Data.Map as M
 import Data.Time.Clock.POSIX
+import System.Directory
+import System.FilePath
 
 import HsDev.Project
+import HsDev.Util
 
 -- | Location of symbol
 data Location = Location {
@@ -174,11 +178,22 @@ symbolQualifiedName :: Symbol a -> String
 symbolQualifiedName s = pre ++ symbolName s where
 	pre = maybe "" ((++ ".") . symbolName) $ symbolModule s
 
+-- | Make location, canonicalizing path and locating project
 mkLocation :: Location -> IO Location
-mkLocation loc = undefined
+mkLocation loc = do
+	f <- canonicalizePath (locationFile loc)
+	p <- locateProject f
+	return $ loc {
+		locationFile = f,
+		locationProject = p }
 
+-- | Make location by file, line and column
+location :: FilePath -> Int -> Int -> Maybe Project -> Location
+location f l c p = Location (normalise f) l c p
+
+-- | Module location is located at file:1:1
 moduleLocation :: FilePath -> Location
-moduleLocation fname = Location fname 1 1 Nothing
+moduleLocation fname = location fname 1 1 Nothing
 
 -- | Set module references
 setModuleReferences :: Symbol Module -> Symbol Module

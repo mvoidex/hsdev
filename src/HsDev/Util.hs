@@ -34,4 +34,3 @@ traverseDirectory path = do
 		if isDir
 			then traverseDirectory (path </> c)
 			else return [path </> c]
-
