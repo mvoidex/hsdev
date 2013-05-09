@@ -166,10 +166,15 @@ dump :: FilePath -> Map String (Symbol Module) -> IO ()
 dump file = BS.writeFile file . encodePretty
 
 -- | Load cache from file
-load :: FilePath -> IO (Map String (Symbol Module))
+load :: FilePath -> IO Database
 load file = do
 	cts <- BS.readFile file
-	return $ maybe M.empty (M.map setModuleReferences) $ decode cts
+	ms <- return $ maybe M.empty (M.map setModuleReferences) $ decode cts
+	p <- loadProj $ nub $ mapMaybe (\m -> symbolLocation m >>= locationProject) $ M.elems ms
+	return $ mappend p (toDatabase ms)
+	where
+		loadProj [proj] = return $ fromProject proj
+		loadProj _ = return mempty
 
 toDatabase :: Map String (Symbol Module) -> Database
 toDatabase = mconcat . map fromModule . M.elems

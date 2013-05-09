@@ -37,18 +37,18 @@ data Database = Database {
 		deriving (Eq, Ord)
 
 instance Group Database where
-	add l r = Database {
-		databaseCabalModules = M.unionWith M.union (databaseCabalModules l) (databaseCabalModules r),
-		databaseFiles = M.union (databaseFiles l) (databaseFiles r),
-		databaseProjects = M.union (databaseProjects l) (databaseProjects r),
-		databaseModules = add (databaseModules l) (databaseModules r),
-		databaseSymbols = add (databaseSymbols l) (databaseSymbols r) }
-	sub l r = Database {
-		databaseCabalModules = M.differenceWith diff' (databaseCabalModules l) (databaseCabalModules r),
-		databaseFiles = M.difference (databaseFiles l) (databaseFiles r),
-		databaseProjects = M.difference (databaseProjects l) (databaseProjects r),
-		databaseModules = sub (databaseModules l) (databaseModules r),
-		databaseSymbols = sub (databaseSymbols l) (databaseSymbols r) }
+	add new old = Database {
+		databaseCabalModules = M.unionWith M.union (databaseCabalModules old) (databaseCabalModules new),
+		databaseFiles = M.union (databaseFiles old) (databaseFiles new),
+		databaseProjects = M.union (databaseProjects old) (databaseProjects new),
+		databaseModules = add (databaseModules old) (databaseModules new),
+		databaseSymbols = add (databaseSymbols old) (databaseSymbols new) }
+	sub old new = Database {
+		databaseCabalModules = M.differenceWith diff' (databaseCabalModules old) (databaseCabalModules new),
+		databaseFiles = M.difference (databaseFiles old) (databaseFiles new),
+		databaseProjects = M.difference (databaseProjects old) (databaseProjects new),
+		databaseModules = sub (databaseModules old) (databaseModules new),
+		databaseSymbols = sub (databaseSymbols old) (databaseSymbols new) }
 		where
 			diff' x y = if M.null z then Nothing else Just z where
 				z = M.difference x y
@@ -79,7 +79,7 @@ fromModule m = fromMaybe (error "Module must specify source file or cabal") (inS
 -- | Make database from project
 fromProject :: Project -> Database
 fromProject p = zero {
-	databaseProjects = M.singleton (projectName p) p }
+	databaseProjects = M.singleton (projectCabal p) p }
 
 -- Modules for project specified
 projectModules :: Project -> Database -> Map FilePath (Symbol Module)
