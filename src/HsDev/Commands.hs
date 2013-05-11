@@ -55,7 +55,7 @@ symbolInfo db file ident = do
 	where
 		(qualifiedName, identName) = splitIdentifier ident
 		filterDecl f p = satisfy [
-			maybe False (isVisible Cabal p) . symbolModule,
+			maybe False (\m -> isVisible Cabal p m || inFile f m) . symbolModule,
 			\s -> fromMaybe True $ do
 				thisModule <- M.lookup f (databaseFiles db)
 				declModule <- symbolModule s
