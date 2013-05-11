@@ -8,7 +8,6 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Set (Set)
 import qualified Data.Set as S
-import Data.Monoid
 
 -- | Group is monoid with invertibility
 -- But for our purposes we prefer two functions: `add` and `sub`.

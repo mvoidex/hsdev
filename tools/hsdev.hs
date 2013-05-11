@@ -17,6 +17,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import System.Args
 import System.Environment
+import System.Exit
 import System.Directory (canonicalizePath, getDirectoryContents, doesFileExist)
 import System.FilePath
 import System.IO
@@ -24,6 +25,7 @@ import System.IO
 import HsDev.Cache
 import HsDev.Commands
 import HsDev.Database
+import HsDev.Database.Async
 import HsDev.Project
 import HsDev.Scan
 import HsDev.Symbols
@@ -37,7 +39,10 @@ main = do
 	args' <- getArgs
 	case args' of
 		["help"] -> printUsage
-		[] -> run mempty
+		[] -> do
+			db <- newAsync
+			traceEvents db
+			run db
 		_ -> putStrLn "Unknown command" >> printUsage
 
 commands :: [Command]
@@ -93,137 +98,126 @@ commands = [
 	where
 		fmtArgs = (++ ["[-format fmt]" $= "output format, can be 'raw' (using print), 'name' for just name of symbol, 'brief' for short info, 'detailed' for detailed info and 'json' for json output"])
 
-run :: Database -> IO ()
-run db = flip catch onError $ do
-	cmd <- liftM split getLine
-	case parseCommand commands cmd of
-		Left e -> putStrLn e >> run db
-		Right (name, cmdArgs) -> case name of
-			"exit" -> return ()
-			"help" -> do
-				runMaybeT $ msum [
+run :: Async Database -> IO ()
+run db = run' >>= \b -> when (not b) (run db) where
+	run' =  flip catch onError $ do
+		dbval <- readAsync db
+		cmd <- liftM split getLine
+		case parseCommand commands cmd of
+			Left e -> putStrLn e >> return False
+			Right (name, cmdArgs) -> (>> return (name == "exit")) $ case name of
+				"exit" -> return ()
+				"help" -> void $ runMaybeT $ msum [
 					do
 						cmdName <- maybe mzero return $ at 0 cmdArgs
 						liftIO $ mapM_ print $ filter ((== cmdName) . commandName) commands,
 					liftIO printUsage]
-				run db
-			"scan" -> do
-				r <- runAction $ runMaybeT $ msum [
-					do
-						cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
-						mname <- MaybeT $ return $ at 0 cmdArgs
-						lift $ scanModule (if null cabalPath then Cabal else CabalDev cabalPath) mname,
-					do
-						cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
-						lift $ scanCabal (if null cabalPath then Cabal else CabalDev cabalPath),
-					do
-						file <- MaybeT $ return $ arg "file" cmdArgs
-						lift $ scanFile file,
-					do
-						proj <- MaybeT $ return $ arg "project" cmdArgs
-						proj' <- liftIO $ locateProject proj
-						maybe (throwError $ "Project " ++ proj ++ " not found") (lift . scanProject) proj']
-				run $ maybe db (mappend db) r
-			"find" -> do
-				rs <- runAction (findDeclaration db (fromJust $ at 0 cmdArgs))
-				proj' <- getProject db cmdArgs
-				file' <- maybe (return Nothing) (\f -> if null f then return Nothing else fmap Just (canonicalizePath f)) $ arg "file" cmdArgs
-				let
-					filters :: Symbol a -> Bool
-					filters = satisfy $ catMaybes [
-						fmap inProject proj',
-						fmap inFile file',
-						if has "file" cmdArgs then Just bySources else Nothing,
-						fmap inModule $ arg "module" cmdArgs,
-						fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
-					rs' = filter filters rs
-				formatResult (fromMaybe "detailed" $ arg "format" cmdArgs) rs'
-				run db
-			"list" -> do
-				proj' <- getProject db cmdArgs
-				let
-					filters = satisfy $ catMaybes [
-						fmap inProject proj',
-						fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
-					ms = filter filters $ concatMap S.toList $ M.elems $ databaseModules db
-				printModules ms
-				run db
-			"browse" -> do
-				rs <- runAction (findModule db (fromJust $ at 0 cmdArgs))
-				proj' <- getProject db cmdArgs
-				let
-					filters :: Symbol a -> Bool
-					filters = satisfy $ catMaybes [
-						fmap inProject proj',
-						fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
-					rs' = filter filters rs
-					browsedModule = head rs'
-				fromMaybe (return ()) $ msum [
-					if length rs' > 1 then Just (putStrLn "Ambiguous modules:" >> printModules rs') else Nothing,
-					if null rs' then Just (putStrLn "Module not found") else Nothing,
-					Just $ formatResult (fromMaybe "detailed" $ arg "format" cmdArgs) $ M.elems $ moduleDeclarations $ symbol browsedModule]
-				run db
-			"goto" -> do
-				rs <- runAction (goToDeclaration db (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
-				mapM_ print rs
-				run db
-			"info" -> do
-				str <- runAction (symbolInfo db (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
-				putStrLn str
-				run db
-			"complete" -> do
-				runMaybeT $ do
+				"scan" -> do
+					r <- runAction $ runMaybeT $ msum [
+						do
+							cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
+							mname <- MaybeT $ return $ at 0 cmdArgs
+							lift $ scanModule (if null cabalPath then Cabal else CabalDev cabalPath) mname,
+						do
+							cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
+							lift $ scanCabal (if null cabalPath then Cabal else CabalDev cabalPath),
+						do
+							file <- MaybeT $ return $ arg "file" cmdArgs
+							lift $ scanFile file,
+						do
+							proj <- MaybeT $ return $ arg "project" cmdArgs
+							proj' <- liftIO $ locateProject proj
+							maybe (throwError $ "Project " ++ proj ++ " not found") (lift . scanProject) proj']
+					maybe (return ()) (modifyAsync db . Append) r
+				"find" -> do
+					rs <- runAction (findDeclaration dbval (fromJust $ at 0 cmdArgs))
+					proj' <- getProject dbval cmdArgs
+					file' <- maybe (return Nothing) (\f -> if null f then return Nothing else fmap Just (canonicalizePath f)) $ arg "file" cmdArgs
+					let
+						filters :: Symbol a -> Bool
+						filters = satisfy $ catMaybes [
+							fmap inProject proj',
+							fmap inFile file',
+							if has "file" cmdArgs then Just bySources else Nothing,
+							fmap inModule $ arg "module" cmdArgs,
+							fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
+						rs' = filter filters rs
+					formatResult (fromMaybe "detailed" $ arg "format" cmdArgs) rs'
+				"list" -> do
+					proj' <- getProject dbval cmdArgs
+					let
+						filters = satisfy $ catMaybes [
+							fmap inProject proj',
+							fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
+						ms = filter filters $ concatMap S.toList $ M.elems $ databaseModules dbval
+					printModules ms
+				"browse" -> do
+					rs <- runAction (findModule dbval (fromJust $ at 0 cmdArgs))
+					proj' <- getProject dbval cmdArgs
+					let
+						filters :: Symbol a -> Bool
+						filters = satisfy $ catMaybes [
+							fmap inProject proj',
+							fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
+						rs' = filter filters rs
+						browsedModule = head rs'
+					fromMaybe (return ()) $ msum [
+						if length rs' > 1 then Just (putStrLn "Ambiguous modules:" >> printModules rs') else Nothing,
+						if null rs' then Just (putStrLn "Module not found") else Nothing,
+						Just $ formatResult (fromMaybe "detailed" $ arg "format" cmdArgs) $ M.elems $ moduleDeclarations $ symbol browsedModule]
+				"goto" -> do
+					rs <- runAction (goToDeclaration dbval (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
+					mapM_ print rs
+				"info" -> do
+					str <- runAction (symbolInfo dbval (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
+					putStrLn str
+				"complete" -> void $ runMaybeT $ do
 					m <- msum [
 						do
 							file <- maybe mzero (liftIO . canonicalizePath) $ arg "file" cmdArgs
-							maybe (liftIO (putStrLn "Can't locate file in database") >> mzero) return $ lookupFile file db,
+							maybe (liftIO (putStrLn "Can't locate file in database") >> mzero) return $ lookupFile file dbval,
 						do
 							mname <- maybe mzero return $ arg "module" cmdArgs
 							cabal <- return $ maybe Cabal asCabal $ arg "cabal" cmdArgs
-							maybe (liftIO (putStrLn "Can't find module specified") >> mzero) return $ lookupModule cabal mname db]
-					rs <- liftIO $ runAction (completions db m (fromJust $ at 0 cmdArgs))
+							maybe (liftIO (putStrLn "Can't find module specified") >> mzero) return $ lookupModule cabal mname dbval]
+					rs <- liftIO $ runAction (completions dbval m (fromJust $ at 0 cmdArgs))
 					liftIO $ formatResult (fromMaybe "name" $ arg "format" cmdArgs) rs
-				run db
-			"dump" -> do
-				runMaybeT $ msum [
+				"dump" -> void $ runMaybeT $ msum [
 					when (has "files" cmdArgs) $ do
-						forM_  (M.assocs $ M.map symbolName $ databaseFiles db) $ \(fname, mname) ->
+						forM_  (M.assocs $ M.map symbolName $ databaseFiles dbval) $ \(fname, mname) ->
 							liftIO (putStrLn (mname ++ " in " ++ fname)),
 					do
 						file <- MaybeT $ return $ arg "file" cmdArgs
-						maybe (liftIO $ putStrLn "File not found") (liftIO . print) $ M.lookup file (databaseFiles db)]
-				run db
-			"cache" -> do
-				db' <- cache cmdArgs db
-				run (mappend db db')
-			_ -> putStrLn "Unknown command" >> run db
-	where
-		onError :: SomeException -> IO ()
-		onError e = do
-			putStrLn $ "Exception: " ++ show e
-			run db
-		formatResult fmt rs = mapM_ (putStrLn . format) rs where
-			format = case fmt of
-				"raw" -> show
-				"name" -> symbolName
-				"brief" -> brief
-				"detailed" -> detailed
-				"json" -> L.unpack . encode . encodeDeclaration
-				_ -> show
+						maybe (liftIO $ putStrLn "File not found") (liftIO . print) $ M.lookup file (databaseFiles dbval)]
+				"cache" -> do
+					db' <- cache cmdArgs dbval
+					modifyAsync db (Append db')
+				_ -> putStrLn "Unknown command"
+		where
+			onError :: SomeException -> IO Bool
+			onError e = (putStrLn $ "Exception: " ++ show e) >> return False
+			formatResult fmt rs = mapM_ (putStrLn . format) rs where
+				format = case fmt of
+					"raw" -> show
+					"name" -> symbolName
+					"brief" -> brief
+					"detailed" -> detailed
+					"json" -> L.unpack . encode . encodeDeclaration
+					_ -> show
 
-		printModules ms = mapM_ printModule ms where
-			printModule m
-				| bySources m = putStrLn $ symbolName m ++ " (" ++ maybe "" locationFile (symbolLocation m) ++ ")"
-				| otherwise = putStrLn $ symbolName m ++ maybe "" (\c -> if c == Cabal then "" else show c) (moduleCabal $ symbol m)
-		asCabal "" = Cabal
-		asCabal p = CabalDev p
-		getProject :: Database -> Args String -> IO (Maybe Project)
-		getProject db as = do
-			projCabal <- maybe (return Nothing) (fmap Just . canonicalizePath) pname
-			return $ msum [proj, fmap project projCabal]
-			where
-				pname = arg "project" as
-				proj = find ((== pname) . Just . projectName) $ M.elems $ databaseProjects db
+			printModules ms = mapM_ printModule ms where
+				printModule m
+					| bySources m = putStrLn $ symbolName m ++ " (" ++ maybe "" locationFile (symbolLocation m) ++ ")"
+					| otherwise = putStrLn $ symbolName m ++ maybe "" (\c -> if c == Cabal then "" else show c) (moduleCabal $ symbol m)
+			asCabal "" = Cabal
+			asCabal p = CabalDev p
+			getProject :: Database -> Args String -> IO (Maybe Project)
+			getProject db as = do
+				projCabal <- maybe (return Nothing) (fmap Just . canonicalizePath) pname
+				return $ msum [proj, fmap project projCabal]
+				where
+					pname = arg "project" as
+					proj = find ((== pname) . Just . projectName) $ M.elems $ databaseProjects db
 
 runAction :: Monoid a => ErrorT String IO a -> IO a
 runAction act = runErrorT act >>= either onError onOk where

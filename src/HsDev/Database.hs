@@ -1,5 +1,6 @@
 module HsDev.Database (
 	Database(..),
+	databaseIntersection,
 	createIndexes,
 	fromModule,
 	fromProject,
@@ -37,12 +38,14 @@ data Database = Database {
 		deriving (Eq, Ord)
 
 instance Group Database where
-	add new old = Database {
-		databaseCabalModules = M.unionWith M.union (databaseCabalModules old) (databaseCabalModules new),
-		databaseFiles = M.union (databaseFiles old) (databaseFiles new),
-		databaseProjects = M.union (databaseProjects old) (databaseProjects new),
-		databaseModules = add (databaseModules old) (databaseModules new),
-		databaseSymbols = add (databaseSymbols old) (databaseSymbols new) }
+	add old new = Database {
+		databaseCabalModules = M.unionWith M.union (databaseCabalModules old') (databaseCabalModules new),
+		databaseFiles = M.union (databaseFiles old') (databaseFiles new),
+		databaseProjects = M.union (databaseProjects old') (databaseProjects new),
+		databaseModules = add (databaseModules old') (databaseModules new),
+		databaseSymbols = add (databaseSymbols old') (databaseSymbols new) }
+		where
+			old' = sub old (databaseIntersection old new)
 	sub old new = Database {
 		databaseCabalModules = M.differenceWith diff' (databaseCabalModules old) (databaseCabalModules new),
 		databaseFiles = M.difference (databaseFiles old) (databaseFiles new),
@@ -57,6 +60,13 @@ instance Group Database where
 instance Monoid Database where
 	mempty = zero
 	mappend = add
+
+-- | Database intersection, returns data from first database
+databaseIntersection :: Database -> Database -> Database
+databaseIntersection l r = createIndexes $ Database {
+	databaseCabalModules = M.intersectionWith M.intersection (databaseCabalModules l) (databaseCabalModules r),
+	databaseFiles = M.intersection (databaseFiles l) (databaseFiles r),
+	databaseProjects = M.intersection (databaseProjects l) (databaseProjects r) }
 
 -- | Create indexes
 createIndexes :: Database -> Database
