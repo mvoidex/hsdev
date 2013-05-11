@@ -2,6 +2,7 @@ module Main (
 	main
 	) where
 
+import Control.Concurrent
 import Control.Exception (catch, SomeException)
 import Control.Monad
 import Control.Monad.Error
@@ -31,6 +32,7 @@ import HsDev.Scan
 import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Symbols.JSON
+import HsDev.Tools.GhcMod
 import HsDev.Util
 
 main :: IO ()
@@ -113,22 +115,24 @@ run db = run' >>= \b -> when (not b) (run db) where
 						liftIO $ mapM_ print $ filter ((== cmdName) . commandName) commands,
 					liftIO printUsage]
 				"scan" -> do
-					r <- runAction $ runMaybeT $ msum [
+					forkAction $ runMaybeT $ msum [
 						do
 							cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
 							mname <- MaybeT $ return $ at 0 cmdArgs
-							lift $ scanModule (if null cabalPath then Cabal else CabalDev cabalPath) mname,
+							lift $ update db $ scanModule (asCabal cabalPath) mname,
 						do
 							cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
-							lift $ scanCabal (if null cabalPath then Cabal else CabalDev cabalPath),
+							ms <- lift $ withConfig (config { configCabal = asCabal cabalPath }) list
+							mapM_ (lift . update db . scanModule (asCabal cabalPath)) ms,
+							--lift $ update db $ scanCabal (asCabal cabalPath),
 						do
 							file <- MaybeT $ return $ arg "file" cmdArgs
-							lift $ scanFile file,
+							lift $ update db $ scanFile file,
 						do
 							proj <- MaybeT $ return $ arg "project" cmdArgs
 							proj' <- liftIO $ locateProject proj
-							maybe (throwError $ "Project " ++ proj ++ " not found") (lift . scanProject) proj']
-					maybe (return ()) (modifyAsync db . Append) r
+							maybe (throwError $ "Project " ++ proj ++ " not found") (lift . update db . scanProject) proj']
+					--maybe (return ()) (modifyAsync db . Append) r
 				"find" -> do
 					rs <- runAction (findDeclaration dbval (fromJust $ at 0 cmdArgs))
 					proj' <- getProject dbval cmdArgs
@@ -218,6 +222,9 @@ run db = run' >>= \b -> when (not b) (run db) where
 				where
 					pname = arg "project" as
 					proj = find ((== pname) . Just . projectName) $ M.elems $ databaseProjects db
+
+forkAction :: Monoid a => ErrorT String IO a -> IO ()
+forkAction act = void $ forkIO $ void $ runAction act
 
 runAction :: Monoid a => ErrorT String IO a -> IO a
 runAction act = runErrorT act >>= either onError onOk where

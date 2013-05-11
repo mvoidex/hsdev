@@ -50,6 +50,7 @@ library
     haskell-src-exts == 1.13.*,
     hdocs == 0.1.*,
     mtl == 2.1.*,
+    transformers == 0.3.*,
     process == 1.1.*,
     regexpr == 0.5.*,
     time == 1.4.*

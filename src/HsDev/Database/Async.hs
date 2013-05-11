@@ -1,9 +1,13 @@
 module HsDev.Database.Async (
 	traceEvents,
+	async,
+	update,
 	module Data.Async
 	) where
 
+import Control.Concurrent
 import Control.Monad
+import Control.Monad.IO.Class
 import qualified Data.Map as M
 import qualified Data.Set as S
 
@@ -30,3 +34,11 @@ traceEvents avar = subscribeEvents avar traceEvent where
 	showModule m
 		| bySources m = symbolName m ++ " in " ++ maybe "" locationFile (symbolLocation m)
 		| otherwise = symbolName m ++ maybe "" (\c -> if c == Cabal then "" else (" in " ++ show c)) (moduleCabal $ symbol m)
+
+async :: IO () -> IO ()
+async = void . forkIO
+
+update :: MonadIO m => Async Database -> m Database -> m ()
+update db act = do
+	db' <- act
+	liftIO $ modifyAsync db (Append db')
