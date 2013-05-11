@@ -51,33 +51,32 @@ commands = [
 	cmd "scan" "scan module from cabal" [
 		"module" $= "module to scan",
 		"-cabal [sandbox]" $= "path to sandbox"],
-	cmd "find" "find symbol" [
+	cmd "find" "find symbol" $ fmtArgs [
 		"name" $= "",
 		"[-project p]" $= "symbol in project",
 		"[-file [f]]" $= "symbol in file",
 		"[-module m]" $= "module of symbol",
-		"[-cabal [sandbox]]" $= "sandbox of module, where symbol defined",
-		"[-raw]" $= "don't format output",
-		"[-json]" $= "format as json"],
+		"[-cabal [sandbox]]" $= "sandbox of module, where symbol defined"],
 	cmd "list" "list modules" [
 		"[-cabal [sandbox]]" $= "modules from sandbox",
 		"[-project p]" $= "modules from project"],
-	cmd "browse" "browse module" [
+	cmd "browse" "browse module" $ fmtArgs [
 		"module" $= "",
 		"[-project p]" $= "module in project",
-		"[-cabal [sandbox]]" $= "sandbox of module",
-		"[-raw]" $= "don't format output",
-		"[-detailed]" $= "show detailed info",
-		"[-json]" $= "format as json"],
+		"[-cabal [sandbox]]" $= "sandbox of module"],
 	cmd "goto" "find symbol declaration" [
 		"name" $= "",
 		"[-file f]" $= "context source file"],
 	cmd "info" "get info for symbol" [
 		"name" $= "",
 		"[-file f]" $= "context source file"],
-	cmd "complete" "autocompletion" [
-		"file" $= "context source file",
-		"input" $= "string to complete"],
+	cmd "complete" "autocompletion" $ fmtArgs [
+		"input" $= "string to complete",
+		"-file file" $= "context source file"],
+	cmd "complete" "autocompletion" $ fmtArgs [
+		"input" $= "string to complete",
+		"-module m" $= "module to complete from",
+		"[-cabal [sandbox]]" $= ""],
 	cmd "dump" "dump file names, that are loaded in database" ["-files" $= ""],
 	cmd "dump" "dump module contents" ["-file f" $= "file to dump"],
 	cmd "cache" "dump cache of cabal packages" ["-dump" $= "", "-cabal [sandbox]" $= ""],
@@ -88,7 +87,11 @@ commands = [
 	cmd "cache" "load cache from file" ["-load" $= "", "-file cache-file" $= ""],
 	cmd "cache" "load cache from directory" ["-load" $= "", "-path path" $= ""],
 	cmd "help" "this command" [],
+	cmd "help" "show help about command" [
+		"command" $= "command name"],
 	cmd "exit" "exit" []]
+	where
+		fmtArgs = (++ ["[-format fmt]" $= "output format, can be 'raw' (using print), 'name' for just name of symbol, 'brief' for short info, 'detailed' for detailed info and 'json' for json output"])
 
 run :: Database -> IO ()
 run db = flip catch onError $ do
@@ -97,7 +100,13 @@ run db = flip catch onError $ do
 		Left e -> putStrLn e >> run db
 		Right (name, cmdArgs) -> case name of
 			"exit" -> return ()
-			"help" -> printUsage >> run db
+			"help" -> do
+				runMaybeT $ msum [
+					do
+						cmdName <- maybe mzero return $ at 0 cmdArgs
+						liftIO $ mapM_ print $ filter ((== cmdName) . commandName) commands,
+					liftIO printUsage]
+				run db
 			"scan" -> do
 				r <- runAction $ runMaybeT $ msum [
 					do
@@ -128,12 +137,7 @@ run db = flip catch onError $ do
 						fmap inModule $ arg "module" cmdArgs,
 						fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
 					rs' = filter filters rs
-					formatJson = forM_ rs' $ \r ->
-						putStrLn $ L.unpack $ encode $ encodeDeclaration r
-				fromMaybe (return ()) $ msum [
-					if has "raw" cmdArgs then Just $ mapM_ print rs' else Nothing,
-					if has "json" cmdArgs then Just formatJson else Nothing,
-					Just (formatResult rs')]
+				formatResult (fromMaybe "detailed" $ arg "format" cmdArgs) rs'
 				run db
 			"list" -> do
 				proj' <- getProject db cmdArgs
@@ -157,9 +161,7 @@ run db = flip catch onError $ do
 				fromMaybe (return ()) $ msum [
 					if length rs' > 1 then Just (putStrLn "Ambiguous modules:" >> printModules rs') else Nothing,
 					if null rs' then Just (putStrLn "Module not found") else Nothing,
-					if has "raw" cmdArgs then Just $ mapM_ print $ M.elems $ moduleDeclarations $ symbol browsedModule else Nothing,
-					if has "json" cmdArgs then Just (putStrLn $ L.unpack $ encode $ encodeModule browsedModule) else Nothing,
-					Just (mapM_ (putStrLn . (if has "detailed" cmdArgs then detailed else brief)) $ M.elems $ moduleDeclarations $ symbol browsedModule)]
+					Just $ formatResult (fromMaybe "detailed" $ arg "format" cmdArgs) $ M.elems $ moduleDeclarations $ symbol browsedModule]
 				run db
 			"goto" -> do
 				rs <- runAction (goToDeclaration db (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
@@ -170,9 +172,17 @@ run db = flip catch onError $ do
 				putStrLn str
 				run db
 			"complete" -> do
-				file <- canonicalizePath $ fromJust $ at 0 cmdArgs
-				rs <- runAction (completions db file (fromJust $ at 1 cmdArgs))
-				mapM_ putStrLn rs
+				runMaybeT $ do
+					m <- msum [
+						do
+							file <- maybe mzero (liftIO . canonicalizePath) $ arg "file" cmdArgs
+							maybe (liftIO (putStrLn "Can't locate file in database") >> mzero) return $ lookupFile file db,
+						do
+							mname <- maybe mzero return $ arg "module" cmdArgs
+							cabal <- return $ maybe Cabal asCabal $ arg "cabal" cmdArgs
+							maybe (liftIO (putStrLn "Can't find module specified") >> mzero) return $ lookupModule cabal mname db]
+					rs <- liftIO $ runAction (completions db m (fromJust $ at 0 cmdArgs))
+					liftIO $ formatResult (fromMaybe "name" $ arg "format" cmdArgs) rs
 				run db
 			"dump" -> do
 				runMaybeT $ msum [
@@ -192,7 +202,15 @@ run db = flip catch onError $ do
 		onError e = do
 			putStrLn $ "Exception: " ++ show e
 			run db
-		formatResult rs = mapM_ (putStrLn . detailed) rs
+		formatResult fmt rs = mapM_ (putStrLn . format) rs where
+			format = case fmt of
+				"raw" -> show
+				"name" -> symbolName
+				"brief" -> brief
+				"detailed" -> detailed
+				"json" -> L.unpack . encode . encodeDeclaration
+				_ -> show
+
 		printModules ms = mapM_ printModule ms where
 			printModule m
 				| bySources m = putStrLn $ symbolName m ++ " (" ++ maybe "" locationFile (symbolLocation m) ++ ")"

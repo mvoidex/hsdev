@@ -2,7 +2,7 @@
 
 module System.Args (
 	Args,
-	Command,
+	Command(commandName, commandDesc, commandArgs),
 	cmd,
 	nodesc,
 	($=),
