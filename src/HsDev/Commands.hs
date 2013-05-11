@@ -1,10 +1,7 @@
 {-# LANGUAGE RankNTypes #-}
 
 module HsDev.Commands (
-	SearchResult(..), searchResult,
-	filterDeclaration, filterModule, filterResult,
-	isDeclaration, isModule,
-	findSymbol,
+	findDeclaration, findModule,
 	goToDeclaration,
 	symbolInfo,
 	completions
@@ -24,58 +21,29 @@ import HsDev.Database
 import HsDev.Symbols
 import HsDev.Symbols.Util
 
--- | Declaration of module
-data SearchResult = ResultDeclaration (Symbol Declaration) | ResultModule (Symbol Module)
+findDeclaration :: Database -> String -> ErrorT String IO [Symbol Declaration]
+findDeclaration db ident = return $ maybe [] S.toList $ M.lookup ident (databaseSymbols db)
 
--- | Fold result
-searchResult :: (Symbol Declaration -> a) -> (Symbol Module -> a) -> SearchResult -> a
-searchResult l _ (ResultDeclaration s) = l s
-searchResult _ r (ResultModule m) = r m
+findModule :: Database -> String -> ErrorT String IO [Symbol Module]
+findModule db mname = return $ maybe [] S.toList $ M.lookup mname (databaseModules db)
 
--- | Filter only declaration
-filterDeclaration :: (Symbol Declaration -> Bool) -> SearchResult -> Bool
-filterDeclaration p = searchResult p (const True)
-
--- | Filter only module
-filterModule :: (Symbol Module -> Bool) -> SearchResult -> Bool
-filterModule p = searchResult (const True) p
-
--- | Filter both
-filterResult :: (forall a. Symbol a -> Bool) -> SearchResult -> Bool
-filterResult p = searchResult p p
-
-isDeclaration :: SearchResult -> Bool
-isDeclaration = searchResult (const True) (const False)
-
-isModule :: SearchResult -> Bool
-isModule = searchResult (const False) (const True)
-
-findSymbol :: Database -> String -> ErrorT String IO [SearchResult]
-findSymbol db ident = return $ map ResultDeclaration candidates ++ map ResultModule moduleCandidates where
-	candidates = maybe [] S.toList $ M.lookup identName (databaseSymbols db)
-	moduleCandidates = maybe [] S.toList $ M.lookup ident (databaseModules db)
-	(_, identName) = splitIdentifier ident
-
-goToDeclaration :: Database -> Maybe FilePath -> String -> ErrorT String IO [SearchResult]
+goToDeclaration :: Database -> Maybe FilePath -> String -> ErrorT String IO [Symbol Declaration]
 goToDeclaration db file ident = do
 	fileName <- maybe (return "") (liftIO . canonicalizePath) file
-	liftM (filter (filterDeclaration $ fdecl' fileName) . filter (filterModule $ fmod' fileName)) $ findSymbol db ident
+	thisModule <- maybe (throwError $ "Can't find module at file " ++ fileName) return $ M.lookup fileName (databaseFiles db)
+	decls <- findDeclaration db identName
+	return $ filter (maybe False (isReachable thisModule qualifiedName) . symbolModule) decls
 	where
-		fdecl' f = maybe False (reachable qualifiedName f) . symbolModule
-		fmod' f = reachable (Just ident) f
-		reachable qnm f m = bySources m && maybe (maybe True (== symbolName m) qnm) (\cur -> isReachable cur qnm m) thisModule where
-			thisModule = M.lookup f (databaseFiles db)
 		(qualifiedName, identName) = splitIdentifier ident
 
 symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO String
 symbolInfo db file ident = do
 	fileName <- maybe (return "") (liftIO . canonicalizePath) file
 	project <- maybe (return Nothing) (const $ liftIO $ locateProject fileName) file
-	decls <- liftM (mapMaybe (searchResult Just (const Nothing))) $ findSymbol db ident
+	decls <- findDeclaration db identName
 	let
 		filterFunction qname = maybe (\m -> maybe True (== symbolName m) qname) (\cur -> isReachable cur qname) $ M.lookup fileName (databaseFiles db)
-		decls' = groupize [inProject_ project, notPrelude] $ filter (maybe False (filterFunction qualifiedName) . symbolModule) decls
-		resultDecls = fromMaybe [] $ listToMaybe $ dropWhile null decls'
+		resultDecls = getGroup [inProject_ project, notPrelude] $ filter (maybe False (filterFunction qualifiedName) . symbolModule) decls
 		notPrelude m = maybe True ((/= "Prelude") . symbolName) $ symbolModule m
 	case length resultDecls of
 		0 -> throwError $ "Symbol '" ++ ident ++ "' not found"
@@ -120,7 +88,10 @@ splitIdentifier name = (qname, name') where
 	qname = if null prefix' then Nothing else Just prefix'
 	name' = fromMaybe (error "Impossible happened") $ stripPrefix prefix name
 
-groupize :: [a -> Bool] -> [a] -> [[a]]
-groupize [] l = [l]
-groupize (p:ps) l = p' : groupize ps tl where
-	(p', tl) = partition p l
+groupize :: [a -> Bool] -> [a] -> [Maybe [a]]
+groupize ps ls = map (\p -> nonull (filter p ls)) ps where
+	nonull [] = Nothing
+	nonull x = Just x
+
+getGroup :: [a -> Bool] -> [a] -> [a]
+getGroup ps ls = fromMaybe [] $ msum $ groupize ps ls

@@ -28,7 +28,7 @@ import Text.Read (readMaybe)
 data Args a = Args {
 	posArgs :: [a],
 	namedArgs :: Map String a }
-		deriving (Eq, Show)
+		deriving (Eq)
 
 instance Monoid (Args a) where
 	mempty = Args [] mempty
@@ -126,9 +126,9 @@ name $= d = (read name, d)
 
 parseCommand :: [Command] -> [String] -> Either String (String, Args String)
 parseCommand _ [] = Left "No command given"
-parseCommand cmds (s:ss) = liftM ((,) s) $ args (parseCommand' $ filter ((== s) . commandName) cmds) ss where
-	parseCommand' cs = foldr (<|>) (throwError $ "Can't parse command " ++ s) $ map parseCommand' cs where
-		parseCommand' (Command _ _ as) = mapM_ (parseArg . fst) as
+parseCommand cmds (s:ss) = liftM ((,) s) $ parseCommand' $ filter ((== s) . commandName) cmds where
+	parseCommand' cs = foldr (<|>) (Left $ "Can't parse command " ++ s) $ map ((`args` ss) . parse') cs where
+		parse' (Command _ _ as) = mapM_ (parseArg . fst) as
 		parseArg (PosArg _) = pos
 		parseArg (NamedArg n a o) = (if o then opt else id) $ named n (maybe (pure "") parseValue a) where
 			parseValue (_, Nothing) = val

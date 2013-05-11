@@ -48,6 +48,9 @@ commands = [
 		"-project p" $= "path to project .cabal file"],
 	cmd "scan" "scan file" [
 		"-file f" $= "file to scan"],
+	cmd "scan" "scan module from cabal" [
+		"module" $= "module to scan",
+		"-cabal [sandbox]" $= "path to sandbox"],
 	cmd "find" "find symbol" [
 		"name" $= "",
 		"[-project p]" $= "symbol in project",
@@ -99,6 +102,10 @@ run db = flip catch onError $ do
 				r <- runAction $ runMaybeT $ msum [
 					do
 						cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
+						mname <- MaybeT $ return $ at 0 cmdArgs
+						lift $ scanModule (if null cabalPath then Cabal else CabalDev cabalPath) mname,
+					do
+						cabalPath <- MaybeT $ return $ arg "cabal" cmdArgs
 						lift $ scanCabal (if null cabalPath then Cabal else CabalDev cabalPath),
 					do
 						file <- MaybeT $ return $ arg "file" cmdArgs
@@ -109,7 +116,7 @@ run db = flip catch onError $ do
 						maybe (throwError $ "Project " ++ proj ++ " not found") (lift . scanProject) proj']
 				run $ maybe db (mappend db) r
 			"find" -> do
-				rs <- runAction (findSymbol db (fromJust $ at 0 cmdArgs))
+				rs <- runAction (findDeclaration db (fromJust $ at 0 cmdArgs))
 				proj' <- getProject db cmdArgs
 				file' <- maybe (return Nothing) (\f -> if null f then return Nothing else fmap Just (canonicalizePath f)) $ arg "file" cmdArgs
 				let
@@ -120,11 +127,11 @@ run db = flip catch onError $ do
 						if has "file" cmdArgs then Just bySources else Nothing,
 						fmap inModule $ arg "module" cmdArgs,
 						fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
-					rs' = filter (filterResult filters) rs
-					formatJson = forM_ (lefts $ map (searchResult Left Right) rs') $ \r ->
+					rs' = filter filters rs
+					formatJson = forM_ rs' $ \r ->
 						putStrLn $ L.unpack $ encode $ encodeDeclaration r
 				fromMaybe (return ()) $ msum [
-					if has "raw" cmdArgs then Just $ printResults rs' else Nothing,
+					if has "raw" cmdArgs then Just $ mapM_ print rs' else Nothing,
 					if has "json" cmdArgs then Just formatJson else Nothing,
 					Just (formatResult rs')]
 				run db
@@ -138,17 +145,17 @@ run db = flip catch onError $ do
 				printModules ms
 				run db
 			"browse" -> do
-				rs <- runAction (findSymbol db (fromJust $ at 0 cmdArgs))
+				rs <- runAction (findModule db (fromJust $ at 0 cmdArgs))
 				proj' <- getProject db cmdArgs
 				let
 					filters :: Symbol a -> Bool
 					filters = satisfy $ catMaybes [
 						fmap inProject proj',
 						fmap (inCabal . asCabal) $ arg "cabal" cmdArgs]
-					rs' = filter (filterResult filters) $ filter (searchResult (const False) (const True)) rs
-					browsedModule = searchResult (error "Impossible") id $ head rs'
+					rs' = filter filters rs
+					browsedModule = head rs'
 				fromMaybe (return ()) $ msum [
-					if length rs' > 1 then Just (putStrLn "Ambiguous modules:" >> printResults rs') else Nothing,
+					if length rs' > 1 then Just (putStrLn "Ambiguous modules:" >> printModules rs') else Nothing,
 					if null rs' then Just (putStrLn "Module not found") else Nothing,
 					if has "raw" cmdArgs then Just $ mapM_ print $ M.elems $ moduleDeclarations $ symbol browsedModule else Nothing,
 					if has "json" cmdArgs then Just (putStrLn $ L.unpack $ encode $ encodeModule browsedModule) else Nothing,
@@ -156,7 +163,7 @@ run db = flip catch onError $ do
 				run db
 			"goto" -> do
 				rs <- runAction (goToDeclaration db (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
-				printResults rs
+				mapM_ print rs
 				run db
 			"info" -> do
 				str <- runAction (symbolInfo db (arg "file" cmdArgs) (fromJust $ at 0 cmdArgs))
@@ -185,13 +192,7 @@ run db = flip catch onError $ do
 		onError e = do
 			putStrLn $ "Exception: " ++ show e
 			run db
-		printResults [] = putStrLn "Nothing found"
-		printResults rs = mapM_ printResult rs where
-			printResult (ResultDeclaration d) = print d
-			printResult (ResultModule m)
-				| bySources m = putStrLn $ "module " ++ symbolName m ++ " from " ++ maybe "" locationFile (symbolLocation m)
-				| otherwise = putStrLn $ "module " ++ symbolName m ++ " from " ++ maybe "" show (moduleCabal $ symbol m)
-		formatResult rs = mapM_ putStrLn $ mapMaybe (searchResult (Just . detailed) (const Nothing)) rs
+		formatResult rs = mapM_ (putStrLn . detailed) rs
 		printModules ms = mapM_ printModule ms where
 			printModule m
 				| bySources m = putStrLn $ symbolName m ++ " (" ++ maybe "" locationFile (symbolLocation m) ++ ")"

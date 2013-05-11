@@ -1,5 +1,6 @@
 module HsDev.Scan (
 	scanCabal,
+	scanModule,
 	scanFile,
 	scanProject
 	) where
@@ -16,11 +17,15 @@ import HsDev.Project
 
 -- | Scan cabal for modules
 scanCabal :: Cabal -> ErrorT String IO Database
-scanCabal cabal = withConfig (config { configCabal = cabal }) $ do
-	ms <- list
-	fmap mconcat $ mapM loadModule ms
+scanCabal cabal = do
+	ms <- withConfig (config { configCabal = cabal }) list
+	fmap mconcat $ mapM (scanModule cabal) ms
+
+-- | Scan cabal module
+scanModule :: Cabal -> String -> ErrorT String IO Database
+scanModule cabal name = withConfig (config { configCabal = cabal }) $ do
+	catchError (fmap fromModule $ browse' name) (const $ return mempty)
 	where
-		loadModule s = catchError (fmap fromModule $ browse' s) (const $ return mempty)
 		browse' s = do
 			m <- browse s
 			liftIO $ loadDocs [] m
