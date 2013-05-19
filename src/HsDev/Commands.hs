@@ -43,14 +43,14 @@ goToDeclaration db file ident = do
 				declModule <- symbolModule s
 				return (isReachable thisModule qualifiedName declModule)]
 
-symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO String
+symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO (Symbol Declaration)
 symbolInfo db file ident = do
 	fileName <- maybe (return "") (liftIO . canonicalizePath) file
 	project <- maybe (return Nothing) (const $ liftIO $ locateProject fileName) file
 	decls <- liftM (nubModules . sortDecls project . filter (filterDecl fileName project)) $ findDeclaration db identName
 	case length (noPrelude decls) of
-		0 -> maybe (throwError $ "Symbol '" ++ ident ++ "' not found") (return . detailed) $ find (inModule "Prelude") decls
-		1 -> return $ detailed $ head $ noPrelude decls
+		0 -> maybe (throwError $ "Symbol '" ++ ident ++ "' not found") return $ find (inModule "Prelude") decls
+		1 -> return $ head decls
 		_ -> throwError $ "Ambiguous symbols: " ++ intercalate ", " (map put (noPrelude decls))
 	where
 		(qualifiedName, identName) = splitIdentifier ident

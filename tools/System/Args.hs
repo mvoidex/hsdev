@@ -1,217 +1,170 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances, UndecidableInstances #-}
-
 module System.Args (
-	Args,
-	Command(commandName, commandDesc, commandArgs),
-	cmd,
-	nodesc,
-	($=),
-	parseCommand,
-	args,
-	arg, at, has,
-	split
+	Args, ArgSpec(..), ArgsSpec,
+	preview, detailed,
+	(|>),
+	arg, flag, def, defList, impl, opt, expl, list, desc,
+	verify, args, cmdline, json,
+	has, gets, gets_, get, get_, val, val_,
+	split,
+	usage
 	) where
 
-import Control.Applicative
-import Control.Arrow (first)
-import Control.Monad.State
-import Control.Monad.Error
-import Control.Monad.Writer
-import Data.Char
+import Control.Arrow
+import Control.Monad
+import Data.Aeson hiding (json, json')
+import Data.Char (isSpace)
+import Data.Function
 import Data.List
 import Data.Map (Map)
-import qualified Data.Map as M
 import Data.Maybe
-import Data.Monoid
+import Data.Ord
+import qualified Data.HashMap.Strict as HM
+import qualified Data.Map as M
+import qualified Data.Text as T (unpack)
+import qualified Data.Vector as V (toList)
 import Text.Read (readMaybe)
 
-data Args a = Args {
-	posArgs :: [a],
-	namedArgs :: Map String a }
-		deriving (Eq)
+-- | Named arguments
+type Args = Map String [String]
 
-instance Monoid (Args a) where
-	mempty = Args [] mempty
-	mappend l r = Args (posArgs l `mappend` posArgs r) (namedArgs l `mappend` namedArgs r)
+-- | Argument description
+data ArgSpec = ArgSpec {
+	argName :: String,
+	argValueName :: Maybe String,
+	argDesc :: Maybe String,
+	argOptional :: Bool,
+	argList :: Bool,
+	argDefault :: Maybe [String],
+	argImplicit :: Maybe [String] }
 
-instance Show (Args String) where
-	show (Args ps ns) = unwords $ ps ++ concatMap show' (M.toList ns) where
-		show' (n, "") = ['-':n]
-		show' (n, v) = ['-':n, v]
+-- | Arguments
+type ArgsSpec = [ArgSpec]
 
-newtype ParserT a = ParserT { runParserT :: WriterT (Args String) (StateT [String] (Either String)) a }
-	deriving (MonadState [String], MonadWriter (Args String), MonadError String, Functor, Monad, Applicative, Alternative)
+-- | Preview argument spec info
+preview :: ArgSpec -> String
+preview a = bra (argOptional a || isJust (argDefault a)) str where
+	str = '-':argName a ++ maybe "" ((' ':) . bra (isJust $ argImplicit a) . ("<" ++) . (++ ">")) (argValueName a) ++ if argList a then "..." else ""
+	bra True s = "[" ++ s ++ "]"
+	bra False s = s
 
-data Arg =
-	PosArg { argName :: String } |
-	NamedArg { argName :: String, argArg :: Maybe (String, Maybe String), argOptional :: Bool }
-		deriving (Eq)
+-- | Detailed info
+detailed :: ArgSpec -> Maybe String
+detailed a = if hasInfo then Just (unwords info) else Nothing where
+	info = catMaybes [
+		Just $ '-':argName a,
+		fmap (\vn -> vn ++ maybe "" (('=':) . intercalate ",") (argImplicit a)) (argValueName a),
+		argDefault a >>= \d -> if null d then Nothing else Just ("(" ++ intercalate "," d ++ ")"),
+		fmap (" -- " ++) (argDesc a)]
+	hasInfo = isJust (argDesc a) || maybe False (not . null) (argDefault a) || (isJust (argImplicit a) && isJust (argValueName a))
 
-instance Show Arg where
-	show (PosArg n) = n
-	show (NamedArg n a o) = (if o then (\s -> "[" ++ s ++ "]") else id) $ ('-':n) ++ maybe "" showArg a where
-		showArg (aname, Nothing) = ' ':aname
-		showArg (aname, Just adef) = " [" ++ aname ++ "=" ++ adef ++ "]"
+-- | Chain operator
+(|>) :: a -> (a -> b) -> b
+x |> f = f x
+infixl 5 |>
 
-newtype Parser a = Parser { runParser :: String -> [(a, String)] }
+-- | Argument by name
+arg :: String -> String -> ArgSpec
+arg n m = ArgSpec n (Just m) Nothing False False Nothing Nothing
 
-instance Functor Parser where
-	fmap f (Parser g) = Parser $ \s -> map (first f) (g s)
+-- | Flag argument
+flag :: String -> ArgSpec
+flag f = ArgSpec f Nothing Nothing True False Nothing (Just [])
 
-instance Monad Parser where
-	return v = Parser $ \s -> [(v, s)]
-	(Parser x) >>= f = Parser $ \s -> concatMap f' (x s) where
-		f' (v, str) = runParser (f v) str
+-- | Set default argument
+def :: String -> ArgSpec -> ArgSpec
+def v a = a { argDefault = Just [v] }
 
-instance Applicative Parser where
-	pure v = Parser $ \s -> [(v, s)]
-	f <*> x = Parser $ \s -> concatMap x' (runParser f s) where
-		x' (f', str) = do
-			(val, str') <- runParser x str
-			return (f' val, str')
+-- | Set default list argument
+defList :: [String] -> ArgSpec -> ArgSpec
+defList v a = a { argDefault = Just v }
 
-instance Alternative Parser where
-	empty = Parser $ const []
-	(Parser l) <|> (Parser r) = Parser $ \s -> l s ++ r s
+-- | Set implicit argument
+impl :: String -> ArgSpec -> ArgSpec
+impl v a = a { argImplicit = Just [v] }
 
-instance Read Arg where
-	readsPrec _ = take 1 . runParser (named' <|> pos') where
-		pos' = do
-			nm <- name
-			if null nm then empty else return (PosArg nm)
-		named' = fmap (\n -> n { argOptional = True }) (bra nvp) <|> nvp
-		nvp = do
-			ch '-'
-			nm <- name
-			Parser $ \s -> return ((), dropWhile isSpace s)
-			a <- defarg <|> valarg <|> pure Nothing
-			return $ NamedArg nm a False
-		defarg = bra $ do
-			a <- name
-			v <- (ch '=' >> val) <|> pure ""
-			return $ Just (a, Just v)
-		valarg = do
-			a <- name
-			return $ Just (a, Nothing)
-		bra p = do
-			ch '['
-			r <- p
-			ch ']'
-			return r
-		name = Parser $ \s -> filter (not . null . fst) [span (\c -> isDigit c || isAlpha c || (c `elem` "-_")) s]
-		val = name <|> pure ""
-		ch c = Parser $ \s -> if [c] `isPrefixOf` s then return ((), drop 1 s) else []
+-- | Argument is optional
+opt :: ArgSpec -> ArgSpec
+opt a = a { argOptional = True }
 
-data Command = Command {
-	commandName :: String,
-	commandDesc :: String,
-	commandArgs :: [(Arg, String)] }
-		deriving (Eq)
+-- | Argument is explicit
+expl :: ArgSpec -> ArgSpec
+expl a = a { argOptional = False }
 
-instance Show Command where
-	show (Command name d as) = intercalate "\n" $ (unwords (name : map (show . fst) as) ++ " -- " ++ d) : map ('\t':) as' where
-		as' = mapMaybe argDesc as
-		argDesc (_, "") = Nothing
-		argDesc (PosArg n, d) = Just $ n ++ " -- " ++ d
-		argDesc (NamedArg n _ _, d) = Just $ ('-':n) ++ " -- " ++ d
+-- | Argument is list
+list :: ArgSpec -> ArgSpec
+list a = a { argList = True, argOptional = True, argDefault = Just [] }
 
-cmd :: String -> String -> [(Arg, String)] -> Command
-cmd = Command
+-- | Set argument description
+desc :: String -> ArgSpec -> ArgSpec
+desc d a = a { argDesc = Just d }
 
-nodesc :: String
-nodesc = ""
+-- | Verify arguments, set default and implicit values
+verify :: ArgsSpec -> Args -> Either [String] Args
+verify specs as = if M.null errs then Right as' else Left (M.elems errs) where
+	(errs, as') = M.mapEither id $ M.unionWith setImpl (M.mapWithKey checkList as) impls `M.union` defs
+	defs = M.fromList $ mapMaybe def' specs where
+		def' a = liftM ((,) (argName a)) $ maybe (if argOptional a then Nothing else Just (Left $ argName a ++ " not specified")) (Just . Right) $ argDefault a
+	impls = (`M.intersection` as) $ M.fromList $ map impl' specs where
+		impl' a = (argName a, maybe (Left $ "No value for " ++ argName a) Right $ argImplicit a)
+	checkList nm vals = maybe noArg verifySpec $ find ((== nm) . argName) specs where
+		noArg = Left $ "Unknown key: " ++ nm
+		verifySpec spec'
+			| not (argList spec') && (length vals > 1) = Left $ "Multiple keys: " ++ nm
+			| otherwise = Right vals
+	setImpl v iv = do
+		v' <- v
+		case v' of
+			[] -> iv
+			_ -> Right v'
 
-($=) :: String -> String -> (Arg, String)
-name $= d = (read name, d)
+-- | Parse arguments from command line
+args :: ArgsSpec -> [String] -> Either String Args
+args specs i = as >>= left unlines . verify specs where
+	as = liftM (M.fromList . map ((head *** concat) . unzip) . groupBy ((==) `on` fst) . sortBy (comparing fst)) $ unfoldrM splitKey i
 
-parseCommand :: [Command] -> [String] -> Either String (String, Args String)
-parseCommand _ [] = Left "No command given"
-parseCommand cmds (s:ss) = liftM ((,) s) $ parseCommand' $ filter ((== s) . commandName) cmds where
-	parseCommand' cs = foldr (<|>) (Left $ "Can't parse command " ++ s) $ map ((`args` ss) . parse') cs where
-		parse' (Command _ _ as) = mapM_ (parseArg . fst) as
-		parseArg (PosArg _) = pos
-		parseArg (NamedArg n a o) = (if o then opt else id) $ named n (maybe (pure "") parseValue a) where
-			parseValue (_, Nothing) = val
-			parseValue (_, Just d) = val <|> pure d
-			val = withPeek val' where
-				val' ('-':_) = throwError "Invalid value"
-				val' s = return s
+-- | Parse arguments from command line
+cmdline :: ArgsSpec -> String -> Either String Args
+cmdline specs = args specs . split
 
-posArg :: a -> Args a
-posArg v = Args [v] mempty
+-- | Parse arguments from JSON
+json :: ArgsSpec -> Value -> Either String Args
+json specs (Object v) = left unlines $ if M.null errs then verify specs as else Left (M.elems errs) where
+	(errs, as) = M.mapEither id $ M.map parseArg $ M.mapKeys T.unpack $ M.fromList $ HM.toList v
+	parseArg Null = Right []
+	parseArg (Bool b) = Right [show b]
+	parseArg (Number n) = Right [show n]
+	parseArg (String s) = Right [T.unpack s]
+	parseArg (Array a) = liftM concat $ mapM parseArg $ V.toList a
+	parseArg _ = Left "Invalid value"
+json _ _ = Left "Invalid json value"
 
-namedArg :: String -> a -> Args a
-namedArg name v = Args [] (M.singleton name v)
+-- | Check whether argument exists
+has :: String -> Args -> Bool
+has = M.member
 
-lit :: String -> ParserT ()
-lit name = withPeek $ \s -> unless (s == name) (throwError $ "Expected: " ++ name)
+-- | Get argument list
+gets :: String -> Args -> Maybe [String]
+gets = M.lookup
 
-pos :: ParserT ()
-pos = withPeek $ tell . posArg
+-- | Force get argument list
+gets_ :: String -> Args -> [String]
+gets_ name as = fromMaybe (error $ "No argument " ++ name) $ gets name as
 
-named :: String -> ParserT String -> ParserT ()
-named name p = do
-	str <- get
-	let
-		(before, after) = break (== ('-':name)) str
-	when (null after) $ throwError ("Named argument " ++ name ++ " not found")
-	put (tail after)
-	(r, _) <- ParserT $ lift $ runWriterT (runParserT p)
-	after' <- get
-	put $ before ++ after'
-	tell $ namedArg name r
+-- | Get argument
+get :: String -> Args -> Maybe String
+get name as = M.lookup name as >>= listToMaybe
 
-notEof :: ParserT a -> ParserT a
-notEof p = do
-	e <- gets null
-	when e $ throwError "EOF"
-	p
+-- | Force get argument
+get_ :: String -> Args -> String
+get_ name as = fromMaybe (error $ "No argument " ++ name) $ get name as
 
-eof :: ParserT ()
-eof = do
-	e <- gets null
-	unless e $ throwError "EOF expected"
+-- | Read argument
+val :: Read a => String -> Args -> Maybe a
+val name as = get name as >>= readMaybe
 
-peek :: ParserT String
-peek = notEof $ do
-	s <- gets head
-	modify tail
-	return s
-
-withPeek :: (String -> ParserT a) -> ParserT a
-withPeek f = notEof $ do
-	p <- peek
-	catchError (f p) (\e -> unpeek p >> throwError e)
-
-unpeek :: String -> ParserT ()
-unpeek s = modify (s:)
-
-opt :: ParserT () -> ParserT ()
-opt p = p <|> pure ()
-
--- | Parse args
-args :: ParserT () -> [String] -> Either String (Args String)
-args p s = evalStateT (execWriterT (runParserT (p >> eof))) s where
-
-class ReadArg a where
-	readArg :: String -> Maybe a
-
-instance ReadArg String where
-	readArg = Just
-
-instance ReadArg Int where
-	readArg = readMaybe
-
-arg :: ReadArg a => String -> Args String -> Maybe a
-arg name pargs = M.lookup name (namedArgs pargs) >>= readArg
-
-at :: ReadArg a => Int -> Args String -> Maybe a
-at n pargs
-	| n >= length (posArgs pargs) = Nothing
-	| otherwise = readArg $ posArgs pargs !! n
-
-has :: String -> Args String -> Bool
-has name = M.member name . namedArgs
+-- | Force read argument
+val_ :: Read a => String -> Args -> Maybe a
+val_ name as = fromMaybe (error $ "Can't read " ++ name) $ val name as
 
 -- | Split string to words
 split :: String -> [String]
@@ -229,10 +182,27 @@ split (c:cs)
 		readQuote ('"':ss) = ("", ss)
 		readQuote (s:ss) = first (s:) $ readQuote ss
 
-test :: Command
-test = cmd "find" "Find symbol" [
-	"name" $= nodesc,
-	"[-project p]" $= "Project to find in",
-	"[-file f]" $= "File to find in",
-	"[-module m]" $= "Symbol module",
-	"[-cabal [sandbox]]" $= nodesc]
+-- | Print usage
+usage :: ArgsSpec -> [String]
+usage as = line : det where
+	line = unwords $ map preview as
+	det = mapMaybe (fmap ('\t':) . detailed) as
+
+splitKey :: [String] -> Either String (Maybe ((String, [String]), [String]))
+splitKey [] = Right Nothing
+splitKey (('-':key):vals) = Right $ Just ((key, v), vs) where
+	(v, vs) = break ("-" `isPrefixOf`) vals
+splitKey (key:_) = Left $ "Invalid input: " ++ key
+
+unfoldrM :: Monad m => (a -> m (Maybe (b, a))) -> a -> m [b]
+unfoldrM f x = f x >>= maybe (return []) (\(h, t) -> liftM (h:) (unfoldrM f t))
+
+--test :: ArgsSpec
+--test = [
+--	arg "name" "symbol-name",
+--	arg "project" "p" |> opt |> desc "Project to find in",
+--	arg "module" "m" |> opt |> desc "Symbol module",
+--	arg "cabal" "sandbox" |> opt |> impl "cabal" |> desc "Cabal database to find in",
+--	flag "test",
+--	arg "timeout" "ms" |> def "100",
+--	arg "g" "ghc_opts" |> list]
