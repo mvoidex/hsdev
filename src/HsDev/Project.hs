@@ -7,6 +7,7 @@ module HsDev.Project (
 	) where
 
 import Control.Arrow
+import Control.DeepSeq
 import Control.Monad.Error
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
@@ -20,6 +21,9 @@ data Project = Project {
 	projectCabal :: FilePath,
 	projectDescription :: Maybe ProjectDescription }
 		deriving (Read, Show)
+
+instance NFData Project where
+	rnf (Project n p c _) = rnf n `seq` rnf p `seq` rnf c
 
 instance Eq Project where
 	l == r = projectCabal l == projectCabal r
@@ -61,7 +65,7 @@ data Info = Info {
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
 analyzeCabal source = case parsePackageDescription source of
-	ParseOk _ r -> Right $ ProjectDescription {
+	ParseOk _ r -> Right ProjectDescription {
 		projectLibrary = fmap (toLibrary . PD.condTreeData) $ PD.condLibrary r,
 		projectExecutables = fmap (toExecutable . second PD.condTreeData) $ PD.condExecutables r,
 		projectTests = fmap (toTest . second PD.condTreeData) $ PD.condTestSuites r }

@@ -18,17 +18,15 @@ import HsDev.Project
 -- | Scan cabal for modules
 scanCabal :: Cabal -> ErrorT String IO Database
 scanCabal cabal = do
-	ms <- withConfig (config { configCabal = cabal }) list
+	ms <- list
 	fmap mconcat $ mapM (scanModule cabal) ms
 
 -- | Scan cabal module
 scanModule :: Cabal -> String -> ErrorT String IO Database
-scanModule cabal name = withConfig (config { configCabal = cabal }) $ do
-	catchError (fmap fromModule $ browse' name) (const $ return mempty)
-	where
-		browse' s = do
-			m <- browse s
-			liftIO $ loadDocs [] m
+scanModule _ name = catchError (fmap fromModule $ browse' name) (const $ return mempty) where
+	browse' s = do
+		m <- browse s
+		liftIO $ loadDocs [] m
 
 -- | Scan file
 scanFile :: FilePath -> ErrorT String IO Database

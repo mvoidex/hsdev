@@ -6,10 +6,9 @@ module Data.Async (
 	subscribe, subscribeEvents
 	) where
 
+import Control.DeepSeq
 import Control.Monad
 import Control.Concurrent
-import Control.Concurrent.MVar
-import Control.Concurrent.Chan
 
 import Data.Group
 
@@ -20,7 +19,7 @@ data Event a = Append a | Remove a | Clear | Modify (a -> a) | Action (a -> IO a
 event :: Group a => Event a -> a -> IO a
 event (Append v) x = return $ add x v
 event (Remove v) x = return $ sub x v
-event Clear x = return zero
+event Clear _ = return zero
 event (Modify p) x = return $ p x
 event (Action p) x = p x
 
@@ -30,7 +29,7 @@ data Async a = Async {
 	asyncTrace :: Chan a,
 	asyncEvents :: Chan (Event a) }
 
-newAsync :: Group a => IO (Async a)
+newAsync :: (NFData a, Group a) => IO (Async a)
 newAsync = do
 	var <- newMVar zero
 	trace <- newChan
@@ -41,19 +40,17 @@ newAsync = do
 	where
 		doUpdate ch x e = do
 			x' <- event e x
-			writeChan ch x'
+			force x' `seq` writeChan ch x'
 			return x'
 
 readAsync :: Async a -> IO a
 readAsync = readMVar . asyncVar
 
 modifyAsync :: Async a -> Event a -> IO ()
-modifyAsync avar e = writeChan (asyncEvents avar) e
+modifyAsync avar = writeChan (asyncEvents avar)
 
 subscribe :: Async a -> (a -> IO ()) -> IO ()
-subscribe avar onUpdate = do
-	dupChan (asyncTrace avar) >>= getChanContents >>= void . forkIO . mapM_ onUpdate
+subscribe avar onUpdate = dupChan (asyncTrace avar) >>= getChanContents >>= void . forkIO . mapM_ onUpdate
 
 subscribeEvents :: Async a -> (Event a -> IO ()) -> IO ()
-subscribeEvents avar onEvent = do
-	dupChan (asyncEvents avar) >>= getChanContents >>= void . forkIO . mapM_ onEvent
+subscribeEvents avar onEvent = dupChan (asyncEvents avar) >>= getChanContents >>= void . forkIO . mapM_ onEvent

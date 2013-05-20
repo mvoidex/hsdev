@@ -14,10 +14,9 @@ module HsDev.Database (
 	remove
 	) where
 
-import Control.Arrow
 import Control.Monad
+import Control.DeepSeq
 import Data.Group
-import Data.List
 import Data.Map (Map)
 import Data.Set (Set)
 import Data.Maybe
@@ -37,16 +36,19 @@ data Database = Database {
 	databaseSymbols :: Map String (Set (Symbol Declaration)) }
 		deriving (Eq, Ord)
 
+instance NFData Database where
+	rnf (Database cm f p ms ss) = rnf cm `seq` rnf f `seq` rnf p `seq` rnf ms `seq` rnf ss
+
 instance Group Database where
-	add old new = Database {
+	add old new = force Database {
 		databaseCabalModules = M.unionWith M.union (databaseCabalModules old') (databaseCabalModules new),
-		databaseFiles = M.union (databaseFiles old') (databaseFiles new),
-		databaseProjects = M.union (databaseProjects old') (databaseProjects new),
+		databaseFiles = databaseFiles old' `M.union` databaseFiles new,
+		databaseProjects = databaseProjects old' `M.union` databaseProjects new,
 		databaseModules = add (databaseModules old') (databaseModules new),
 		databaseSymbols = add (databaseSymbols old') (databaseSymbols new) }
 		where
 			old' = sub old (databaseIntersection old new)
-	sub old new = Database {
+	sub old new = force Database {
 		databaseCabalModules = M.differenceWith diff' (databaseCabalModules old) (databaseCabalModules new),
 		databaseFiles = M.difference (databaseFiles old) (databaseFiles new),
 		databaseProjects = M.difference (databaseProjects old) (databaseProjects new),
@@ -63,14 +65,14 @@ instance Monoid Database where
 
 -- | Database intersection, returns data from first database
 databaseIntersection :: Database -> Database -> Database
-databaseIntersection l r = createIndexes $ Database {
+databaseIntersection l r = force $ createIndexes $ mempty {
 	databaseCabalModules = M.intersectionWith M.intersection (databaseCabalModules l) (databaseCabalModules r),
 	databaseFiles = M.intersection (databaseFiles l) (databaseFiles r),
 	databaseProjects = M.intersection (databaseProjects l) (databaseProjects r) }
 
 -- | Create indexes
 createIndexes :: Database -> Database
-createIndexes db = db {
+createIndexes db = force $ db {
 	databaseModules = groupSum $ map (\m -> M.singleton (symbolName m) (S.singleton m)) ms,
 	databaseSymbols = groupSum $ map (M.map S.singleton . moduleDeclarations . symbol) ms }
 	where
@@ -78,7 +80,7 @@ createIndexes db = db {
 
 -- | Make database from module
 fromModule :: Symbol Module -> Database
-fromModule m = fromMaybe (error "Module must specify source file or cabal") (inSource `mplus` inCabal) where
+fromModule m = force $ fromMaybe (error "Module must specify source file or cabal") (inSource `mplus` inCabal) where
 	inSource = do
 		loc <- symbolLocation m
 		return $ createIndexes $ Database mempty (M.singleton (locationFile loc) m) mempty zero zero
@@ -93,8 +95,8 @@ fromProject p = zero {
 
 -- Modules for project specified
 projectModules :: Project -> Database -> Map FilePath (Symbol Module)
-projectModules project = M.filter thisProject . databaseFiles where
-	thisProject m = maybe False (== project) $ do
+projectModules proj = M.filter thisProject . databaseFiles where
+	thisProject m = maybe False (== proj) $ do
 		loc <- symbolLocation m
 		locationProject loc
 

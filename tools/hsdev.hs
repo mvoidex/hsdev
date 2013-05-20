@@ -66,10 +66,10 @@ mainCommands = [
 			hClose h]
 
 main :: IO ()
-main = do
+main = withSocketsDo $ do
 	hSetBuffering stdout LineBuffering
 	hSetEncoding stdout utf8
-	(args'@(cmdName:cmdArgs)) <- getArgs
+	(args'@(~(cmdName:cmdArgs))) <- getArgs
 	when (null args') $ do
 		printMainUsage
 		exitSuccess
@@ -117,7 +117,7 @@ commands = map addArgs [
 	cmd "scan" "scan modules installed in cabal" [cabal] $ \db -> do
 		forkAction $ do
 			cabal' <- force cabalArg
-			ms <- liftCmd $ withConfig (config { configCabal = cabal' }) list
+			ms <- liftIO (runErrorT list) >>= either (\e -> throwError (strMsg ("Failed to invoke ghc-mod list: " ++ e))) return
 			mapM_ (liftCmd . update db . scanModule cabal') ms
 		return ok,
 	cmd "scan" "scan project" [arg "project" "p" |> desc "path to .cabal file"] $ \db -> do
@@ -183,6 +183,14 @@ commands = map addArgs [
 		liftM ResultDeclarations (withDbFileName db goToDeclaration),
 	cmd "info" "get info for symbol" [name, ctx |> opt] $ \db ->
 		liftM (ResultDeclarations . return) (withDbFileName db symbolInfo),
+	cmd "lookup" "find symbol" [name, ctx, fmt |> def "brief"] $ \db ->
+		liftM (either ResultDeclarations (ResultDeclarations . return)) (withDbFileName db lookupSymbol'),
+	cmd "import" "import module to bring symbol in scope" [name, ctx] $ \db -> do
+		dbval <- getDb db
+		file <- force fileArg
+		name <- asks (get_ "name")
+		ss <- liftCmd $ importSymbol dbval file name
+		return $ ResultOk $ M.singleton "imports" $ List ss,
 	cmd "complete" "autocompletion" [arg "input" "str" |> desc "string to complete", ctx, fmt |> def "name"] $ \db -> do
 		file <- force fileArg
 		dbval <- getDb db
@@ -244,6 +252,9 @@ commands = map addArgs [
 		getDirectoryContents' p = do
 			b <- doesDirectoryExist p
 			if b then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p) else return []
+
+		lookupSymbol' d (Just f) s = lookupSymbol d f s
+		lookupSymbol' _ Nothing _ = throwError "No file"
 
 		withDbFileName :: Async Database -> (Database -> Maybe FilePath -> String -> ErrorT String IO a) -> CommandAction a
 		withDbFileName db f = join $ liftM3 (\x y z -> liftCmd (f x y z)) (getDb db) fileArg (asks $ get_ "name")

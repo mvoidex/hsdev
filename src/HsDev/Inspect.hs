@@ -32,14 +32,14 @@ import HsDev.Util
 analyzeModule :: String -> Either String (Symbol Module)
 analyzeModule source = fmap setModuleReferences $ case H.parseFileContents source of
 	H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
-	H.ParseOk (H.Module _ (H.ModuleName moduleName) _ _ _ imports declarations) -> Right $ mkSymbol moduleName $ Module {
+	H.ParseOk (H.Module _ (H.ModuleName moduleName) _ _ _ imports declarations) -> Right $ mkSymbol moduleName Module {
 		moduleExports = [],
 		moduleImports = M.fromList $ map ((importModuleName &&& id) . getImport) imports,
 		moduleDeclarations = M.fromList $ map (symbolName &&& id) $ getDecls declarations,
 		moduleCabal = Nothing }
 
 getImport :: H.ImportDecl -> Import
-getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mname $ H.importAs d) where
+getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mname $ H.importAs d) (Just $ toLocation $ H.importLoc d) where
 	mname (H.ModuleName n) = n
 
 getDecls :: [H.Decl] -> [Symbol Declaration]
@@ -158,7 +158,7 @@ addDoc docsMap decl = decl { symbolDocs = M.lookup (symbolName decl) docsMap }
 
 -- | Adds documentations to module
 addDocs :: Map String String -> Symbol Module -> Symbol Module
-addDocs docsMap info = fmap addDocs' info where
+addDocs docsMap = fmap addDocs' where
 	addDocs' :: Module -> Module
 	addDocs' m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDeclarations m) }
 
@@ -167,7 +167,7 @@ inspectFile :: FilePath -> ErrorT String IO (Symbol Module)
 inspectFile file = do
 	let
 		noReturn :: E.SomeException -> IO [Doc.Interface]
-		noReturn e = return []
+		noReturn _ = return []
 	p <- liftIO $ locateProject file
 	source <- liftIO $ readFileUtf8 file
 	absFilename <- liftIO $ Dir.canonicalizePath file

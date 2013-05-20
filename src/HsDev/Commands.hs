@@ -3,6 +3,8 @@
 module HsDev.Commands (
 	findDeclaration, findModule,
 	goToDeclaration,
+	importSymbol,
+	lookupSymbol,
 	symbolInfo,
 	completions,
 	moduleCompletions
@@ -30,6 +32,12 @@ findDeclaration db ident = return $ maybe [] S.toList $ M.lookup ident (database
 findModule :: Database -> String -> ErrorT String IO [Symbol Module]
 findModule db mname = return $ maybe [] S.toList $ M.lookup mname (databaseModules db)
 
+reachablePredicate :: Database -> Maybe String -> FilePath -> Symbol Declaration -> Bool
+reachablePredicate db qualifiedName f s = fromMaybe True $ do
+	thisModule <- M.lookup f (databaseFiles db)
+	declModule <- symbolModule s
+	return (isReachable thisModule qualifiedName declModule)
+
 goToDeclaration :: Database -> Maybe FilePath -> String -> ErrorT String IO [Symbol Declaration]
 goToDeclaration db file ident = do
 	fileName <- maybe (return "") (liftIO . canonicalizePath) file
@@ -38,10 +46,31 @@ goToDeclaration db file ident = do
 		(qualifiedName, identName) = splitIdentifier ident
 		filterDecl f = satisfy [
 			bySources,
-			\s -> fromMaybe True $ do
-				thisModule <- M.lookup f (databaseFiles db)
-				declModule <- symbolModule s
-				return (isReachable thisModule qualifiedName declModule)]
+			reachablePredicate db qualifiedName f]
+
+importSymbol :: Database -> FilePath -> String -> ErrorT String IO [String]
+importSymbol db file ident = do
+	look <- lookupSymbol db file ident
+	return $ case look of
+		Right _ -> []
+		Left cs -> mapMaybe (fmap makeImport . symbolModule) cs
+	where
+		makeImport :: Symbol Module -> String
+		makeImport m = "import " ++ symbolName m
+
+lookupSymbol :: Database -> FilePath -> String -> ErrorT String IO (Either [Symbol Declaration] (Symbol Declaration))
+lookupSymbol db file ident = do
+	fileName <- liftIO $ canonicalizePath file
+	project <- liftIO $ locateProject fileName
+	decls <- liftM (filter (filterDecl fileName project)) $ findDeclaration db identName
+	let
+		visibles = filter (reachablePredicate db qualifiedName fileName) decls
+		bestModule = preferredModule Cabal project (mapMaybe symbolModule visibles)
+		bestVisible = find ((== bestModule) . symbolModule) visibles
+	return $ maybe (Left decls) Right bestVisible
+	where
+		(qualifiedName, identName) = splitIdentifier ident
+		filterDecl f p = maybe False (\m -> isVisible Cabal p m || inFile f m) . symbolModule
 
 symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO (Symbol Declaration)
 symbolInfo db file ident = do
@@ -56,10 +85,7 @@ symbolInfo db file ident = do
 		(qualifiedName, identName) = splitIdentifier ident
 		filterDecl f p = satisfy [
 			maybe False (\m -> isVisible Cabal p m || inFile f m) . symbolModule,
-			\s -> fromMaybe True $ do
-				thisModule <- M.lookup f (databaseFiles db)
-				declModule <- symbolModule s
-				return (isReachable thisModule qualifiedName declModule)]
+			reachablePredicate db qualifiedName f]
 		sortDecls p = uncurry (++) . partition (inProject_ p)
 		nubModules = nubBy ((==) `on` (fmap symbolName . symbolModule))
 		noPrelude = filter (not . inModule "Prelude")
@@ -73,22 +99,22 @@ completions db m prefix = return $ filter ((identName `isPrefixOf`) . symbolName
 		moduleScope = scope m
 
 		scope :: Symbol Module -> Map (Maybe String) [Symbol Module]
-		scope m = M.unionsWith (++) $ decls [Nothing, Just (symbolName m)] m : imports m
-		decls qs m = M.unionsWith (++) $ map (\q -> M.singleton q [m]) qs
-		imports m = map (importScope m) $ (if bySources m then (Import "Prelude" False Nothing :) else id) $ M.elems (moduleImports (symbol m))
-		importScope m i = fromMaybe M.empty $ do
+		scope m' = M.unionsWith (++) $ decls [Nothing, Just (symbolName m')] m' : imports m'
+		decls qs m' = M.unionsWith (++) $ map (\q -> M.singleton q [m']) qs
+		imports m' = map (importScope m') $ (if bySources m' then (Import "Prelude" False Nothing Nothing :) else id) $ M.elems (moduleImports (symbol m))
+		importScope m' i = fromMaybe M.empty $ do
 			ms <- M.lookup (importModuleName i) (databaseModules db)
-			imported <- visibleModule Cabal (symbolLocation m >>= locationProject) (S.toList ms)
+			imported <- visibleModule Cabal (symbolLocation m' >>= locationProject) (S.toList ms)
 			return $ decls (catMaybes [
 				Just (Just (importModuleName i)),
 				if not (importIsQualified i) then Just Nothing else Nothing,
 				fmap Just (importAs i)]) imported
 
-		project = symbolLocation m >>= locationProject
+		--project = symbolLocation m >>= locationProject
 
 moduleCompletions :: Database -> [Symbol Module] -> String -> ErrorT String IO [String]
-moduleCompletions db ms prefix = return $ nub $ completions' $ map symbolName ms where
-	completions' ms' = mapMaybe getNext ms' where
+moduleCompletions _ ms prefix = return $ nub $ completions' $ map symbolName ms where
+	completions' = mapMaybe getNext where
 		getNext m
 			| prefix `isPrefixOf` m = listToMaybe $ map snd $ dropWhile (uncurry (==)) $ zip (splitBy '.' prefix) (splitBy '.' m)
 			| otherwise = Nothing

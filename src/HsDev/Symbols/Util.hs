@@ -18,7 +18,6 @@ module HsDev.Symbols.Util (
 	) where
 
 import Control.Monad
-import Data.List
 import Data.Maybe
 import qualified Data.Map as M
 import System.FilePath
@@ -58,22 +57,22 @@ isImported m (Just q) imported = maybe prelude qualifiedImport $ M.lookup (symbo
 
 isReachable :: Symbol Module -> Maybe String -> Symbol Module -> Bool
 isReachable m q imported
-	| m == imported && (q == Nothing || q == Just (symbolName m)) = True
+	| m == imported && (isNothing q || q == Just (symbolName m)) = True
 	| otherwise = isImported m q imported
 
 isVisible :: Cabal -> Maybe Project -> Symbol Module -> Bool
-isVisible cabal project = liftM2 (||) (inCabal cabal) (maybe (const False) inProject project)
+isVisible cabal proj = liftM2 (||) (inCabal cabal) (maybe (const False) inProject proj)
 
 sourceModule :: Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
-sourceModule project ms = listToMaybe $ filter (inProject_ project) ms ++ filter bySources ms
+sourceModule proj ms = listToMaybe $ filter (inProject_ proj) ms ++ filter bySources ms
 
 visibleModule :: Cabal -> Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
-visibleModule cabal project ms = listToMaybe $ filter (inProject_ project) ms ++ filter (inCabal cabal) ms
+visibleModule cabal proj ms = listToMaybe $ filter (inProject_ proj) ms ++ filter (inCabal cabal) ms
 
 preferredModule :: Cabal -> Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
-preferredModule cabal project ms = listToMaybe $ concatMap (`filter` ms) order where
+preferredModule cabal proj ms = listToMaybe $ concatMap (`filter` ms) order where
 	order = [
-		inProject_ project,
+		inProject_ proj,
 		inCabal cabal,
 		bySources,
 		const True]

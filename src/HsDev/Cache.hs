@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Cache (
 	escapePath,
@@ -10,7 +11,7 @@ module HsDev.Cache (
 	) where
 
 import Control.Applicative
-import Control.Monad (mzero)
+import Control.Monad
 import Data.Aeson
 import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Lazy as BS
@@ -20,7 +21,6 @@ import Data.Maybe
 import Data.Map (Map)
 import Data.Monoid
 import qualified Data.Map as M
-import System.Directory
 import System.FilePath
 
 import HsDev.Symbols
@@ -52,13 +52,15 @@ instance ToJSON Import where
 	toJSON i = object [
 		"name" .= importModuleName i,
 		"qualified" .= importIsQualified i,
-		"as" .= importAs i]
+		"as" .= importAs i,
+		"loc" .= importLocation i]
 
 instance FromJSON Import where
 	parseJSON (Object v) = Import <$>
 		v .: "name" <*>
 		v .: "qualified" <*>
-		v .: "as"
+		v .: "as" <*>
+		v .: "loc"
 	parseJSON _ = mzero
 
 instance ToJSON a => ToJSON (Symbol a) where
@@ -85,9 +87,9 @@ instance ToJSON Cabal where
 instance FromJSON Cabal where
 	parseJSON v = do
 		p <- parseJSON v
-		if p == "<cabal>"
-			then return Cabal
-			else return (CabalDev p)
+		return $ if p == "<cabal>"
+			then Cabal
+			else CabalDev p
 
 instance ToJSON Module where
 	toJSON m = object [
@@ -150,7 +152,7 @@ instance FromJSON Declaration where
 	parseJSON _ = mzero
 
 escapePath :: FilePath -> FilePath
-escapePath = intercalate "." . map (filter (\c -> isAlpha c || isDigit c)) . splitDirectories
+escapePath = intercalate "." . map (filter isAlphaNum) . splitDirectories
 
 -- | Name of cache file for cabal
 cabalCache :: Cabal -> FilePath
@@ -169,8 +171,9 @@ dump file = BS.writeFile file . encodePretty
 load :: FilePath -> IO Database
 load file = do
 	cts <- BS.readFile file
-	ms <- return $ maybe M.empty (M.map setModuleReferences) $ decode cts
-	p <- loadProj $ nub $ mapMaybe (\m -> symbolLocation m >>= locationProject) $ M.elems ms
+	let
+		ms = maybe M.empty (M.map setModuleReferences) $ decode cts
+	p <- loadProj $ nub $ mapMaybe (symbolLocation >=> locationProject) $ M.elems ms
 	return $ mappend p (toDatabase ms)
 	where
 		loadProj [proj] = return $ fromProject proj

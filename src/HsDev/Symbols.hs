@@ -1,4 +1,5 @@
 {-# LANGUAGE  TypeSynonymInstances, FlexibleInstances #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols (
 	Location, locationFile, locationLine, locationColumn, locationProject,
@@ -24,8 +25,9 @@ module HsDev.Symbols (
 	) where
 
 import Control.Arrow
-import Data.Function (fix, on)
+import Control.DeepSeq
 import Data.List
+import Data.Function (fix)
 import Data.Map (Map)
 import Data.Maybe
 import qualified Data.Map as M
@@ -44,8 +46,11 @@ data Location = Location {
 	locationProject :: Maybe Project }
 		deriving (Eq, Ord)
 
+instance NFData Location where
+	rnf (Location f l c p) = rnf f `seq` rnf l `seq` rnf c `seq` rnf p
+
 instance Read POSIXTime where
-	readsPrec i = map (first fromIntegral) . readsPrec i
+	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
 
 instance Show Location where
 	show loc = intercalate ":" [locationFile loc, show $ locationLine loc, show $ locationColumn loc]
@@ -54,8 +59,12 @@ instance Show Location where
 data Import = Import {
 	importModuleName :: String,
 	importIsQualified :: Bool,
-	importAs :: Maybe String }
+	importAs :: Maybe String,
+	importLocation :: Maybe Location }
 		deriving (Eq, Ord)
+
+instance NFData Import where
+	rnf (Import m q a l) = rnf m `seq` rnf q `seq` rnf a `seq` rnf l
 
 instance Show Import where
 	show i = "import " ++ (if importIsQualified i then "qualified " else "") ++ importModuleName i ++ maybe "" (" as " ++) (importAs i)
@@ -68,6 +77,9 @@ data Symbol a = Symbol {
 	symbolLocation :: Maybe Location,
 	symbolTags :: [String],
 	symbol :: a }
+
+instance NFData a => NFData (Symbol a) where
+	rnf (Symbol n _ ds l t v) = rnf n `seq` rnf ds `seq` rnf l `seq` rnf t `seq` rnf v
 
 instance Ord a => Ord (Symbol a) where
 	compare l r = compare (asTuple l) (asTuple r) where
@@ -117,6 +129,10 @@ instance Show (Symbol Declaration) where
 -- | Cabal or cabal-dev
 data Cabal = Cabal | CabalDev FilePath deriving (Eq, Ord)
 
+instance NFData Cabal where
+	rnf Cabal = ()
+	rnf (CabalDev p) = rnf p
+
 instance Show Cabal where
 	show Cabal = "<cabal>"
 	show (CabalDev path) = path
@@ -128,6 +144,9 @@ data Module = Module {
 	moduleDeclarations :: Map String (Symbol Declaration),
 	moduleCabal :: Maybe Cabal }
 		deriving (Ord)
+
+instance NFData Module where
+	rnf (Module e i d c) = rnf e `seq` rnf i `seq` rnf d `seq` rnf c
 
 instance Eq Module where
 	l == r = moduleCabal l == moduleCabal r
@@ -145,6 +164,9 @@ data TypeInfo = TypeInfo {
 	typeInfoDefinition :: Maybe String }
 		deriving (Eq, Ord, Read, Show)
 
+instance NFData TypeInfo where
+	rnf (TypeInfo c a d) = rnf c `seq` rnf a `seq` rnf d
+
 showTypeInfo :: TypeInfo -> String -> String -> String
 showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ " " ++ name ++ " " ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
 
@@ -157,6 +179,13 @@ data Declaration =
 	Class { classInfo :: TypeInfo }
 		deriving (Ord)
 
+instance NFData Declaration where
+	rnf (Function f) = rnf f
+	rnf (Type i) = rnf i
+	rnf (NewType i) = rnf i
+	rnf (Data i) = rnf i
+	rnf (Class i) = rnf i
+
 instance Eq Declaration where
 	(Function l) == (Function r) = l == r
 	(Type _) == (Type _) = True
@@ -167,7 +196,7 @@ instance Eq Declaration where
 
 -- | Make symbol by name and data
 mkSymbol :: String -> a -> Symbol a
-mkSymbol name d = Symbol name Nothing Nothing Nothing [] d
+mkSymbol name = Symbol name Nothing Nothing Nothing []
 
 -- | Returns `filename:line:column`
 position :: Location -> String
@@ -189,7 +218,7 @@ mkLocation loc = do
 
 -- | Make location by file, line and column
 location :: FilePath -> Int -> Int -> Maybe Project -> Location
-location f l c p = Location (normalise f) l c p
+location f = Location (normalise f)
 
 -- | Module location is located at file:1:1
 moduleLocation :: FilePath -> Location
