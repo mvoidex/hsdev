@@ -3,10 +3,11 @@ module System.Args (
 	preview, detailed,
 	(|>),
 	arg, flag, def, defList, impl, opt, expl, list, desc,
-	verify, args, cmdline, json,
+	args, verify, implArgs, args_, cmdline, json,
 	has, gets, gets_, get, get_, val, val_,
 	split,
-	usage
+	usage,
+	unargs, unargsJson
 	) where
 
 import Control.Arrow
@@ -18,10 +19,11 @@ import Data.List
 import Data.Map (Map)
 import Data.Maybe
 import Data.Ord
+import Data.String
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map as M
 import qualified Data.Text as T (unpack)
-import qualified Data.Vector as V (toList)
+import qualified Data.Vector as V (toList, fromList)
 import Text.Read (readMaybe)
 
 -- | Named arguments
@@ -98,29 +100,52 @@ list a = a { argList = True, argOptional = True, argDefault = Just [] }
 desc :: String -> ArgSpec -> ArgSpec
 desc d a = a { argDesc = Just d }
 
--- | Verify arguments, set default and implicit values
-verify :: ArgsSpec -> Args -> Either [String] Args
-verify specs as = if M.null errs then Right as' else Left (M.elems errs) where
-	(errs, as') = M.mapEither id $ M.unionWith setImpl (M.mapWithKey checkList as) impls `M.union` defs
-	defs = M.fromList $ mapMaybe def' specs where
-		def' a = liftM ((,) (argName a)) $ maybe (if argOptional a then Nothing else Just (Left $ argName a ++ " not specified")) (Just . Right) $ argDefault a
-	impls = (`M.intersection` as) $ M.fromList $ map impl' specs where
-		impl' a = (argName a, maybe (Left $ "No value for " ++ argName a) Right $ argImplicit a)
-	checkList nm vals = maybe noArg verifySpec $ find ((== nm) . argName) specs where
-		noArg = Left $ "Unknown key: " ++ nm
-		verifySpec spec'
-			| not (argList spec') && (length vals > 1) = Left $ "Multiple keys: " ++ nm
-			| otherwise = Right vals
-	setImpl v iv = do
-		v' <- v
-		case v' of
-			[] -> iv
-			_ -> Right v'
-
 -- | Parse arguments from command line
 args :: ArgsSpec -> [String] -> Either String Args
-args specs i = as >>= left unlines . verify specs where
-	as = liftM (M.fromList . map ((head *** concat) . unzip) . groupBy ((==) `on` fst) . sortBy (comparing fst)) $ unfoldrM splitKey i
+args specs i = do
+	as <- args_ i
+	left unlines $ verify specs (implArgs specs as)
+
+-- | Verify arguments
+verify :: ArgsSpec -> Args -> Either [String] Args
+verify specs as = if null errors then Right as else Left errors where
+	errors = mapMaybe valid specs ++ unknownKeys
+
+	valid spec
+		| not (argOptional spec) && isNothing (argDefault spec) =
+			if M.member (argName spec) as then Nothing else Just (argName spec ++ " not specified")
+		| isNothing (argImplicit spec) && not (argList spec) = do
+			v <- M.lookup (argName spec) as
+			if null v then return ("No value for " ++ argName spec) else Nothing
+		| not (argList spec) = do
+			v <- M.lookup (argName spec) as
+			if length v > 1 then return ("Multiple keys: " ++ argName spec) else Nothing
+		| otherwise = Nothing
+
+	unknownKeys = map ("Unknown key: " ++ ) $ filter (not . null) $ M.keys as \\ map argName specs
+
+-- | Set default and implicit values
+implArgs :: ArgsSpec -> Args -> Args
+implArgs specs as = as' where
+	as' = M.filterWithKey (\k _ -> not (null k)) $ M.unionWith setImpl (as `M.union` posMap) impls `M.union` defs
+	posMap = M.fromList $ zipWith (\s v -> (argName s, [v])) posSpecs posVals where
+		posSpecs = filter (\s -> not (argOptional s || isJust (argDefault s))) specs
+	posVals = fromMaybe [] $ M.lookup "" as
+	defs = M.fromList $ mapMaybe def' specs where
+		def' a = liftM ((,) (argName a)) $ argDefault a
+	impls = (`M.intersection` as) $ M.fromList $ mapMaybe impl' specs where
+		impl' a = liftM ((,) (argName a)) $ argImplicit a
+	setImpl [] iv = iv
+	setImpl v _ = v
+
+-- | Parse arguments without verification
+args_ :: [String] -> Either String Args
+args_ i = do
+	(posArgs, namedArgs) <- fmap (partition (null . fst)) $ unfoldrM splitKey i
+	let
+		argsMap = M.fromList . map ((head *** concat) . unzip) . groupBy ((==) `on` fst) . sortBy (comparing fst) $ namedArgs
+		posMap = M.singleton "" $ concatMap snd posArgs
+	return $ argsMap `M.union` posMap
 
 -- | Parse arguments from command line
 cmdline :: ArgsSpec -> String -> Either String Args
@@ -128,7 +153,7 @@ cmdline specs = args specs . split
 
 -- | Parse arguments from JSON
 json :: ArgsSpec -> Value -> Either String Args
-json specs (Object v) = left unlines $ if M.null errs then verify specs as else Left (M.elems errs) where
+json specs (Object v) = left unlines $ if M.null errs then verify specs (implArgs specs as) else Left (M.elems errs) where
 	(errs, as) = M.mapEither id $ M.map parseArg $ M.mapKeys T.unpack $ M.fromList $ HM.toList v
 	parseArg Null = Right []
 	parseArg (Bool b) = Right [show b]
@@ -163,7 +188,7 @@ val :: Read a => String -> Args -> Maybe a
 val name as = get name as >>= readMaybe
 
 -- | Force read argument
-val_ :: Read a => String -> Args -> Maybe a
+val_ :: Read a => String -> Args -> a
 val_ name as = fromMaybe (error $ "Can't read " ++ name) $ val name as
 
 -- | Split string to words
@@ -188,11 +213,31 @@ usage as = line : det where
 	line = unwords $ map preview as
 	det = mapMaybe (fmap ('\t':) . detailed) as
 
+-- | Convert arguments to command string
+unargs :: Args -> [String]
+unargs as = pos ++ named where
+	pos = fromMaybe [] $ M.lookup "" as
+	as' = M.delete "" as
+	named = concatMap (uncurry toArgs) (M.toList as')
+	toArgs n [] = ['-':n]
+	toArgs n vs = concatMap (\v -> ('-':n):[v]) vs
+
+-- | Convert arguments to JSON
+unargsJson :: Args -> Value
+unargsJson as = Object $ HM.fromList $ M.toList $ M.mapKeys fromString $ M.map toJson as where
+	toJson [] = Bool True
+	toJson [s] = String $ fromString s
+	toJson ss = Array $ V.fromList $ map (String . fromString) ss
+
 splitKey :: [String] -> Either String (Maybe ((String, [String]), [String]))
 splitKey [] = Right Nothing
 splitKey (('-':key):vals) = Right $ Just ((key, v), vs) where
-	(v, vs) = break ("-" `isPrefixOf`) vals
-splitKey (key:_) = Left $ "Invalid input: " ++ key
+	v = maybeToList $ do
+		val' <- listToMaybe vals
+		when ("-" `isPrefixOf` val') mzero
+		return val'
+	vs = drop (length v) vals
+splitKey (key:vals) = Right $ Just (("", [key]), vals)
 
 unfoldrM :: Monad m => (a -> m (Maybe (b, a))) -> a -> m [b]
 unfoldrM f x = f x >>= maybe (return []) (\(h, t) -> liftM (h:) (unfoldrM f t))

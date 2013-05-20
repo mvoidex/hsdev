@@ -3,10 +3,11 @@
 module System.Command (
 	Command(..),
 	Param(..), CommandError(..), CommandAction(..),
+	runAction,
 	(&&=),
 	cmd,
 	brief, help,
-	parseCmd, parseJson,
+	parseArgs, parseCmd, parseJson,
 	run,
 
 	module System.Args
@@ -35,7 +36,7 @@ data Command a = Command {
 -- | Parameter
 data Param =
 	Param String |
-	List [Param] |
+	List [String] |
 	Dictionary (Map String Param)
 
 instance ToJSON Param where
@@ -49,7 +50,7 @@ data CommandError = CommandError {
 	errorParams :: Map String Param }
 
 (&&=) :: CommandError -> [(String, Param)] -> CommandError
-e &&= es = e { errorParams = M.union (M.fromList es) (errorParams e) }
+e &&= es = e { errorParams = M.fromList es `M.union` errorParams e }
 
 instance Error CommandError where
 	noMsg = CommandError noMsg M.empty
@@ -65,9 +66,13 @@ newtype CommandAction a = CommandAction {
 	runCommand :: ReaderT Args (ErrorT CommandError IO) a }
 		deriving (Functor, Monad, MonadReader Args, MonadIO, Applicative, MonadError CommandError)
 
+-- | Run CommandAction
+runAction :: CommandAction a -> Args -> (CommandError -> IO b) -> (a -> IO b) -> IO b
+runAction c as onError onOk = runErrorT (runReaderT (runCommand c) as) >>= either onError onOk
+
 -- | Make command
 cmd :: String -> String -> ArgsSpec -> a -> Command a
-cmd name desc args cmdId = Command name cmdId (Just desc) args
+cmd name d as cmdId = Command name cmdId (Just d) as
 
 -- | Show brief help for command
 brief :: Command a -> String
@@ -76,6 +81,11 @@ brief c = unwords $ [commandName c, head (usage (commandArgs c))] ++ maybe [] (r
 -- | Show help for command
 help :: Command a -> [String]
 help c = brief c : tail (usage (commandArgs c))
+
+-- | Parse command by args
+parseArgs :: [Command a] -> [String] -> Either String (a, Args)
+parseArgs _ [] = Left "No command given"
+parseArgs cmds (cmdName : cmdArgs) = parse cmds args cmdName cmdArgs
 
 -- | Parse command
 parseCmd :: [Command a] -> String -> Either String (a, Args)
@@ -99,11 +109,11 @@ parseJson cmds i = eitherDecode (fromString i) >>= parse' where
 -- | Run parsed command
 run :: Either String (CommandAction a, Args) -> (CommandError -> IO r) -> (a -> IO r) -> IO r
 run (Left e) onError _ = onError $ strMsg e
-run (Right (act, as)) onError onOk = runErrorT (runReaderT (runCommand act) as) >>= either onError onOk
+run (Right (act, as)) onError onOk = runAction act as onError onOk
 
 parse :: [Command a] -> (ArgsSpec -> b -> Either String Args) -> String -> b -> Either String (a, Args)
 parse cmds f cmdName cmdArgs = if null oks then err else Right (head oks) where
 	cmds' = filter ((== cmdName) . commandName) cmds
-	(fails, oks) = partitionEithers $ map parseCmd cmds'
+	(fails, oks) = partitionEithers $ map parseCmd' cmds'
 	err = Left $ unlines (("Can't parse " ++ cmdName ++ ":") : map ('\t':) fails)
-	parseCmd c = liftM ((,) (commandId c)) $ f (commandArgs c) cmdArgs
+	parseCmd' c = liftM ((,) (commandId c)) $ f (commandArgs c) cmdArgs

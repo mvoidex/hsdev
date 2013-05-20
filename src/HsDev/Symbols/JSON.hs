@@ -16,7 +16,7 @@ encodeDeclaration :: Symbol Declaration -> Value
 encodeDeclaration s = object $ sym ++ decl (symbol s) where
 	sym = [
 		"name" .= symbolName s,
-		"module" .= fmap symbolName (symbolModule s),
+		"module" .= fmap encodeModuleHead (symbolModule s),
 		"docs" .= symbolDocs s,
 		"location" .= fmap encodeLocation (symbolLocation s)]
 	decl (Function t) = ["what" .= str "function", "type" .= t]
@@ -25,6 +25,14 @@ encodeDeclaration s = object $ sym ++ decl (symbol s) where
 	decl (Data ti) = ["what" .= str "data"] ++ info ti
 	decl (Class ti) = ["what" .= str "class"] ++ info ti
 	info ti = ["ctx" .= typeInfoContext ti, "args" .= typeInfoArgs ti, "definition" .= typeInfoDefinition ti]
+
+encodeModuleHead :: Symbol Module -> Value
+encodeModuleHead m = object $ sym ++ module' (symbol m) where
+	sym = [
+		"name" .= symbolName m,
+		"location" .= fmap encodeLocation (symbolLocation m)]
+	module' m' = [
+		"cabal" .= fmap show (moduleCabal m')]
 
 encodeModule :: Symbol Module -> Value
 encodeModule m = object $ sym ++ module' (symbol m) where
