@@ -51,7 +51,8 @@ mainCommands = [
 		forever $ liftIO $ do
 			s <- getLine
 			r <- processCmd isJson db s
-			putStrLn r,
+			putStrLn $ either id id r
+			either (const exitSuccess) (const $ return ()) r,
 	cmd "server" "start server" [arg "port" "p" |> def "4567"] $ do
 		p <- asks (val_ "port")
 		s <- liftIO $ socket AF_INET Stream defaultProtocol
@@ -65,7 +66,8 @@ mainCommands = [
 			str <- hGetLine h
 			putStrLn $ "received: " ++ str
 			r <- processCmd True db str
-			hPutStrLn h r
+			hPutStrLn h $ either id id r
+			either (const exitSuccess) (const $ return ()) r
 			putStrLn "response sent"
 			hClose h]
 	where
@@ -103,7 +105,8 @@ main = withSocketsDo $ do
 data CommandResult =
 	ResultDeclarations [Symbol Declaration] |
 	ResultModules [Symbol Module] |
-	ResultOk (Map String Param)
+	ResultOk (Map String Param) |
+	ResultExit
 
 instance ToJSON CommandResult where
 	toJSON (ResultDeclarations decls) = object [
@@ -115,6 +118,8 @@ instance ToJSON CommandResult where
 	toJSON (ResultOk ps) = object [
 		"result" .= ("ok" :: String),
 		"params" .= toJSON ps]
+	toJSON ResultExit = object [
+		"result" .= ("exit" :: String)]
 
 ok :: CommandResult
 ok = ResultOk M.empty
@@ -253,7 +258,7 @@ commands = map addArgs [
 		asks (get "command") >>= maybe (liftIO printUsage) (\cmdName ->
 			liftIO (mapM_ (putStrLn . unlines . help) $ filter ((== cmdName) . commandName) commands))
 		return ok,
-	cmd "exit" "exit" [] $ \_ -> liftIO exitSuccess >> return ok]
+	cmd "exit" "exit" [] $ \_ -> return ResultExit]
 	where
 		getDirectoryContents' :: FilePath -> IO [FilePath]
 		getDirectoryContents' p = do
@@ -329,12 +334,14 @@ printMainUsage = mapM_ (putStrLn . C.brief) mainCommands
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . C.brief) commands
 
-processCmd :: Bool -> Async Database -> String -> IO String
+processCmd :: Bool -> Async Database -> String -> IO (Either String String)
 processCmd isJson db cmd' = run (fmap (first ($ db)) $ (if isJson then parseJson else parseCmd) commands cmd') (return . onError isJson) (return . onOk isJson) where
-	onError True err = L.unpack $ encode err
-	onError False err = unlines $ ("error: " ++ errorMsg err) : map ('\t':) (concatMap (uncurry showP) (M.toList (errorParams err)))
-	onOk True (_, v) = L.unpack $ encode v
-	onOk False (as, v) = case v of
+	onError True err = Right $ L.unpack $ encode err
+	onError False err = Right $ unlines $ ("error: " ++ errorMsg err) : map ('\t':) (concatMap (uncurry showP) (M.toList (errorParams err)))
+	onOk True (_, ResultExit) = Left $ L.unpack $ encode ResultExit
+	onOk True (_, v) = Right $ L.unpack $ encode v
+	onOk False (_, ResultExit) = Left "bye"
+	onOk False (as, v) = Right $ case v of
 		ResultDeclarations decls -> unlines $ map (formatResult fmt) decls
 		ResultModules ms -> unlines $ map (formatModules fmt) ms
 		ResultOk ps -> unlines $ "ok" : map ('\t':) (concatMap (uncurry showP) (M.toList ps))
