@@ -58,11 +58,14 @@ mainCommands = [
 		liftIO $ listen s maxListenQueue
 		db <- liftIO newAsync
 		forever $ liftIO $ do
+			putStrLn "listening for connection"
 			s' <- fmap fst $ accept s
 			h <- socketToHandle s' ReadWriteMode
 			str <- hGetLine h
+			putStrLn $ "received: " ++ str
 			r <- processCmd True db str
 			hPutStrLn h r
+			putStrLn "response sent"
 			hClose h]
 
 main :: IO ()

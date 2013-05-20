@@ -40,7 +40,7 @@ instance NFData Database where
 	rnf (Database cm f p ms ss) = rnf cm `seq` rnf f `seq` rnf p `seq` rnf ms `seq` rnf ss
 
 instance Group Database where
-	add old new = force Database {
+	add old new = Database {
 		databaseCabalModules = M.unionWith M.union (databaseCabalModules old') (databaseCabalModules new),
 		databaseFiles = databaseFiles old' `M.union` databaseFiles new,
 		databaseProjects = databaseProjects old' `M.union` databaseProjects new,
@@ -48,7 +48,7 @@ instance Group Database where
 		databaseSymbols = add (databaseSymbols old') (databaseSymbols new) }
 		where
 			old' = sub old (databaseIntersection old new)
-	sub old new = force Database {
+	sub old new = Database {
 		databaseCabalModules = M.differenceWith diff' (databaseCabalModules old) (databaseCabalModules new),
 		databaseFiles = M.difference (databaseFiles old) (databaseFiles new),
 		databaseProjects = M.difference (databaseProjects old) (databaseProjects new),
@@ -65,14 +65,14 @@ instance Monoid Database where
 
 -- | Database intersection, returns data from first database
 databaseIntersection :: Database -> Database -> Database
-databaseIntersection l r = force $ createIndexes $ mempty {
+databaseIntersection l r = createIndexes $ mempty {
 	databaseCabalModules = M.intersectionWith M.intersection (databaseCabalModules l) (databaseCabalModules r),
 	databaseFiles = M.intersection (databaseFiles l) (databaseFiles r),
 	databaseProjects = M.intersection (databaseProjects l) (databaseProjects r) }
 
 -- | Create indexes
 createIndexes :: Database -> Database
-createIndexes db = force $ db {
+createIndexes db = db {
 	databaseModules = groupSum $ map (\m -> M.singleton (symbolName m) (S.singleton m)) ms,
 	databaseSymbols = groupSum $ map (M.map S.singleton . moduleDeclarations . symbol) ms }
 	where
@@ -80,7 +80,7 @@ createIndexes db = force $ db {
 
 -- | Make database from module
 fromModule :: Symbol Module -> Database
-fromModule m = force $ fromMaybe (error "Module must specify source file or cabal") (inSource `mplus` inCabal) where
+fromModule m = fromMaybe (error "Module must specify source file or cabal") (inSource `mplus` inCabal) where
 	inSource = do
 		loc <- symbolLocation m
 		return $ createIndexes $ Database mempty (M.singleton (locationFile loc) m) mempty zero zero
