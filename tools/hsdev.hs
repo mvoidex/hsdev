@@ -7,6 +7,7 @@ module Main (
 import Control.Applicative
 import Control.Arrow
 import Control.Concurrent
+import Control.Exception
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Error
@@ -57,7 +58,7 @@ mainCommands = [
 		liftIO $ bind s (SockAddrInet (fromInteger p) iNADDR_ANY)
 		liftIO $ listen s maxListenQueue
 		db <- liftIO newAsync
-		forever $ liftIO $ do
+		forever $ liftIO $ handle ignoreIO $ do
 			putStrLn "listening for connection"
 			s' <- fmap fst $ accept s
 			h <- socketToHandle s' ReadWriteMode
@@ -67,6 +68,9 @@ mainCommands = [
 			hPutStrLn h r
 			putStrLn "response sent"
 			hClose h]
+	where
+		ignoreIO :: IOException -> IO ()
+		ignoreIO _ = return ()
 
 main :: IO ()
 main = withSocketsDo $ do
