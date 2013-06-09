@@ -9,7 +9,7 @@ import Control.Exception
 import Data.Map (Map)
 import qualified Data.Map as M
 
-import HDocs.Module (moduleDocs, configSession, runDocsM, formatDoc)
+import HDocs.Module (docs, runDocsM, formatDoc)
 
 import HsDev.Symbols
 
@@ -17,20 +17,19 @@ import HsDev.Symbols
 hdocs :: String -> [String] -> IO (Map String String)
 hdocs moduleName opts = catch hdocs' onError where
 	hdocs' = do
-		flags <- configSession opts
-		docs <- runDocsM $ fmap (M.map formatDoc) $ moduleDocs flags moduleName
-		return docs
+		d <- runDocsM $ docs opts moduleName
+		return $ either (const M.empty) (M.map formatDoc) d
 	onError :: SomeException -> IO (Map String String)
 	onError _ = return M.empty
 
 setDocs :: Map String String -> Symbol Module -> Symbol Module
-setDocs docs s = setModuleReferences $ fmap setDocs' s where
+setDocs d s = setModuleReferences $ fmap setDocs' s where
 	setDocs' m = m {
 		moduleDeclarations = M.mapWithKey setDoc $ moduleDeclarations m }
-	setDoc name decl = decl { symbolDocs = M.lookup name docs }
+	setDoc name decl = decl { symbolDocs = M.lookup name d }
 
 -- | Load docs for module
 loadDocs :: [String] -> Symbol Module -> IO (Symbol Module)
 loadDocs opts m = do
-	docs <- hdocs (symbolName m) opts
-	return $ setDocs docs m
+	d <- hdocs (symbolName m) opts
+	return $ setDocs d m

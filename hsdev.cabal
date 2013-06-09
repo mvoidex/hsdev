@@ -56,13 +56,16 @@ library
     transformers == 0.3.*,
     process == 1.1.*,
     regexpr == 0.5.*,
-    time == 1.4.*
+    time == 1.4.*,
+
+    attoparsec == 0.10.*,
+    unordered-containers == 0.2.*,
+    text == 0.11.*
 
 executable hsdev
   main-is: hsdev.hs
   hs-source-dirs: tools
   other-modules:
-    System.Args
     System.Command
   build-depends:
     base == 4.6.*,

@@ -2,118 +2,93 @@
 
 module System.Command (
 	Command(..),
-	Param(..), CommandError(..), CommandAction(..),
-	runAction,
-	(&&=),
-	cmd,
+	cmd, cmd_,
 	brief, help,
-	parseArgs, parseCmd, parseJson,
 	run,
-
-	module System.Args
+	opt, askOpt,
+	split, unsplit
 	) where
 
-import Control.Applicative
-import Control.Monad
-import Control.Monad.Reader
-import Control.Monad.Error
-import Data.Aeson hiding (json, Error)
-import Data.Either
+import Control.Arrow
+import Data.Char
+import Data.List (stripPrefix, unfoldr)
+import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Map (Map)
 import qualified Data.Map as M
-import qualified Data.HashMap.Strict as HM
-import Data.String
-import qualified Data.Text as T (unpack)
-import System.Args
+import Data.Monoid
+import System.Console.GetOpt
 
 -- | Command
 data Command a = Command {
-	commandName :: String,
-	commandId :: a,
+	commandName :: [String],
+	commandPosArgs :: [String],
 	commandDesc :: Maybe String,
-	commandArgs :: ArgsSpec }
-
--- | Parameter
-data Param =
-	Param String |
-	List [String] |
-	Dictionary (Map String Param)
-
-instance ToJSON Param where
-	toJSON (Param str) = toJSON str
-	toJSON (List ps) = toJSON ps
-	toJSON (Dictionary d) = toJSON d
-
--- | Command error
-data CommandError = CommandError {
-	errorMsg :: String,
-	errorParams :: Map String Param }
-
-(&&=) :: CommandError -> [(String, Param)] -> CommandError
-e &&= es = e { errorParams = M.fromList es `M.union` errorParams e }
-
-instance Error CommandError where
-	noMsg = CommandError noMsg M.empty
-	strMsg m = CommandError m M.empty
-
-instance ToJSON CommandError where
-	toJSON (CommandError msg params) = object [
-		"error" .= msg,
-		"params" .= params]
-
--- | Command action
-newtype CommandAction a = CommandAction {
-	runCommand :: ReaderT Args (ErrorT CommandError IO) a }
-		deriving (Functor, Monad, MonadReader Args, MonadIO, Applicative, MonadError CommandError)
-
--- | Run CommandAction
-runAction :: CommandAction a -> Args -> (CommandError -> IO b) -> (a -> IO b) -> IO b
-runAction c as onError onOk = runErrorT (runReaderT (runCommand c) as) >>= either onError onOk
+	commandUsage :: [String],
+	commandRun :: [String] -> Maybe (Either [String] a) }
 
 -- | Make command
-cmd :: String -> String -> ArgsSpec -> a -> Command a
-cmd name d as cmdId = Command name cmdId (Just d) as
+cmd :: Monoid c => [String] -> [String] -> String -> [OptDescr c] -> (c -> [String] -> a) -> Command a
+cmd name posArgs descr as act = Command {
+	commandName = name,
+	commandPosArgs = posArgs,
+	commandDesc = descr',
+	commandUsage = lines $ usageInfo (unwords (name ++ map (\a -> "[" ++ a ++ "]") posArgs) ++ maybe "" (" -- " ++) descr') as,
+	commandRun = \opts -> case getOpt Permute as opts of
+		(opts', cs, errs) -> fmap (\cs' -> if null errs then return (act (mconcat opts') cs') else Left errs) (stripPrefix name cs) }
+	where
+		descr' = if null descr then Nothing else Just descr
+
+-- | Make command without params
+cmd_ :: [String] -> [String] -> String -> ([String] -> a) -> Command a
+cmd_ name posArgs descr act = cmd name posArgs descr [] (act' act) where
+	act' :: a -> () -> a
+	act' = const
 
 -- | Show brief help for command
 brief :: Command a -> String
-brief c = unwords $ [commandName c, head (usage (commandArgs c))] ++ maybe [] (return . ("-- " ++)) (commandDesc c)
+brief = head . commandUsage
 
--- | Show help for command
+-- | Show detailed help for command
 help :: Command a -> [String]
-help c = brief c : tail (usage (commandArgs c))
+help = commandUsage
 
--- | Parse command by args
-parseArgs :: [Command a] -> [String] -> Either String (a, Args)
-parseArgs _ [] = Left "No command given"
-parseArgs cmds (cmdName : cmdArgs) = parse cmds args cmdName cmdArgs
+-- | Run commands
+run :: [Command a] -> a -> ([String] -> a) -> [String] -> a
+run cmds onDef onError as = maybe onDef (either onError id) found where
+	found = listToMaybe $ mapMaybe (`commandRun` as) cmds
 
--- | Parse command
-parseCmd :: [Command a] -> String -> Either String (a, Args)
-parseCmd _ "" = Left "No command given"
-parseCmd cmds str = parse cmds args cmdName cmdArgs where
-	(cmdName : cmdArgs) = split str
+opt :: String -> String -> Map String String
+opt name value = M.singleton name value
 
--- | Parse command from JSON
-parseJson :: [Command a] -> String -> Either String (a, Args)
-parseJson cmds i = eitherDecode (fromString i) >>= parse' where
-	parse' (Object v) = do
-		nameVal <- maybe (Left "No command given") Right $ HM.lookup (fromString "cmd") v
-		cmdName <- case nameVal of
-			String str -> Right (T.unpack str)
-			_ -> Left "Can't read command name"
-		parse cmds json cmdName cmdArgs
-		where
-			cmdArgs = Object $ HM.delete (fromString "cmd") v
-	parse' _ = Left "Invalid value"
+askOpt :: String -> Map String String -> Maybe String
+askOpt = M.lookup
 
--- | Run parsed command
-run :: Either String (CommandAction a, Args) -> (CommandError -> IO r) -> (a -> IO r) -> IO r
-run (Left e) onError _ = onError $ strMsg e
-run (Right (act, as)) onError onOk = runAction act as onError onOk
+-- | Split string to words
+split :: String -> [String]
+split "" = []
+split (c:cs)
+	| isSpace c = split cs
+	| c == '"' = let (w, cs') = readQuote cs in w : split cs'
+	| otherwise = let (ws, tl) = break isSpace cs in (c:ws) : split tl
+	where
+		readQuote :: String -> (String, String)
+		readQuote "" = ("", "")
+		readQuote ('\\':ss)
+			| null ss = ("\\", "")
+			| otherwise = first (head ss :) $ readQuote (tail ss)
+		readQuote ('"':ss) = ("", ss)
+		readQuote (s:ss) = first (s:) $ readQuote ss
 
-parse :: [Command a] -> (ArgsSpec -> b -> Either String Args) -> String -> b -> Either String (a, Args)
-parse cmds f cmdName cmdArgs = if null oks then err else Right (head oks) where
-	cmds' = filter ((== cmdName) . commandName) cmds
-	(fails, oks) = partitionEithers $ map parseCmd' cmds'
-	err = Left $ unlines (("Can't parse " ++ cmdName ++ ":") : map ('\t':) fails)
-	parseCmd' c = liftM ((,) (commandId c)) $ f (commandArgs c) cmdArgs
+unsplit :: [String] -> String
+unsplit = unwords . map escape where
+	escape :: String -> String
+	escape str
+		| any isSpace str || '"' `elem` str = "\"" ++ concat (unfoldr escape' str) ++ "\""
+		| otherwise = str
+	escape' :: String -> Maybe (String, String)
+	escape' [] = Nothing
+	escape' (ch:tl) = Just (escaped, tl) where
+		escaped = case ch of
+			'"' -> "\\\""
+			'\\' -> "\\\\"
+			_ -> [ch]

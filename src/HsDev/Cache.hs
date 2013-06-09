@@ -14,18 +14,26 @@ import Control.Applicative
 import Control.Monad
 import Data.Aeson
 import Data.Aeson.Encode.Pretty
-import qualified Data.ByteString.Lazy as BS
+import Data.Aeson.Types (Parser)
+import qualified Data.ByteString.Lazy.Char8 as BS
 import Data.Char
 import Data.List
+import qualified Data.HashMap.Strict as HM (HashMap, toList)
 import Data.Maybe
 import Data.Map (Map)
 import Data.Monoid
 import qualified Data.Map as M
+import Data.Text (Text)
 import System.FilePath
 
 import HsDev.Symbols
 import HsDev.Project
 import HsDev.Database
+
+
+-- | Workaround, sometimes we get HM.lookup "foo" v == Nothing, but lookup "foo" (HM.toList v) == Just smth
+(.::) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser a
+v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lookup name $ HM.toList v
 
 instance ToJSON Location where
 	toJSON loc = object [
@@ -36,10 +44,10 @@ instance ToJSON Location where
 
 instance FromJSON Location where
 	parseJSON (Object v) = location <$>
-		v .: "file" <*>
-		v .: "line" <*>
-		v .: "column" <*>
-		v .: "project"
+		v .:: "file" <*>
+		v .:: "line" <*>
+		v .:: "column" <*>
+		v .:: "project"
 	parseJSON _ = mzero
 
 instance ToJSON Project where
@@ -57,10 +65,10 @@ instance ToJSON Import where
 
 instance FromJSON Import where
 	parseJSON (Object v) = Import <$>
-		v .: "name" <*>
-		v .: "qualified" <*>
-		v .: "as" <*>
-		v .: "loc"
+		v .:: "name" <*>
+		v .:: "qualified" <*>
+		v .:: "as" <*>
+		v .:: "loc"
 	parseJSON _ = mzero
 
 instance ToJSON a => ToJSON (Symbol a) where
@@ -72,12 +80,12 @@ instance ToJSON a => ToJSON (Symbol a) where
 
 instance FromJSON a => FromJSON (Symbol a) where
 	parseJSON (Object v) = Symbol <$>
-		v .: "name" <*>
+		v .:: "name" <*>
 		pure Nothing <*>
-		v .: "docs" <*>
-		v .: "location" <*>
+		v .:: "docs" <*>
+		v .:: "location" <*>
 		pure [] <*>
-		v .: "symbol"
+		v .:: "symbol"
 	parseJSON _ = mzero
 
 instance ToJSON Cabal where
@@ -100,10 +108,10 @@ instance ToJSON Module where
 
 instance FromJSON Module where
 	parseJSON (Object v) = Module <$>
-		v .: "exports" <*>
-		v .: "imports" <*>
-		v .: "declarations" <*>
-		v .: "cabal"
+		v .:: "exports" <*>
+		v .:: "imports" <*>
+		v .:: "declarations" <*>
+		v .:: "cabal"
 	parseJSON _ = mzero
 
 instance ToJSON TypeInfo where
@@ -114,9 +122,9 @@ instance ToJSON TypeInfo where
 
 instance FromJSON TypeInfo where
 	parseJSON (Object v) = TypeInfo <$>
-		v .: "ctx" <*>
-		v .: "args" <*>
-		v .: "definition"
+		v .:: "ctx" <*>
+		v .:: "args" <*>
+		v .:: "definition"
 	parseJSON _ = mzero
 
 instance ToJSON Declaration where
@@ -137,10 +145,10 @@ instance ToJSON Declaration where
 		"info" .= i]
 
 instance FromJSON Declaration where
-	parseJSON (Object v) = (Function <$> v .: "type") <|> parseType where
+	parseJSON (Object v) = (Function <$> v .:: "type") <|> parseType where
 		parseType = do
-			w <- fmap (id :: String -> String) $ v .: "what"
-			i <- v .: "info"
+			w <- fmap (id :: String -> String) $ v .:: "what"
+			i <- v .:: "info"
 			let
 				ctor = case w of
 					"type" -> Type
@@ -168,16 +176,16 @@ dump :: FilePath -> Map String (Symbol Module) -> IO ()
 dump file = BS.writeFile file . encodePretty
 
 -- | Load cache from file
-load :: FilePath -> IO Database
+load :: FilePath -> IO (Either String Database)
 load file = do
 	cts <- BS.readFile file
 	let
-		ms = maybe M.empty (M.map setModuleReferences) $ decode cts
-	p <- loadProj $ nub $ mapMaybe (symbolLocation >=> locationProject) $ M.elems ms
-	return $ mappend p (toDatabase ms)
+		ms = fmap (M.map setModuleReferences) $ eitherDecode cts
+	return $ fmap (\ms' -> mappend (p ms') (toDatabase ms')) ms
 	where
-		loadProj [proj] = return $ fromProject proj
-		loadProj _ = return mempty
+		p = loadProj . nub . mapMaybe (symbolLocation >=> locationProject) . M.elems
+		loadProj [proj] = fromProject proj
+		loadProj _ = mempty
 
 toDatabase :: Map String (Symbol Module) -> Database
 toDatabase = mconcat . map fromModule . M.elems
