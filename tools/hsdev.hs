@@ -63,26 +63,33 @@ mainCommands = [
 			db <- newAsync
 			forever $ do
 				s <- getLine
-				r <- processCmd db s
-				putStrLn $ either id id r
-				either (const exitSuccess) (const $ return ()) r,
+				r <- processCmd db s putStrLn
+				unless r exitSuccess,
 	cmd ["server"] [] "start server" [
 		Option ['p'] ["port"] (ReqArg (First . readMaybe) "n") "port number"] $ \p _ -> do
-			s <- socket AF_INET Stream defaultProtocol
-			bind s (SockAddrInet (maybe 4567 fromInteger (getFirst p)) iNADDR_ANY)
-			listen s maxListenQueue
-			db <- newAsync
-			forever $ handle ignoreIO $ do
-				putStrLn "listening for connection"
-				s' <- fmap fst $ accept s
-				h <- socketToHandle s' ReadWriteMode
-				str <- hGetLine h
-				putStrLn $ "received: " ++ str
-				r <- processCmd db str
-				hPutStrLn h $ either id id r
-				either (const exitSuccess) (const $ return ()) r
-				putStrLn "response sent"
-				hClose h]
+			msgs <- newChan
+			forkIO $ getChanContents msgs >>= mapM_ putStrLn
+			thId <- myThreadId
+			let
+				outputStr = writeChan msgs
+			forkIO $ do
+				s <- socket AF_INET Stream defaultProtocol
+				bind s (SockAddrInet (maybe 4567 fromInteger (getFirst p)) iNADDR_ANY)
+				listen s maxListenQueue
+				db <- newAsync
+				forever $ handle ignoreIO $ do
+					outputStr "listening for connections"
+					s' <- fmap fst $ accept s
+					void $ forkIO $ bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
+						str <- hGetLine h
+						outputStr $ "received: " ++ str
+						r <- processCmd db str (hPutStrLn h)
+						unless r $ throwTo thId ExitSuccess
+			forever $ do
+				c <- getLine
+				case c of
+					"exit" -> exitSuccess
+					_ -> outputStr "enter 'exit' to quit"]
 	where
 		ignoreIO :: IOException -> IO ()
 		ignoreIO _ = return ()
@@ -122,39 +129,12 @@ main = withSocketsDo $ do
 					Option [] ["json"] (NoArg (mempty { clientJson = Any True })) "json output"] as
 				p = mconcat ps
 
---main :: IO ()
---main = withSocketsDo $ do
---	hSetBuffering stdout LineBuffering
---	hSetEncoding stdout utf8
---	(args'@(~(cmdName:cmdArgs))) <- getArgs
---	when (null args') $ do
---		printMainUsage
---		exitSuccess
---	case parseArgs mainCommands args' of
---		Right (act, as) -> runAction act as onError onOk
---		Left _ -> do
---			as <- either (\e -> putStrLn e >> return M.empty) return $ args_ cmdArgs
---			let
---				cmdSpec = maybe [] commandArgs $ find ((== cmdName) . commandName) commands
---				p = fromMaybe (4567 :: Integer) $ val "port" as
---				as' = unargsJson $ M.insert "cmd" [cmdName] $ implArgs cmdSpec $ M.delete "port" as
---			s <- socket AF_INET Stream defaultProtocol
---			addr' <- inet_addr "127.0.0.1"
---			connect s (SockAddrInet (fromIntegral p) addr')
---			h <- socketToHandle s ReadWriteMode
---			hPutStrLn h $ L.unpack $ encode as'
---			hGetContents h >>= putStrLn
---	where
---		onError :: CommandError -> IO ()
---		onError err = putStrLn $ L.unpack $ encode err
---		onOk :: () -> IO ()
---		onOk _ = return ()
-
 data CommandResult =
 	ResultDeclarations [Symbol Declaration] |
 	ResultModules [Symbol Module] |
 	ResultOk (Map String String) |
 	ResultError String (Map String String) |
+	ResultProcess ((String -> IO ()) -> IO ()) |
 	ResultExit
 
 instance ToJSON CommandResult where
@@ -171,6 +151,8 @@ instance ToJSON CommandResult where
 		"result" .= ("error" :: String),
 		"error" .= e,
 		"details" .= as]
+	toJSON (ResultProcess _) = object [
+		"result" .= ("process" :: String)]
 	toJSON ResultExit = object [
 		"result" .= ("exit" :: String)]
 
@@ -186,30 +168,42 @@ errArgs s as = ResultError s (M.fromList as)
 commands :: [Command (Async Database -> IO CommandResult)]
 commands = [
 	cmd ["scan", "cabal"] [] "scan modules installed in cabal" [
-		Option ['c'] ["cabal"] (ReqArg (First . Just) "path") "path to cabal sandbox"] $ \p _ db -> do
+		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox",
+		Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete",
+		Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"] $ \as _ db -> do
 			ms <- runErrorT list
+			cabal <- maybe (return Cabal) asCabal $ askOpt "cabal" as
 			case ms of
 				Left e -> return $ err $ "Failed to invoke ghc-mod 'list': " ++ e
-				Right r -> do
-					forkIO $ void $ runErrorT $ mapM_ (update db . scanModule (maybe Cabal CabalDev $ getFirst p)) r
-					return ok,
+				Right r -> startProcess as $ \onStatus -> do
+					forM_ r $ \mname -> do
+						result <- runErrorT $ update db $ scanModule cabal mname
+						either
+							(onStatus . (("error scanning module " ++ mname ++ ": ") ++))
+							(const $ onStatus $ "module " ++ mname ++ " scanned")
+							result,
 	cmd ["scan", "project"] [] "scan project" [
-		Option ['p'] ["project"] (ReqArg (First . Just) "path") "project's .cabal file"] $ \p _ db -> do
-			proj <- locateProject $ fromMaybe "." $ getFirst p
+		Option ['p'] ["project"] (ReqArg (opt "cabal") "path") "project's .cabal file",
+		Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete",
+		Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"] $ \as _ db -> do
+			proj <- locateProject $ fromMaybe "." $ askOpt "project" as
 			case proj of
-				Nothing -> return $ err $ "Project " ++ maybe "in current directory" (\p' -> "'" ++ p' ++ "'") (getFirst p) ++ " not found"
-				Just proj' -> do
-					forkIO $ void $ runErrorT $ update db $ scanProject proj'
-					return ok,
+				Nothing -> return $ err $ "Project " ++ maybe "in current directory" (\p' -> "'" ++ p' ++ "'") (askOpt "project" as) ++ " not found"
+				Just proj' -> startProcess as $ \onStatus -> do
+					result <- runErrorT $ update db $ scanProject proj'
+					either
+						(onStatus . (("error scanning project " ++ projectName proj' ++ ": ") ++))
+						(const $ onStatus $ "project " ++ projectName proj' ++ " scanned")
+						result,
 	cmd_ ["scan", "file"] ["source file"] "scan file" $ \fs db -> case fs of
 		[file] -> do
-			forkIO $ void $ runErrorT $ update db $ scanFile file
+			runErrorT $ update db $ scanFile file
 			return ok
 		_ -> return $ err "Invalid arguments",
 	cmd ["scan", "module"] ["module name"] "scan module in cabal" [
 		Option ['c'] ["cabal"] (ReqArg (First . Just) "path") "path to cabal sandbox"] $ \p ms db -> case ms of
 			[mname] -> do
-				forkIO $ void $ runErrorT $ update db $ scanModule (maybe Cabal CabalDev $ getFirst p) mname
+				runErrorT $ update db $ scanModule (maybe Cabal CabalDev $ getFirst p) mname
 				return ok
 			_ -> return $ err "Invalid arguments",
 	cmd ["find"] ["symbol"] "find symbol" [
@@ -395,209 +389,12 @@ commands = [
 		getDb :: (MonadIO m) => Async Database -> m Database
 		getDb = liftIO . readAsync
 
---commands :: [Command (Async Database -> CommandAction (Args, CommandResult))]
---commands = map addArgs [
---	cmd "scan" "scan modules installed in cabal" [cabal] $ \db -> do
---		forkAction $ do
---			cabal' <- force cabalArg
---			ms <- liftIO (runErrorT list) >>= either (\e -> throwError (strMsg ("Failed to invoke ghc-mod list: " ++ e))) return
---			mapM_ (liftCmd . update db . scanModule cabal') ms
---		return ok,
---	cmd "scan" "scan project" [arg "project" "p" |> desc "path to .cabal file"] $ \db -> do
---		forkAction $ do
---			projName <- asks (get_ "project")
---			proj <- liftIO $ locateProject projName
---			maybe (liftIO $ putStrLn $ "Project " ++ projName ++ " not found") (liftCmd . update db . scanProject) proj
---		return ok,
---	cmd "scan" "scan file" [arg "file" "f"] $ \db -> do
---		forkAction $ do
---			file <- force fileArg
---			liftCmd $ update db $ scanFile file
---		return ok,
---	cmd "scan" "scan module in cabal" [arg "module" "m", cabal] $ \db -> do
---		forkAction $ do
---			cabal' <- force cabalArg
---			mname <- asks (get_ "module")
---			liftCmd $ update db $ scanModule cabal' mname
---		return ok,
---	cmd "find" "find symbol" [
---		name,
---		arg "project" "p" |> opt,
---		arg "file" "f" |> opt,
---		arg "module" "m" |> opt,
---		cabal |> opt,
---		fmt |> def "detailed", nodocs, onlyname] $ \db -> do
---			dbval <- getDb db
---			nm <- asks (get_ "name")
---			rs <- liftCmd $ findDeclaration dbval nm
---			proj <- getProject db
---			file <- fileArg
---			filters <- liftM (satisfy . catMaybes) $ sequence [
---				return $ fmap inProject proj,
---				return $ fmap inFile file,
---				fmap (\h -> if h then Just bySources else Nothing) $ asks (has "file"),
---				fmap (fmap inModule) $ asks (get "module"),
---				fmap (fmap inCabal) cabalArg]
---			return $ ResultDeclarations $ filter filters rs,
---	cmd "list" "list modules" [arg "project" "p" |> opt, cabal |> opt] $ \db -> do
---		dbval <- getDb db
---		proj <- getProject db
---		filters <- liftM (satisfy . catMaybes) $ sequence [
---			return $ fmap inProject proj,
---			fmap (fmap inCabal) cabalArg]
---		return $ ResultOk $ M.singleton "modules" $ List $ map symbolName $ filter filters $ concatMap S.toList $ M.elems $ databaseModules dbval,
---	cmd "browse" "browse module" [
---		arg "module" "m",
---		arg "project" "p" |> opt,
---		cabal |> opt,
---		fmt |> def "detailed", nodocs, onlyname] $ \db -> do
---			dbval <- getDb db
---			mname <- asks (get_ "module")
---			rs <- liftCmd $ findModule dbval mname
---			proj <- getProject db
---			filters <- liftM (satisfy . catMaybes) $ sequence [
---				return $ fmap inProject proj,
---				fmap (fmap inCabal) cabalArg]
---			case filter filters rs of
---				[] -> throwError $ strMsg "Module not found" &&= [("module", Param mname)]
---				[m] -> return $ ResultModules [m]
---				ms' -> throwError $ strMsg "Ambiguous modules" &&= [("modules", List $ map showModule ms')],
---	cmd "goto" "find symbol declaration" [name, ctx |> opt, fmt |> def "detailed"] $ \db ->
---		liftM ResultDeclarations (withDbFileName db goToDeclaration),
---	cmd "info" "get info for symbol" [name, ctx |> opt] $ \db ->
---		liftM (ResultDeclarations . return) (withDbFileName db symbolInfo),
---	cmd "lookup" "find symbol" [name, ctx, fmt |> def "brief"] $ \db ->
---		liftM (either ResultDeclarations (ResultDeclarations . return)) (withDbFileName db lookupSymbol'),
---	cmd "import" "import module to bring symbol in scope" [name, ctx] $ \db -> do
---		dbval <- getDb db
---		file <- force fileArg
---		name <- asks (get_ "name")
---		ss <- liftCmd $ importSymbol dbval file name
---		return $ ResultOk $ M.singleton "imports" $ List ss,
---	cmd "complete" "autocompletion" [arg "input" "str" |> desc "string to complete", ctx, fmt |> def "name"] $ \db -> do
---		file <- force fileArg
---		dbval <- getDb db
---		maybe (throwError $ strMsg "Can't locate file in database" &&= [("file", Param file)]) (complete db) $ lookupFile file dbval,
---	cmd "complete" "autocompletion" [
---		arg "input" "str" |> desc "string to complete",
---		arg "module" "m",
---		cabal |> opt,
---		fmt |> def "name", nodocs, onlyname] $ \db -> do
---			mname <- asks (get_ "module")
---			dbval <- getDb db
---			cabal' <- fmap (fromMaybe Cabal) cabalArg
---			maybe (throwError $ strMsg "Can't find module specified" &&= [("module", Param mname)]) (complete db) $ lookupModule cabal' mname dbval,
---	cmd "dump" "dump file names loaded in database" [flag "files" |> expl] $ \db -> do
---		dbval <- getDb db
---		return $ ResultOk $ M.fromList $ map (snd &&& (Param . fst)) $ M.assocs $ M.map symbolName $ databaseFiles dbval,
---	cmd "dump" "dump module contents" [arg "file" "f" |> desc "file to dump"] $ \db -> do
---		dbval <- getDb db
---		file <- force fileArg
---		maybe (throwError $ strMsg "File not found" &&= [("file", Param file)]) (return . ResultModules . return) $ M.lookup file (databaseFiles dbval),
---	cmd "cache" "dump cache of cabal packages" [flag "dump" |> expl, cabal] $ \db -> do
---		cabal' <- force cabalArg
---		dbval <- getDb db
---		liftIO $ dump (cabalCache cabal') (cabalModules cabal' dbval)
---		return ok,
---	cmd "cache" "dump cache of project" [flag "dump" |> expl, arg "project" "p"] $ \db -> do
---		proj <- force projArg
---		dbval <- getDb db
---		liftIO $ dump (projectCache proj) (projectModules proj dbval)
---		return ok,
---	cmd "cache" "dump all" [flag "dump" |> expl, cachepath] $ \db -> do
---		dbval <- getDb db
---		path' <- force pathArg
---		liftIO $ do
---			createDirectoryIfMissing True (path' </> "cabal")
---			createDirectoryIfMissing True (path' </> "projects")
---			forM_ (M.keys $ databaseCabalModules dbval) $ \c -> dump (path' </> "cabal" </> cabalCache c) (cabalModules c dbval)
---			forM_ (M.keys $ databaseProjects dbval) $ \p -> dump (path' </> "projects" </> projectCache (project p)) (projectModules (project p) dbval)
---		return ok,
---	cmd "cache" "load cache for cabal packages" [flag "load" |> expl, cabal] $ \db -> cacheLoad db $ do
---		cabal' <- force cabalArg
---		liftIO $ load (cabalCache cabal'),
---	cmd "cache" "load cache for project" [flag "load" |> expl, arg "project" "p"] $ \db -> cacheLoad db $ do
---		proj <- force projArg
---		liftIO $ load (projectCache proj),
---	cmd "cache" "load cache for directory" [flag "load" |> expl, cachepath] $ \db -> cacheLoad db $ do
---		path' <- force pathArg
---		cts <- liftM concat $ mapM (liftM (filter ((== ".json") . takeExtension)) . liftIO . getDirectoryContents') [path', path' </> "cabal", path' </> "projects"]
---		liftM mconcat $ forM cts $ \c -> liftIO $ do
---			e <- doesFileExist c
---			if e then load c else return mempty,
---	cmd "help" "this command" [arg "command" "name" |> opt] $ \_ -> do
---		asks (get "command") >>= maybe (liftIO printUsage) (\cmdName ->
---			liftIO (mapM_ (putStrLn . unlines . help) $ filter ((== cmdName) . commandName) commands))
---		return ok,
---	cmd "exit" "exit" [] $ \_ -> return ResultExit]
---	where
---		getDirectoryContents' :: FilePath -> IO [FilePath]
---		getDirectoryContents' p = do
---			b <- doesDirectoryExist p
---			if b then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p) else return []
-
---		lookupSymbol' d (Just f) s = lookupSymbol d f s
---		lookupSymbol' _ Nothing _ = throwError "No file"
-
---		withDbFileName :: Async Database -> (Database -> Maybe FilePath -> String -> ErrorT String IO a) -> CommandAction a
---		withDbFileName db f = join $ liftM3 (\x y z -> liftCmd (f x y z)) (getDb db) fileArg (asks $ get_ "name")
-
---		addArgs :: Command (Async Database -> CommandAction CommandResult) -> Command (Async Database -> CommandAction (Args, CommandResult))
---		addArgs c = c {
---			commandId = liftM2 (,) ask . commandId c }
-
---		cabal = arg "cabal" "sandbox" |> impl "" |> desc "path to sandbox"
---		name = arg "name" "symbol"
---		ctx = arg "file" "f" |> desc "context source file"
---		cachepath = arg "path" "p" |> def "." |> desc "cache path"
---		fmt = arg "format" "fmt" |> opt |> desc "output format, can be 'raw' (using print), 'name' for just name of symbol, 'brief' for short info, 'detailed' for detailed info and 'json' for json output"
---		nodocs = flag "nodocs"
---		onlyname = flag "onlyname"
-
---		complete :: Async Database -> Symbol Module -> CommandAction CommandResult
---		complete db m = do
---			dbval <- getDb db
---			input <- asks (get_ "input")
---			liftM ResultDeclarations (liftCmd $ completions dbval m input)
-
---		getDb :: (MonadIO m) => Async Database -> m Database
---		getDb = liftIO . readAsync
-
---		cabalArg :: (MonadReader Args m, MonadIO m, Applicative m) => m (Maybe Cabal)
---		cabalArg = asks (get "cabal") >>= traverse asCabal
---		projArg :: (MonadReader Args m, MonadIO m, Applicative m) => m (Maybe Project)
---		projArg = asks (get "project") >>= traverse (fmap project . liftIO . canonicalizePath)
---		fileArg :: (MonadReader Args m, MonadIO m, Applicative m) => m (Maybe FilePath)
---		fileArg = asks (get "file") >>= traverse (liftIO . canonicalizePath)
---		pathArg :: (MonadReader Args m, MonadIO m, Applicative m) => m (Maybe FilePath)
---		pathArg = asks (get "path") >>= traverse (liftIO . canonicalizePath)
---		force :: Monad m => m (Maybe a) -> m a
---		force = liftM fromJust
-
---		cacheLoad db act = do
---			db' <- act
---			liftIO $ modifyAsync db (Append db')
---			return ok
-
---		showModule = symbolName
-
---		asCabal "" = return Cabal
---		asCabal p = fmap CabalDev $ liftIO $ canonicalizePath p
-
---		getProject db = do
---			db' <- getDb db
---			projName <- asks (get "project")
---			let
---				foundProject = find ((== projName) . Just . projectName) $ M.elems $ databaseProjects db'
---			projCabal <- traverse (liftIO . canonicalizePath) projName
---			return $ msum [foundProject, fmap project projCabal]
-
---		liftCmd = CommandAction . lift . mapErrorT (fmap $ left strMsg)
-
---forkAction :: CommandAction a -> CommandAction ()
---forkAction act = do
---	r <- ask
---	liftIO $ void $ forkIO $ void $ runErrorT (runReaderT (runCommand act) r)
+		startProcess :: Map String String -> ((String -> IO ()) -> IO ()) -> IO CommandResult
+		startProcess as f
+			| isJust (askOpt "wait" as) = return $ ResultProcess (f . onMsg)
+			| otherwise = forkIO (f $ const $ return ()) >> return ok
+			where
+				onMsg showMsg = if isJust (askOpt "status" as) then showMsg else (const $ return ())
 
 printMainUsage :: IO ()
 printMainUsage = do
@@ -607,10 +404,10 @@ printMainUsage = do
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) commands
 
-processCmd :: Async Database -> String -> IO (Either String String)
-processCmd db cmdArgs = fmap (toResult (getAny $ mconcat isJson)) $ run commands (asCmd unknownCommand) (asCmd . commandError) cmdArgs' db where
-	(isJson, cmdArgs', _) = getOpt RequireOrder [Option [] ["json"] (NoArg (Any True)) "json output"] (split cmdArgs)
-
+processCmd :: Async Database -> String -> (String -> IO ()) -> IO Bool
+processCmd db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd . commandError) cmdArgs' db >>= processResult where
+	(isJsonArgs, cmdArgs', _) = getOpt RequireOrder [Option [] ["json"] (NoArg (Any True)) "json output"] (split cmdArgs)
+	isJson = getAny $ mconcat isJsonArgs
 	asCmd :: CommandResult -> (Async Database -> IO CommandResult)
 	asCmd r _ = return r
 
@@ -619,66 +416,38 @@ processCmd db cmdArgs = fmap (toResult (getAny $ mconcat isJson)) $ run commands
 	commandError :: [String] -> CommandResult
 	commandError errs = errArgs "Command syntax error" [("what", unlines errs)]
 
-	toResult True ResultExit = Left $ L.unpack $ encode ResultExit
-	toResult True v = Right $ L.unpack $ encode v
-	toResult False ResultExit = Left "bye"
-	toResult False v = Right $ case v of
-		ResultDeclarations decls -> unlines $ map (formatResult fmt) decls
-		ResultModules ms -> unlines $ map (formatModules fmt) ms
-		ResultOk ps -> unlines $ "ok" : map (('\t':) . uncurry showP) (M.toList ps)
-		ResultError e ds -> unlines $ ("error: " ++ e) : map (('\t':) . uncurry showP) (M.toList ds)
-		where
-			fmt :: String
-			fmt = "detailed" -- fromMaybe "raw" $ get "format" as
-			formatResult fmt' = case fmt' of
-				"raw" -> show
-				"name" -> symbolName
-				"brief" -> brief
-				"detailed" -> detailed
-				_ -> show
-			formatModules fmt' = case fmt' of
-				"raw" -> show
-				"name" -> symbolName
-				"brief" -> moduleBrief
-				"detailed" -> moduleDetailed
-				_ -> show
-			moduleBrief m
-				| bySources m = "module " ++ symbolName m ++ maybe "" (\l -> " (" ++ locationFile l ++ ")") (symbolLocation m)
-				| otherwise = "module " ++ symbolName m ++ maybe "" (\c -> " (" ++ show c ++ ")") (moduleCabal (symbol m))
-			moduleDetailed m = unlines $ moduleBrief m : map (formatResult ("brief" :: String)) (M.elems $ moduleDeclarations $ symbol m)
+	processResult :: CommandResult -> IO Bool
+	processResult (ResultProcess act) = act (printResult . showStatus) >> processResult ok where
+		showStatus s
+			| isJson = L.unpack $ encode $ object ["status" .= s]
+			| otherwise = "status: " ++ s
+	processResult ResultExit = printResult (if isJson then L.unpack (encode ResultExit) else "bye") >> return False
+	processResult v
+		| isJson = (printResult $ L.unpack $ encode v) >> return True
+		| otherwise = printResult str >> return True where
+			str = case v of
+				ResultDeclarations decls -> unlines $ map (formatResult fmt) decls
+				ResultModules ms -> unlines $ map (formatModules fmt) ms
+				ResultOk ps -> unlines $ "ok" : map (('\t':) . uncurry showP) (M.toList ps)
+				ResultError e ds -> unlines $ ("error: " ++ e) : map (('\t':) . uncurry showP) (M.toList ds)
+				where
+					fmt :: String
+					fmt = "detailed" -- fromMaybe "raw" $ get "format" as
+					formatResult fmt' = case fmt' of
+						"raw" -> show
+						"name" -> symbolName
+						"brief" -> brief
+						"detailed" -> detailed
+						_ -> show
+					formatModules fmt' = case fmt' of
+						"raw" -> show
+						"name" -> symbolName
+						"brief" -> moduleBrief
+						"detailed" -> moduleDetailed
+						_ -> show
+					moduleBrief m
+						| bySources m = "module " ++ symbolName m ++ maybe "" (\l -> " (" ++ locationFile l ++ ")") (symbolLocation m)
+						| otherwise = "module " ++ symbolName m ++ maybe "" (\c -> " (" ++ show c ++ ")") (moduleCabal (symbol m))
+					moduleDetailed m = unlines $ moduleBrief m : map (formatResult ("brief" :: String)) (M.elems $ moduleDeclarations $ symbol m)
 	showP :: String -> String -> String
 	showP n v = n ++ ": " ++ v
-
---processCmd :: Bool -> Async Database -> String -> IO (Either String String)
---processCmd isJson db cmd' = run (fmap (first ($ db)) $ (if isJson then parseJson else parseCmd) commands cmd') (return . onError isJson) (return . onOk isJson) where
---	onError True err = Right $ L.unpack $ encode err
---	onError False err = Right $ unlines $ ("error: " ++ errorMsg err) : map ('\t':) (concatMap (uncurry showP) (M.toList (errorParams err)))
---	onOk True (_, ResultExit) = Left $ L.unpack $ encode ResultExit
---	onOk True (_, v) = Right $ L.unpack $ encode v
---	onOk False (_, ResultExit) = Left "bye"
---	onOk False (as, v) = Right $ case v of
---		ResultDeclarations decls -> unlines $ map (formatResult fmt) decls
---		ResultModules ms -> unlines $ map (formatModules fmt) ms
---		ResultOk ps -> unlines $ "ok" : map ('\t':) (concatMap (uncurry showP) (M.toList ps))
---		where
---			fmt = fromMaybe "raw" $ get "format" as
---			formatResult fmt' = case fmt' of
---				"raw" -> show
---				"name" -> symbolName
---				"brief" -> brief
---				"detailed" -> detailed
---				_ -> show
---			formatModules fmt' = case fmt' of
---				"raw" -> show
---				"name" -> symbolName
---				"brief" -> moduleBrief
---				"detailed" -> moduleDetailed
---				_ -> show
---			moduleBrief m
---				| bySources m = "module " ++ symbolName m ++ maybe "" (\l -> " (" ++ locationFile l ++ ")") (symbolLocation m)
---				| otherwise = "module " ++ symbolName m ++ maybe "" (\c -> " (" ++ show c ++ ")") (moduleCabal (symbol m))
---			moduleDetailed m = unlines $ moduleBrief m : map (formatResult ("brief" :: String)) (M.elems $ moduleDeclarations $ symbol m)
---	showP :: String -> Param -> [String]
---	showP n (Param s) = [n ++ ": " ++ s]
---	showP n (List ls) = [n ++ ": [" ++ intercalate ", " ls ++ "]"]
---	showP n (Dictionary d) = (n ++ ":") : map ('\t':) (concatMap (uncurry showP) (M.toList d))
