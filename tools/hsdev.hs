@@ -281,10 +281,11 @@ commands = [
 	cmd_ ["complete", "file"] ["source file", "input"] "autocompletion" $ \as db -> case as of
 		[file, input] -> do
 			dbval <- getDb db
+			file' <- canonicalizePath file
 			maybe
 				(return $ errArgs "File is not scanned" [("file", file)])
 				(\m -> liftM (either err ResultDeclarations) (runErrorT (completions dbval m input)))
-				(lookupFile file dbval)
+				(lookupFile file' dbval)
 		_ -> return $ err "Invalid arguments",
 	cmd ["complete", "module"] ["module name", "input"] "autocompletion" [
 		Option ['c'] ["cabal"] (ReqArg (First . Just) "path") "path to cabal sandbox"] $ \p as db -> case as of
