@@ -1,5 +1,8 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module HsDev.Util (
 	traverseDirectory,
+	haskellSource,
 	-- * String utils
 	tab, tabs
 	) where
@@ -17,6 +20,9 @@ traverseDirectory path = do
 		if isDir
 			then traverseDirectory (path </> c)
 			else return [path </> c]
+
+haskellSource :: FilePath -> Bool
+haskellSource f = takeExtension f `elem` [".hs", ".lhs"]
 
 tab :: Int -> String -> String
 tab n s = replicate n '\t' ++ s

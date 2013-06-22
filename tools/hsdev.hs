@@ -44,6 +44,7 @@ import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Symbols.JSON
 import HsDev.Tools.GhcMod
+import HsDev.Util
 
 mainCommands :: [Command (IO ())]
 mainCommands = [
@@ -67,56 +68,64 @@ mainCommands = [
 				s <- getLine
 				r <- processCmd db s putStrLn
 				unless r exitSuccess,
-	cmd ["server", "start"] [] "start remote server" [
-		Option ['p'] ["port"] (ReqArg (First . readMaybe) "n") "port number"] $ \p _ -> do
-			pname <- getExecutablePath
-			void $ runInteractiveProcess pname (["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst p :: Maybe Int)) Nothing Nothing
-			putStrLn $ "Server started at port " ++ show (maybe 4567 fromIntegral (getFirst p)),
-	cmd ["server", "run"] [] "start server" [
-		Option ['p'] ["port"] (ReqArg (First . readMaybe) "n") "port number"] $ \p _ -> do
-			msgs <- newChan
-			forkIO $ getChanContents msgs >>= mapM_ putStrLn
-			thId <- myThreadId
-			exitVar <- newEmptyMVar
-			let
-				outputStr = writeChan msgs
-			forkIO $ do
-				s <- socket AF_INET Stream defaultProtocol
-				bind s (SockAddrInet (maybe 4567 fromInteger (getFirst p)) iNADDR_ANY)
-				listen s maxListenQueue
-				db <- newAsync
-				forever $ handle ignoreIO $ do
-					outputStr "listening for connections"
-					s' <- fmap fst $ accept s
-					void $ forkIO $ bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-						str <- hGetLine h
-						outputStr $ "received: " ++ str
-						r <- processCmd db str (hPutStrLn h)
-						unless r $ putMVar exitVar ()
-			forkIO $ do
-				c <- getLine
-				case c of
-					"exit" -> putMVar exitVar ()
-					_ -> outputStr "enter 'exit' to quit"
-			takeMVar exitVar,
-	cmd ["server", "stop"] [] "stop remote server" [
-		Option ['p'] ["port"] (ReqArg (First . readMaybe) "n") "port number"] $ \p _ -> do
-			pname <- getProgName
-			r <- readProcess pname (["--json", "exit"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst p :: Maybe Int)) ""
-			let
-				stopped = case decode (L.pack r) of
-					Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
-						res <- obj .: "result"
-						return (res == ("exit" :: String))
-					_ -> False
-			if stopped then putStrLn "Server stopped" else putStrLn ("Server returned: " ++ r)]
+	cmd ["server", "start"] [] "start remote server" clientOpts $ \copts _ -> do
+		pname <- getExecutablePath
+		void $ runInteractiveProcess pname (["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts)) Nothing Nothing
+		printOk copts $ "Server started at port " ++ show (fromMaybe 4567 (getFirst $ clientPort copts)),
+	cmd ["server", "run"] [] "start server" clientOpts $ \copts _ -> do
+		msgs <- newChan
+		forkIO $ getChanContents msgs >>= mapM_ (printOk copts)
+		exitVar <- newEmptyMVar
+		let
+			outputStr = writeChan msgs
+		forkIO $ do
+			s <- socket AF_INET Stream defaultProtocol
+			bind s (SockAddrInet (maybe 4567 fromIntegral (getFirst $ clientPort copts)) iNADDR_ANY)
+			listen s maxListenQueue
+			db <- newAsync
+			forever $ handle ignoreIO $ do
+				outputStr "listening for connections"
+				s' <- fmap fst $ accept s
+				void $ forkIO $ bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
+					str <- hGetLine h
+					outputStr $ "received: " ++ str
+					r <- processCmd db str (hPutStrLn h)
+					unless r $ putMVar exitVar ()
+		forkIO $ do
+			c <- getLine
+			case c of
+				"exit" -> putMVar exitVar ()
+				_ -> outputStr "enter 'exit' to quit"
+		takeMVar exitVar,
+	cmd ["server", "stop"] [] "stop remote server" clientOpts $ \copts _ -> do
+		pname <- getExecutablePath
+		r <- readProcess pname (["--json", "exit"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts)) ""
+		let
+			stopped = case decode (L.pack r) of
+				Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
+					res <- obj .: "result"
+					return (res == ("exit" :: String))
+				_ -> False
+		printOk copts $ if stopped then "Server stopped" else "Server returned: " ++ r]
 	where
 		ignoreIO :: IOException -> IO ()
 		ignoreIO _ = return ()
 
+		printOk :: ClientOpts -> String -> IO ()
+		printOk copts str
+			| getAny (clientJson copts) = putStrLn $ L.unpack $ encode $ object [
+				"result" .= ("ok" :: String),
+				"message" .= str]
+			| otherwise = putStrLn str
+
 data ClientOpts = ClientOpts {
 	clientPort :: First Int,
 	clientJson :: Any }
+
+clientOpts :: [OptDescr ClientOpts]
+clientOpts = [
+	Option [] ["port"] (ReqArg (\p -> mempty { clientPort = First (readMaybe p) }) "number") "connection port",
+	Option [] ["json"] (NoArg (mempty { clientJson = Any True })) "json output"]
 
 instance Monoid ClientOpts where
 	mempty = ClientOpts mempty mempty
@@ -144,9 +153,7 @@ main = withSocketsDo $ do
 			hPutStrLn h $ unsplit $ (if getAny (clientJson p) then ("--json":) else id) as'
 			hGetContents h >>= putStrLn
 			where
-				(ps, as', _) = getOpt RequireOrder [
-					Option [] ["port"] (ReqArg (\p -> mempty { clientPort = First (readMaybe p) }) "number") "connection port",
-					Option [] ["json"] (NoArg (mempty { clientJson = Any True })) "json output"] as
+				(ps, as', _) = getOpt RequireOrder clientOpts as
 				p = mconcat ps
 
 data CommandResult =
@@ -189,10 +196,8 @@ errArgs s as = ResultError s (M.fromList as)
 
 commands :: [Command (Async Database -> IO CommandResult)]
 commands = [
-	cmd ["scan", "cabal"] [] "scan modules installed in cabal" [
-		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox",
-		Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete",
-		Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"] $ \as _ db -> do
+	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox" : waitStatusOpts) $
+		\as _ db -> do
 			ms <- runErrorT list
 			cabal <- maybe (return Cabal) asCabal $ askOpt "cabal" as
 			case ms of
@@ -204,10 +209,8 @@ commands = [
 							(onStatus . (("error scanning module " ++ mname ++ ": ") ++))
 							(const $ onStatus $ "module " ++ mname ++ " scanned")
 							result,
-	cmd ["scan", "project"] [] "scan project" [
-		Option ['p'] ["project"] (ReqArg (opt "cabal") "path") "project's .cabal file",
-		Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete",
-		Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"] $ \as _ db -> do
+	cmd ["scan", "project"] [] "scan project" (Option ['p'] ["project"] (ReqArg (opt "project") "path") "project's .cabal file" : waitStatusOpts) $
+		\as _ db -> do
 			proj <- locateProject $ fromMaybe "." $ askOpt "project" as
 			case proj of
 				Nothing -> return $ err $ "Project " ++ maybe "in current directory" (\p' -> "'" ++ p' ++ "'") (askOpt "project" as) ++ " not found"
@@ -217,6 +220,21 @@ commands = [
 						(onStatus . (("error scanning project " ++ projectName proj' ++ ": ") ++))
 						(const $ onStatus $ "project " ++ projectName proj' ++ " scanned")
 						result,
+	cmd ["scan", "path"] ["path to scan"] "scan directory" waitStatusOpts $ \as ps db -> case ps of
+		[dir] -> do
+			exists <- doesDirectoryExist dir
+			case exists of
+				False -> return $ err $ "Invalid directory: " ++ dir
+				True -> startProcess as $ \onStatus -> do
+					onStatus $ "scanning " ++ dir ++ " for haskell sources"
+					srcs <- liftM (filter haskellSource) $ traverseDirectory dir
+					forM_ srcs $ \src -> do
+						result <- runErrorT $ update db $ scanFile src
+						either
+							(onStatus . (("error scanning file " ++ src ++ ": ") ++))
+							(const $ onStatus $ "file " ++ src ++ " scanned")
+							result
+		_ -> return $ err "Invalid arguments",
 	cmd_ ["scan", "file"] ["source file"] "scan file" $ \fs db -> case fs of
 		[file] -> do
 			runErrorT $ update db $ scanFile file
@@ -228,6 +246,51 @@ commands = [
 				runErrorT $ update db $ scanModule (maybe Cabal CabalDev $ getFirst p) mname
 				return ok
 			_ -> return $ err "Invalid arguments",
+	cmd ["rescan"] [] "rescan sources" ([
+		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to rescan",
+		Option ['f'] ["file"] (ReqArg (opt "file") "path") "file to rescan",
+		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ waitStatusOpts) $
+			\as ns db -> do
+				dbval <- getDb db
+				projectMods <- traverse (fmap (\p -> projectModules p dbval) . getProject db) $ askOpt "project" as
+				let
+					fileMods = do
+						file' <- askOpt "file" as
+						fmod <- lookupFile file' dbval
+						return $ M.singleton file' fmod
+					dirMods = do
+						dir' <- askOpt "dir" as
+						return $ M.filterWithKey (\f _ -> isParent dir' f) $ databaseFiles dbval
+					allMods = Just $ databaseFiles dbval
+					rescanMods = fromMaybe (error "Impossible happened") $ msum [projectMods, fileMods, dirMods, allMods]
+				startProcess as $ \onStatus -> do
+					forM_ (M.elems rescanMods) $ \m -> do
+						result <- runErrorT $ do
+							srcFile <- maybe (throwError $ "error rescanning module '" ++ symbolName m ++ "': source not specified") (return . locationFile) $ symbolLocation m
+							r <- catchError (update db $ scanFile srcFile) (throwError . (("error rescanning file '" ++ srcFile ++ "': ") ++))
+							return srcFile
+						either onStatus (\src -> onStatus ("file '" ++ src ++ "' rescanned")) result,
+	cmd ["clean"] [] "clean info about modules" [
+		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox",
+		Option ['p'] ["project"] (ReqArg (opt "project") "path") "module project",
+		Option ['f'] ["file"] (ReqArg (opt "file") "source") "module source file",
+		Option ['m'] ["module"] (ReqArg (opt "module") "module name") "module name"] $ \as _ db -> do
+			dbval <- getDb db
+			cabal <- traverse asCabal $ askOpt "cabal" as
+			proj <- traverse (getProject db) $ askOpt "project" as
+			file <- traverse canonicalizePath $ askOpt "file" as
+			let
+				filters = satisfy $ catMaybes [
+					fmap inProject proj,
+					fmap inFile file,
+					fmap inModule (askOpt "module" as),
+					fmap inCabal cabal]
+				toClean = filter filters (flattenModules dbval)
+				mkey m
+					| bySources m = "sources"
+					| otherwise = maybe "<null>" show $ moduleCabal (symbol m)
+			mapM_ (modifyAsync db . Remove . fromModule) toClean
+			return $ ResultOk $ M.map unlines $ M.unionsWith (++) $ map (uncurry M.singleton . (mkey &&& (return . symbolName))) toClean,
 	cmd ["find"] ["symbol"] "find symbol" [
 		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to find in",
 		Option ['f'] ["file"] (ReqArg (opt "file") "path") "file to find in",
@@ -235,7 +298,7 @@ commands = [
 		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"] $ \as ns db -> case ns of
 			[nm] -> do
 				dbval <- getDb db
-				proj <- maybe (return Nothing) (fmap Just . getProject db) $ askOpt "project" as
+				proj <- traverse (getProject db) $ askOpt "project" as
 				file <- traverse canonicalizePath (askOpt "file" as)
 				cabal <- traverse asCabal $ askOpt "cabal" as
 				let
@@ -252,7 +315,7 @@ commands = [
 		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to list modules for",
 		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"] $ \as _ db -> do
 			dbval <- getDb db
-			proj <- maybe (return Nothing) (fmap Just . getProject db) $ askOpt "project" as
+			proj <- traverse (getProject db) $ askOpt "project" as
 			cabal <- traverse asCabal $ askOpt "cabal" as
 			let
 				filters = satisfy $ catMaybes [
@@ -264,7 +327,7 @@ commands = [
 		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"] $ \as ms db -> case ms of
 			[mname] -> do
 				dbval <- getDb db
-				proj <- maybe (return Nothing) (fmap Just . getProject db) $ askOpt "project" as
+				proj <- traverse (getProject db) $ askOpt "project" as
 				cabal <- traverse asCabal $ askOpt "cabal" as
 				let
 					filters = satisfy $ catMaybes [
@@ -349,6 +412,10 @@ commands = [
 			proj' <- getProject db proj
 			dump (projectCache proj') (projectModules proj' dbval)
 			return ok,
+	cmd_ ["cache", "dump", "standalone"] [] "dump cache of standalone files" $ \_ db -> do
+		dbval <- getDb db
+		dump standaloneCache (standaloneModules dbval)
+		return ok,
 	cmd_ ["cache", "dump", "all"] ["path"] "dump all" $ \as db -> do
 		if length as > 1
 			then return (err "Invalid arguments")
@@ -360,6 +427,7 @@ commands = [
 				createDirectoryIfMissing True (path </> "projects")
 				forM_ (M.keys $ databaseCabalModules dbval) $ \c -> dump (path </> "cabal" </> cabalCache c) (cabalModules c dbval)
 				forM_ (M.keys $ databaseProjects dbval) $ \p -> dump (path </> "projects" </> projectCache (project p)) (projectModules (project p) dbval)
+				dump (path </> standaloneCache) (standaloneModules dbval)
 				return ok,
 	cmd ["cache", "load", "cabal"] [] "load cache for cabal packages" [
 		Option ['c'] ["cabal"] (ReqArg (First . Just) "path") "path to cabal sandbox"] $ \p _ db -> do
@@ -372,13 +440,16 @@ commands = [
 			cacheLoad db . load . projectCache $ proj'
 			return ok
 		_ -> return $ err "Invalid arguments",
+	cmd_ ["cache", "load", "standalone"] [] "load cache for standalone files" $ \_ db -> do
+		cacheLoad db $ load standaloneCache
+		return ok,
 	cmd_ ["cache", "load", "all"] ["paths..."] "load cache from directory" $ \as db -> do
 		cts <- liftM concat $ mapM (liftM (filter ((== ".json") . takeExtension)) . getDirectoryContents') $ concatMap (\p -> [p, p </> "cabal", p </> "projects"]) (if null as then ["."] else as)
 		forM_ cts $ \c -> do
 			e <- doesFileExist c
 			when e $ cacheLoad db (load c)
 		return ok,
-	cmd_ ["help"] ["command"] "this command" $ \as db -> case as of
+	cmd_ ["help"] ["command"] "this command" $ \as _ -> case as of
 		[] -> printUsage >> return ok
 		cmdname -> do
 			let
@@ -428,6 +499,15 @@ commands = [
 			| otherwise = forkIO (f $ const $ return ()) >> return ok
 			where
 				onMsg showMsg = if isJust (askOpt "status" as) then showMsg else (const $ return ())
+
+		waitStatusOpts :: [OptDescr (Map String String)]
+		waitStatusOpts = [
+			Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete",
+			Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"]
+
+		isParent :: FilePath -> FilePath -> Bool
+		isParent dir file = norm dir `isPrefixOf` norm file where
+			norm = splitDirectories . normalise
 
 printMainUsage :: IO ()
 printMainUsage = do

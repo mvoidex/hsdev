@@ -5,6 +5,7 @@ module HsDev.Cache (
 	escapePath,
 	cabalCache,
 	projectCache,
+	standaloneCache,
 	dump,
 	load,
 	toDatabase
@@ -19,7 +20,6 @@ import qualified Data.ByteString.Lazy.Char8 as BS
 import Data.Char
 import Data.List
 import qualified Data.HashMap.Strict as HM (HashMap, toList)
-import Data.Maybe
 import Data.Map (Map)
 import Data.Monoid
 import qualified Data.Map as M
@@ -171,6 +171,10 @@ cabalCache (CabalDev p) = escapePath p ++ ".json"
 projectCache :: Project -> FilePath
 projectCache p = escapePath (projectPath p) ++ ".json"
 
+-- | Name of cache for standalone files
+standaloneCache :: FilePath
+standaloneCache = "standalone.json"
+
 -- | Dump cache data to file
 dump :: FilePath -> Map String (Symbol Module) -> IO ()
 dump file = BS.writeFile file . encodePretty
@@ -179,13 +183,7 @@ dump file = BS.writeFile file . encodePretty
 load :: FilePath -> IO (Either String Database)
 load file = do
 	cts <- BS.readFile file
-	let
-		ms = fmap (M.map setModuleReferences) $ eitherDecode cts
-	return $ fmap (\ms' -> mappend (p ms') (toDatabase ms')) ms
-	where
-		p = loadProj . nub . mapMaybe (symbolLocation >=> locationProject) . M.elems
-		loadProj [proj] = fromProject proj
-		loadProj _ = mempty
+	return $ fmap (toDatabase . M.map setModuleReferences) $ eitherDecode cts
 
 toDatabase :: Map String (Symbol Module) -> Database
 toDatabase = mconcat . map fromModule . M.elems

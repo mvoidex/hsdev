@@ -176,10 +176,15 @@ inspectFile file = do
 		forM is $ \i -> do
 			moduleFile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 			return (moduleFile, i)
-	either throwError (return . setModuleReferences . fmap (setLocations absFilename p) . setLoc absFilename p . maybe id addDocs docsMap) $ analyzeModule source
+	either throwError (handleFail . setModuleReferences . fmap (setLocations absFilename p) . setLoc absFilename p . maybe id addDocs docsMap) $ analyzeModule source
 	where
 		setLoc f p s = s { symbolLocation = Just ((moduleLocation f) { locationProject = p }) }
 		setLocations f p m = m { moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = f, locationProject = p }) (symbolLocation decl) }) (moduleDeclarations m) }
+		-- Workaround: haskell-src-exts calls error
+		handleFail :: Symbol Module -> ErrorT String IO (Symbol Module)
+		handleFail m = ErrorT $ E.catch (liftM Right $ E.evaluate m) onErrorCall where
+			onErrorCall :: E.ErrorCall -> IO (Either String (Symbol Module))
+			onErrorCall = return . Left . show
 
 -- | Inspect project
 inspectProject :: Project -> ErrorT String IO (Project, [Symbol Module])
@@ -187,7 +192,7 @@ inspectProject p = do
 	p' <- readProject (projectCabal p)
 	let
 		dirs = maybe [] (map (projectPath p' </>) . sourceDirs) $ projectDescription p'
-	sourceFiles <- liftIO $ liftM (filter ((== ".hs") . takeExtension) . concat) $ mapM traverseDirectory dirs
+	sourceFiles <- liftIO $ liftM (filter haskellSource . concat) $ mapM traverseDirectory dirs
 	modules <- liftM concat $ mapM inspectFile' sourceFiles
 	return (p', modules)
 	where

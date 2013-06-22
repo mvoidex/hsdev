@@ -2,6 +2,7 @@
 
 module HsDev.Symbols.JSON (
 	encodeDeclaration,
+	encodeModuleHead,
 	encodeModule
 	) where
 

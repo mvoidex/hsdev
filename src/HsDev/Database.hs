@@ -5,7 +5,9 @@ module HsDev.Database (
 	fromModule,
 	fromProject,
 	projectModules,
+	standaloneModules,
 	cabalModules,
+	flattenModules,
 
 	lookupModule,
 	lookupFile,
@@ -14,6 +16,7 @@ module HsDev.Database (
 	remove
 	) where
 
+import Control.Arrow
 import Control.Monad
 import Control.DeepSeq
 import Data.Group
@@ -43,11 +46,13 @@ instance Group Database where
 	add old new = Database {
 		databaseCabalModules = M.unionWith M.union (databaseCabalModules old') (databaseCabalModules new),
 		databaseFiles = databaseFiles old' `M.union` databaseFiles new,
-		databaseProjects = databaseProjects old' `M.union` databaseProjects new,
+		databaseProjects = M.unionWith mergeProject (databaseProjects old') (databaseProjects new),
 		databaseModules = add (databaseModules old') (databaseModules new),
 		databaseSymbols = add (databaseSymbols old') (databaseSymbols new) }
 		where
 			old' = sub old (databaseIntersection old new)
+			mergeProject pl pr = pl {
+				projectDescription = msum [projectDescription pl, projectDescription pr] }
 	sub old new = Database {
 		databaseCabalModules = M.differenceWith diff' (databaseCabalModules old) (databaseCabalModules new),
 		databaseFiles = M.difference (databaseFiles old) (databaseFiles new),
@@ -83,7 +88,9 @@ fromModule :: Symbol Module -> Database
 fromModule m = fromMaybe (error "Module must specify source file or cabal") (inSource `mplus` inCabal) where
 	inSource = do
 		loc <- symbolLocation m
-		return $ createIndexes $ Database mempty (M.singleton (locationFile loc) m) mempty zero zero
+		let
+			proj = maybe mempty (uncurry M.singleton . (projectCabal &&& id)) $ locationProject loc
+		return $ createIndexes $ Database mempty (M.singleton (locationFile loc) m) proj zero zero
 	inCabal = do
 		cabal <- moduleCabal $ symbol m
 		return $ createIndexes $ Database (M.singleton cabal (M.singleton (symbolName m) m)) mempty mempty zero zero
@@ -100,10 +107,19 @@ projectModules proj = M.filter thisProject . databaseFiles where
 		loc <- symbolLocation m
 		locationProject loc
 
+-- | Standalone modules with no project
+standaloneModules :: Database -> Map FilePath (Symbol Module)
+standaloneModules = M.filter noProject . databaseFiles where
+	noProject m = isJust (symbolLocation m) && isNothing (symbolLocation m >>= locationProject)
+
 -- | Modules for cabal specified
 cabalModules :: Cabal -> Database -> Map String (Symbol Module)
 cabalModules cabal db = fromMaybe M.empty $ M.lookup cabal $ databaseCabalModules db
-		
+
+-- | All database modules
+flattenModules :: Database -> [Symbol Module]
+flattenModules db = M.elems (databaseFiles db) ++ concatMap M.elems (M.elems $ databaseCabalModules db)
+
 lookupModule :: Cabal -> String -> Database -> Maybe (Symbol Module)
 lookupModule cabal name db = do
 	c <- M.lookup cabal $ databaseCabalModules db

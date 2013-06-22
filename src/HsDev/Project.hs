@@ -1,7 +1,7 @@
 module HsDev.Project (
 	Project(..),
 	ProjectDescription(..), Library(..), Executable(..), Test(..), Info(..),
-	readProject,
+	readProject, loadProject,
 	project,
 	sourceDirs
 	) where
@@ -122,6 +122,10 @@ readProject file = do
 	where
 		mkProject desc = (project file) {
 			projectDescription = Just desc }
+
+-- | Load project description
+loadProject :: Project -> ErrorT String IO Project
+loadProject = readProject . projectCabal
 
 -- | Make project by .cabal file
 project :: FilePath -> Project

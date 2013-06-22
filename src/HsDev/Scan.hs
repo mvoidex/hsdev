@@ -5,6 +5,8 @@ module HsDev.Scan (
 	scanProject
 	) where
 
+import Control.Applicative
+import Control.Monad ((>=>))
 import Control.Monad.Error
 import Data.Monoid
 
@@ -19,14 +21,11 @@ import HsDev.Project
 scanCabal :: Cabal -> ErrorT String IO Database
 scanCabal cabal = do
 	ms <- list
-	fmap mconcat $ mapM (scanModule cabal) ms
+	fmap mconcat $ mapM (\m -> scanModule cabal m <|> return mempty) ms
 
 -- | Scan cabal module
 scanModule :: Cabal -> String -> ErrorT String IO Database
-scanModule _ name = catchError (fmap fromModule $ browse' name) (const $ return mempty) where
-	browse' s = do
-		m <- browse s
-		liftIO $ loadDocs [] m
+scanModule _ = fmap fromModule . (browse >=> liftIO . loadDocs [])
 
 -- | Scan file
 scanFile :: FilePath -> ErrorT String IO Database
