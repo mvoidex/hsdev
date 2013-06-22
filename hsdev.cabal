@@ -25,6 +25,7 @@ library
     HsDev.Database.Async
     HsDev.Inspect
     HsDev.Project
+    HsDev.Project.JSON
     HsDev.Scan
     HsDev.Symbols
     HsDev.Symbols.JSON
@@ -78,10 +79,25 @@ executable hsdev
     monad-loops == 0.3.*,
     mtl == 2.1.*,
     network == 2.4.*,
+    process == 1.1.*,
     text == 0.11.*,
     transformers == 0.3.*,
     unordered-containers == 0.2.*,
     vector == 0.10.*
+
+executable hsinspect
+  main-is: hsinspect.hs
+  hs-source-dirs: tools
+  other-modules:
+    System.Command
+  build-depends:
+    base == 4.6.*,
+    hsdev,
+    aeson == 0.6.*,
+    bytestring == 0.10.*,
+    containers == 0.5.*,
+    mtl == 2.1.*,
+    transformers == 0.3.*
 
 test-suite test
   main-is: Test.hs

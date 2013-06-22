@@ -21,7 +21,8 @@ module HsDev.Symbols (
 	unalias,
 	brief,
 	detailed,
-	moduleContents
+	moduleContents,
+	locateProject
 	) where
 
 import Control.Arrow
@@ -151,12 +152,6 @@ instance NFData Module where
 instance Eq Module where
 	l == r = moduleCabal l == moduleCabal r
 
-tab :: Int -> String -> String
-tab n s = replicate n '\t' ++ s
-
-tabs :: Int -> String -> String
-tabs n = unlines . map (tab n) . lines
-
 -- | Common info for type/newtype/data/class
 data TypeInfo = TypeInfo {
 	typeInfoContext :: Maybe String,
@@ -270,3 +265,19 @@ moduleContents s = unlines $ header ++ cts where
 		""]
 	cts = map showDecl (M.elems $ moduleDeclarations $ symbol s)
 	showDecl d = brief d ++ maybe "" (" -- " ++) (symbolDocs d)
+
+-- | Find project file is related to
+locateProject :: FilePath -> IO (Maybe Project)
+locateProject file = do
+	file' <- canonicalizePath file
+	isDir <- doesDirectoryExist file'
+	if isDir then locateHere file' else locateParent (takeDirectory file')
+	where
+		locateHere path = do
+			cts <- getDirectoryContents path
+			return $ fmap (project . (path </>)) $ find ((== ".cabal") . takeExtension) cts
+		locateParent dir = do
+			cts <- getDirectoryContents dir
+			case find ((== ".cabal") . takeExtension) cts of
+				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
+				Just cabalFile -> return $ Just $ project (dir </> cabalFile)

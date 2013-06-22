@@ -2,7 +2,7 @@
 
 module System.Command (
 	Command(..),
-	cmd, cmd_,
+	cmd, cmd_, addhelp,
 	brief, help,
 	run,
 	opt, askOpt,
@@ -11,11 +11,12 @@ module System.Command (
 
 import Control.Arrow
 import Data.Char
-import Data.List (stripPrefix, unfoldr)
+import Data.List (stripPrefix, unfoldr, isPrefixOf)
 import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Monoid
+import Data.Function (fix)
 import System.Console.GetOpt
 
 -- | Command
@@ -25,6 +26,10 @@ data Command a = Command {
 	commandDesc :: Maybe String,
 	commandUsage :: [String],
 	commandRun :: [String] -> Maybe (Either [String] a) }
+
+instance Functor Command where
+	fmap f cmd' = cmd' {
+		commandRun = fmap (fmap f) . commandRun cmd' }
 
 -- | Make command
 cmd :: Monoid c => [String] -> [String] -> String -> [OptDescr c] -> (c -> [String] -> a) -> Command a
@@ -44,6 +49,20 @@ cmd_ name posArgs descr act = cmd name posArgs descr [] (act' act) where
 	act' :: a -> () -> a
 	act' = const
 
+-- | Add help command
+addhelp :: String -> (IO () -> a) -> IO () -> [Command a] -> [Command a]
+addhelp tool toCmd usage cmds = fix addhelp' where
+	addhelp' hcmds = helpcmd : cmds where
+		helpcmd = fmap toCmd $ cmd_ ["help"] ["command"] "help" $ \as -> case as of
+			[] -> usage
+			cmdname -> do
+				let
+					addHeader [] = []
+					addHeader (h:hs) = map ('\t':) $ (tool ++ " " ++ h) : map ('\t':) hs
+				case filter ((cmdname `isPrefixOf`) . commandName) hcmds of
+					[] -> putStrLn $ "Unknown command: " ++ unwords cmdname
+					helps -> mapM_ (putStrLn . unlines . addHeader . help) helps
+
 -- | Show brief help for command
 brief :: Command a -> String
 brief = head . commandUsage
@@ -58,7 +77,7 @@ run cmds onDef onError as = maybe onDef (either onError id) found where
 	found = listToMaybe $ mapMaybe (`commandRun` as) cmds
 
 opt :: String -> String -> Map String String
-opt name value = M.singleton name value
+opt = M.singleton
 
 askOpt :: String -> Map String String -> Maybe String
 askOpt = M.lookup

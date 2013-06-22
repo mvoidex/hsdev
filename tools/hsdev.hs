@@ -10,13 +10,15 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Error
-import qualified Data.ByteString.Lazy.Char8 as L (unpack)
+import qualified Data.ByteString.Lazy.Char8 as L (unpack, pack)
 import Data.Aeson
+import Data.Aeson.Types (parseMaybe)
 import Data.Maybe
 import Data.Monoid
 import Data.List
 import Data.Traversable (traverse)
 import Data.Map (Map)
+import Data.String (fromString)
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Network.Socket
@@ -28,6 +30,7 @@ import System.Console.GetOpt
 import System.Directory (canonicalizePath, getDirectoryContents, doesFileExist, createDirectoryIfMissing, doesDirectoryExist)
 import System.FilePath
 import System.IO
+import System.Process
 import Text.Read (readMaybe)
 
 import HsDev.Cache
@@ -35,12 +38,12 @@ import HsDev.Commands
 import HsDev.Database
 import HsDev.Database.Async
 import HsDev.Project
+import HsDev.Project.JSON
 import HsDev.Scan
 import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Symbols.JSON
 import HsDev.Tools.GhcMod
-import HsDev.Util
 
 mainCommands :: [Command (IO ())]
 mainCommands = [
@@ -51,25 +54,30 @@ mainCommands = [
 			putStrLn "Interactive commands:"
 			putStrLn ""
 			printUsage
-		[cmdname] -> do
+		cmdname -> do
 			let
 				addHeader [] = []
 				addHeader (h:hs) = map ('\t':) $ ("hsdev " ++ h) : map ('\t':) hs
-			mapM_ (putStrLn . unlines . addHeader . help) $ filter ((== cmdname) . head . commandName) commands
-		_ -> do
-			printMainUsage
-			putStrLn "Invalid arguments",
+			case filter ((cmdname `isPrefixOf`) . commandName) commands of
+				[] -> putStrLn $ "Unknown command: " ++ unwords cmdname
+				helpCmds -> mapM_ (putStrLn . unlines . addHeader . help) helpCmds,
 	cmd_ ["run"] [] "run interactive" $ \_ -> do
 			db <- newAsync
 			forever $ do
 				s <- getLine
 				r <- processCmd db s putStrLn
 				unless r exitSuccess,
-	cmd ["server"] [] "start server" [
+	cmd ["server", "start"] [] "start remote server" [
+		Option ['p'] ["port"] (ReqArg (First . readMaybe) "n") "port number"] $ \p _ -> do
+			pname <- getExecutablePath
+			void $ runInteractiveProcess pname (["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst p :: Maybe Int)) Nothing Nothing
+			putStrLn $ "Server started at port " ++ show (maybe 4567 fromIntegral (getFirst p)),
+	cmd ["server", "run"] [] "start server" [
 		Option ['p'] ["port"] (ReqArg (First . readMaybe) "n") "port number"] $ \p _ -> do
 			msgs <- newChan
 			forkIO $ getChanContents msgs >>= mapM_ putStrLn
 			thId <- myThreadId
+			exitVar <- newEmptyMVar
 			let
 				outputStr = writeChan msgs
 			forkIO $ do
@@ -84,12 +92,24 @@ mainCommands = [
 						str <- hGetLine h
 						outputStr $ "received: " ++ str
 						r <- processCmd db str (hPutStrLn h)
-						unless r $ throwTo thId ExitSuccess
-			forever $ do
+						unless r $ putMVar exitVar ()
+			forkIO $ do
 				c <- getLine
 				case c of
-					"exit" -> exitSuccess
-					_ -> outputStr "enter 'exit' to quit"]
+					"exit" -> putMVar exitVar ()
+					_ -> outputStr "enter 'exit' to quit"
+			takeMVar exitVar,
+	cmd ["server", "stop"] [] "stop remote server" [
+		Option ['p'] ["port"] (ReqArg (First . readMaybe) "n") "port number"] $ \p _ -> do
+			pname <- getProgName
+			r <- readProcess pname (["--json", "exit"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst p :: Maybe Int)) ""
+			let
+				stopped = case decode (L.pack r) of
+					Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
+						res <- obj .: "result"
+						return (res == ("exit" :: String))
+					_ -> False
+			if stopped then putStrLn "Server stopped" else putStrLn ("Server returned: " ++ r)]
 	where
 		ignoreIO :: IOException -> IO ()
 		ignoreIO _ = return ()
@@ -132,6 +152,7 @@ main = withSocketsDo $ do
 data CommandResult =
 	ResultDeclarations [Symbol Declaration] |
 	ResultModules [Symbol Module] |
+	ResultProjects [Project] |
 	ResultOk (Map String String) |
 	ResultError String (Map String String) |
 	ResultProcess ((String -> IO ()) -> IO ()) |
@@ -144,9 +165,10 @@ instance ToJSON CommandResult where
 	toJSON (ResultModules ms) = object [
 		"result" .= ("ok" :: String),
 		"modules" .= toJSON (map encodeModule ms)]
-	toJSON (ResultOk ps) = object [
+	toJSON (ResultProjects ps) = object [
 		"result" .= ("ok" :: String),
-		"params" .= toJSON ps]
+		"projects" .= toJSON (map encodeProject ps)]
+	toJSON (ResultOk ps) = object $ ("result" .= ("ok" :: String)) : map (uncurry (.=) . first fromString) (M.toList ps) where
 	toJSON (ResultError e as) = object [
 		"result" .= ("error" :: String),
 		"error" .= e,
@@ -255,6 +277,16 @@ commands = [
 						[] -> return $ errArgs "Module not found" [("module", mname)]
 						[m] -> return $ ResultModules [m]
 						ms' -> return $ errArgs "Ambiguous modules" [("modules", unlines (map showModule ms'))],
+	cmd_ ["project"] ["project name"] "show project list or detailed project info" $ \ns db -> case ns of
+		[] -> do
+			dbval <- getDb db
+			return $ ResultOk $ M.singleton "projects" $ unlines $ map projectName $ M.elems $ databaseProjects dbval
+		[pname] -> do
+			dbval <- getDb db
+			case filter ((== pname) . projectName) $ M.elems $ databaseProjects dbval of
+				[] -> return $ err $ "Project not found: " ++ pname
+				ps -> return $ ResultProjects ps
+		_ -> return $ err "Invalid arguments",
 	cmd ["goto"] ["symbol"] "find symbol declaration" [
 		Option ['f'] ["file"] (ReqArg (opt "file") "path") "context source file"] $ \as ns db -> case ns of
 			[nm] -> do
@@ -348,13 +380,13 @@ commands = [
 		return ok,
 	cmd_ ["help"] ["command"] "this command" $ \as db -> case as of
 		[] -> printUsage >> return ok
-		[cmdname] -> do
+		cmdname -> do
 			let
 				addHeader [] = []
 				addHeader (h:hs) = map ('\t':) $ ("hsdev " ++ h) : map ('\t':) hs
-			mapM_ (putStrLn . unlines . addHeader . help) $ filter ((== cmdname) . head . commandName) commands
-			return ok
-		_ -> return $ err "Invalid arguments",
+			case filter ((cmdname `isPrefixOf`) . commandName) commands of
+				[] -> return $ err $  "Unknown command: " ++ unwords cmdname
+				helpCmds -> mapM_ (putStrLn . unlines . addHeader . help) helpCmds >> return ok,
 	cmd_ ["exit"] [] "exit" $ \_ _ -> return ResultExit]
 	where
 		getDirectoryContents' :: FilePath -> IO [FilePath]
@@ -429,6 +461,7 @@ processCmd db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd .
 			str = case v of
 				ResultDeclarations decls -> unlines $ map (formatResult fmt) decls
 				ResultModules ms -> unlines $ map (formatModules fmt) ms
+				ResultProjects ps -> unlines $ map (formatProject fmt) ps
 				ResultOk ps -> unlines $ "ok" : map (('\t':) . uncurry showP) (M.toList ps)
 				ResultError e ds -> unlines $ ("error: " ++ e) : map (('\t':) . uncurry showP) (M.toList ds)
 				where
@@ -446,6 +479,11 @@ processCmd db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd .
 						"brief" -> moduleBrief
 						"detailed" -> moduleDetailed
 						_ -> show
+					formatProject fmt' = case fmt' of
+						"raw" -> show
+						"name" -> projectName
+						"brief" -> projectCabal
+						"detailed" -> show
 					moduleBrief m
 						| bySources m = "module " ++ symbolName m ++ maybe "" (\l -> " (" ++ locationFile l ++ ")") (symbolLocation m)
 						| otherwise = "module " ++ symbolName m ++ maybe "" (\c -> " (" ++ show c ++ ")") (moduleCabal (symbol m))
