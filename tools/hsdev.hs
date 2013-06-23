@@ -482,8 +482,8 @@ commands = [
 	cmd ["cache", "load", "standalone"] [] "load cache for standalone files" [cacheDir] $ \as _ db -> do
 		cacheLoad db (load $ pathArg as </> standaloneCache)
 		return ok,
-	cmd_ ["cache", "load"] ["paths..."] "load cache from directories" $ \ns db -> do
-		cts <- liftM concat $ mapM (liftM (filter ((== ".json") . takeExtension)) . getDirectoryContents') $ concatMap (\p -> [p, p </> "cabal", p </> "projects"]) (if null ns then ["."] else ns)
+	cmd ["cache", "load"] [] "load cache from directories" [cacheDir] $ \as _ db -> do
+		cts <- liftM concat $ mapM (liftM (filter ((== ".json") . takeExtension)) . getDirectoryContents') [pathArg as, pathArg as </> "cabal", pathArg as </> "projects"]
 		forM_ cts $ \c -> do
 			e <- doesFileExist c
 			when e $ cacheLoad db (load c)
