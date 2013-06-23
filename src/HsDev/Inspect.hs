@@ -173,16 +173,17 @@ inspectFile file = do
 	p <- liftIO $ locateProject file
 	source <- liftIO $ readFileUtf8 file
 	absFilename <- liftIO $ Dir.canonicalizePath file
+	mtime <- liftIO $ Dir.getModificationTime file
 	docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
 		is <- E.catch (Doc.createInterfaces [Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] [absFilename]) noReturn
 		forM is $ \i -> do
 			moduleFile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 			return (moduleFile, i)
 	forced <- ErrorT $ E.catch (E.evaluate $ analyzeModule source) onError
-	return . setModuleReferences . fmap (setLocations absFilename p) . setLoc absFilename p . maybe id addDocs docsMap $ forced
+	return . setModuleReferences . fmap (setLocations absFilename p mtime) . setLoc absFilename p mtime . maybe id addDocs docsMap $ forced
 	where
-		setLoc f p s = s { symbolLocation = Just ((moduleLocation f) { locationProject = p }) }
-		setLocations f p m = m { moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = f, locationProject = p }) (symbolLocation decl) }) (moduleDeclarations m) }
+		setLoc f p tm s = s { symbolLocation = Just ((moduleLocation f) { locationProject = p, locationTimeStamp = Just tm }) }
+		setLocations f p tm m = m { moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = f, locationProject = p, locationTimeStamp = Just tm }) (symbolLocation decl) }) (moduleDeclarations m) }
 
 		onError :: E.ErrorCall -> IO (Either String (Symbol Module))
 		onError = return . Left . show

@@ -27,11 +27,13 @@ module HsDev.Symbols (
 
 import Control.Arrow
 import Control.DeepSeq
+import Control.Exception
 import Data.List
 import Data.Function (fix)
 import Data.Map (Map)
 import Data.Maybe
 import qualified Data.Map as M
+import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import System.Directory
 import System.FilePath
@@ -44,11 +46,12 @@ data Location = Location {
 	locationFile :: FilePath,
 	locationLine :: Int,
 	locationColumn :: Int,
-	locationProject :: Maybe Project }
+	locationProject :: Maybe Project,
+	locationTimeStamp :: Maybe UTCTime }
 		deriving (Eq, Ord)
 
 instance NFData Location where
-	rnf (Location f l c p) = rnf f `seq` rnf l `seq` rnf c `seq` rnf p
+	rnf (Location f l c p t) = rnf f `seq` rnf l `seq` rnf c `seq` rnf p `seq` rnf t
 
 instance Read POSIXTime where
 	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
@@ -207,13 +210,18 @@ mkLocation :: Location -> IO Location
 mkLocation loc = do
 	f <- canonicalizePath (locationFile loc)
 	p <- locateProject f
+	tm <- catch (fmap Just $ getModificationTime f) ignoreIO
 	return $ loc {
 		locationFile = f,
-		locationProject = p }
+		locationProject = p,
+		locationTimeStamp = tm }
+	where
+		ignoreIO :: IOException -> IO (Maybe a)
+		ignoreIO _ = return Nothing
 
 -- | Make location by file, line and column
 location :: FilePath -> Int -> Int -> Maybe Project -> Location
-location f = Location (normalise f)
+location f l c p = Location (normalise f) l c p Nothing
 
 -- | Module location is located at file:1:1
 moduleLocation :: FilePath -> Location
@@ -280,4 +288,4 @@ locateProject file = do
 			cts <- getDirectoryContents dir
 			case find ((== ".cabal") . takeExtension) cts of
 				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
-				Just cabalFile -> return $ Just $ project (dir </> cabalFile)
+				Just cabalf -> return $ Just $ project (dir </> cabalf)

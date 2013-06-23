@@ -237,27 +237,39 @@ commands = [
 			proj <- locateProject $ fromMaybe "." $ askOpt "project" as
 			case proj of
 				Nothing -> return $ err $ "Project " ++ maybe "in current directory" (\p' -> "'" ++ p' ++ "'") (askOpt "project" as) ++ " not found"
-				Just proj' -> startProcess as $ \onStatus -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ projectName proj' ++ "fails with: ") ++)) $ do
+				Just proj' -> startProcess as $ \onStatus -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ projectName proj' ++ " fails with: ") ++)) $ do
 					proj'' <- loadProject proj'
 					srcs <- projectSources proj''
 					forM_ srcs $ \src -> flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
 						update db $ fmap fromModule $ inspectFile src
 						liftIO (onStatus $ "file " ++ src ++ " scanned"),
-	cmd ["scan", "path"] ["path to scan"] "scan directory" waitStatusOpts $ \as ps db -> case ps of
+	cmd ["scan", "path"] ["path to scan"] "scan directory" (
+		Option ['p'] ["projects"] (NoArg (opt "projects" "")) "scan only for projects" : waitStatusOpts) $ \as ps db -> case ps of
 		[dir] -> do
 			dir' <- canonicalizePath dir
 			exists <- doesDirectoryExist dir'
 			case exists of
 				False -> return $ err $ "Invalid directory: " ++ dir
-				True -> startProcess as $ \onStatus -> do
-					onStatus $ "scanning " ++ dir ++ " for haskell sources"
-					srcs <- liftM (filter haskellSource) $ traverseDirectory dir
-					forM_ srcs $ \src -> do
-						result <- runErrorT $ update db $ scanFile src
-						either
-							(onStatus . (("error scanning file " ++ src ++ ": ") ++))
-							(const $ onStatus $ "file " ++ src ++ " scanned")
-							result
+				True -> case isJust (askOpt "projects" as) of
+					False -> startProcess as $ \onStatus -> do
+						onStatus $ "scanning " ++ dir ++ " for haskell sources"
+						srcs <- liftM (filter haskellSource) $ traverseDirectory dir
+						forM_ srcs $ \src -> do
+							result <- runErrorT $ update db $ scanFile src
+							either
+								(onStatus . (("error scanning file " ++ src ++ ": ") ++))
+								(const $ onStatus $ "file " ++ src ++ " scanned")
+								result
+					True -> startProcess as $ \onStatus -> do
+						onStatus $ "scanning " ++ dir ++ " for cabal projects"
+						cabals <- liftM (filter cabalFile) $ traverseDirectory dir
+						forM_ cabals $ \cabal -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ cabal ++ " fails with: ") ++)) $ do
+							proj <- loadProject $ project cabal
+							srcs <- projectSources proj
+							forM_ srcs $ \src -> flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
+								update db $ fmap fromModule $ inspectFile src
+								liftIO (onStatus $ "file " ++ src ++ " scanned")
+							liftIO (onStatus $ "project " ++ projectName proj ++ " scanned")
 		_ -> return $ err "Invalid arguments",
 	cmd_ ["scan", "file"] ["source file"] "scan file" $ \fs db -> case fs of
 		[file] -> do
@@ -288,34 +300,42 @@ commands = [
 						return $ M.filterWithKey (\f _ -> isParent dir' f) $ databaseFiles dbval
 					allMods = Just $ databaseFiles dbval
 					rescanMods = fromMaybe (error "Impossible happened") $ msum [projectMods, fileMods, dirMods, allMods]
+					moduleId m = maybe (symbolName m) locationFile $ symbolLocation m
 				startProcess as $ \onStatus -> do
-					forM_ (M.elems rescanMods) $ \m -> do
-						result <- runErrorT $ do
-							srcFile <- maybe (throwError $ "error rescanning module '" ++ symbolName m ++ "': source not specified") (return . locationFile) $ symbolLocation m
-							(update db $ scanFile srcFile) `catchError` (throwError . (("error rescanning file '" ++ srcFile ++ "': ") ++))
-							return srcFile
-						either onStatus (\src -> onStatus ("file '" ++ src ++ "' rescanned")) result,
+					forM_ (M.elems rescanMods) $ \m -> runErrorT $ flip catchError (throwError . (("error rescanning module '" ++ moduleId m ++ "': ") ++)) $ do
+						update db $ rescanModule m
+						liftIO $ onStatus $ "module '" ++ moduleId m ++ "' rescanned",
 	cmd ["clean"] [] "clean info about modules" [
 		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox",
 		Option ['p'] ["project"] (ReqArg (opt "project") "path") "module project",
 		Option ['f'] ["file"] (ReqArg (opt "file") "source") "module source file",
-		Option ['m'] ["module"] (ReqArg (opt "module") "module name") "module name"] $ \as _ db -> do
+		Option ['m'] ["module"] (ReqArg (opt "module") "module name") "module name",
+		Option ['a'] ["all"] (NoArg (opt "all" "")) "clear all"] $ \as _ db -> do
 			dbval <- getDb db
 			cabal <- traverse asCabal $ askOpt "cabal" as
 			proj <- traverse (getProject db) $ askOpt "project" as
 			file <- traverse canonicalizePath $ askOpt "file" as
 			let
-				filters = satisfy $ catMaybes [
+				cleanAll = isJust (askOpt "all" as)
+				filters = catMaybes [
 					fmap inProject proj,
 					fmap inFile file,
 					fmap inModule (askOpt "module" as),
 					fmap inCabal cabal]
-				toClean = filter filters (flattenModules dbval)
+				toClean = filter (satisfy filters) (flattenModules dbval)
 				mkey m
 					| bySources m = "sources"
 					| otherwise = maybe "<null>" show $ moduleCabal (symbol m)
-			mapM_ (modifyAsync db . Remove . fromModule) toClean
-			return $ ResultOk $ M.map unlines $ M.unionsWith (++) $ map (uncurry M.singleton . (mkey &&& (return . symbolName))) toClean,
+				action
+					| null filters && cleanAll = do
+						modifyAsync db Clear
+						return ok
+					| null filters && not cleanAll = return $ errArgs "Specify filter or explicitely set flag --all" []
+					| cleanAll = return $ errArgs "--all flag can't be set with filters" []
+					| otherwise = do
+						mapM_ (modifyAsync db . Remove . fromModule) toClean
+						return $ ResultOk $ M.map unlines $ M.unionsWith (++) $ map (uncurry M.singleton . (mkey &&& (return . symbolName))) toClean
+			action,
 	cmd ["find"] ["symbol"] "find symbol" [
 		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to find in",
 		Option ['f'] ["file"] (ReqArg (opt "file") "path") "file to find in",

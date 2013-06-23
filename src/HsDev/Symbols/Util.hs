@@ -14,13 +14,16 @@ module HsDev.Symbols.Util (
 	visibleModule,
 	preferredModule,
 
-	satisfy
+	satisfy,
+
+	isActual
 	) where
 
 import Control.Monad
 import Data.Maybe
 import qualified Data.Map as M
 import System.FilePath
+import System.Directory
 
 import HsDev.Symbols
 import HsDev.Project
@@ -79,3 +82,10 @@ preferredModule cabal proj ms = listToMaybe $ concatMap (`filter` ms) order wher
 
 satisfy :: [a -> Bool] -> a -> Bool
 satisfy ps x = all ($ x) ps
+
+-- | Is file info actual?
+isActual :: Symbol a -> IO Bool
+isActual = maybe (return False) checkStamp . symbolLocation where
+	checkStamp l = do
+		actualStamp <- getModificationTime (locationFile l)
+		return $ Just actualStamp == locationTimeStamp l

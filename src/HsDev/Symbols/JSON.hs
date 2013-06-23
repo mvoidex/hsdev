@@ -63,7 +63,8 @@ encodeLocation loc = object [
 	"file" .= locationFile loc,
 	"line" .= locationLine loc,
 	"column" .= locationColumn loc,
-	"project" .= fmap projectCabal (locationProject loc)]
+	"project" .= fmap projectCabal (locationProject loc),
+	"mtime" .= locationTimeStamp loc]
 
 encodeImport :: Import -> Value
 encodeImport i = object [
@@ -130,7 +131,8 @@ decodeLocation = withObject "location" $ \v -> Location <$>
 	(v .: "file") <*>
 	(v .: "line") <*>
 	(v .: "column") <*>
-	fmap (fmap project) (v .: "project")
+	fmap (fmap project) (v .: "project") <*>
+	(v .: "mtime")
 
 decodeImport :: Value -> Parser Import
 decodeImport = withObject "import" $ \v -> Import <$>
