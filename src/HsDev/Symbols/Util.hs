@@ -6,6 +6,7 @@ module HsDev.Symbols.Util (
 	inModule,
 	inCabal,
 	bySources,
+	standalone,
 	isImported,
 	isReachable,
 	isVisible,
@@ -51,6 +52,11 @@ inCabal cabal = maybe False ((== Just cabal) . moduleCabal . symbol) . symbolMod
 
 bySources :: Symbol a -> Bool
 bySources = isJust . symbolLocation
+
+-- | Standalone module, not in project or cabal
+standalone :: Symbol a -> Bool
+standalone s = bySources s && noProject s where
+	noProject m = isNothing (symbolLocation m >>= locationProject)
 
 isImported :: Symbol Module -> Maybe String -> Symbol Module -> Bool
 isImported m Nothing imported = maybe (symbolName imported == "Prelude") (not . importIsQualified) $ M.lookup (symbolName imported) (moduleImports $ symbol m)

@@ -122,7 +122,7 @@ mainCommands = [
 		outputStr "server shutdown",
 	cmd ["server", "stop"] [] "stop remote server" clientOpts $ \copts _ -> do
 		pname <- getExecutablePath
-		r <- readProcess pname (["--json", "exit"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts)) ""
+		r <- readProcess pname (["--json"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts) ++ ["exit"]) ""
 		let
 			stopped = case decode (L.pack r) of
 				Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
@@ -219,33 +219,36 @@ errArgs s as = ResultError s (M.fromList as)
 
 commands :: [Command (Async Database -> IO CommandResult)]
 commands = [
-	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox" : waitStatusOpts) $
+	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (sandbox : waitStatusOpts) $
 		\as _ db -> do
+			dbval <- getDb db
 			ms <- runErrorT list
 			cabal <- maybe (return Cabal) asCabal $ askOpt "cabal" as
 			case ms of
 				Left e -> return $ err $ "Failed to invoke ghc-mod 'list': " ++ e
 				Right r -> startProcess as $ \onStatus -> do
-					forM_ r $ \mname -> do
-						result <- runErrorT $ update db $ scanModule cabal mname
-						either
-							(onStatus . (("error scanning module " ++ mname ++ ": ") ++))
-							(const $ onStatus $ "module " ++ mname ++ " scanned")
-							result,
-	cmd ["scan", "project"] [] "scan project" (Option ['p'] ["project"] (ReqArg (opt "project") "path") "project's .cabal file" : waitStatusOpts) $
+					forM_ r $ \mname -> when (isNothing $ lookupModule cabal mname dbval) $ void $ runErrorT $ do
+						update db $ scanModule cabal mname
+						liftIO $ onStatus $ "module " ++ mname ++ " scanned"
+						`catchError`
+						(liftIO . onStatus . (("error scanning module " ++ mname ++ ": ") ++)),
+	cmd ["scan", "project"] [] "scan project" (projectArg "project's .cabal file" : waitStatusOpts) $
 		\as _ db -> do
+			dbval <- getDb db
 			proj <- locateProject $ fromMaybe "." $ askOpt "project" as
 			case proj of
 				Nothing -> return $ err $ "Project " ++ maybe "in current directory" (\p' -> "'" ++ p' ++ "'") (askOpt "project" as) ++ " not found"
 				Just proj' -> startProcess as $ \onStatus -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ projectName proj' ++ " fails with: ") ++)) $ do
 					proj'' <- loadProject proj'
+					update db $ return $ fromProject proj''
 					srcs <- projectSources proj''
 					forM_ srcs $ \src -> flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
-						update db $ fmap fromModule $ inspectFile src
+						maybe (update db $ fmap fromModule $ inspectFile src) (update db . rescanModule) $ lookupFile src dbval
 						liftIO (onStatus $ "file " ++ src ++ " scanned"),
 	cmd ["scan", "path"] ["path to scan"] "scan directory" (
 		Option ['p'] ["projects"] (NoArg (opt "projects" "")) "scan only for projects" : waitStatusOpts) $ \as ps db -> case ps of
 		[dir] -> do
+			dbval <- getDb db
 			dir' <- canonicalizePath dir
 			exists <- doesDirectoryExist dir'
 			case exists of
@@ -254,38 +257,40 @@ commands = [
 					False -> startProcess as $ \onStatus -> do
 						onStatus $ "scanning " ++ dir ++ " for haskell sources"
 						srcs <- liftM (filter haskellSource) $ traverseDirectory dir
-						forM_ srcs $ \src -> do
-							result <- runErrorT $ update db $ scanFile src
-							either
-								(onStatus . (("error scanning file " ++ src ++ ": ") ++))
-								(const $ onStatus $ "file " ++ src ++ " scanned")
-								result
+						forM_ srcs $ \src -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
+							maybe (update db $ fmap fromModule $ inspectFile src) (update db . rescanModule) $ lookupFile src dbval
+							liftIO (onStatus $ "file " ++ src ++ " scanned")
 					True -> startProcess as $ \onStatus -> do
 						onStatus $ "scanning " ++ dir ++ " for cabal projects"
 						cabals <- liftM (filter cabalFile) $ traverseDirectory dir
 						forM_ cabals $ \cabal -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ cabal ++ " fails with: ") ++)) $ do
 							proj <- loadProject $ project cabal
+							update db $ return $ fromProject proj
 							srcs <- projectSources proj
 							forM_ srcs $ \src -> flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
-								update db $ fmap fromModule $ inspectFile src
+								maybe (update db $ fmap fromModule $ inspectFile src) (update db . rescanModule) $ lookupFile src dbval
 								liftIO (onStatus $ "file " ++ src ++ " scanned")
 							liftIO (onStatus $ "project " ++ projectName proj ++ " scanned")
 		_ -> return $ err "Invalid arguments",
 	cmd_ ["scan", "file"] ["source file"] "scan file" $ \fs db -> case fs of
 		[file] -> do
+			dbval <- getDb db
 			file' <- canonicalizePath file
-			runErrorT $ update db $ scanFile file'
-			return ok
+			res <- runErrorT $ maybe (update db $ fmap fromModule $ inspectFile file') (update db . rescanModule) $ lookupFile file' dbval
+			return $ either (\e -> errArgs e []) (const ok) res
 		_ -> return $ err "Invalid arguments",
-	cmd ["scan", "module"] ["module name"] "scan module in cabal" [
-		Option ['c'] ["cabal"] (ReqArg (First . Just) "path") "path to cabal sandbox"] $ \p ms db -> case ms of
-			[mname] -> do
-				runErrorT $ update db $ scanModule (maybe Cabal CabalDev $ getFirst p) mname
-				return ok
-			_ -> return $ err "Invalid arguments",
+	cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox] $ \as ms db -> case ms of
+		[mname] -> do
+			dbval <- getDb db
+			if (isNothing $ lookupModule (maybe Cabal CabalDev $ askOpt "cabal" as) mname dbval)
+				then do
+					res <- runErrorT $ update db $ scanModule (maybe Cabal CabalDev $ askOpt "cabal" as) mname
+					return $ either (\e -> errArgs e []) (const ok) res
+				else return ok
+		_ -> return $ err "Invalid arguments",
 	cmd ["rescan"] [] "rescan sources" ([
-		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to rescan",
-		Option ['f'] ["file"] (ReqArg (opt "file") "path") "file to rescan",
+		projectArg "project to rescan",
+		fileArg "file to rescan",
 		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ waitStatusOpts) $
 			\as _ db -> do
 				dbval <- getDb db
@@ -306,10 +311,10 @@ commands = [
 						update db $ rescanModule m
 						liftIO $ onStatus $ "module '" ++ moduleId m ++ "' rescanned",
 	cmd ["clean"] [] "clean info about modules" [
-		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox",
-		Option ['p'] ["project"] (ReqArg (opt "project") "path") "module project",
-		Option ['f'] ["file"] (ReqArg (opt "file") "source") "module source file",
-		Option ['m'] ["module"] (ReqArg (opt "module") "module name") "module name",
+		sandbox,
+		projectArg "module project",
+		fileArg "module source file",
+		moduleArg "module name",
 		Option ['a'] ["all"] (NoArg (opt "all" "")) "clear all"] $ \as _ db -> do
 			dbval <- getDb db
 			cabal <- traverse asCabal $ askOpt "cabal" as
@@ -337,10 +342,10 @@ commands = [
 						return $ ResultOk $ M.map unlines $ M.unionsWith (++) $ map (uncurry M.singleton . (mkey &&& (return . symbolName))) toClean
 			action,
 	cmd ["find"] ["symbol"] "find symbol" [
-		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to find in",
-		Option ['f'] ["file"] (ReqArg (opt "file") "path") "file to find in",
-		Option ['m'] ["module"] (ReqArg (opt "module") "name") "module to find in",
-		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"] $ \as ns db -> case ns of
+		projectArg "project to find in",
+		fileArg "file to find in",
+		moduleArg "module to find in",
+		sandbox] $ \as ns db -> case ns of
 			[nm] -> do
 				dbval <- getDb db
 				proj <- traverse (getProject db) $ askOpt "project" as
@@ -356,20 +361,18 @@ commands = [
 				rs <- runErrorT $ findDeclaration dbval nm
 				return $ either (err . ("Unable to find declaration: " ++)) (ResultDeclarations . filter filters) rs
 			_ -> return $ err "Invalid arguments",
-	cmd ["list"] [] "list modules" [
-		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to list modules for",
-		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"] $ \as _ db -> do
-			dbval <- getDb db
-			proj <- traverse (getProject db) $ askOpt "project" as
-			cabal <- traverse asCabal $ askOpt "cabal" as
-			let
-				filters = satisfy $ catMaybes [
-					fmap inProject proj,
-					fmap inCabal cabal]
-			return $ ResultOk $ M.singleton "modules" $ unlines $ map symbolName $ filter filters $ concatMap S.toList $ M.elems $ databaseModules dbval,
+	cmd ["list"] [] "list modules" [projectArg "project to list modules for", sandbox] $ \as _ db -> do
+		dbval <- getDb db
+		proj <- traverse (getProject db) $ askOpt "project" as
+		cabal <- traverse asCabal $ askOpt "cabal" as
+		let
+			filters = satisfy $ catMaybes [
+				fmap inProject proj,
+				fmap inCabal cabal]
+		return $ ResultOk $ M.singleton "modules" $ unlines $ map symbolName $ filter filters $ concatMap S.toList $ M.elems $ databaseModules dbval,
 	cmd ["browse"] ["module name"] "browse module" [
-		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to look module in",
-		Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"] $ \as ms db -> case ms of
+		projectArg "project to look module in",
+		sandbox] $ \as ms db -> case ms of
 			[mname] -> do
 				dbval <- getDb db
 				proj <- traverse (getProject db) $ askOpt "project" as
@@ -395,18 +398,16 @@ commands = [
 				[] -> return $ err $ "Project not found: " ++ pname
 				ps -> return $ ResultProjects ps
 		_ -> return $ err "Invalid arguments",
-	cmd ["goto"] ["symbol"] "find symbol declaration" [
-		Option ['f'] ["file"] (ReqArg (opt "file") "path") "context source file"] $ \as ns db -> case ns of
-			[nm] -> do
-				dbval <- getDb db
-				liftM (either err ResultDeclarations) $ runErrorT $ goToDeclaration dbval (askOpt "file" as) nm
-			_ -> return $ err "Invalid arguments",
-	cmd ["info"] ["symbol"] "get info for symbol" [
-		Option ['f'] ["file"] (ReqArg (opt "file") "path") "context source file"] $ \as ns db -> case ns of
-			[nm] -> do
-				dbval <- getDb db
-				liftM (either err (ResultDeclarations . return)) $ runErrorT $ symbolInfo dbval (askOpt "file" as) nm
-			_ -> return $ err "Invalid arguments",
+	cmd ["goto"] ["symbol"] "find symbol declaration" [contextFile] $ \as ns db -> case ns of
+		[nm] -> do
+			dbval <- getDb db
+			liftM (either err ResultDeclarations) $ runErrorT $ goToDeclaration dbval (askOpt "file" as) nm
+		_ -> return $ err "Invalid arguments",
+	cmd ["info"] ["symbol"] "get info for symbol" [contextFile] $ \as ns db -> case ns of
+		[nm] -> do
+			dbval <- getDb db
+			liftM (either err (ResultDeclarations . return)) $ runErrorT $ symbolInfo dbval (askOpt "file" as) nm
+		_ -> return $ err "Invalid arguments",
 	cmd_ ["lookup"] ["source file", "symbol"] "find symbol" $ \ns db -> case ns of
 		[file, nm] -> do
 			dbval <- getDb db
@@ -427,16 +428,15 @@ commands = [
 				(\m -> liftM (either err ResultDeclarations) (runErrorT (completions dbval m input)))
 				(lookupFile file' dbval)
 		_ -> return $ err "Invalid arguments",
-	cmd ["complete", "module"] ["module name", "input"] "autocompletion" [
-		Option ['c'] ["cabal"] (ReqArg (First . Just) "path") "path to cabal sandbox"] $ \p as db -> case as of
-			[mname, input] -> do
-				dbval <- getDb db
-				cabal <- getCabal $ getFirst p
-				maybe
-					(return $ errArgs "Unknown module" [("module", mname)])
-					(\m -> liftM (either err ResultDeclarations) (runErrorT (completions dbval m input)))
-					(lookupModule cabal mname dbval)
-			_ -> return $ err "Invalid arguments",
+	cmd ["complete", "module"] ["module name", "input"] "autocompletion" [sandbox] $ \p as db -> case as of
+		[mname, input] -> do
+			dbval <- getDb db
+			cabal <- getCabal $ askOpt "cabal" p
+			maybe
+				(return $ errArgs "Unknown module" [("module", mname)])
+				(\m -> liftM (either err ResultDeclarations) (runErrorT (completions dbval m input)))
+				(lookupModule cabal mname dbval)
+		_ -> return $ err "Invalid arguments",
 	cmd_ ["dump", "files"] [] "dump file names loaded in database" $ \_ db -> do
 		dbval <- getDb db
 		return $ ResultOk $ M.fromList $ map (snd &&& fst) $ M.assocs $ M.map symbolName $ databaseFiles dbval,
@@ -445,51 +445,45 @@ commands = [
 			dbval <- getDb db
 			return $ maybe (errArgs "File not found" [("file", file)]) (ResultModules . return) $ M.lookup file (databaseFiles dbval)
 		_ -> return $ err "Invalid arguments",
-	cmd ["cache", "dump", "cabal"] [] "dump cache of cabal packages" [
-		Option ['c'] ["cabal"] (ReqArg (First . Just) "path") "path to cabal sandbox"] $ \p _ db -> do
+	cmd ["cache", "dump", "cabal"] [] "dump cache of cabal modules" [
+		sandbox, cacheDir] $ \as _ db -> do
 			dbval <- getDb db
-			cabal <- getCabal $ getFirst p
-			dump (cabalCache cabal) (cabalModules cabal dbval)
+			cabal <- getCabal $ askOpt "cabal" as
+			dump (pathArg as </> cabalCache cabal) (cabalModules cabal dbval)
 			return ok,
-	cmd_ ["cache", "dump", "project"] ["project name"] "dump cache of project" $ \as db -> case as of
-		[proj] -> do
-			dbval <- getDb db
-			proj' <- getProject db proj
-			dump (projectCache proj') (projectModules proj' dbval)
-			return ok,
-	cmd_ ["cache", "dump", "standalone"] [] "dump cache of standalone files" $ \_ db -> do
+	cmd ["cache", "dump", "project"] ["projects..."] "dump cache of project" [cacheDir] $ \as ns db -> do
 		dbval <- getDb db
-		dump standaloneCache (standaloneModules dbval)
+		ps <- if null ns
+			then return (M.elems $ databaseProjects dbval)
+			else mapM (getProject db) ns
+		forM_ ps $ \p -> dump (pathArg as </> projectCache p) (projectModules p dbval)
 		return ok,
-	cmd_ ["cache", "dump", "all"] ["path"] "dump all" $ \as db -> do
-		if length as > 1
-			then return (err "Invalid arguments")
-			else do
-				let
-					path = fromMaybe "." $ listToMaybe as
-				dbval <- getDb db
-				createDirectoryIfMissing True (path </> "cabal")
-				createDirectoryIfMissing True (path </> "projects")
-				forM_ (M.keys $ databaseCabalModules dbval) $ \c -> dump (path </> "cabal" </> cabalCache c) (cabalModules c dbval)
-				forM_ (M.keys $ databaseProjects dbval) $ \p -> dump (path </> "projects" </> projectCache (project p)) (projectModules (project p) dbval)
-				dump (path </> standaloneCache) (standaloneModules dbval)
-				return ok,
+	cmd ["cache", "dump", "standalone"] [] "dump cache of standalone files" [cacheDir] $ \as _ db -> do
+		dbval <- getDb db
+		dump (pathArg as </> standaloneCache) (standaloneModules dbval)
+		return ok,
+	cmd ["cache", "dump"] [] "dump all" [cacheDir] $ \as _ db -> do
+		dbval <- getDb db
+		createDirectoryIfMissing True (pathArg as </> "cabal")
+		createDirectoryIfMissing True (pathArg as </> "projects")
+		forM_ (M.keys $ databaseCabalModules dbval) $ \c -> dump (pathArg as </> "cabal" </> cabalCache c) (cabalModules c dbval)
+		forM_ (M.keys $ databaseProjects dbval) $ \p -> dump (pathArg as </> "projects" </> projectCache (project p)) (projectModules (project p) dbval)
+		dump (pathArg as </> standaloneCache) (standaloneModules dbval)
+		return ok,
 	cmd ["cache", "load", "cabal"] [] "load cache for cabal packages" [
-		Option ['c'] ["cabal"] (ReqArg (First . Just) "path") "path to cabal sandbox"] $ \p _ db -> do
-			cabal <- getCabal $ getFirst p
-			cacheLoad db $ load (cabalCache cabal)
+		sandbox, cacheDir] $ \as _ db -> do
+			cabal <- getCabal $ askOpt "cabal" as
+			cacheLoad db $ load (pathArg as </> cabalCache cabal)
 			return ok,
-	cmd_ ["cache", "load", "project"] ["project name"] "load cache for project" $ \as db -> case as of
-		[proj] -> do
-			proj' <- getProj proj
-			cacheLoad db . load . projectCache $ proj'
-			return ok
-		_ -> return $ err "Invalid arguments",
-	cmd_ ["cache", "load", "standalone"] [] "load cache for standalone files" $ \_ db -> do
-		cacheLoad db $ load standaloneCache
+	cmd ["cache", "load", "project"] ["projects..."] "load cache for projects" [cacheDir] $ \as ns db -> do
+		ps <- mapM getProj ns
+		forM_ ps $ \p -> cacheLoad db (load (pathArg as </> projectCache p))
 		return ok,
-	cmd_ ["cache", "load", "all"] ["paths..."] "load cache from directory" $ \as db -> do
-		cts <- liftM concat $ mapM (liftM (filter ((== ".json") . takeExtension)) . getDirectoryContents') $ concatMap (\p -> [p, p </> "cabal", p </> "projects"]) (if null as then ["."] else as)
+	cmd ["cache", "load", "standalone"] [] "load cache for standalone files" [cacheDir] $ \as _ db -> do
+		cacheLoad db (load $ pathArg as </> standaloneCache)
+		return ok,
+	cmd_ ["cache", "load"] ["paths..."] "load cache from directories" $ \ns db -> do
+		cts <- liftM concat $ mapM (liftM (filter ((== ".json") . takeExtension)) . getDirectoryContents') $ concatMap (\p -> [p, p </> "cabal", p </> "projects"]) (if null ns then ["."] else ns)
 		forM_ cts $ \c -> do
 			e <- doesFileExist c
 			when e $ cacheLoad db (load c)
@@ -549,6 +543,15 @@ commands = [
 		waitStatusOpts = [
 			Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete",
 			Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"]
+
+		cacheDir = Option ['p'] ["path"] (ReqArg (opt "path") "path") "cache path"
+		sandbox = Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"
+		projectArg = Option ['p'] ["project"] (ReqArg (opt "project") "path")
+		fileArg = Option ['f'] ["file"] (ReqArg (opt "file") "path")
+		moduleArg = Option ['m'] ["module"] (ReqArg (opt "module") "name")
+		contextFile = fileArg "context source file"
+
+		pathArg = fromMaybe "." . askOpt "path"
 
 		isParent :: FilePath -> FilePath -> Bool
 		isParent dir file = norm dir `isPrefixOf` norm file where

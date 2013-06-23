@@ -70,7 +70,8 @@ encodeImport :: Import -> Value
 encodeImport i = object [
 	"module" .= importModuleName i,
 	"qualified" .= importIsQualified i,
-	"as" .= importAs i]
+	"as" .= importAs i,
+	"location" .= fmap encodeLocation (importLocation i)]
 
 decodeDeclaration :: Value -> Parser (Symbol Declaration)
 decodeDeclaration = withObject "declaration" $ \v -> Symbol <$>
@@ -139,7 +140,7 @@ decodeImport = withObject "import" $ \v -> Import <$>
 	(v .: "module") <*>
 	(v .: "qualified") <*>
 	(v .: "as") <*>
-	pure Nothing
+	((v .: "location") >>= traverse decodeLocation)
 
 str :: String -> String
 str = id

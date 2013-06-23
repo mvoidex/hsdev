@@ -183,7 +183,9 @@ inspectFile file = do
 	return . setModuleReferences . fmap (setLocations absFilename p mtime) . setLoc absFilename p mtime . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p tm s = s { symbolLocation = Just ((moduleLocation f) { locationProject = p, locationTimeStamp = Just tm }) }
-		setLocations f p tm m = m { moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = f, locationProject = p, locationTimeStamp = Just tm }) (symbolLocation decl) }) (moduleDeclarations m) }
+		setLocations f p tm m = m {
+			moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = f, locationProject = p, locationTimeStamp = Just tm }) (symbolLocation decl) }) (moduleDeclarations m),
+			moduleImports = M.map (\imp -> imp { importLocation = fmap (\l -> l { locationFile = f, locationProject = p, locationTimeStamp = Just tm }) (importLocation imp) }) (moduleImports m) }
 
 		onError :: E.ErrorCall -> IO (Either String (Symbol Module))
 		onError = return . Left . show
