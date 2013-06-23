@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols (
-	Location, locationFile, locationLine, locationColumn, locationProject,
+	Location(..),
 	Import(..),
 	Symbol(..),
 	Cabal(..),

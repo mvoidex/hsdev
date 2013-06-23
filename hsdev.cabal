@@ -17,6 +17,7 @@ cabal-version:       >=1.8
 
 library
   hs-source-dirs: src
+  ghc-options: -threaded
   exposed-modules:
     HsDev
     HsDev.Cache
@@ -66,6 +67,7 @@ library
 executable hsdev
   main-is: hsdev.hs
   hs-source-dirs: tools
+  ghc-options: -threaded
   other-modules:
     System.Command
   build-depends:

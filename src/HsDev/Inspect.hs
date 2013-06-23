@@ -1,10 +1,12 @@
 module HsDev.Inspect (
 	analyzeModule,
 	inspectFile,
+	projectSources,
 	inspectProject
 	) where
 
 import Control.Arrow
+import Control.Applicative
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
@@ -172,35 +174,40 @@ inspectFile file = do
 	source <- liftIO $ readFileUtf8 file
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
-		is <- E.catch (Doc.createInterfaces [] [file]) noReturn
+		is <- E.catch (Doc.createInterfaces [Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] [absFilename]) noReturn
 		forM is $ \i -> do
 			moduleFile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 			return (moduleFile, i)
-	either throwError (handleFail . setModuleReferences . fmap (setLocations absFilename p) . setLoc absFilename p . maybe id addDocs docsMap) $ analyzeModule source
+	forced <- ErrorT $ E.catch (E.evaluate $ analyzeModule source) onError
+	return . setModuleReferences . fmap (setLocations absFilename p) . setLoc absFilename p . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p s = s { symbolLocation = Just ((moduleLocation f) { locationProject = p }) }
 		setLocations f p m = m { moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = f, locationProject = p }) (symbolLocation decl) }) (moduleDeclarations m) }
-		-- Workaround: haskell-src-exts calls error
-		handleFail :: Symbol Module -> ErrorT String IO (Symbol Module)
-		handleFail m = ErrorT $ E.catch (liftM Right $ E.evaluate m) onErrorCall where
-			onErrorCall :: E.ErrorCall -> IO (Either String (Symbol Module))
-			onErrorCall = return . Left . show
+
+		onError :: E.ErrorCall -> IO (Either String (Symbol Module))
+		onError = return . Left . show
+
+-- | Enumerate project source files
+projectSources :: Project -> ErrorT String IO [FilePath]
+projectSources p = do
+	p' <- loadProject p
+	let
+		dirs = maybe [] (map (projectPath p' </>) . sourceDirs) $ projectDescription p'
+	liftIO $ liftM (filter haskellSource . concat) $ mapM traverseDirectory dirs
 
 -- | Inspect project
 inspectProject :: Project -> ErrorT String IO (Project, [Symbol Module])
 inspectProject p = do
-	p' <- readProject (projectCabal p)
-	let
-		dirs = maybe [] (map (projectPath p' </>) . sourceDirs) $ projectDescription p'
-	sourceFiles <- liftIO $ liftM (filter haskellSource . concat) $ mapM traverseDirectory dirs
+	p' <- loadProject p
+	sourceFiles <- projectSources p'
 	modules <- liftM concat $ mapM inspectFile' sourceFiles
 	return (p', modules)
 	where
-		inspectFile' f = catchError (liftM return $ inspectFile f) (const $ return [])
+		inspectFile' f = liftM return (inspectFile f) <|> return []
 
 -- | Read file in UTF8
 readFileUtf8 :: FilePath -> IO String
-readFileUtf8 f = do
-	h <- openFile f ReadMode
+readFileUtf8 f = withFile f ReadMode $ \h -> do
 	hSetEncoding h utf8
-	hGetContents h
+	cts <- hGetContents h
+	length cts `seq` return cts

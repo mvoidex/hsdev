@@ -4,7 +4,6 @@ module HsDev.Database.Async (
 	module Data.Async
 	) where
 
-import Control.Concurrent
 import Control.Monad
 import Control.Monad.IO.Class
 import qualified Data.Map as M
@@ -16,15 +15,15 @@ import HsDev.Database
 import HsDev.Symbols
 import HsDev.Symbols.Util
 
-traceEvents :: Async Database -> IO ()
-traceEvents avar = subscribeEvents avar traceEvent where
+traceEvents :: Async Database -> (String -> IO ()) -> IO ()
+traceEvents avar logMsg = subscribeEvents avar traceEvent where
 	traceEvent (Append db) = forM_ (dbModules db) $ \m ->
-		putStrLn $ "appending " ++ showModule m
+		logMsg $ "appending " ++ showModule m
 	traceEvent (Remove db) = forM_ (dbModules db) $ \m ->
-		putStrLn $ "removing " ++ showModule m
-	traceEvents Clear = putStrLn "clearing"
-	traceEvents (Modify _) = putStrLn "custom modify"
-	traceEvents (Action _) = putStrLn "custom action"
+		logMsg $ "removing " ++ showModule m
+	traceEvents Clear = logMsg "clearing"
+	traceEvents (Modify _) = logMsg "custom modify"
+	traceEvents (Action _) = logMsg "custom action"
 
 	dbModules :: Database -> [Symbol Module]
 	dbModules db = concatMap S.toList $ M.elems $ databaseModules db

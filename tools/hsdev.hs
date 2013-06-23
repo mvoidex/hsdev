@@ -45,6 +45,7 @@ import HsDev.Symbols.Util
 import HsDev.Symbols.JSON
 import HsDev.Tools.GhcMod
 import HsDev.Util
+import HsDev.Inspect
 
 mainCommands :: [Command (IO ())]
 mainCommands = [
@@ -69,34 +70,56 @@ mainCommands = [
 				r <- processCmd db s putStrLn
 				unless r exitSuccess,
 	cmd ["server", "start"] [] "start remote server" clientOpts $ \copts _ -> do
-		pname <- getExecutablePath
-		void $ runInteractiveProcess pname (["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts)) Nothing Nothing
+		let
+			args = ["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts)
+		void $ runInteractiveProcess "powershell" ["-Command", "& {start-process hsdev " ++ intercalate ", " args ++ " -WindowStyle Hidden}"] Nothing Nothing
 		printOk copts $ "Server started at port " ++ show (fromMaybe 4567 (getFirst $ clientPort copts)),
 	cmd ["server", "run"] [] "start server" clientOpts $ \copts _ -> do
 		msgs <- newChan
 		forkIO $ getChanContents msgs >>= mapM_ (printOk copts)
-		exitVar <- newEmptyMVar
 		let
 			outputStr = writeChan msgs
+
+		db <- newAsync
+
+		waitListen <- newEmptyMVar
+		clientChan <- newChan
+
 		forkIO $ do
+			accepter <- myThreadId
 			s <- socket AF_INET Stream defaultProtocol
 			bind s (SockAddrInet (maybe 4567 fromIntegral (getFirst $ clientPort copts)) iNADDR_ANY)
 			listen s maxListenQueue
-			db <- newAsync
-			forever $ handle ignoreIO $ do
-				outputStr "listening for connections"
+			forever $ handle (ignoreIO outputStr) $ do
 				s' <- fmap fst $ accept s
+				outputStr $ show s' ++ " connected"
 				void $ forkIO $ bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-					str <- hGetLine h
-					outputStr $ "received: " ++ str
-					r <- processCmd db str (hPutStrLn h)
-					unless r $ putMVar exitVar ()
-		forkIO $ do
-			c <- getLine
-			case c of
-				"exit" -> putMVar exitVar ()
-				_ -> outputStr "enter 'exit' to quit"
-		takeMVar exitVar,
+					me <- myThreadId
+					done <- newEmptyMVar
+					let
+						timeoutWait = do
+							notDone <- isEmptyMVar done
+							when notDone $ do
+								void $ forkIO $ do
+									threadDelay 1000000
+									tryPutMVar done ()
+									killThread me
+								void $ takeMVar done
+					writeChan clientChan (Just timeoutWait)
+					req <- hGetLine h
+					outputStr $ show s' ++ ": " ++ req
+					r <- processCmd db req (hPutStrLn h)
+					unless r $ do
+						void $ tryPutMVar waitListen ()
+						killThread accepter
+					putMVar done ()
+
+
+		takeMVar waitListen
+		outputStr "waiting for clients"
+		writeChan clientChan Nothing
+		getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
+		outputStr "server shutdown",
 	cmd ["server", "stop"] [] "stop remote server" clientOpts $ \copts _ -> do
 		pname <- getExecutablePath
 		r <- readProcess pname (["--json", "exit"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts)) ""
@@ -108,8 +131,8 @@ mainCommands = [
 				_ -> False
 		printOk copts $ if stopped then "Server stopped" else "Server returned: " ++ r]
 	where
-		ignoreIO :: IOException -> IO ()
-		ignoreIO _ = return ()
+		ignoreIO :: (String -> IO ()) -> IOException -> IO ()
+		ignoreIO out = out . show
 
 		printOk :: ClientOpts -> String -> IO ()
 		printOk copts str
@@ -214,15 +237,16 @@ commands = [
 			proj <- locateProject $ fromMaybe "." $ askOpt "project" as
 			case proj of
 				Nothing -> return $ err $ "Project " ++ maybe "in current directory" (\p' -> "'" ++ p' ++ "'") (askOpt "project" as) ++ " not found"
-				Just proj' -> startProcess as $ \onStatus -> do
-					result <- runErrorT $ update db $ scanProject proj'
-					either
-						(onStatus . (("error scanning project " ++ projectName proj' ++ ": ") ++))
-						(const $ onStatus $ "project " ++ projectName proj' ++ " scanned")
-						result,
+				Just proj' -> startProcess as $ \onStatus -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ projectName proj' ++ "fails with: ") ++)) $ do
+					proj'' <- loadProject proj'
+					srcs <- projectSources proj''
+					forM_ srcs $ \src -> flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
+						update db $ fmap fromModule $ inspectFile src
+						liftIO (onStatus $ "file " ++ src ++ " scanned"),
 	cmd ["scan", "path"] ["path to scan"] "scan directory" waitStatusOpts $ \as ps db -> case ps of
 		[dir] -> do
-			exists <- doesDirectoryExist dir
+			dir' <- canonicalizePath dir
+			exists <- doesDirectoryExist dir'
 			case exists of
 				False -> return $ err $ "Invalid directory: " ++ dir
 				True -> startProcess as $ \onStatus -> do
@@ -237,7 +261,8 @@ commands = [
 		_ -> return $ err "Invalid arguments",
 	cmd_ ["scan", "file"] ["source file"] "scan file" $ \fs db -> case fs of
 		[file] -> do
-			runErrorT $ update db $ scanFile file
+			file' <- canonicalizePath file
+			runErrorT $ update db $ scanFile file'
 			return ok
 		_ -> return $ err "Invalid arguments",
 	cmd ["scan", "module"] ["module name"] "scan module in cabal" [
@@ -250,7 +275,7 @@ commands = [
 		Option ['p'] ["project"] (ReqArg (opt "project") "path") "project to rescan",
 		Option ['f'] ["file"] (ReqArg (opt "file") "path") "file to rescan",
 		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ waitStatusOpts) $
-			\as ns db -> do
+			\as _ db -> do
 				dbval <- getDb db
 				projectMods <- traverse (fmap (\p -> projectModules p dbval) . getProject db) $ askOpt "project" as
 				let
@@ -267,7 +292,7 @@ commands = [
 					forM_ (M.elems rescanMods) $ \m -> do
 						result <- runErrorT $ do
 							srcFile <- maybe (throwError $ "error rescanning module '" ++ symbolName m ++ "': source not specified") (return . locationFile) $ symbolLocation m
-							r <- catchError (update db $ scanFile srcFile) (throwError . (("error rescanning file '" ++ srcFile ++ "': ") ++))
+							(update db $ scanFile srcFile) `catchError` (throwError . (("error rescanning file '" ++ srcFile ++ "': ") ++))
 							return srcFile
 						either onStatus (\src -> onStatus ("file '" ++ src ++ "' rescanned")) result,
 	cmd ["clean"] [] "clean info about modules" [
@@ -530,10 +555,21 @@ processCmd db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd .
 	commandError errs = errArgs "Command syntax error" [("what", unlines errs)]
 
 	processResult :: CommandResult -> IO Bool
-	processResult (ResultProcess act) = act (printResult . showStatus) >> processResult ok where
-		showStatus s
-			| isJson = L.unpack $ encode $ object ["status" .= s]
-			| otherwise = "status: " ++ s
+	processResult (ResultProcess act) = do
+		act (printResult . showStatus)
+		processResult ok
+		`catch`
+		processFailed
+		where
+			processFailed :: SomeException -> IO Bool
+			processFailed e = do
+				processResult $ errArgs "process throws exception" [("exception", show e)]
+				return True
+
+			showStatus s
+				| isJson = L.unpack $ encode $ object ["status" .= s]
+				| otherwise = "status: " ++ s
+
 	processResult ResultExit = printResult (if isJson then L.unpack (encode ResultExit) else "bye") >> return False
 	processResult v
 		| isJson = (printResult $ L.unpack $ encode v) >> return True

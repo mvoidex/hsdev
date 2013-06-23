@@ -11,7 +11,7 @@ import Control.DeepSeq
 import Control.Exception (handle, IOException)
 import Control.Monad.Error
 import Data.List (intercalate)
-import Data.Maybe (maybeToList)
+import Data.Maybe (maybeToList, isJust)
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
 import Distribution.ModuleName (components)
@@ -118,14 +118,16 @@ analyzeCabal source = case parsePackageDescription source of
 readProject :: FilePath -> ErrorT String IO Project
 readProject file = do
 	source <- ErrorT $ handle (\e -> return (Left ("IO error: " ++ show (e :: IOException)))) (fmap Right $ readFile file)
-	either throwError (return . mkProject) $ analyzeCabal source
+	length source `seq` either throwError (return . mkProject) $ analyzeCabal source
 	where
 		mkProject desc = (project file) {
 			projectDescription = Just desc }
 
 -- | Load project description
 loadProject :: Project -> ErrorT String IO Project
-loadProject = readProject . projectCabal
+loadProject p
+	| isJust (projectDescription p) = return p
+	| otherwise = readProject (projectCabal p)
 
 -- | Make project by .cabal file
 project :: FilePath -> Project

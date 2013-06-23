@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module System.Command (
 	Command(..),
@@ -30,6 +31,14 @@ data Command a = Command {
 instance Functor Command where
 	fmap f cmd' = cmd' {
 		commandRun = fmap (fmap f) . commandRun cmd' }
+
+instance Functor ArgDescr where
+	fmap f (NoArg v) = NoArg $ f v
+	fmap f (ReqArg g d) = ReqArg (f . g) d
+	fmap f (OptArg g d) = OptArg (f . g) d
+
+instance Functor OptDescr where
+	fmap f (Option short long descr expl) = Option short long (fmap f descr) expl
 
 -- | Make command
 cmd :: Monoid c => [String] -> [String] -> String -> [OptDescr c] -> (c -> [String] -> a) -> Command a
