@@ -6,6 +6,7 @@ module HsDev.Database.Async (
 
 import Control.Monad
 import Control.Monad.IO.Class
+import Control.DeepSeq (force)
 import qualified Data.Map as M
 import qualified Data.Set as S
 
@@ -36,4 +37,4 @@ traceEvents avar logMsg = subscribeEvents avar traceEvent where
 update :: MonadIO m => Async Database -> m Database -> m ()
 update db act = do
 	db' <- act
-	liftIO $ modifyAsync db (Append db')
+	force db' `seq` (liftIO $ modifyAsync db (Append db'))

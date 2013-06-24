@@ -13,10 +13,12 @@ import Control.Monad.Error
 import qualified Data.ByteString.Lazy.Char8 as L (unpack, pack)
 import Data.Aeson
 import Data.Aeson.Types (parseMaybe)
+import Data.Either (partitionEithers)
 import Data.Maybe
 import Data.Monoid
 import Data.List
 import Data.Traversable (traverse)
+import qualified Data.Traversable as T (forM)
 import Data.Map (Map)
 import Data.String (fromString)
 import qualified Data.Map as M
@@ -219,7 +221,7 @@ errArgs s as = ResultError s (M.fromList as)
 
 commands :: [Command (Async Database -> IO CommandResult)]
 commands = [
-	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (sandbox : waitStatusOpts) $
+	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (sandbox : [wait, status]) $
 		\as _ db -> do
 			dbval <- getDb db
 			ms <- runErrorT list
@@ -232,7 +234,7 @@ commands = [
 						liftIO $ onStatus $ "module " ++ mname ++ " scanned"
 						`catchError`
 						(liftIO . onStatus . (("error scanning module " ++ mname ++ ": ") ++)),
-	cmd ["scan", "project"] [] "scan project" (projectArg "project's .cabal file" : waitStatusOpts) $
+	cmd ["scan", "project"] [] "scan project" (projectArg "project's .cabal file" : [wait, status]) $
 		\as _ db -> do
 			dbval <- getDb db
 			proj <- locateProject $ fromMaybe "." $ askOpt "project" as
@@ -246,7 +248,7 @@ commands = [
 						maybe (update db $ fmap fromModule $ inspectFile src) (update db . rescanModule) $ lookupFile src dbval
 						liftIO (onStatus $ "file " ++ src ++ " scanned"),
 	cmd ["scan", "path"] ["path to scan"] "scan directory" (
-		Option ['p'] ["projects"] (NoArg (opt "projects" "")) "scan only for projects" : waitStatusOpts) $ \as ps db -> case ps of
+		Option ['p'] ["projects"] (NoArg (opt "projects" "")) "scan only for projects" : [wait, status]) $ \as ps db -> case ps of
 		[dir] -> do
 			dbval <- getDb db
 			dir' <- canonicalizePath dir
@@ -291,25 +293,30 @@ commands = [
 	cmd ["rescan"] [] "rescan sources" ([
 		projectArg "project to rescan",
 		fileArg "file to rescan",
-		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ waitStatusOpts) $
+		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ [wait, status]) $
 			\as _ db -> do
 				dbval <- getDb db
-				projectMods <- traverse (fmap (\p -> projectModules p dbval) . getProject db) $ askOpt "project" as
+				projectMods <- T.forM (askOpt "project" as) $ \p -> do
+					p' <- getProject db p
+					let
+						res = projectModules p' dbval
+					return $ if M.null res then Left ("Unknown project: " ++ p) else Right res
+				fileMods <- T.forM (askOpt "file" as) $ \f ->
+					return $ maybe (Left $ "Unknown file: " ++ f) (Right . M.singleton f) $ lookupFile f dbval
+				dirMods <- T.forM (askOpt "dir" as) $ \d -> do
+					return $ Right $ M.filterWithKey (\f _ -> isParent d f) $ databaseFiles dbval
+
 				let
-					fileMods = do
-						file' <- askOpt "file" as
-						fmod <- lookupFile file' dbval
-						return $ M.singleton file' fmod
-					dirMods = do
-						dir' <- askOpt "dir" as
-						return $ M.filterWithKey (\f _ -> isParent dir' f) $ databaseFiles dbval
-					allMods = Just $ databaseFiles dbval
-					rescanMods = fromMaybe (error "Impossible happened") $ msum [projectMods, fileMods, dirMods, allMods]
+					(errors, filteredMods) = partitionEithers $ catMaybes [projectMods, fileMods, dirMods]
+					rescanMods = if null filteredMods then databaseFiles dbval else M.unions filteredMods
 					moduleId m = maybe (symbolName m) locationFile $ symbolLocation m
-				startProcess as $ \onStatus -> do
-					forM_ (M.elems rescanMods) $ \m -> runErrorT $ flip catchError (throwError . (("error rescanning module '" ++ moduleId m ++ "': ") ++)) $ do
-						update db $ rescanModule m
-						liftIO $ onStatus $ "module '" ++ moduleId m ++ "' rescanned",
+
+				if not $ null errors
+					then return $ err $ intercalate ", " errors
+					else startProcess as $ \onStatus -> do
+						forM_ (M.elems rescanMods) $ \m -> runErrorT $ flip catchError (throwError . (("error rescanning module " ++ moduleId m ++ ": ") ++)) $ do
+							update db $ rescanModule m
+							liftIO $ onStatus $ "module " ++ moduleId m ++ " rescanned",
 	cmd ["clean"] [] "clean info about modules" [
 		sandbox,
 		projectArg "module project",
@@ -471,22 +478,26 @@ commands = [
 		dump (pathArg as </> standaloneCache) (standaloneModules dbval)
 		return ok,
 	cmd ["cache", "load", "cabal"] [] "load cache for cabal packages" [
-		sandbox, cacheDir] $ \as _ db -> do
+		sandbox, cacheDir, wait] $ \as _ db -> do
 			cabal <- getCabal $ askOpt "cabal" as
 			cacheLoad db $ load (pathArg as </> cabalCache cabal)
+			waitDb as db
 			return ok,
-	cmd ["cache", "load", "project"] ["projects..."] "load cache for projects" [cacheDir] $ \as ns db -> do
+	cmd ["cache", "load", "project"] ["projects..."] "load cache for projects" [cacheDir, wait] $ \as ns db -> do
 		ps <- mapM getProj ns
 		forM_ ps $ \p -> cacheLoad db (load (pathArg as </> projectCache p))
+		waitDb as db
 		return ok,
-	cmd ["cache", "load", "standalone"] [] "load cache for standalone files" [cacheDir] $ \as _ db -> do
+	cmd ["cache", "load", "standalone"] [] "load cache for standalone files" [cacheDir, wait] $ \as _ db -> do
 		cacheLoad db (load $ pathArg as </> standaloneCache)
+		waitDb as db
 		return ok,
-	cmd ["cache", "load"] [] "load cache from directories" [cacheDir] $ \as _ db -> do
+	cmd ["cache", "load"] [] "load cache from directories" [cacheDir, wait] $ \as _ db -> do
 		cts <- liftM concat $ mapM (liftM (filter ((== ".json") . takeExtension)) . getDirectoryContents') [pathArg as, pathArg as </> "cabal", pathArg as </> "projects"]
 		forM_ cts $ \c -> do
 			e <- doesFileExist c
 			when e $ cacheLoad db (load c)
+		waitDb as db
 		return ok,
 	cmd_ ["help"] ["command"] "this command" $ \as _ -> case as of
 		[] -> printUsage >> return ok
@@ -504,11 +515,17 @@ commands = [
 			b <- doesDirectoryExist p
 			if b then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p) else return []
 
+		waitDb as db = when (isJust (askOpt "wait" as)) $ do
+			putStrLn "wait for db"
+			waitDbVar <- newEmptyMVar
+			modifyAsync db (Action $ \d -> putStrLn "db done!" >> putMVar waitDbVar () >> return d)
+			takeMVar waitDbVar
+
 		cacheLoad db act = do
 			db' <- act
 			case db' of
 				Left e -> putStrLn e
-				Right database -> modifyAsync db (Append database)
+				Right database -> update db (return database)
 
 		showModule = symbolName
 
@@ -539,11 +556,8 @@ commands = [
 			where
 				onMsg showMsg = if isJust (askOpt "status" as) then showMsg else (const $ return ())
 
-		waitStatusOpts :: [OptDescr (Map String String)]
-		waitStatusOpts = [
-			Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete",
-			Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"]
-
+		wait = Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete"
+		status = Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"
 		cacheDir = Option ['p'] ["path"] (ReqArg (opt "path") "path") "cache path"
 		sandbox = Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"
 		projectArg = Option ['p'] ["project"] (ReqArg (opt "project") "path")
