@@ -6,14 +6,15 @@ module System.Command (
 	cmd, cmd_, addhelp,
 	brief, help,
 	run,
-	opt, askOpt,
+	Opts(..),
+	opt, hasOpt, askOpt, askOpts,
 	split, unsplit
 	) where
 
 import Control.Arrow
 import Data.Char
 import Data.List (stripPrefix, unfoldr, isPrefixOf)
-import Data.Maybe (mapMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Monoid
@@ -85,11 +86,24 @@ run :: [Command a] -> a -> ([String] -> a) -> [String] -> a
 run cmds onDef onError as = maybe onDef (either onError id) found where
 	found = listToMaybe $ mapMaybe (`commandRun` as) cmds
 
-opt :: String -> String -> Map String String
-opt = M.singleton
+-- | Options holder
+newtype Opts = Opts { getOpts :: Map String [String] }
 
-askOpt :: String -> Map String String -> Maybe String
-askOpt = M.lookup
+instance Monoid Opts where
+	mempty = Opts mempty
+	(Opts l) `mappend` (Opts r) = Opts $ M.unionWith (++) l r
+
+opt :: String -> String -> Opts
+opt n v = Opts $ M.singleton n [v]
+
+hasOpt :: String -> Opts -> Bool
+hasOpt n = M.member n . getOpts
+
+askOpt :: String -> Opts -> Maybe String
+askOpt n = listToMaybe . askOpts n
+
+askOpts :: String -> Opts -> [String]
+askOpts n = fromMaybe [] . M.lookup n . getOpts
 
 -- | Split string to words
 split :: String -> [String]

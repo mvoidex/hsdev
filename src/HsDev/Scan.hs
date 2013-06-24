@@ -19,30 +19,30 @@ import HsDev.Inspect
 import HsDev.Project
 
 -- | Scan cabal for modules
-scanCabal :: Cabal -> ErrorT String IO Database
-scanCabal cabal = do
-	ms <- list
-	fmap mconcat $ mapM (\m -> scanModule cabal m <|> return mempty) ms
+scanCabal :: [String] -> Cabal -> ErrorT String IO Database
+scanCabal opts cabal = do
+	ms <- list opts
+	fmap mconcat $ mapM (\m -> scanModule opts cabal m <|> return mempty) ms
 
 -- | Scan cabal module
-scanModule :: Cabal -> String -> ErrorT String IO Database
-scanModule _ = fmap fromModule . (browse >=> liftIO . loadDocs [])
+scanModule :: [String] -> Cabal -> String -> ErrorT String IO Database
+scanModule opts _ = fmap fromModule . (browse opts >=> liftIO . loadDocs opts)
 
 -- | Scan file
-scanFile :: FilePath -> ErrorT String IO Database
-scanFile = fmap fromModule . inspectFile
+scanFile :: [String] -> FilePath -> ErrorT String IO Database
+scanFile opts = fmap fromModule . inspectFile opts
 
 -- | Scan project
-scanProject :: Project -> ErrorT String IO Database
-scanProject p = do
-	(p', ms) <- inspectProject p
+scanProject :: [String] -> Project -> ErrorT String IO Database
+scanProject opts p = do
+	(p', ms) <- inspectProject opts p
 	return $ mconcat (fromProject p' : map fromModule ms)
 
 -- | Rescan module
-rescanModule :: Symbol Module -> ErrorT String IO Database
-rescanModule m
+rescanModule :: [String] -> Symbol Module -> ErrorT String IO Database
+rescanModule opts m
 	| bySources m = do
 		loc <- maybe (throwError "Location not specified") return $ symbolLocation m
 		actual <- liftIO $ isActual m
-		if actual then return mempty else scanFile (locationFile loc)
+		if actual then return mempty else scanFile opts (locationFile loc)
 	| otherwise = return mempty

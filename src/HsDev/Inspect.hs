@@ -165,8 +165,8 @@ addDocs docsMap = fmap addDocs' where
 	addDocs' m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDeclarations m) }
 
 -- | Inspect file
-inspectFile :: FilePath -> ErrorT String IO (Symbol Module)
-inspectFile file = do
+inspectFile :: [String] -> FilePath -> ErrorT String IO (Symbol Module)
+inspectFile opts file = do
 	let
 		noReturn :: E.SomeException -> IO [Doc.Interface]
 		noReturn _ = return []
@@ -175,7 +175,7 @@ inspectFile file = do
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	mtime <- liftIO $ Dir.getModificationTime file
 	docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
-		is <- E.catch (Doc.createInterfaces [Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] [absFilename]) noReturn
+		is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
 		forM is $ \i -> do
 			moduleFile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 			return (moduleFile, i)
@@ -199,14 +199,14 @@ projectSources p = do
 	liftIO $ liftM (filter haskellSource . concat) $ mapM traverseDirectory dirs
 
 -- | Inspect project
-inspectProject :: Project -> ErrorT String IO (Project, [Symbol Module])
-inspectProject p = do
+inspectProject :: [String] -> Project -> ErrorT String IO (Project, [Symbol Module])
+inspectProject opts p = do
 	p' <- loadProject p
 	sourceFiles <- projectSources p'
 	modules <- liftM concat $ mapM inspectFile' sourceFiles
 	return (p', modules)
 	where
-		inspectFile' f = liftM return (inspectFile f) <|> return []
+		inspectFile' f = liftM return (inspectFile opts f) <|> return []
 
 -- | Read file in UTF8
 readFileUtf8 :: FilePath -> IO String

@@ -221,20 +221,20 @@ errArgs s as = ResultError s (M.fromList as)
 
 commands :: [Command (Async Database -> IO CommandResult)]
 commands = [
-	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (sandbox : [wait, status]) $
+	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (sandbox : ghcOpts : [wait, status]) $
 		\as _ db -> do
 			dbval <- getDb db
-			ms <- runErrorT list
+			ms <- runErrorT $ list (getGhcOpts as)
 			cabal <- maybe (return Cabal) asCabal $ askOpt "cabal" as
 			case ms of
 				Left e -> return $ err $ "Failed to invoke ghc-mod 'list': " ++ e
 				Right r -> startProcess as $ \onStatus -> do
 					forM_ r $ \mname -> when (isNothing $ lookupModule cabal mname dbval) $ void $ runErrorT $ do
-						update db $ scanModule cabal mname
+						update db $ scanModule (getGhcOpts as) cabal mname
 						liftIO $ onStatus $ "module " ++ mname ++ " scanned"
 						`catchError`
 						(liftIO . onStatus . (("error scanning module " ++ mname ++ ": ") ++)),
-	cmd ["scan", "project"] [] "scan project" (projectArg "project's .cabal file" : [wait, status]) $
+	cmd ["scan", "project"] [] "scan project" (projectArg "project's .cabal file" : ghcOpts : [wait, status]) $
 		\as _ db -> do
 			dbval <- getDb db
 			proj <- locateProject $ fromMaybe "." $ askOpt "project" as
@@ -245,22 +245,22 @@ commands = [
 					update db $ return $ fromProject proj''
 					srcs <- projectSources proj''
 					forM_ srcs $ \src -> flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
-						maybe (update db $ fmap fromModule $ inspectFile src) (update db . rescanModule) $ lookupFile src dbval
+						maybe (update db $ fmap fromModule $ inspectFile (getGhcOpts as) src) (update db . rescanModule (getGhcOpts as)) $ lookupFile src dbval
 						liftIO (onStatus $ "file " ++ src ++ " scanned"),
 	cmd ["scan", "path"] ["path to scan"] "scan directory" (
-		Option ['p'] ["projects"] (NoArg (opt "projects" "")) "scan only for projects" : [wait, status]) $ \as ps db -> case ps of
+		Option ['p'] ["projects"] (NoArg (opt "projects" "")) "scan only for projects" : ghcOpts : [wait, status]) $ \as ps db -> case ps of
 		[dir] -> do
 			dbval <- getDb db
 			dir' <- canonicalizePath dir
 			exists <- doesDirectoryExist dir'
 			case exists of
 				False -> return $ err $ "Invalid directory: " ++ dir
-				True -> case isJust (askOpt "projects" as) of
+				True -> case hasOpt "projects" as of
 					False -> startProcess as $ \onStatus -> do
 						onStatus $ "scanning " ++ dir ++ " for haskell sources"
 						srcs <- liftM (filter haskellSource) $ traverseDirectory dir
 						forM_ srcs $ \src -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
-							maybe (update db $ fmap fromModule $ inspectFile src) (update db . rescanModule) $ lookupFile src dbval
+							maybe (update db $ fmap fromModule $ inspectFile (getGhcOpts as) src) (update db . rescanModule (getGhcOpts as)) $ lookupFile src dbval
 							liftIO (onStatus $ "file " ++ src ++ " scanned")
 					True -> startProcess as $ \onStatus -> do
 						onStatus $ "scanning " ++ dir ++ " for cabal projects"
@@ -270,30 +270,30 @@ commands = [
 							update db $ return $ fromProject proj
 							srcs <- projectSources proj
 							forM_ srcs $ \src -> flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
-								maybe (update db $ fmap fromModule $ inspectFile src) (update db . rescanModule) $ lookupFile src dbval
+								maybe (update db $ fmap fromModule $ inspectFile (getGhcOpts as) src) (update db . rescanModule (getGhcOpts as)) $ lookupFile src dbval
 								liftIO (onStatus $ "file " ++ src ++ " scanned")
 							liftIO (onStatus $ "project " ++ projectName proj ++ " scanned")
 		_ -> return $ err "Invalid arguments",
-	cmd_ ["scan", "file"] ["source file"] "scan file" $ \fs db -> case fs of
+	cmd ["scan", "file"] ["source file"] "scan file" [ghcOpts] $ \as fs db -> case fs of
 		[file] -> do
 			dbval <- getDb db
 			file' <- canonicalizePath file
-			res <- runErrorT $ maybe (update db $ fmap fromModule $ inspectFile file') (update db . rescanModule) $ lookupFile file' dbval
+			res <- runErrorT $ maybe (update db $ fmap fromModule $ inspectFile (getGhcOpts as) file') (update db . rescanModule (getGhcOpts as)) $ lookupFile file' dbval
 			return $ either (\e -> errArgs e []) (const ok) res
 		_ -> return $ err "Invalid arguments",
-	cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox] $ \as ms db -> case ms of
+	cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox, ghcOpts] $ \as ms db -> case ms of
 		[mname] -> do
 			dbval <- getDb db
 			if (isNothing $ lookupModule (maybe Cabal CabalDev $ askOpt "cabal" as) mname dbval)
 				then do
-					res <- runErrorT $ update db $ scanModule (maybe Cabal CabalDev $ askOpt "cabal" as) mname
+					res <- runErrorT $ update db $ scanModule (getGhcOpts as) (maybe Cabal CabalDev $ askOpt "cabal" as) mname
 					return $ either (\e -> errArgs e []) (const ok) res
 				else return ok
 		_ -> return $ err "Invalid arguments",
 	cmd ["rescan"] [] "rescan sources" ([
 		projectArg "project to rescan",
 		fileArg "file to rescan",
-		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ [wait, status]) $
+		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ [ghcOpts, wait, status]) $
 			\as _ db -> do
 				dbval <- getDb db
 				projectMods <- T.forM (askOpt "project" as) $ \p -> do
@@ -315,7 +315,7 @@ commands = [
 					then return $ err $ intercalate ", " errors
 					else startProcess as $ \onStatus -> do
 						forM_ (M.elems rescanMods) $ \m -> runErrorT $ flip catchError (throwError . (("error rescanning module " ++ moduleId m ++ ": ") ++)) $ do
-							update db $ rescanModule m
+							update db $ rescanModule (getGhcOpts as) m
 							liftIO $ onStatus $ "module " ++ moduleId m ++ " rescanned",
 	cmd ["clean"] [] "clean info about modules" [
 		sandbox,
@@ -328,7 +328,7 @@ commands = [
 			proj <- traverse (getProject db) $ askOpt "project" as
 			file <- traverse canonicalizePath $ askOpt "file" as
 			let
-				cleanAll = isJust (askOpt "all" as)
+				cleanAll = hasOpt "all" as
 				filters = catMaybes [
 					fmap inProject proj,
 					fmap inFile file,
@@ -515,7 +515,7 @@ commands = [
 			b <- doesDirectoryExist p
 			if b then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p) else return []
 
-		waitDb as db = when (isJust (askOpt "wait" as)) $ do
+		waitDb as db = when (hasOpt "wait" as) $ do
 			putStrLn "wait for db"
 			waitDbVar <- newEmptyMVar
 			modifyAsync db (Action $ \d -> putStrLn "db done!" >> putMVar waitDbVar () >> return d)
@@ -549,12 +549,12 @@ commands = [
 		getDb :: (MonadIO m) => Async Database -> m Database
 		getDb = liftIO . readAsync
 
-		startProcess :: Map String String -> ((String -> IO ()) -> IO ()) -> IO CommandResult
+		startProcess :: Opts -> ((String -> IO ()) -> IO ()) -> IO CommandResult
 		startProcess as f
-			| isJust (askOpt "wait" as) = return $ ResultProcess (f . onMsg)
+			| hasOpt "wait" as = return $ ResultProcess (f . onMsg)
 			| otherwise = forkIO (f $ const $ return ()) >> return ok
 			where
-				onMsg showMsg = if isJust (askOpt "status" as) then showMsg else (const $ return ())
+				onMsg showMsg = if hasOpt "status" as then showMsg else (const $ return ())
 
 		wait = Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete"
 		status = Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"
@@ -566,6 +566,10 @@ commands = [
 		contextFile = fileArg "context source file"
 
 		pathArg = fromMaybe "." . askOpt "path"
+
+		ghcOpts = Option ['g'] ["ghcopt"] (ReqArg (opt "ghc") "ghc flags") "flags to pass to GHC"
+
+		getGhcOpts = askOpts "ghc"
 
 		isParent :: FilePath -> FilePath -> Bool
 		isParent dir file = norm dir `isPrefixOf` norm file where

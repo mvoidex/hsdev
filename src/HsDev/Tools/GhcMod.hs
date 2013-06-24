@@ -19,12 +19,12 @@ import qualified Language.Haskell.GhcMod as GhcMod
 import HsDev.Symbols
 import HsDev.Tools.Base
 
-list :: ErrorT String IO [String]
-list = tryGhc $ GhcMod.listMods GhcMod.defaultOptions
+list :: [String] -> ErrorT String IO [String]
+list opts = tryGhc $ GhcMod.listMods (GhcMod.defaultOptions { GhcMod.ghcOpts = opts })
 
-browse :: String -> ErrorT String IO (Symbol Module)
-browse moduleName = do
-	rs <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True }) moduleName
+browse :: [String] -> String -> ErrorT String IO (Symbol Module)
+browse opts moduleName = do
+	rs <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = opts }) moduleName
 	return $ setModuleReferences Symbol {
 		symbolName = moduleName,
 		symbolModule = Nothing,
@@ -48,10 +48,10 @@ browse moduleName = do
 			return $ mkSymbol (groups `at` 2) (ctor (groups `at` 1) $ TypeInfo Nothing args Nothing)
 		parseDecl s = parseFunction s `mplus` parseType s
 
-info :: FilePath -> String -> String -> Cabal -> ErrorT String IO (Symbol Declaration)
-info file moduleName symName cabal = do
+info :: [String] -> FilePath -> String -> String -> Cabal -> ErrorT String IO (Symbol Declaration)
+info opts file moduleName symName cabal = do
 	cradle <- getCradle cabal
-	rs <- tryGhc $ GhcMod.info GhcMod.defaultOptions cradle file moduleName symName
+	rs <- tryGhc $ GhcMod.info (GhcMod.defaultOptions { GhcMod.ghcOpts = opts }) cradle file moduleName symName
 	toDecl rs
 	where
 		toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s

@@ -26,11 +26,12 @@ import HsDev.Project.JSON (encodeProject)
 commands :: [Command (IO ())]
 commands = addhelp "hsinspect" id printUsage [
 	cmd ["module"] [] "inspect installed module" [
-		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to ghc in ghc-mod and hdocs"] $
-			\ghc_opts as -> oneArg as encodeModule (browse >=> liftIO . loadDocs ghc_opts),
-	cmd_ ["file"] [] "inspect file" $ \as -> oneArg as encodeModule inspectFile,
+		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
+			\ghc_opts as -> oneArg as encodeModule (browse ghc_opts >=> liftIO . loadDocs ghc_opts),
+	cmd ["file"] [] "inspect file" [
+		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
+			\ghc_opts as -> oneArg as encodeModule (inspectFile ghc_opts),
 	cmd_ ["cabal"] [] "inspect cabal" $ \as -> oneArg as encodeProject readProject]
-
 	where
 		oneArg :: [String] -> (a -> Value) -> (String -> ErrorT String IO a) -> IO ()
 		oneArg [] _ _ = putJSON $ errorStr "Not enough arguments"
