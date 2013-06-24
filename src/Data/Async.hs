@@ -2,8 +2,7 @@ module Data.Async (
 	Event(..),
 	event,
 	Async(..),
-	newAsync, readAsync, modifyAsync,
-	subscribe, subscribeEvents
+	newAsync, readAsync, modifyAsync
 	) where
 
 import Control.DeepSeq
@@ -23,34 +22,23 @@ event Clear _ = return zero
 event (Modify p) x = return $ p x
 event (Action p) x = p x
 
--- | Async variable
 data Async a = Async {
 	asyncVar :: MVar a,
-	asyncTrace :: Chan a,
 	asyncEvents :: Chan (Event a) }
 
 newAsync :: (NFData a, Group a) => IO (Async a)
 newAsync = do
 	var <- newMVar zero
-	trace <- newChan
 	events <- newChan
-	dupChan events >>= getChanContents >>= forkIO . foldM_ (doUpdate trace) zero
-	dupChan trace >>= getChanContents >>= forkIO . mapM_ (swapMVar var)
-	return $ Async var trace events
-	where
-		doUpdate ch x e = do
-			x' <- event e x
-			force x' `seq` writeChan ch x'
-			return x'
+	forkIO $ do
+		evs <- getChanContents events
+		forM_ evs $ \e -> modifyMVar_ var $ \val -> do
+			x' <- event e val
+			force x' `seq` return x'
+	return $ Async var events
 
 readAsync :: Async a -> IO a
 readAsync = readMVar . asyncVar
 
 modifyAsync :: Async a -> Event a -> IO ()
 modifyAsync avar = writeChan (asyncEvents avar)
-
-subscribe :: Async a -> (a -> IO ()) -> IO ()
-subscribe avar onUpdate = dupChan (asyncTrace avar) >>= getChanContents >>= void . forkIO . mapM_ onUpdate
-
-subscribeEvents :: Async a -> (Event a -> IO ()) -> IO ()
-subscribeEvents avar onEvent = dupChan (asyncEvents avar) >>= getChanContents >>= void . forkIO . mapM_ onEvent
