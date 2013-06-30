@@ -200,7 +200,7 @@ instance ToJSON CommandResult where
 	toJSON (ResultProjects ps) = object [
 		"result" .= ("ok" :: String),
 		"projects" .= toJSON (map encodeProject ps)]
-	toJSON (ResultOk ps) = object $ ("result" .= ("ok" :: String)) : map (uncurry (.=) . first fromString) (M.toList ps) where
+	toJSON (ResultOk ps) = object $ ("result" .= ("ok" :: String)) : map (uncurry (.=) . first fromString) (M.toList ps)
 	toJSON (ResultError e as) = object [
 		"result" .= ("error" :: String),
 		"error" .= e,
@@ -258,13 +258,13 @@ commands = [
 				True -> case hasOpt "projects" as of
 					False -> startProcess as $ \onStatus -> do
 						onStatus $ "scanning " ++ dir ++ " for haskell sources"
-						srcs <- liftM (filter haskellSource) $ traverseDirectory dir
+						srcs <- liftM (filter haskellSource) $ traverseDirectory dir'
 						forM_ srcs $ \src -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("error scanning file " ++ src ++ ": ") ++)) $ do
 							maybe (update db $ fmap fromModule $ inspectFile (getGhcOpts as) src) (update db . rescanModule (getGhcOpts as)) $ lookupFile src dbval
 							liftIO (onStatus $ "file " ++ src ++ " scanned")
 					True -> startProcess as $ \onStatus -> do
 						onStatus $ "scanning " ++ dir ++ " for cabal projects"
-						cabals <- liftM (filter cabalFile) $ traverseDirectory dir
+						cabals <- liftM (filter cabalFile) $ traverseDirectory dir'
 						forM_ cabals $ \cabal -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ cabal ++ " fails with: ") ++)) $ do
 							proj <- loadProject $ project cabal
 							update db $ return $ fromProject proj
@@ -352,22 +352,22 @@ commands = [
 		projectArg "project to find in",
 		fileArg "file to find in",
 		moduleArg "module to find in",
-		sandbox] $ \as ns db -> case ns of
-			[nm] -> do
-				dbval <- getDb db
-				proj <- traverse (getProject db) $ askOpt "project" as
-				file <- traverse canonicalizePath (askOpt "file" as)
-				cabal <- traverse asCabal $ askOpt "cabal" as
-				let
-					filters = satisfy $ catMaybes [
-						fmap inProject proj,
-						fmap inFile file,
-						if isJust file then Just bySources else Nothing,
-						fmap inModule (askOpt "module" as),
-						fmap inCabal cabal]
-				rs <- runErrorT $ findDeclaration dbval nm
-				return $ either (err . ("Unable to find declaration: " ++)) (ResultDeclarations . filter filters) rs
-			_ -> return $ err "Invalid arguments",
+		sandbox] $ \as ns db -> do
+			dbval <- getDb db
+			proj <- traverse (getProject db) $ askOpt "project" as
+			file <- traverse canonicalizePath (askOpt "file" as)
+			cabal <- traverse asCabal $ askOpt "cabal" as
+			let
+				filters = satisfy $ catMaybes [
+					fmap inProject proj,
+					fmap inFile file,
+					fmap inModule (askOpt "module" as),
+					fmap inCabal cabal]
+				result = return . either (err . ("Unable to find declaration: " ++)) (ResultDeclarations . filter filters)
+			case ns of
+				[] -> result $ Right $ concatMap S.toList $ M.elems $ databaseSymbols dbval
+				[nm] -> runErrorT (findDeclaration dbval nm) >>= result
+				_ -> return $ err "Invalid arguments",
 	cmd ["list"] [] "list modules" [projectArg "project to list modules for", sandbox] $ \as _ db -> do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
@@ -421,20 +421,19 @@ commands = [
 			r <- runErrorT $ liftM (either ResultDeclarations (ResultDeclarations . return)) (lookupSymbol dbval file nm)
 			return $ either err id r
 		_ -> return $ err "Invalid arguments",
-	cmd_ ["import"] ["source file", "symbol"] "import module to bring symbols in scope" $ \ns db -> case ns of
-		[file, nm] -> do
-			dbval <- getDb db
-			liftM (either err (ResultOk . M.singleton "imports" . unlines)) $ runErrorT (importSymbol dbval file nm)
-		_ -> return $ err "Invalid arguments",
-	cmd_ ["complete", "file"] ["source file", "input"] "autocompletion" $ \as db -> case as of
-		[file, input] -> do
-			dbval <- getDb db
-			file' <- canonicalizePath file
-			maybe
-				(return $ errArgs "File is not scanned" [("file", file)])
-				(\m -> liftM (either err ResultDeclarations) (runErrorT (completions dbval m input)))
-				(lookupFile file' dbval)
-		_ -> return $ err "Invalid arguments",
+	cmd_ ["complete", "file"] ["source file", "input"] "autocompletion" $ \as db -> do
+		dbval <- getDb db
+		let
+			complete' f i = do
+				file' <- canonicalizePath f
+				maybe
+					(return $ errArgs "File is not scanned" [("file", f)])
+					(\m -> liftM (either err ResultDeclarations) (runErrorT (completions dbval m i)))
+					(lookupFile file' dbval)
+		case as of
+			[file] -> complete' file ""
+			[file, input] -> complete' file input
+			_ -> return $ err "Invalid arguments",
 	cmd ["complete", "module"] ["module name", "input"] "autocompletion" [sandbox] $ \p as db -> case as of
 		[mname, input] -> do
 			dbval <- getDb db

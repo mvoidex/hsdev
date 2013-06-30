@@ -3,7 +3,6 @@
 module HsDev.Commands (
 	findDeclaration, findModule,
 	goToDeclaration,
-	importSymbol,
 	lookupSymbol,
 	symbolInfo,
 	completions,
@@ -47,16 +46,6 @@ goToDeclaration db file ident = do
 		filterDecl f = satisfy [
 			bySources,
 			reachablePredicate db qualifiedName f]
-
-importSymbol :: Database -> FilePath -> String -> ErrorT String IO [String]
-importSymbol db file ident = do
-	look <- lookupSymbol db file ident
-	return $ case look of
-		Right _ -> []
-		Left cs -> mapMaybe (fmap makeImport . symbolModule) cs
-	where
-		makeImport :: Symbol Module -> String
-		makeImport m = "import " ++ symbolName m
 
 lookupSymbol :: Database -> FilePath -> String -> ErrorT String IO (Either [Symbol Declaration] (Symbol Declaration))
 lookupSymbol db file ident = do

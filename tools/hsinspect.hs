@@ -27,7 +27,7 @@ commands :: [Command (IO ())]
 commands = addhelp "hsinspect" id printUsage [
 	cmd ["module"] [] "inspect installed module" [
 		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
-			\ghc_opts as -> oneArg as encodeModule (browse ghc_opts >=> liftIO . loadDocs ghc_opts),
+			\ghc_opts as -> oneArg as encodeModule (browse ghc_opts >=> (liftIO . loadDocs ghc_opts)),
 	cmd ["file"] [] "inspect file" [
 		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
 			\ghc_opts as -> oneArg as encodeModule (inspectFile ghc_opts),

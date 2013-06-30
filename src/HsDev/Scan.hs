@@ -26,7 +26,7 @@ scanCabal opts cabal = do
 
 -- | Scan cabal module
 scanModule :: [String] -> Cabal -> String -> ErrorT String IO Database
-scanModule opts _ = fmap fromModule . (browse opts >=> liftIO . loadDocs opts)
+scanModule opts _ = fmap fromModule . (browse opts >=> (liftIO . loadDocs opts))
 
 -- | Scan file
 scanFile :: [String] -> FilePath -> ErrorT String IO Database
