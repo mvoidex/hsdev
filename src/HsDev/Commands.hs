@@ -51,7 +51,7 @@ lookupSymbol :: Database -> FilePath -> String -> ErrorT String IO (Either [Symb
 lookupSymbol db file ident = do
 	fileName <- liftIO $ canonicalizePath file
 	project <- liftIO $ locateProject fileName
-	decls <- liftM (filter (filterDecl fileName project)) $ findDeclaration db identName
+	decls <- liftM (filter (filterDecl fileName project)) $ findDeclaration db ident
 	let
 		visibles = filter (reachablePredicate db qualifiedName fileName) decls
 		bestModule = preferredModule Cabal project (mapMaybe symbolModule visibles)

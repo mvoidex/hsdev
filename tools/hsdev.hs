@@ -352,7 +352,9 @@ commands = [
 		projectArg "project to find in",
 		fileArg "file to find in",
 		moduleArg "module to find in",
-		sandbox] $ \as ns db -> do
+		sandbox,
+		sourced,
+		standaloned] $ \as ns db -> do
 			dbval <- getDb db
 			proj <- traverse (getProject db) $ askOpt "project" as
 			file <- traverse canonicalizePath (askOpt "file" as)
@@ -362,39 +364,47 @@ commands = [
 					fmap inProject proj,
 					fmap inFile file,
 					fmap inModule (askOpt "module" as),
-					fmap inCabal cabal]
+					fmap inCabal cabal,
+					if hasOpt "source" as then Just bySources else Nothing,
+					if hasOpt "standalone" as then Just standalone else Nothing]
 				result = return . either (err . ("Unable to find declaration: " ++)) (ResultDeclarations . filter filters)
 			case ns of
 				[] -> result $ Right $ concatMap S.toList $ M.elems $ databaseSymbols dbval
 				[nm] -> runErrorT (findDeclaration dbval nm) >>= result
 				_ -> return $ err "Invalid arguments",
-	cmd ["list"] [] "list modules" [projectArg "project to list modules for", sandbox] $ \as _ db -> do
+	cmd ["list"] [] "list modules" [projectArg "project to list modules for", sandbox, sourced, standaloned] $ \as _ db -> do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
 		cabal <- traverse asCabal $ askOpt "cabal" as
 		let
 			filters = satisfy $ catMaybes [
 				fmap inProject proj,
-				fmap inCabal cabal]
+				fmap inCabal cabal,
+				if hasOpt "source" as then Just bySources else Nothing,
+				if hasOpt "standalone" as then Just standalone else Nothing]
 		return $ ResultOk $ M.singleton "modules" $ unlines $ map symbolName $ filter filters $ concatMap S.toList $ M.elems $ databaseModules dbval,
-	cmd ["browse"] ["module name"] "browse module" [
+	cmd ["browse"] [] "browse module" [
+		moduleArg "module to browse",
 		projectArg "project to look module in",
-		sandbox] $ \as ms db -> case ms of
-			[mname] -> do
-				dbval <- getDb db
-				proj <- traverse (getProject db) $ askOpt "project" as
-				cabal <- traverse asCabal $ askOpt "cabal" as
-				let
-					filters = satisfy $ catMaybes [
-						fmap inProject proj,
-						fmap inCabal cabal]
-				rs <- runErrorT $ findModule dbval mname
-				case rs of
-					Left e -> return $ err e
-					Right rs' -> case filter filters rs' of
-						[] -> return $ errArgs "Module not found" [("module", mname)]
-						[m] -> return $ ResultModules [m]
-						ms' -> return $ errArgs "Ambiguous modules" [("modules", unlines (map showModule ms'))],
+		fileArg "source file to look in",
+		sandbox] $ \as _ db -> do
+			dbval <- getDb db
+			proj <- traverse (getProject db) $ askOpt "project" as
+			cabal <- traverse asCabal $ askOpt "cabal" as
+			file' <- traverse canonicalizePath $ askOpt "file" as
+			let
+				filters = satisfy $ catMaybes [
+					fmap inProject proj,
+					fmap inCabal cabal,
+					fmap inFile file',
+					fmap inModule (askOpt "module" as)]
+			rs <- maybe (return $ Right $ filter filters $ concatMap S.toList $ M.elems $ databaseModules dbval) (runErrorT . findModule dbval) $ askOpt "module" as
+			case rs of
+				Left e -> return $ err e
+				Right rs' -> case rs' of
+					[] -> return $ errArgs "Module not found" []
+					[m] -> return $ ResultModules [m]
+					ms' -> return $ errArgs "Ambiguous modules" [("modules", unlines (map showModule ms'))],
 	cmd_ ["project"] ["project name"] "show project list or detailed project info" $ \ns db -> case ns of
 		[] -> do
 			dbval <- getDb db
@@ -558,7 +568,9 @@ commands = [
 		wait = Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete"
 		status = Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"
 		cacheDir = Option ['p'] ["path"] (ReqArg (opt "path") "path") "cache path"
-		sandbox = Option ['c'] ["cabal"] (ReqArg (opt "cabal") "path") "path to cabal sandbox"
+		sandbox = Option ['c'] ["cabal"] (OptArg (opt "cabal" . fromMaybe "") "path") "path to cabal sandbox"
+		sourced = Option [] ["src"] (NoArg $ opt "source" "") "source files"
+		standaloned = Option [] ["stand"] (NoArg $ opt "standalone" "") "standalone files"
 		projectArg = Option ['p'] ["project"] (ReqArg (opt "project") "path")
 		fileArg = Option ['f'] ["file"] (ReqArg (opt "file") "path")
 		moduleArg = Option ['m'] ["module"] (ReqArg (opt "module") "name")
