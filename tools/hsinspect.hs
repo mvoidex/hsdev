@@ -20,18 +20,18 @@ import HsDev.Inspect (inspectFile)
 import HsDev.Project (readProject)
 import HsDev.Tools.GhcMod (browse)
 import HsDev.Tools.HDocs (loadDocs)
-import HsDev.Symbols.JSON (encodeModule)
-import HsDev.Project.JSON (encodeProject)
+import HsDev.Symbols (InspectedModule(..))
+import HsDev.Symbols.JSON ()
 
 commands :: [Command (IO ())]
 commands = addhelp "hsinspect" id printUsage [
 	cmd ["module"] [] "inspect installed module" [
 		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
-			\ghc_opts as -> oneArg as encodeModule (browse ghc_opts >=> (liftIO . loadDocs ghc_opts)),
+			\ghc_opts as -> oneArg as toJSON (browse ghc_opts >=> loadDocs' ghc_opts),
 	cmd ["file"] [] "inspect file" [
 		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
-			\ghc_opts as -> oneArg as encodeModule (inspectFile ghc_opts),
-	cmd_ ["cabal"] [] "inspect cabal" $ \as -> oneArg as encodeProject readProject]
+			\ghc_opts as -> oneArg as toJSON (inspectFile ghc_opts),
+	cmd_ ["cabal"] [] "inspect cabal" $ \as -> oneArg as toJSON readProject]
 	where
 		oneArg :: [String] -> (a -> Value) -> (String -> ErrorT String IO a) -> IO ()
 		oneArg [] _ _ = putJSON $ errorStr "Not enough arguments"
@@ -39,6 +39,13 @@ commands = addhelp "hsinspect" id printUsage [
 			r <- runErrorT $ onArg s
 			putJSON $ either errorStr toj r
 		oneArg _ _ _ = putJSON $ errorStr "Too much arguments"
+
+		loadDocs' opts m = case inspectionResult m of
+			Left _ -> return m
+			Right m' -> do
+				m'' <- liftIO $ loadDocs opts m'
+				return $ m {
+					inspectionResult = Right m'' }
 
 main :: IO ()
 main = handle handleError $ do

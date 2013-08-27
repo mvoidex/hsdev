@@ -1,6 +1,8 @@
+{-# LANGUAGE TypeSynonymInstances #-}
+
 module HsDev.Inspect (
 	analyzeModule,
-	inspectFile,
+	inspectFile, fileInspection,
 	projectSources,
 	inspectProject
 	) where
@@ -13,6 +15,7 @@ import Control.Monad.Error
 import Data.List (intercalate)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
 import qualified Documentation.Haddock as Doc
@@ -28,52 +31,55 @@ import qualified HsBinds
 
 import HsDev.Symbols
 import HsDev.Project
+import HsDev.Tools.Base
 import HsDev.Util
 
 -- | Analize source contents
-analyzeModule :: String -> Either String (Symbol Module)
-analyzeModule source = fmap setModuleReferences $ case H.parseFileContents source of
+analyzeModule :: String -> Either String Module
+analyzeModule source = case H.parseFileContents source of
 	H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
-	H.ParseOk (H.Module _ (H.ModuleName moduleName) _ _ _ imports declarations) -> Right $ mkSymbol moduleName Module {
+	H.ParseOk (H.Module _ (H.ModuleName mname) _ _ _ imports declarations) -> Right $ Module {
+		moduleName = mname,
+		moduleDocs =  Nothing,
+		moduleLocation = MemoryModule Nothing,
 		moduleExports = [],
 		moduleImports = M.fromList $ map ((importModuleName &&& id) . getImport) imports,
-		moduleDeclarations = M.fromList $ map (symbolName &&& id) $ getDecls declarations,
-		moduleCabal = Nothing }
+		moduleDeclarations = M.fromList $ map (declarationName &&& id) $ getDecls declarations }
 
 getImport :: H.ImportDecl -> Import
-getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mname $ H.importAs d) (Just $ toLocation $ H.importLoc d) where
+getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mname $ H.importAs d) (Just $ toPosition $ H.importLoc d) where
 	mname (H.ModuleName n) = n
 
-getDecls :: [H.Decl] -> [Symbol Declaration]
+getDecls :: [H.Decl] -> [Declaration]
 getDecls decls = infos ++ defs where
 	infos = concatMap getDecl decls
-	names = map symbolName infos
+	names = map declarationName infos
 	defs = filter noInfo $ concatMap getDef decls
-	noInfo :: Symbol Declaration -> Bool
-	noInfo d = symbolName d `notElem` names
+	noInfo :: Declaration -> Bool
+	noInfo d = declarationName d `notElem` names
 
-getDecl :: H.Decl -> [Symbol Declaration]
+getDecl :: H.Decl -> [Declaration]
 getDecl decl = case decl of
 	H.TypeSig loc names typeSignature -> map
-		(\n -> setLocation loc (mkSymbol (identOfName n) (Function (Just $ H.prettyPrint typeSignature))))
+		(\n -> setPosition loc (Declaration (identOfName n) Nothing Nothing (Function (Just $ H.prettyPrint typeSignature))))
 		names
-	H.TypeDecl loc n args _ -> [setLocation loc $ mkSymbol (identOfName n) (Type $ TypeInfo Nothing (map H.prettyPrint args) Nothing)]
-	H.DataDecl loc dataOrNew ctx n args _ _ -> [setLocation loc $ mkSymbol (identOfName n) (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
-	H.GDataDecl loc dataOrNew ctx n args _ _ _ -> [setLocation loc $ mkSymbol (identOfName n) (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
-	H.ClassDecl loc ctx n args _ _ -> [setLocation loc $ mkSymbol (identOfName n) (Class $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
+	H.TypeDecl loc n args _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Type $ TypeInfo Nothing (map H.prettyPrint args) Nothing)]
+	H.DataDecl loc dataOrNew ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
+	H.GDataDecl loc dataOrNew ctx n args _ _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
+	H.ClassDecl loc ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Class $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
 	_ -> []
 	where
-		ctor :: H.DataOrNew -> TypeInfo -> Declaration
+		ctor :: H.DataOrNew -> TypeInfo -> DeclarationInfo
 		ctor H.DataType = Data
 		ctor H.NewType = NewType
 
 		makeCtx [] = Nothing
 		makeCtx ctx = Just $ intercalate ", " $ map H.prettyPrint ctx
 
-getDef :: H.Decl -> [Symbol Declaration]
+getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []
-getDef (H.FunBind (H.Match loc n _ _ _ _ : _)) = [setLocation loc $ mkSymbol (identOfName n) (Function Nothing)]
-getDef (H.PatBind loc pat _ _ _) = map (\name -> setLocation loc (mkSymbol (identOfName name) (Function Nothing))) $ names pat where
+getDef (H.FunBind (H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Function Nothing)]
+getDef (H.PatBind loc pat _ _ _) = map (\name -> setPosition loc (Declaration (identOfName name) Nothing Nothing (Function Nothing))) $ names pat where
 	names :: H.Pat -> [H.Name]
 	names (H.PVar n) = [n]
 	names (H.PNeg n) = names n
@@ -103,11 +109,11 @@ identOfName name = case name of
 	H.Ident s -> s
 	H.Symbol s -> s
 
-toLocation :: H.SrcLoc -> Location
-toLocation (H.SrcLoc fname l c) = location fname l c Nothing
+toPosition :: H.SrcLoc -> Position
+toPosition (H.SrcLoc _ l c) = Position l c
 
-setLocation :: H.SrcLoc -> Symbol a -> Symbol a
-setLocation loc s = s { symbolLocation = Just (toLocation loc) }
+setPosition :: H.SrcLoc -> Declaration -> Declaration
+setPosition loc d = d { declarationPosition = Just (toPosition loc) }
 
 -- | Get Map from declaration name to its documentation
 documentationMap :: Doc.Interface -> Map String String
@@ -155,40 +161,38 @@ documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems ifa
 	locatedName (Loc.L _ nm) = Name.getOccString nm
 
 -- | Adds documentation to declaration
-addDoc :: Map String String -> Symbol Declaration -> Symbol Declaration
-addDoc docsMap decl = decl { symbolDocs = M.lookup (symbolName decl) docsMap }
+addDoc :: Map String String -> Declaration -> Declaration
+addDoc docsMap decl = decl { declarationDocs = M.lookup (declarationName decl) docsMap }
 
--- | Adds documentations to module
-addDocs :: Map String String -> Symbol Module -> Symbol Module
-addDocs docsMap = fmap addDocs' where
-	addDocs' :: Module -> Module
-	addDocs' m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDeclarations m) }
+-- | Adds documentation to all declarations in module
+addDocs :: Map String String -> Module -> Module
+addDocs docsMap m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDeclarations m) }
 
 -- | Inspect file
-inspectFile :: [String] -> FilePath -> ErrorT String IO (Symbol Module)
+inspectFile :: [String] -> FilePath -> ErrorT String IO InspectedModule
 inspectFile opts file = do
 	let
 		noReturn :: E.SomeException -> IO [Doc.Interface]
 		noReturn _ = return []
-	p <- liftIO $ locateProject file
+	proj <- liftIO $ locateProject file
 	source <- liftIO $ readFileUtf8 file
 	absFilename <- liftIO $ Dir.canonicalizePath file
-	mtime <- liftIO $ Dir.getModificationTime file
-	docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
-		is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
-		forM is $ \i -> do
-			moduleFile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
-			return (moduleFile, i)
-	forced <- ErrorT $ E.catch (E.evaluate $ analyzeModule source) onError
-	return . setModuleReferences . fmap (setLocations absFilename p mtime) . setLoc absFilename p mtime . maybe id addDocs docsMap $ forced
+	liftIO $ inspect (FileModule file (fmap projectCabal proj)) (fileInspection file) $ do
+		docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
+			is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
+			forM is $ \i -> do
+				mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
+				return (mfile, i)
+		forced <- ErrorT $ E.catch (E.evaluate $ analyzeModule source) onError
+		return $ setLoc absFilename (fmap projectCabal proj) . maybe id addDocs docsMap $ forced
 	where
-		setLoc f p tm s = s { symbolLocation = Just ((moduleLocation f) { locationProject = p, locationTimeStamp = Just tm }) }
-		setLocations f p tm m = m {
-			moduleDeclarations = M.map (\decl -> decl { symbolLocation = fmap (\l -> l { locationFile = f, locationProject = p, locationTimeStamp = Just tm }) (symbolLocation decl) }) (moduleDeclarations m),
-			moduleImports = M.map (\imp -> imp { importLocation = fmap (\l -> l { locationFile = f, locationProject = p, locationTimeStamp = Just tm }) (importLocation imp) }) (moduleImports m) }
-
-		onError :: E.ErrorCall -> IO (Either String (Symbol Module))
+		setLoc f p m = m { moduleLocation = FileModule f p }
+		onError :: E.ErrorCall -> IO (Either String Module)
 		onError = return . Left . show
+
+-- | File inspection data
+fileInspection :: FilePath -> ErrorT String IO Inspection
+fileInspection = fmap (InspectionTime . utcTimeToPOSIXSeconds) . liftIO . Dir.getModificationTime
 
 -- | Enumerate project source files
 projectSources :: Project -> ErrorT String IO [FilePath]
@@ -199,7 +203,7 @@ projectSources p = do
 	liftIO $ liftM (filter haskellSource . concat) $ mapM traverseDirectory dirs
 
 -- | Inspect project
-inspectProject :: [String] -> Project -> ErrorT String IO (Project, [Symbol Module])
+inspectProject :: [String] -> Project -> ErrorT String IO (Project, [InspectedModule])
 inspectProject opts p = do
 	p' <- loadProject p
 	sourceFiles <- projectSources p'

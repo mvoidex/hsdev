@@ -1,135 +1,157 @@
 module HsDev.Database (
 	Database(..),
-	databaseIntersection,
-	createIndexes,
-	fromModule,
-	fromProject,
-	projectModules,
-	standaloneModules,
-	cabalModules,
-	flattenModules,
+	databaseIntersection, nullDatabase, allModules, createIndexes,
+	fromModule, fromProject,
+	filterDB,
+	projectDB, cabalDB, standaloneDB,
+	selectModule, lookupModule, lookupFile,
+	getInspected,
 
-	lookupModule,
-	lookupFile,
-
-	append,
-	remove
+	append, remove
 	) where
 
 import Control.Arrow
 import Control.Monad
 import Control.DeepSeq
+import Data.Either (rights)
+import Data.Function (on)
 import Data.Group
+import Data.List
 import Data.Map (Map)
+import Data.Ord
 import Data.Set (Set)
 import Data.Maybe
 import Data.Monoid
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Data.HashMap as HM
 
 import HsDev.Symbols
+import HsDev.Symbols.Util
 import HsDev.Project
 
--- | Info about modules
+-- | HsDev database
 data Database = Database {
-	databaseCabalModules :: Map Cabal (Map String (Symbol Module)),
-	databaseFiles :: Map FilePath (Symbol Module),
+	databaseModules :: Map ModuleLocation InspectedModule,
 	databaseProjects :: Map String Project,
-	databaseModules :: Map String (Set (Symbol Module)),
-	databaseSymbols :: Map String (Set (Symbol Declaration)) }
+	databaseCabalIndex :: Map Cabal (Set Module),
+	databaseModulesIndex :: Map String (Set Module),
+	databaseFilesIndex :: Map FilePath Module,
+	databaseSymbolsIndex :: HM.Map String (Set ModuleDeclaration) }
 		deriving (Eq, Ord)
 
 instance NFData Database where
-	rnf (Database cm f p ms ss) = rnf cm `seq` rnf f `seq` rnf p `seq` rnf ms `seq` rnf ss
+	rnf (Database ms ps mc mi fi si) = rnf ms `seq` rnf ps `seq` rnf mc `seq` rnf mi `seq` rnf fi `seq` rnf si
 
 instance Group Database where
 	add old new = Database {
-		databaseCabalModules = M.unionWith M.union (databaseCabalModules old') (databaseCabalModules new),
-		databaseFiles = databaseFiles old' `M.union` databaseFiles new,
-		databaseProjects = M.unionWith mergeProject (databaseProjects old') (databaseProjects new),
-		databaseModules = add (databaseModules old') (databaseModules new),
-		databaseSymbols = add (databaseSymbols old') (databaseSymbols new) }
+		databaseModules = databaseModules new `M.union` databaseModules old,
+		databaseProjects = M.unionWith mergeProject (databaseProjects new) (databaseProjects old),
+		databaseCabalIndex = databaseCabalIndex old `add` databaseCabalIndex new,
+		databaseModulesIndex = databaseModulesIndex old `add` databaseModulesIndex new,
+		databaseFilesIndex = databaseFilesIndex old `M.union` databaseFilesIndex new,
+		databaseSymbolsIndex = databaseSymbolsIndex old `add` databaseSymbolsIndex new }
 		where
-			old' = sub old (databaseIntersection old new)
 			mergeProject pl pr = pl {
 				projectDescription = msum [projectDescription pl, projectDescription pr] }
 	sub old new = Database {
-		databaseCabalModules = M.differenceWith diff' (databaseCabalModules old) (databaseCabalModules new),
-		databaseFiles = M.difference (databaseFiles old) (databaseFiles new),
-		databaseProjects = M.difference (databaseProjects old) (databaseProjects new),
-		databaseModules = sub (databaseModules old) (databaseModules new),
-		databaseSymbols = sub (databaseSymbols old) (databaseSymbols new) }
-		where
-			diff' x y = if M.null z then Nothing else Just z where
-				z = M.difference x y
-	zero = Database M.empty M.empty M.empty M.empty M.empty
+		databaseModules = databaseModules old `M.difference` databaseModules new,
+		databaseProjects = databaseProjects old `M.difference` databaseProjects new,
+		databaseCabalIndex = databaseCabalIndex old `sub` databaseCabalIndex new,
+		databaseModulesIndex = databaseModulesIndex old `sub` databaseModulesIndex new,
+		databaseFilesIndex = databaseFilesIndex old `M.difference` databaseFilesIndex new,
+		databaseSymbolsIndex = databaseSymbolsIndex old `sub` databaseSymbolsIndex new }
+	zero = Database M.empty M.empty M.empty M.empty M.empty HM.empty
 
 instance Monoid Database where
 	mempty = zero
 	mappend = add
 
--- | Database intersection, returns data from first database
+-- | Database intersection, prefers first database data
 databaseIntersection :: Database -> Database -> Database
-databaseIntersection l r = createIndexes $ mempty {
-	databaseCabalModules = M.intersectionWith M.intersection (databaseCabalModules l) (databaseCabalModules r),
-	databaseFiles = M.intersection (databaseFiles l) (databaseFiles r),
-	databaseProjects = M.intersection (databaseProjects l) (databaseProjects r) }
+databaseIntersection l r = mempty {
+	databaseModules = databaseModules l `M.intersection` databaseModules r,
+	databaseProjects = databaseProjects l `M.intersection` databaseProjects r }
+
+-- | Check if database is empty
+nullDatabase :: Database -> Bool
+nullDatabase db = M.null (databaseModules db) && M.null (databaseProjects db)
+
+-- | All modules
+allModules :: Database -> [Module]
+allModules = rights . map inspectionResult . M.elems . databaseModules
 
 -- | Create indexes
 createIndexes :: Database -> Database
 createIndexes db = db {
-	databaseModules = groupSum $ map (\m -> M.singleton (symbolName m) (S.singleton m)) ms,
-	databaseSymbols = groupSum $ map (M.map S.singleton . moduleDeclarations . symbol) ms }
+	databaseCabalIndex = M.fromList $ map ((head *** S.fromList) . unzip) $ groupSort fst $ mapMaybe getCabal ms,
+	databaseModulesIndex = M.fromList $ map ((moduleName . head) &&& S.fromList) $ groupSort moduleName ms,
+	databaseFilesIndex = M.fromList $ mapMaybe getSrc ms,
+	databaseSymbolsIndex = HM.fromList $ map ((declName . head) &&& S.fromList) $ groupSort declName $ concatMap moduleModuleDeclarations ms }
 	where
-		ms = concatMap M.elems (M.elems (databaseCabalModules db)) ++ M.elems (databaseFiles db)
+		ms = allModules db
+		getCabal m = case moduleLocation m of
+			CabalModule c _ _ -> Just (c, m)
+			_ -> Nothing
+		getSrc m = case moduleLocation m of
+			FileModule f _ -> Just (f, m)
+			_ -> Nothing
+		declName = declarationName . moduleDeclaration
+		groupSort f = groupBy ((==) `on` f) . sortBy (comparing f)
 
 -- | Make database from module
-fromModule :: Symbol Module -> Database
-fromModule m = fromMaybe (error "Module must specify source file or cabal") (inSource `mplus` inCabal) where
-	inSource = do
-		loc <- symbolLocation m
-		let
-			proj = maybe mempty (uncurry M.singleton . (projectCabal &&& id)) $ locationProject loc
-		return $ createIndexes $ Database mempty (M.singleton (locationFile loc) m) proj zero zero
-	inCabal = do
-		cabal <- moduleCabal $ symbol m
-		return $ createIndexes $ Database (M.singleton cabal (M.singleton (symbolName m) m)) mempty mempty zero zero
+fromModule :: InspectedModule -> Database
+fromModule m = zero {
+	databaseModules = M.singleton (inspectionModule m) m }
 
 -- | Make database from project
 fromProject :: Project -> Database
 fromProject p = zero {
 	databaseProjects = M.singleton (projectCabal p) p }
 
--- Modules for project specified
-projectModules :: Project -> Database -> Map FilePath (Symbol Module)
-projectModules proj = M.filter thisProject . databaseFiles where
-	thisProject m = maybe False (== proj) $ do
-		loc <- symbolLocation m
-		locationProject loc
+-- | Filter database by predicate
+filterDB :: (Module -> Bool) -> (Project -> Bool) -> Database -> Database
+filterDB m p db = mempty {
+	databaseModules = M.filter (either (const False) m . inspectionResult) (databaseModules db),
+	databaseProjects = M.filter p (databaseProjects db) }
 
--- | Standalone modules with no project
-standaloneModules :: Database -> Map FilePath (Symbol Module)
-standaloneModules = M.filter noProject . databaseFiles where
-	noProject m = isJust (symbolLocation m) && isNothing (symbolLocation m >>= locationProject)
+-- | Project database
+projectDB :: Project -> Database -> Database
+projectDB proj = filterDB (inProject proj) (((==) `on` projectCabal) proj)
 
--- | Modules for cabal specified
-cabalModules :: Cabal -> Database -> Map String (Symbol Module)
-cabalModules cabal db = fromMaybe M.empty $ M.lookup cabal $ databaseCabalModules db
+-- | Cabal database
+cabalDB :: Cabal -> Database -> Database
+cabalDB cabal = filterDB (inCabal cabal) (const False)
 
--- | All database modules
-flattenModules :: Database -> [Symbol Module]
-flattenModules db = M.elems (databaseFiles db) ++ concatMap M.elems (M.elems $ databaseCabalModules db)
+-- | Standalone database
+standaloneDB :: Database -> Database
+standaloneDB db = filterDB noProject (const False) db where
+	noProject m = all (not . (flip inProject m)) ps
+	ps = M.elems $ databaseProjects db
 
-lookupModule :: Cabal -> String -> Database -> Maybe (Symbol Module)
-lookupModule cabal name db = do
-	c <- M.lookup cabal $ databaseCabalModules db
-	M.lookup name c
+-- | Select module by predicate
+selectModule :: Database -> (Module -> Bool) -> [Module]
+selectModule db p = filter p $ rights $ map inspectionResult $ M.elems $ databaseModules db
 
-lookupFile :: FilePath -> Database -> Maybe (Symbol Module)
-lookupFile file db = M.lookup file (databaseFiles db)
+-- | Lookup module by its location and name
+lookupModule :: ModuleLocation -> Database -> Maybe Module
+lookupModule mloc db = do
+	m <- M.lookup mloc $ databaseModules db
+	either (const Nothing) Just $ inspectionResult m
 
+-- | Lookup module by its source file
+lookupFile :: FilePath -> Database -> Maybe Module
+lookupFile f = M.lookup f . databaseFilesIndex
+
+-- | Get inspected module
+getInspected :: Database -> Module -> InspectedModule
+getInspected db m = fromMaybe err $ M.lookup (moduleLocation m) $ databaseModules db where
+	err = error "Impossible happened: getInspected"
+
+-- | Append database
 append :: Database -> Database -> Database
 append = add
 
+-- | Remove database
 remove :: Database -> Database -> Database
 remove = sub

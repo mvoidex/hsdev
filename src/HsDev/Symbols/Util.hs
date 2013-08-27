@@ -1,97 +1,105 @@
 module HsDev.Symbols.Util (
-	sameProject,
-	inProject,
-	inProject_,
-	inFile,
-	inModule,
-	inCabal,
-	bySources,
-	standalone,
-	isImported,
-	isReachable,
-	isVisible,
-
-	sourceModule,
-	visibleModule,
-	preferredModule,
-
-	satisfy,
-
-	isActual
+	inProject, inCabal, inPackage, inFile, inMemory, inModule, byFile, standalone,
+	qualifier, imported, reachable,
+	sourceModule, visibleModule, preferredModule,
+	allOf, anyOf
 	) where
 
-import Control.Monad
 import Data.Maybe
 import qualified Data.Map as M
 import System.FilePath
-import System.Directory
 
 import HsDev.Symbols
 import HsDev.Project
 
-sameProject :: Symbol a -> Symbol b -> Bool
-sameProject l r = project' l == project' r where
-	project' s = symbolLocation s >>= locationProject
+-- | Check if module in project
+inProject :: Project -> Module -> Bool
+inProject p m = case moduleLocation m of
+	FileModule _ proj -> Just (projectCabal p) == proj
+	_ -> False
+	where
 
-inProject :: Project -> Symbol a -> Bool
-inProject p s = Just p == project' where
-	project' = symbolLocation s >>= locationProject
+-- | Check if module in cabal
+inCabal :: Cabal -> Module -> Bool
+inCabal c m = case moduleLocation m of
+	CabalModule cabal _ _ -> cabal == c
+	_ -> False
 
-inProject_ :: Maybe Project -> Symbol a -> Bool
-inProject_ Nothing _ = False
-inProject_ (Just p) s = inProject p s
+-- | Check if module in package
+inPackage :: String -> Module -> Bool
+inPackage p m = case moduleLocation m of
+	CabalModule _ package _ -> Just p == package
+	_ -> False
 
-inFile :: FilePath -> Symbol a -> Bool
-inFile f s = Just (normalise f) == fmap locationFile (symbolLocation s)
+-- | Check if module in file
+inFile :: FilePath -> Module -> Bool
+inFile fpath m = case moduleLocation m of
+	FileModule f _ -> f == normalise fpath
+	_ -> False
 
-inModule :: String -> Symbol a -> Bool
-inModule moduleName = maybe False ((== moduleName) . symbolName) . symbolModule
+-- | Check if module in memory
+inMemory :: Maybe String -> Module -> Bool
+inMemory mem m = case moduleLocation m of
+	MemoryModule mem' -> mem' == mem
+	_ -> False
 
-inCabal :: Cabal -> Symbol a -> Bool
-inCabal cabal = maybe False ((== Just cabal) . moduleCabal . symbol) . symbolModule
+-- | Check if declaration is in module
+inModule :: String -> Module -> Bool
+inModule mname m = mname == moduleName m
 
-bySources :: Symbol a -> Bool
-bySources = isJust . symbolLocation
+-- | Check if module defined in file
+byFile :: Module -> Bool
+byFile m = case moduleLocation m of
+	FileModule _ _ -> True
+	_ -> False
 
--- | Standalone module, not in project or cabal
-standalone :: Symbol a -> Bool
-standalone s = bySources s && noProject s where
-	noProject m = isNothing (symbolLocation m >>= locationProject)
+-- | Check if module is standalone
+standalone :: Module -> Bool
+standalone m = case moduleLocation m of
+	FileModule _ Nothing -> True
+	_ -> False
 
-isImported :: Symbol Module -> Maybe String -> Symbol Module -> Bool
-isImported m Nothing imported = maybe (symbolName imported == "Prelude") (not . importIsQualified) $ M.lookup (symbolName imported) (moduleImports $ symbol m)
-isImported m (Just q) imported = maybe prelude qualifiedImport $ M.lookup (symbolName imported) (moduleImports $ symbol m) where
-	qualifiedImport i = q == importModuleName i || Just q == importAs i
-	prelude = symbolName imported == "Prelude" && q == "Prelude"
+-- | Get list of imports accessible via qualifier
+qualifier :: Module -> Maybe String -> [Import]
+qualifier m q = filter (importQualifier q) $ (Import "Prelude" False Nothing Nothing : Import (moduleName m) False Nothing Nothing : M.elems (moduleImports m))
 
-isReachable :: Symbol Module -> Maybe String -> Symbol Module -> Bool
-isReachable m q imported
-	| m == imported && (isNothing q || q == Just (symbolName m)) = True
-	| otherwise = isImported m q imported
+-- | Check if module imported via import statement
+imported :: Module -> Import -> Bool
+imported m i = moduleName m == importModuleName i
 
-isVisible :: Cabal -> Maybe Project -> Symbol Module -> Bool
-isVisible cabal proj = liftM2 (||) (inCabal cabal) (maybe (const False) inProject proj)
+-- | Check if module reachable from this module via qualifier
+-- >reachable m q this -- module `m` reachable from `this`
+reachable :: Maybe String -> Module -> Module -> Bool
+reachable q this m = any (imported m) $ qualifier this q
 
-sourceModule :: Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
-sourceModule proj ms = listToMaybe $ filter (inProject_ proj) ms ++ filter bySources ms
+-- | Select module, defined by sources
+sourceModule :: Maybe Project -> [Module] -> Maybe Module
+sourceModule proj ms = listToMaybe $ maybe (const []) (filter . inProject) proj ms ++ filter byFile ms
 
-visibleModule :: Cabal -> Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
-visibleModule cabal proj ms = listToMaybe $ filter (inProject_ proj) ms ++ filter (inCabal cabal) ms
+-- | Select module, visible in project or cabal
+visibleModule :: Cabal -> Maybe Project -> [Module] -> Maybe Module
+visibleModule cabal proj ms = listToMaybe $ maybe (const []) (filter . inProject) proj ms ++ filter (inCabal cabal) ms
 
-preferredModule :: Cabal -> Maybe Project -> [Symbol Module] -> Maybe (Symbol Module)
+-- | Select preferred visible module
+preferredModule :: Cabal -> Maybe Project -> [Module] -> Maybe Module
 preferredModule cabal proj ms = listToMaybe $ concatMap (`filter` ms) order where
 	order = [
-		inProject_ proj,
+		maybe (const False) inProject proj,
 		inCabal cabal,
-		bySources,
+		byFile,
 		const True]
 
-satisfy :: [a -> Bool] -> a -> Bool
-satisfy ps x = all ($ x) ps
+-- | Select value, satisfying to all predicates
+allOf :: [a -> Bool] -> a -> Bool
+allOf ps x = all ($ x) ps
+
+-- | Select value, satisfying one of predicates
+anyOf :: [a -> Bool] -> a -> Bool
+anyOf ps x = any ($ x) ps
 
 -- | Is file info actual?
-isActual :: Symbol a -> IO Bool
-isActual = maybe (return False) checkStamp . symbolLocation where
-	checkStamp l = do
-		actualStamp <- getModificationTime (locationFile l)
-		return $ Just actualStamp == locationTimeStamp l
+--isActual :: Symbol a -> IO Bool
+--isActual = maybe (return False) checkStamp . symbolLocation where
+--	checkStamp l = do
+--		actualStamp <- getModificationTime (locationFile l)
+--		return $ Just actualStamp == locationTimeStamp l

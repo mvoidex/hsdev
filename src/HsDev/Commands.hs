@@ -1,112 +1,155 @@
-{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RankNTypes, FlexibleContexts #-}
 
 module HsDev.Commands (
+	-- * Commands
 	findDeclaration, findModule,
+	fileModule,
 	goToDeclaration,
 	lookupSymbol,
 	symbolInfo,
 	completions,
-	moduleCompletions
+	moduleCompletions,
+
+	-- * Filters
+	checkModule, checkDeclaration, visibleFrom, reachableFrom
 	) where
 
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Error
-import Data.Function
+import Data.Either (rights)
 import Data.List
 import Data.Maybe
 import Data.Map (Map)
 import qualified Data.Map as M
+import qualified Data.HashMap as HM
 import qualified Data.Set as S
+import Data.Traversable (traverse)
 import System.Directory
 
-import HsDev.Util
 import HsDev.Database
+import HsDev.Project (project)
 import HsDev.Symbols
 import HsDev.Symbols.Util
 
-findDeclaration :: Database -> String -> ErrorT String IO [Symbol Declaration]
-findDeclaration db ident = return $ maybe [] S.toList $ M.lookup ident (databaseSymbols db)
+-- | Find declaration by name
+findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
+findDeclaration db ident = return $ maybe [] S.toList $ HM.lookup ident (databaseSymbolsIndex db)
 
-findModule :: Database -> String -> ErrorT String IO [Symbol Module]
-findModule db mname = return $ maybe [] S.toList $ M.lookup mname (databaseModules db)
+-- | Find module by name
+findModule :: Database -> String -> ErrorT String IO [Module]
+findModule db mname = return $ maybe [] S.toList $ M.lookup mname (databaseModulesIndex db)
 
-reachablePredicate :: Database -> Maybe String -> FilePath -> Symbol Declaration -> Bool
-reachablePredicate db qualifiedName f s = fromMaybe True $ do
-	thisModule <- M.lookup f (databaseFiles db)
-	declModule <- symbolModule s
-	return (isReachable thisModule qualifiedName declModule)
+-- | Find module in file
+fileModule :: Database -> FilePath -> ErrorT String IO Module
+fileModule db src = do
+	src' <- liftIO $ canonicalizePath src
+	maybe (throwError $ "File '" ++ src' ++ "' not found") return $ lookupFile src' db
 
-goToDeclaration :: Database -> Maybe FilePath -> String -> ErrorT String IO [Symbol Declaration]
-goToDeclaration db file ident = do
-	fileName <- maybe (return "") (liftIO . canonicalizePath) file
-	liftM (filter (filterDecl fileName)) $ findDeclaration db identName
+-- | Go to declaration
+goToDeclaration :: Database -> Maybe FilePath -> String -> ErrorT String IO [ModuleDeclaration]
+goToDeclaration db ctx ident = do
+	mthis <- (traverse (liftIO . canonicalizePath) >=> traverse (fileModule db)) ctx
+	decls <- findDeclaration db iname
+	return $ flip filter decls $ checkModule $ allOf [
+		maybe (const True) visibleFrom mthis,
+		maybe (const True) (reachableFrom qname) mthis,
+		byFile]
 	where
-		(qualifiedName, identName) = splitIdentifier ident
-		filterDecl f = satisfy [
-			bySources,
-			reachablePredicate db qualifiedName f]
+		(qname, iname) = splitIdentifier ident
 
-lookupSymbol :: Database -> FilePath -> String -> ErrorT String IO (Either [Symbol Declaration] (Symbol Declaration))
+-- | Lookup symbol
+lookupSymbol :: Database -> FilePath -> String -> ErrorT String IO (Either [ModuleDeclaration] ModuleDeclaration)
 lookupSymbol db file ident = do
-	fileName <- liftIO $ canonicalizePath file
-	project <- liftIO $ locateProject fileName
-	decls <- liftM (filter (filterDecl fileName project)) $ findDeclaration db ident
+	mthis <- ((liftIO . canonicalizePath) >=> fileModule db) file
+	decls <- findDeclaration db iname
 	let
-		visibles = filter (reachablePredicate db qualifiedName fileName) decls
-		bestModule = preferredModule Cabal project (mapMaybe symbolModule visibles)
-		bestVisible = find ((== bestModule) . symbolModule) visibles
-	return $ maybe (Left decls) Right bestVisible
+		visible = flip filter decls $ checkModule (visibleFrom mthis)
+		reached = flip filter visible $ checkModule (reachableFrom qname mthis)
+	case reached of
+		[] -> return $ Left visible
+		[r] -> return $ Right r
+		rs -> throwError $ "Ambiguous symbol: " ++ intercalate ", " (map (brief . declarationModule) rs)
 	where
-		(qualifiedName, identName) = splitIdentifier ident
-		filterDecl f p = maybe False (\m -> isVisible Cabal p m || inFile f m) . symbolModule
+		(qname, iname) = splitIdentifier ident
 
-symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO (Symbol Declaration)
-symbolInfo db file ident = do
-	fileName <- maybe (return "") (liftIO . canonicalizePath) file
-	project <- maybe (return Nothing) (const $ liftIO $ locateProject fileName) file
-	decls <- liftM (nubModules . sortDecls project . filter (filterDecl fileName project)) $ findDeclaration db identName
-	case length (noPrelude decls) of
-		0 -> maybe (throwError $ "Symbol '" ++ ident ++ "' not found") return $ find (inModule "Prelude") decls
-		1 -> return $ head decls
-		_ -> throwError $ "Ambiguous symbols: " ++ intercalate ", " (map put (noPrelude decls))
+-- | Find symbol info
+symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO ModuleDeclaration
+symbolInfo db ctx ident = do
+	mthis <- (traverse (liftIO . canonicalizePath) >=> traverse (fileModule db)) ctx
+	decls <- findDeclaration db iname
+	let
+		cands = flip filter decls $ checkModule $ allOf [
+			maybe (const True) visibleFrom mthis,
+			maybe (const True) (reachableFrom qname) mthis,
+			not . inModule "Prelude"]
+	case cands of
+		[] -> throwError $ "Symbol '" ++ ident ++ "' not found"
+		[c] -> return c
+		cs -> throwError $ "Ambiguous symbols: " ++ intercalate ", " (map (brief . declarationModule) cs)
 	where
-		(qualifiedName, identName) = splitIdentifier ident
-		filterDecl f p = satisfy [
-			maybe False (\m -> isVisible Cabal p m || inFile f m) . symbolModule,
-			reachablePredicate db qualifiedName f]
-		sortDecls p = uncurry (++) . partition (inProject_ p)
-		nubModules = nubBy ((==) `on` (fmap symbolName . symbolModule))
-		noPrelude = filter (not . inModule "Prelude")
-		put s = maybe "" ((++ ".") . symbolName) (symbolModule s) ++ symbolName s
+		(qname, iname) = splitIdentifier ident
 
-completions :: Database -> Symbol Module -> String -> ErrorT String IO [Symbol Declaration]
-completions db m prefix = return $ filter ((identName `isPrefixOf`) . symbolName) $ maybe [] (concatMap (M.elems . moduleDeclarations . symbol)) $ M.lookup qualifiedName moduleScope
-	where
-		(qualifiedName, identName) = splitIdentifier prefix
+-- | Completions
+completions :: Database -> Module -> String -> ErrorT String IO [ModuleDeclaration]
+completions db m prefix = return prefixed where
+	modules = flip filter (rights $ map inspectionResult $ M.elems $ databaseModules db) $ allOf [visibleFrom m, reachableFrom qname m]
+	moduleScope = scope m
 
-		moduleScope = scope m
+	scope :: Module -> Map (Maybe String) [Module]
+	scope m' = M.unionWith (++) (decls [Nothing, Just (moduleName m')] m') (imports m')
 
-		scope :: Symbol Module -> Map (Maybe String) [Symbol Module]
-		scope m' = M.unionsWith (++) $ decls [Nothing, Just (symbolName m')] m' : imports m'
-		decls qs m' = M.unionsWith (++) $ map (\q -> M.singleton q [m']) qs
-		imports m' = map (importScope m') $ (if bySources m' then (Import "Prelude" False Nothing Nothing :) else id) $ M.elems (moduleImports (symbol m))
-		importScope m' i = fromMaybe M.empty $ do
-			ms <- M.lookup (importModuleName i) (databaseModules db)
-			imported <- visibleModule Cabal (symbolLocation m' >>= locationProject) (S.toList ms)
-			return $ decls (catMaybes [
-				Just (Just (importModuleName i)),
-				if not (importIsQualified i) then Just Nothing else Nothing,
-				fmap Just (importAs i)]) imported
+	decls :: [Maybe String] -> Module -> Map (Maybe String) [Module]
+	decls qs m' = M.unionsWith (++) $ map (\q -> M.singleton q [m']) qs
 
-		--project = symbolLocation m >>= locationProject
+	imports :: Module -> Map (Maybe String) [Module]
+	imports m' = M.unionsWith (++) $ map (importScope m') $
+		(if byFile m' then (Import "Prelude" False Nothing Nothing :) else id) $
+			(M.elems (moduleImports m))
 
-moduleCompletions :: Database -> [Symbol Module] -> String -> ErrorT String IO [String]
-moduleCompletions _ ms prefix = return $ nub $ completions' $ map symbolName ms where
+	importScope :: Module -> Import -> Map (Maybe String) [Module]
+	importScope _ i = fromMaybe M.empty $ do
+		ms <- M.lookup (importModuleName i) $ databaseModulesIndex db
+		imp' <- listToMaybe $ S.toList ms `intersect` modules
+		return $ decls (catMaybes [
+			Just (Just (importModuleName i)),
+			if not (importIsQualified i) then Just Nothing else Nothing,
+			fmap Just (importAs i)]) imp'
+
+	completes = maybe [] (concatMap moduleModuleDeclarations) $ M.lookup qname moduleScope
+	prefixed = filter ((iname `isPrefixOf`) . declarationName . moduleDeclaration) completes
+
+	(qname, iname) = splitIdentifier prefix
+
+-- | Module completions
+moduleCompletions :: Database -> [Module] -> String -> ErrorT String IO [String]
+moduleCompletions _ ms prefix = return $ nub $ completions' $ map moduleName ms where
 	completions' = mapMaybe getNext where
 		getNext m
 			| prefix `isPrefixOf` m = listToMaybe $ map snd $ dropWhile (uncurry (==)) $ zip (splitBy '.' prefix) (splitBy '.' m)
 			| otherwise = Nothing
+
+-- | Check module
+checkModule :: (Module -> Bool) -> (ModuleDeclaration -> Bool)
+checkModule = (. declarationModule)
+
+-- | Check declaration
+checkDeclaration :: (Declaration -> Bool) -> (ModuleDeclaration -> Bool)
+checkDeclaration = (. moduleDeclaration)
+
+-- | Check whether declaration is visible from source file
+visibleFrom :: Module -> (Module -> Bool)
+visibleFrom m = case moduleLocation m of
+	FileModule src proj -> anyOf [inCabal Cabal, maybe (const True) (inProject . project) proj, inFile src]
+	CabalModule cabal package _ -> allOf [inCabal cabal, maybe (const False) inPackage package]
+	MemoryModule m' -> inMemory m'
+
+-- | Check whether declaration is reachable from source file
+reachableFrom :: Maybe String -> Module -> (Module -> Bool)
+reachableFrom q m = case moduleLocation m of
+	FileModule _ _ -> reachable q m
+	CabalModule cabal _ _ -> inCabal cabal
+	MemoryModule mem -> inMemory mem
 
 splitBy :: Char -> String -> [String]
 splitBy ch = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break (== ch))

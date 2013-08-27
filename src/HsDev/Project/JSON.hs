@@ -1,43 +1,66 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Project.JSON (
-	encodeProject
 	) where
 
+import Control.Applicative
+import Control.Arrow (second)
 import Data.Aeson
-import Data.List (intercalate)
+import Data.List (intercalate, unfoldr)
 
+import HsDev.Util
 import HsDev.Project
 
-encodeProject :: Project -> Value
-encodeProject p = object [
-	"name" .= projectName p,
-	"cabal" .= projectCabal p,
-	"description" .= fmap encodeDescription (projectDescription p)]
+instance ToJSON Project where
+	toJSON p = object [
+		"name" .= projectName p,
+		"path" .= projectPath p,
+		"cabal" .= projectCabal p,
+		"description" .= projectDescription p]
 
-encodeDescription :: ProjectDescription -> Value
-encodeDescription d = object [
-	"library" .= fmap encodeLibrary (projectLibrary d),
-	"executables" .= fmap encodeExecutable (projectExecutables d),
-	"tests" .= fmap encodeTest (projectTests d)]
+instance FromJSON Project where
+	parseJSON = withObject "project" $ \v -> Project <$> v .:: "name" <*> v .:: "path" <*> v .:: "cabal" <*> v .:: "description"
 
-encodeLibrary :: Library -> Value
-encodeLibrary l = object [
-	"modules" .= fmap (intercalate ".") (libraryModules l),
-	"info" .= encodeInfo (libraryBuildInfo l)]
+instance ToJSON ProjectDescription where
+	toJSON d = object [
+		"library" .= projectLibrary d,
+		"executables" .= projectExecutables d,
+		"tests" .= projectTests d]
 
-encodeExecutable :: Executable -> Value
-encodeExecutable e = object [
-	"name" .= executableName e,
-	"path" .= executablePath e,
-	"info" .= encodeInfo (executableBuildInfo e)]
+instance FromJSON ProjectDescription where
+	parseJSON = withObject "project description" $ \v -> ProjectDescription <$> v .:: "library" <*> v .:: "executables" <*> v .:: "tests"
 
-encodeTest :: Test -> Value
-encodeTest t = object [
-	"name" .= testName t,
-	"enabled" .= testEnabled t,
-	"info" .= encodeInfo (testBuildInfo t)]
+instance ToJSON Library where
+	toJSON l = object [
+		"modules" .= fmap (intercalate ".") (libraryModules l),
+		"info" .= libraryBuildInfo l]
 
-encodeInfo :: Info -> Value
-encodeInfo i = object [
-	"source-dirs" .= infoSourceDirs i]
+instance FromJSON Library where
+	parseJSON = withObject "library" $ \v -> Library <$> (fmap splitModule <$> v .:: "modules") <*> v .:: "info" where
+		splitModule :: String -> [String]
+		splitModule = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break (== '.'))
+
+instance ToJSON Executable where
+	toJSON e = object [
+		"name" .= executableName e,
+		"path" .= executablePath e,
+		"info" .= executableBuildInfo e]
+
+instance FromJSON Executable where
+	parseJSON = withObject "executable" $ \v -> Executable <$> v .:: "name" <*> v .:: "path" <*> v .:: "info"
+
+instance ToJSON Test where
+	toJSON t = object [
+		"name" .= testName t,
+		"enabled" .= testEnabled t,
+		"info" .= testBuildInfo t]
+
+instance FromJSON Test where
+	parseJSON = withObject "test" $ \v -> Test <$> v .:: "name" <*> v .:: "enabled" <*> v .:: "info"
+
+instance ToJSON Info where
+	toJSON i = object ["source-dirs" .= infoSourceDirs i]
+
+instance FromJSON Info where
+	parseJSON = withObject "info" $ \v -> Info <$> v .:: "source-dirs"

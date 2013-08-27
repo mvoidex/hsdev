@@ -2,69 +2,79 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols (
-	Location(..),
+	-- * Information
 	Import(..),
 	Symbol(..),
-	Cabal(..),
-	Module(..),
-	TypeInfo(..),
+	Module(..), ModuleId(..), moduleId, moduleModuleDeclarations,
 	Declaration(..),
+	TypeInfo(..),
+	DeclarationInfo(..),
+	ModuleDeclaration(..),
+	Inspection(..),
+	InspectedModule(..),
 
-	mkSymbol,
-	position,
-	symbolQualifiedName,
-	mkLocation,
-	location,
-	moduleLocation,
-	setModuleReferences,
+	-- * Functions
+	showTypeInfo,
+	declarationInfo, declarationTypeInfo, declarationTypeCtor, declarationTypeName,
+	qualifiedName,
+	importQualifier,
+
+	-- * Utility
+	Canonicalize(..),
+	locateProject,
+
+	-- * Modifiers
 	addDeclaration,
-	unalias,
-	brief,
-	detailed,
-	moduleContents,
-	locateProject
+
+	-- * Other
+	unalias, moduleContents,
+
+	-- * Reexports
+	module HsDev.Symbols.Class,
+	module HsDev.Symbols.Documented
 	) where
 
 import Control.Arrow
 import Control.DeepSeq
-import Control.Exception
+import Control.Monad (liftM2)
 import Data.List
-import Data.Function (fix)
 import Data.Map (Map)
 import Data.Maybe
 import qualified Data.Map as M
-import Data.Time.Clock
 import Data.Time.Clock.POSIX
+import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
 
+import HsDev.Symbols.Class
+import HsDev.Symbols.Documented
 import HsDev.Project
 import HsDev.Util
 
--- | Location of symbol
-data Location = Location {
-	locationFile :: FilePath,
-	locationLine :: Int,
-	locationColumn :: Int,
-	locationProject :: Maybe Project,
-	locationTimeStamp :: Maybe UTCTime }
-		deriving (Eq, Ord)
+---- | Location of symbol
+--data Location = Location {
+--	locationFile :: FilePath,
+--	locationLine :: Int,
+--	locationColumn :: Int,
+--	locationProject :: Maybe Project,
+--	locationTimeStamp :: Maybe UTCTime }
+--		deriving (Eq, Ord)
 
-instance NFData Location where
-	rnf (Location f l c p t) = rnf f `seq` rnf l `seq` rnf c `seq` rnf p `seq` rnf t
+--instance NFData Location where
+--	rnf (Location f l c p t) = rnf f `seq` rnf l `seq` rnf c `seq` rnf p `seq` rnf t
 
-instance Read POSIXTime where
-	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
+--instance Read POSIXTime where
+--	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
 
-instance Show Location where
-	show loc = intercalate ":" [locationFile loc, show $ locationLine loc, show $ locationColumn loc]
+--instance Show Location where
+--	show loc = intercalate ":" [locationFile loc, show $ locationLine loc, show $ locationColumn loc]
 
 -- | Module import
 data Import = Import {
 	importModuleName :: String,
 	importIsQualified :: Bool,
 	importAs :: Maybe String,
-	importLocation :: Maybe Location }
+	importPosition :: Maybe Position }
 		deriving (Eq, Ord)
 
 instance NFData Import where
@@ -73,87 +83,100 @@ instance NFData Import where
 instance Show Import where
 	show i = "import " ++ (if importIsQualified i then "qualified " else "") ++ importModuleName i ++ maybe "" (" as " ++) (importAs i)
 
--- | Symbol
-data Symbol a = Symbol {
-	symbolName :: String,
-	symbolModule :: Maybe (Symbol Module),
-	symbolDocs :: Maybe String,
-	symbolLocation :: Maybe Location,
-	symbolTags :: [String],
-	symbol :: a }
+-- | Imported module can be accessed via qualifier
+importQualifier :: Maybe String -> Import -> Bool
+importQualifier Nothing i
+	| not (importIsQualified i) = True
+	| otherwise = False
+importQualifier (Just q) i
+	| q == importModuleName i = True
+	| Just q == importAs i = True
+	| otherwise = False
 
-instance NFData a => NFData (Symbol a) where
-	rnf (Symbol n _ ds l t v) = rnf n `seq` rnf ds `seq` rnf l `seq` rnf t `seq` rnf v
+instance Symbol Module where
+	symbolName = moduleName
+	symbolQualifiedName = moduleName
+	symbolDocs = moduleDocs
+	symbolLocation m = Location (moduleLocation m) Nothing
 
-instance Ord a => Ord (Symbol a) where
-	compare l r = compare (asTuple l) (asTuple r) where
-		asTuple s = (
-			symbolName s,
-			maybe "" symbolName (symbolModule s),
-			symbolLocation s,
-			symbol s)
+instance Symbol Declaration where
+	symbolName = declarationName
+	symbolQualifiedName = declarationName
+	symbolDocs = declarationDocs
+	symbolLocation d = Location (MemoryModule Nothing) (declarationPosition d)
 
-instance Functor Symbol where
-	fmap f s = s { symbol = f (symbol s) }
-
-instance Eq a => Eq (Symbol a) where
-	l == r = and [
-		symbolName l == symbolName r,
-		fmap symbolName (symbolModule l) == fmap symbolName (symbolModule r),
-		symbolLocation l == symbolLocation r,
-		symbol l == symbol r]
-
-instance Show (Symbol Module) where
-	show m = unlines [
-		"module " ++ symbolName m,
-		"\texports: " ++ intercalate ", " (moduleExports $ symbol m),
-		"\timports:",
-		unlines $ map (tab 2 . show) $ M.elems (moduleImports $ symbol m),
-		"\tdeclarations:",
-		unlines $ map (tabs 2 . show) $ M.elems (moduleDeclarations $ symbol m),
-		"\tcabal: " ++ show (moduleCabal $ symbol m),
-		"\tdocs: " ++ fromMaybe "" (symbolDocs m),
-		"\tlocation: " ++ show (symbolLocation m)]
-
-instance Show (Symbol Declaration) where
-	show d = unlines [
-		title,
-		"\tmodule: " ++ maybe "" symbolName (symbolModule d),
-		"\tdocs: " ++ fromMaybe "" (symbolDocs d),
-		"\tlocation:" ++ show (symbolLocation d)]
-		where
-			title = case symbol d of
-				Function t -> symbolName d ++ maybe "" (" :: " ++) t
-				Type ti -> title' "type" ti
-				NewType ti -> title' "newtype" ti
-				Data ti -> title' "data" ti
-				Class ti -> title' "class" ti
-			title' n ti = n ++ " " ++ maybe "" (++ " => ") (typeInfoContext ti) ++ symbolName d ++ " " ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
-
--- | Cabal or cabal-dev
-data Cabal = Cabal | CabalDev FilePath deriving (Eq, Ord)
-
-instance NFData Cabal where
-	rnf Cabal = ()
-	rnf (CabalDev p) = rnf p
-
-instance Show Cabal where
-	show Cabal = "<cabal>"
-	show (CabalDev path) = path
+instance Symbol ModuleDeclaration where
+	symbolName = declarationName . moduleDeclaration
+	symbolQualifiedName d = qualifiedName (declarationModule d) (moduleDeclaration d)
+	symbolDocs = declarationDocs . moduleDeclaration
+	symbolLocation d = (symbolLocation $ declarationModule d) {
+		locationPosition = declarationPosition $ moduleDeclaration d }
 
 -- | Module
 data Module = Module {
+	moduleName :: String,
+	moduleDocs :: Maybe String,
+	moduleLocation :: ModuleLocation,
 	moduleExports :: [String],
 	moduleImports :: Map String Import,
-	moduleDeclarations :: Map String (Symbol Declaration),
-	moduleCabal :: Maybe Cabal }
+	moduleDeclarations :: Map String Declaration }
 		deriving (Ord)
 
 instance NFData Module where
-	rnf (Module e i d c) = rnf e `seq` rnf i `seq` rnf d `seq` rnf c
+	rnf (Module n d s e i ds) = rnf n `seq` rnf d `seq` rnf s `seq` rnf e `seq` rnf i `seq` rnf ds
 
 instance Eq Module where
-	l == r = moduleCabal l == moduleCabal r
+	l == r = moduleName l == moduleName r && moduleLocation l == moduleLocation r
+
+instance Show Module where
+	show m = unlines $ filter (not . null) [
+		"module " ++ moduleName m,
+		"\tlocation: " ++ show (moduleLocation m),
+		"\texports: " ++ intercalate ", " (moduleExports m),
+		"\timports:",
+		unlines $ map (tab 2 . show) $ M.elems (moduleImports m),
+		"\tdeclarations:",
+		unlines $ map (tabs 2 . show) $ M.elems (moduleDeclarations m),
+		maybe "" ("\tdocs: " ++) (moduleDocs m)]
+
+-- | Get list of declarations as ModuleDeclaration
+moduleModuleDeclarations :: Module -> [ModuleDeclaration]
+moduleModuleDeclarations m = [ModuleDeclaration m d | d <- M.elems (moduleDeclarations m)]
+
+-- | Module id
+data ModuleId = ModuleId {
+	moduleIdName :: String,
+	moduleIdLocation :: ModuleLocation }
+		deriving (Eq, Ord)
+
+instance NFData ModuleId where
+	rnf (ModuleId n l) = rnf n `seq` rnf l
+
+instance Show ModuleId where
+	show (ModuleId n l) = "module " ++ n ++ " from " ++ show l
+
+-- | Create module id from module
+moduleId :: Module -> ModuleId
+moduleId m = ModuleId {
+	moduleIdName = moduleName m,
+	moduleIdLocation = moduleLocation m }
+
+-- | Declaration
+data Declaration = Declaration {
+	declarationName :: String,
+	declarationDocs :: Maybe String,
+	declarationPosition :: Maybe Position,
+	declaration :: DeclarationInfo }
+		deriving (Eq, Ord)
+
+instance NFData Declaration where
+	rnf (Declaration n d l x) = rnf n `seq` rnf d `seq` rnf l `seq` rnf x
+
+instance Show Declaration where
+	show d = unlines $ filter (not . null) [
+		brief d,
+		maybe "" ("\tdocs: " ++) $ declarationDocs d,
+		maybe "" (("\tlocation: " ++ ) . show) $ declarationPosition d]
 
 -- | Common info for type/newtype/data/class
 data TypeInfo = TypeInfo {
@@ -168,8 +191,8 @@ instance NFData TypeInfo where
 showTypeInfo :: TypeInfo -> String -> String -> String
 showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ " " ++ name ++ " " ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
 
--- | Declaration
-data Declaration =
+-- | Declaration info
+data DeclarationInfo =
 	Function { functionType :: Maybe String } |
 	Type { typeInfo :: TypeInfo } |
 	NewType { newTypeInfo :: TypeInfo } |
@@ -177,14 +200,14 @@ data Declaration =
 	Class { classInfo :: TypeInfo }
 		deriving (Ord)
 
-instance NFData Declaration where
+instance NFData DeclarationInfo where
 	rnf (Function f) = rnf f
 	rnf (Type i) = rnf i
 	rnf (NewType i) = rnf i
 	rnf (Data i) = rnf i
 	rnf (Class i) = rnf i
 
-instance Eq Declaration where
+instance Eq DeclarationInfo where
 	(Function l) == (Function r) = l == r
 	(Type _) == (Type _) = True
 	(NewType _) == (NewType _) = True
@@ -192,87 +215,61 @@ instance Eq Declaration where
 	(Class _) == (Class _) = True
 	_ == _ = False
 
--- | Make symbol by name and data
-mkSymbol :: String -> a -> Symbol a
-mkSymbol name = Symbol name Nothing Nothing Nothing []
+-- | Get function type of type info
+declarationInfo :: DeclarationInfo -> Either (Maybe String) TypeInfo
+declarationInfo (Function t) = Left t
+declarationInfo (Type ti) = Right ti
+declarationInfo (NewType ti) = Right ti
+declarationInfo (Data ti) = Right ti
+declarationInfo (Class ti) = Right ti
 
--- | Returns `filename:line:column`
-position :: Location -> String
-position loc =  intercalate ":" [locationFile loc, show $ locationLine loc, show $ locationColumn loc]
+-- | Get type info of declaration
+declarationTypeInfo :: DeclarationInfo -> Maybe TypeInfo
+declarationTypeInfo = either (const Nothing) Just . declarationInfo
+
+declarationTypeCtor :: String -> TypeInfo -> DeclarationInfo
+declarationTypeCtor "type" = Type
+declarationTypeCtor "newtype" = NewType
+declarationTypeCtor "data" = Data
+declarationTypeCtor "class" = Class
+declarationTypeCtor "" = error "Invalid type constructor name"
+
+declarationTypeName :: DeclarationInfo -> Maybe String
+declarationTypeName (Type _) = Just "type"
+declarationTypeName (NewType _) = Just "newtype"
+declarationTypeName (Data _) = Just "data"
+declarationTypeName (Class _) = Just "class"
+declarationTypeName _ = Nothing
+
+-- | Symbol in module
+data ModuleDeclaration = ModuleDeclaration {
+	declarationModule :: Module,
+	moduleDeclaration :: Declaration }
+		deriving (Eq, Ord)
+
+instance NFData ModuleDeclaration where
+	rnf (ModuleDeclaration m s) = rnf m `seq` rnf s
+
+instance Show ModuleDeclaration where
+	show (ModuleDeclaration m s) = unlines $ filter (not . null) [
+		show s,
+		"\tmodule: " ++ show (moduleLocation m)]
 
 -- | Returns qualified name of symbol
-symbolQualifiedName :: Symbol a -> String
-symbolQualifiedName s = pre ++ symbolName s where
-	pre = maybe "" ((++ ".") . symbolName) $ symbolModule s
+qualifiedName :: Module -> Declaration -> String
+qualifiedName m d = moduleName m ++ "." ++ declarationName d
 
--- | Make location, canonicalizing path and locating project
-mkLocation :: Location -> IO Location
-mkLocation loc = do
-	f <- canonicalizePath (locationFile loc)
-	p <- locateProject f
-	tm <- catch (fmap Just $ getModificationTime f) ignoreIO
-	return $ loc {
-		locationFile = f,
-		locationProject = p,
-		locationTimeStamp = tm }
-	where
-		ignoreIO :: IOException -> IO (Maybe a)
-		ignoreIO _ = return Nothing
+class Canonicalize a where
+	canonicalize :: a -> IO a
 
--- | Make location by file, line and column
-location :: FilePath -> Int -> Int -> Maybe Project -> Location
-location f l c p = Location (normalise f) l c p Nothing
+instance Canonicalize Cabal where
+	canonicalize Cabal = return Cabal
+	canonicalize (Sandbox p) = fmap Sandbox $ canonicalizePath p
 
--- | Module location is located at file:1:1
-moduleLocation :: FilePath -> Location
-moduleLocation fname = location fname 1 1 Nothing
-
--- | Set module references
-setModuleReferences :: Symbol Module -> Symbol Module
-setModuleReferences m = fix setRefs where
-	setRefs m' = setModule $ fmap setRefs' m where
-		setRefs' m'' = m'' {
-			moduleDeclarations = M.map setModule (moduleDeclarations $ symbol m) }
-		setModule s = s { symbolModule = Just m' }
-
--- | Add declaration to module
-addDeclaration :: Symbol Declaration -> Symbol Module -> Symbol Module
-addDeclaration decl m = setModuleReferences $ fmap setDecls m where
-	setDecls m' = m' { moduleDeclarations = decls }
-	decls = M.insert (symbolName decl) decl $ moduleDeclarations $ symbol m
-
--- Unalias import name
-unalias :: Symbol Module -> String -> [String]
-unalias m alias = [importModuleName i | i <- M.elems (moduleImports (symbol m)), importAs i == Just alias]
-
--- | Brief of declaration
-brief :: Symbol Declaration -> String
-brief s = case symbol s of
-	Function t -> symbolName s ++ maybe "" (" :: " ++) t
-	Type t -> showTypeInfo t "type" (symbolName s)
-	NewType t -> showTypeInfo t "newtype" (symbolName s)
-	Data t -> showTypeInfo t "data" (symbolName s)
-	Class t -> showTypeInfo t "class" (symbolName s)
-
--- | Detailed info about declaration
-detailed :: Symbol Declaration -> String
-detailed s = unlines $ header ++ docs ++ loc where
-	header = [
-		brief s,
-		"",
-		maybe "" symbolName $ symbolModule s]
-	docs = maybe [] return $ symbolDocs s
-	loc = maybe [] (return . showLoc) $ symbolLocation s where
-		showLoc l = "Defined at " ++ position l
-
--- | Module contents
-moduleContents :: Symbol Module -> String
-moduleContents s = unlines $ header ++ cts where
-	header = [
-		"module " ++ symbolName s,
-		""]
-	cts = map showDecl (M.elems $ moduleDeclarations $ symbol s)
-	showDecl d = brief d ++ maybe "" (" -- " ++) (symbolDocs d)
+instance Canonicalize ModuleLocation where
+	canonicalize (FileModule f p) = liftM2 FileModule (canonicalizePath f) (traverse canonicalizePath p)
+	canonicalize (CabalModule c p n) = fmap (\c' -> CabalModule c' p n) $ canonicalize c
+	canonicalize (MemoryModule m) = return $ MemoryModule m
 
 -- | Find project file is related to
 locateProject :: FilePath -> IO (Maybe Project)
@@ -289,3 +286,76 @@ locateProject file = do
 			case find ((== ".cabal") . takeExtension) cts of
 				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
 				Just cabalf -> return $ Just $ project (dir </> cabalf)
+
+-- | Add declaration to module
+addDeclaration :: Declaration -> Module -> Module
+addDeclaration decl m = m { moduleDeclarations = decls' } where
+	decls' = M.insert (declarationName decl) decl $ moduleDeclarations m
+
+-- | Unalias import name
+unalias :: Module -> String -> [String]
+unalias m alias = [importModuleName i | i <- M.elems (moduleImports m), importAs i == Just alias]
+
+instance Documented Module where
+	brief m = moduleName m ++ " in " ++ show (moduleLocation m)
+	detailed m = unlines $ header ++ docs ++ cts where
+		header = [brief m, ""]
+		docs = maybe [] return $ moduleDocs m
+		cts = moduleContents m
+
+instance Documented Declaration where
+	brief d = case declarationInfo $ declaration d of
+		Left f -> name ++ maybe "" (" :: " ++) f
+		Right ti -> showTypeInfo ti (fromMaybe err $ declarationTypeName $ declaration d) name
+		where
+			name = declarationName d
+			err = error "Impossible happened: declarationTypeName"
+
+instance Documented ModuleDeclaration where
+	brief = brief . moduleDeclaration
+
+-- | Module contents
+moduleContents :: Module -> [String]
+moduleContents = map showDecl . M.elems . moduleDeclarations where
+	showDecl d = brief d ++ maybe "" (" -- " ++) (declarationDocs d)
+
+-- | Inspection data
+data Inspection =
+	-- | No inspection
+	InspectionNone |
+	-- | Time of file inspection
+	InspectionTime POSIXTime |
+	-- | Flags of cabal module inspection
+	InspectionFlags [String]
+		deriving (Eq, Ord)
+
+instance NFData Inspection where
+	rnf InspectionNone = ()
+	rnf (InspectionTime t) = rnf t
+	rnf (InspectionFlags fs) = rnf fs
+
+instance Show Inspection where
+	show InspectionNone = "none"
+	show (InspectionTime tm) = "mtime " ++ show tm
+	show (InspectionFlags fs) = "flags [" ++ intercalate ", " fs ++ "]"
+
+instance Read POSIXTime where
+	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
+
+-- | Inspected module
+data InspectedModule = InspectedModule {
+	inspection :: Inspection,
+	inspectionModule :: ModuleLocation,
+	inspectionResult :: Either String Module }
+		deriving (Eq, Ord)
+
+instance NFData InspectedModule where
+	rnf (InspectedModule i mi m) = rnf i `seq` rnf mi `seq` rnf m
+
+instance Show InspectedModule where
+	show (InspectedModule i mi m) = unlines [either showError show m, "\tinspected: " ++ show i] where
+		showError :: String -> String
+		showError e = unlines $ ("\terror: " ++ e) : case mi of
+			FileModule f p -> ["file: " ++ f, "project: " ++ fromMaybe "" p]
+			CabalModule c p n -> ["cabal: " ++ show c, "package: " ++ fromMaybe "" p, "name: " ++ n]
+			MemoryModule mem -> ["mem: " ++ fromMaybe "" mem]

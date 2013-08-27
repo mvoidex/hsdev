@@ -8,182 +8,186 @@ module HsDev.Cache (
 	standaloneCache,
 	dump,
 	load,
-	toDatabase
 	) where
 
 import Control.Applicative
-import Control.Monad
 import Data.Aeson
 import Data.Aeson.Encode.Pretty
-import Data.Aeson.Types (Parser)
 import qualified Data.ByteString.Lazy.Char8 as BS
 import Data.Char
 import Data.List
-import qualified Data.HashMap.Strict as HM (HashMap, toList)
-import Data.Map (Map)
-import Data.Monoid
 import qualified Data.Map as M
-import Data.Text (Text)
 import System.FilePath
 
 import HsDev.Symbols
 import HsDev.Project
+import HsDev.Project.JSON ()
 import HsDev.Database
+import HsDev.Util
 
+instance ToJSON ModuleLocation where
+	toJSON (FileModule f p) = object ["file" .= f, "project" .= p]
+	toJSON (CabalModule c p n) = object ["cabal" .= c, "package" .= p, "name" .= n]
+	toJSON (MemoryModule s) = object ["mem" .= s]
 
--- | Workaround, sometimes we get HM.lookup "foo" v == Nothing, but lookup "foo" (HM.toList v) == Just smth
-(.::) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser a
-v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lookup name $ HM.toList v
+instance FromJSON ModuleLocation where
+	parseJSON = withObject "module location" $ \v ->
+		(FileModule <$> v .:: "file" <*> v .:: "project") <|>
+		(CabalModule <$> v .:: "cabal" <*> v .:: "package" <*> v .:: "name") <|>
+		(MemoryModule <$> v .:: "mem")
+
+instance ToJSON Position where
+	toJSON (Position l c) = object [
+		"line" .= l,
+		"column" .= c]
+
+instance FromJSON Position where
+	parseJSON = withObject "position" $ \v -> Position <$> v .:: "line" <*> v .:: "column"
 
 instance ToJSON Location where
-	toJSON loc = object [
-		"file" .= locationFile loc,
-		"line" .= locationLine loc,
-		"column" .= locationColumn loc,
-		"project" .= locationProject loc]
+	toJSON (Location ml p) = object [
+		"module" .= ml,
+		"pos" .= p]
 
 instance FromJSON Location where
-	parseJSON (Object v) = location <$>
-		v .:: "file" <*>
-		v .:: "line" <*>
-		v .:: "column" <*>
-		v .:: "project"
-	parseJSON _ = mzero
-
-instance ToJSON Project where
-	toJSON p = toJSON (projectCabal p)
-
-instance FromJSON Project where
-	parseJSON v = fmap project $ parseJSON v
+	parseJSON = withObject "location" $ \v -> Location <$> v .:: "module" <*> v .:: "pos"
 
 instance ToJSON Import where
 	toJSON i = object [
 		"name" .= importModuleName i,
 		"qualified" .= importIsQualified i,
 		"as" .= importAs i,
-		"loc" .= importLocation i]
+		"pos" .= importPosition i]
 
 instance FromJSON Import where
-	parseJSON (Object v) = Import <$>
+	parseJSON = withObject "import" $ \v -> Import <$>
 		v .:: "name" <*>
 		v .:: "qualified" <*>
 		v .:: "as" <*>
-		v .:: "loc"
-	parseJSON _ = mzero
-
-instance ToJSON a => ToJSON (Symbol a) where
-	toJSON s = object [
-		"name" .= symbolName s,
-		"docs" .= symbolDocs s,
-		"location" .= symbolLocation s,
-		"symbol" .= symbol s]
-
-instance FromJSON a => FromJSON (Symbol a) where
-	parseJSON (Object v) = Symbol <$>
-		v .:: "name" <*>
-		pure Nothing <*>
-		v .:: "docs" <*>
-		v .:: "location" <*>
-		pure [] <*>
-		v .:: "symbol"
-	parseJSON _ = mzero
+		v .:: "pos"
 
 instance ToJSON Cabal where
 	toJSON Cabal = toJSON ("<cabal>" :: String)
-	toJSON (CabalDev p) = toJSON p
+	toJSON (Sandbox p) = toJSON p
 
 instance FromJSON Cabal where
 	parseJSON v = do
 		p <- parseJSON v
-		return $ if p == "<cabal>"
-			then Cabal
-			else CabalDev p
+		return $ if p == "<cabal>" then Cabal else Sandbox p
 
 instance ToJSON Module where
 	toJSON m = object [
+		"name" .= moduleName m,
+		"docs" .= moduleDocs m,
+		"location" .= moduleLocation m,
 		"exports" .= moduleExports m,
 		"imports" .= moduleImports m,
-		"declarations" .= moduleDeclarations m,
-		"cabal" .= moduleCabal m]
+		"declarations" .= moduleDeclarations m]
 
 instance FromJSON Module where
-	parseJSON (Object v) = Module <$>
+	parseJSON = withObject "module" $ \v -> Module <$>
+		v .:: "name" <*>
+		v .:: "docs" <*>
+		v .:: "location" <*>
 		v .:: "exports" <*>
 		v .:: "imports" <*>
-		v .:: "declarations" <*>
-		v .:: "cabal"
-	parseJSON _ = mzero
+		v .:: "declarations"
+
+instance ToJSON Inspection where
+	toJSON InspectionNone = object ["inspected" .= False]
+	toJSON (InspectionTime tm) = object ["mtime" .= (floor tm :: Integer)]
+	toJSON (InspectionFlags fs) = object ["flags" .= fs]
+
+instance FromJSON Inspection where
+	parseJSON = withObject "inspection" $ \v ->
+		((const InspectionNone :: Bool -> Inspection) <$> v .:: "inspected") <|>
+		((InspectionTime . fromInteger) <$> v .:: "mtime") <|>
+		(InspectionFlags <$> v .:: "flags")
+
+instance ToJSON InspectedModule where
+	toJSON im = object [
+		"inspection" .= inspection im,
+		"location" .= inspectionModule im,
+		either ("error" .=) ("module" .=) (inspectionResult im)]
+
+instance FromJSON InspectedModule where
+	parseJSON = withObject "inspected module" $ \v -> InspectedModule <$>
+		v .:: "inspection" <*>
+		v .:: "location" <*>
+		((Left <$> v .:: "error") <|> (Right <$> v .:: "module"))
 
 instance ToJSON TypeInfo where
 	toJSON t = object [
 		"ctx" .= typeInfoContext t,
 		"args" .= typeInfoArgs t,
-		"definition" .= typeInfoDefinition t]
+		"def" .= typeInfoDefinition t]
 
 instance FromJSON TypeInfo where
-	parseJSON (Object v) = TypeInfo <$>
-		v .:: "ctx" <*>
-		v .:: "args" <*>
-		v .:: "definition"
-	parseJSON _ = mzero
+	parseJSON = withObject "type info" $ \v -> TypeInfo <$> v .:: "ctx" <*> v .:: "args" <*> v .:: "def"
 
 instance ToJSON Declaration where
-	toJSON (Function t) = object [
-		"what" .= ("function" :: String),
-		"type" .= t]
-	toJSON (Type i) = object [
-		"what" .= ("type" :: String),
-		"info" .= i]
-	toJSON (NewType i) = object [
-		"what" .= ("newtype" :: String),
-		"info" .= i]
-	toJSON (Data i) = object [
-		"what" .= ("data" :: String),
-		"info" .= i]
-	toJSON (Class i) = object [
-		"what" .= ("class" :: String),
-		"info" .= i]
+	toJSON d = object [
+		"name" .= declarationName d,
+		"docs" .= declarationDocs d,
+		"pos" .= declarationPosition d,
+		"decl" .= declaration d]
 
 instance FromJSON Declaration where
-	parseJSON (Object v) = (Function <$> v .:: "type") <|> parseType where
-		parseType = do
-			w <- fmap (id :: String -> String) $ v .:: "what"
-			i <- v .:: "info"
-			let
-				ctor = case w of
-					"type" -> Type
-					"newtype" -> NewType
-					"data" -> Data
-					"class" -> Class
-					_ -> error "Invalid data"
-			return $ ctor i
-	parseJSON _ = mzero
+	parseJSON = withObject "declaration" $ \v -> Declaration <$> v .:: "name" <*> v .:: "docs" <*> v .:: "pos" <*> v .:: "decl"
 
+instance ToJSON DeclarationInfo where
+	toJSON i = case declarationInfo i of
+		Left t -> object ["what" .= ("function" :: String), "type" .= t]
+		Right ti -> object ["what" .= declarationTypeName i, "info" .= ti]
+
+instance FromJSON DeclarationInfo where
+	parseJSON = withObject "declaration info" $ \v -> do
+		w <- fmap (id :: String -> String) $ v .:: "what"
+		if w == "function"
+			then Function <$> v .:: "type"
+			else declarationTypeCtor w <$> v .:: "info"
+
+instance ToJSON Database where
+	toJSON (Database ms ps _ _ _ _) = object [
+		"modules" .= M.elems ms,
+		"projects" .= M.elems ps]
+
+instance FromJSON Database where
+	parseJSON = withObject "database" $ \v -> createIndexes <$>
+		(Database <$>
+			((M.unions . map mkModule) <$> v .:: "modules") <*>
+			((M.unions . map mkProject) <$> v .:: "projects") <*>
+			pure mempty <*>
+			pure mempty <*>
+			pure mempty <*>
+			pure mempty)
+		where
+			mkModule m = M.singleton (inspectionModule m) m
+			mkProject p = M.singleton (projectCabal p) p
+
+-- | Escape path
 escapePath :: FilePath -> FilePath
 escapePath = intercalate "." . map (filter isAlphaNum) . splitDirectories
 
--- | Name of cache file for cabal
+-- | Name of cache for cabal
 cabalCache :: Cabal -> FilePath
-cabalCache Cabal = "cabal.json"
-cabalCache (CabalDev p) = escapePath p ++ ".json"
+cabalCache Cabal = "cabal" <.> "json"
+cabalCache (Sandbox p) = escapePath p <.> "json"
 
--- | Name of cache file for projects
+-- | Name of cache for projects
 projectCache :: Project -> FilePath
-projectCache p = escapePath (projectPath p) ++ ".json"
+projectCache p = (escapePath . projectPath $ p) <.> "json"
 
 -- | Name of cache for standalone files
 standaloneCache :: FilePath
-standaloneCache = "standalone.json"
+standaloneCache = "standalone" <.> "json"
 
--- | Dump cache data to file
-dump :: FilePath -> Map String (Symbol Module) -> IO ()
+-- | Dump database to file
+dump :: FilePath -> Database -> IO ()
 dump file = BS.writeFile file . encodePretty
 
--- | Load cache from file
+-- | Load database from file
 load :: FilePath -> IO (Either String Database)
 load file = do
 	cts <- BS.readFile file
-	return $ fmap (toDatabase . M.map setModuleReferences) $ eitherDecode cts
-
-toDatabase :: Map String (Symbol Module) -> Database
-toDatabase = mconcat . map fromModule . M.elems
+	return $ eitherDecode cts

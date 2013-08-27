@@ -2,13 +2,18 @@ module HsDev.Tools.Base (
 	Result,
 	runWait,
 	match,
-	at
+	at,
+	inspect
 	) where
 
+import Control.Monad.Error
+import Control.Monad.State
 import Data.Maybe
 import System.Exit
 import System.Process
 import Text.RegexPR
+
+import HsDev.Symbols
 
 type Result = Either String String
 
@@ -25,3 +30,13 @@ match pat str = do
 
 at :: (Int -> Maybe String) -> Int -> String
 at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
+
+inspect :: Monad m => ModuleLocation -> ErrorT String m Inspection -> ErrorT String m Module -> m InspectedModule
+inspect mloc insp act = execStateT inspect' (InspectedModule InspectionNone mloc (Left "not inspected")) where
+	inspect' = runErrorT $ do
+		i <- mapErrorT lift insp
+		modify (\im -> im { inspection = i })
+		v <- mapErrorT lift act
+		modify (\im -> im { inspectionResult = Right v })
+		`catchError`
+		\e -> modify (\im -> im { inspectionResult = Left e })
