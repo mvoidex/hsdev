@@ -1,5 +1,5 @@
 module HsDev.Database.Async (
-	update, indexes,
+	update,
 	module Data.Async
 	) where
 
@@ -14,8 +14,3 @@ update :: MonadIO m => Async Database -> m Database -> m ()
 update db act = do
 	db' <- act
 	force db' `seq` (liftIO $ modifyAsync db (Append db'))
-	indexes db
-
-indexes :: MonadIO m => Async Database -> m ()
-indexes db = liftIO $ modifyAsync db (Modify createIndexes)
-

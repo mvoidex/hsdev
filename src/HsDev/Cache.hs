@@ -148,19 +148,14 @@ instance FromJSON DeclarationInfo where
 			else declarationTypeCtor w <$> v .:: "info"
 
 instance ToJSON Database where
-	toJSON (Database ms ps _ _ _ _) = object [
+	toJSON (Database ms ps) = object [
 		"modules" .= M.elems ms,
 		"projects" .= M.elems ps]
 
 instance FromJSON Database where
-	parseJSON = withObject "database" $ \v -> createIndexes <$>
-		(Database <$>
-			((M.unions . map mkModule) <$> v .:: "modules") <*>
-			((M.unions . map mkProject) <$> v .:: "projects") <*>
-			pure mempty <*>
-			pure mempty <*>
-			pure mempty <*>
-			pure mempty)
+	parseJSON = withObject "database" $ \v -> (Database <$>
+		((M.unions . map mkModule) <$> v .:: "modules") <*>
+		((M.unions . map mkProject) <$> v .:: "projects"))
 		where
 			mkModule m = M.singleton (inspectionModule m) m
 			mkProject p = M.singleton (projectCabal p) p

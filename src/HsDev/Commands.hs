@@ -22,8 +22,6 @@ import Data.List
 import Data.Maybe
 import Data.Map (Map)
 import qualified Data.Map as M
-import qualified Data.HashMap as HM
-import qualified Data.Set as S
 import Data.Traversable (traverse)
 import System.Directory
 
@@ -34,11 +32,11 @@ import HsDev.Symbols.Util
 
 -- | Find declaration by name
 findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
-findDeclaration db ident = return $ maybe [] S.toList $ HM.lookup ident (databaseSymbolsIndex db)
+findDeclaration db ident = return $ selectDeclarations ((== ident) . declarationName . moduleDeclaration) db
 
 -- | Find module by name
 findModule :: Database -> String -> ErrorT String IO [Module]
-findModule db mname = return $ maybe [] S.toList $ M.lookup mname (databaseModulesIndex db)
+findModule db mname = return $ selectModules ((== mname) . moduleName) db
 
 -- | Find module in file
 fileModule :: Database -> FilePath -> ErrorT String IO Module
@@ -109,8 +107,8 @@ completions db m prefix = return prefixed where
 
 	importScope :: Module -> Import -> Map (Maybe String) [Module]
 	importScope _ i = fromMaybe M.empty $ do
-		ms <- M.lookup (importModuleName i) $ databaseModulesIndex db
-		imp' <- listToMaybe $ S.toList ms `intersect` modules
+		ms <- return $ selectModules ((== importModuleName i) . moduleName) db
+		imp' <- listToMaybe $ ms `intersect` modules
 		return $ decls (catMaybes [
 			Just (Just (importModuleName i)),
 			if not (importIsQualified i) then Just Nothing else Nothing,

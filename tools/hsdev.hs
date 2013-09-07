@@ -14,7 +14,7 @@ import Control.Monad.Error
 import qualified Data.ByteString.Lazy.Char8 as L (unpack, pack)
 import Data.Aeson
 import Data.Aeson.Types (parseMaybe)
-import Data.Either (partitionEithers, rights)
+import Data.Either (partitionEithers)
 import Data.Maybe
 import Data.Monoid
 import Data.List
@@ -23,8 +23,6 @@ import qualified Data.Traversable as T (forM)
 import Data.Map (Map)
 import Data.String (fromString)
 import qualified Data.Map as M
-import qualified Data.HashMap as HM
-import qualified Data.Set as S
 import Network.Socket
 import System.Command hiding (brief)
 import qualified System.Command as C (brief)
@@ -249,9 +247,9 @@ commands = [
 					processM (packArg as) r (update db . return) $ \mname ->
 						if (isNothing $ lookupModule (CabalModule cabal Nothing mname) dbval)
 							then do
-								r <- scanModule (getGhcOpts as) cabal mname
+								r' <- scanModule (getGhcOpts as) cabal mname
 								liftIO $ onStatus $ "module " ++ mname ++ " scanned"
-								return r
+								return r'
 								`catchError`
 								\e -> do
 									liftIO $ onStatus $ "error scanning module " ++ mname ++ ": " ++ e
@@ -316,19 +314,21 @@ commands = [
 		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ [ghcOpts, wait, status]) $
 			\as _ db -> do
 				dbval <- getDb db
+				let
+					fileMap = M.fromList $ mapMaybe toPair $ selectModules byFile dbval
 				projectMods <- T.forM (askOpt "project" as) $ \p -> do
 					p' <- getProject db p
 					let
-						res = databaseFilesIndex $ projectDB p' dbval
+						res = M.fromList $ mapMaybe toPair $ selectModules byFile (projectDB p' dbval)
 					return $ if M.null res then Left ("Unknown project: " ++ p) else Right res
 				fileMods <- T.forM (askOpt "file" as) $ \f ->
 					return $ maybe (Left $ "Unknown file: " ++ f) (Right . M.singleton f) $ lookupFile f dbval
 				dirMods <- T.forM (askOpt "dir" as) $ \d -> do
-					return $ Right $ M.filterWithKey (\f _ -> isParent d f) $ databaseFilesIndex dbval
+					return $ Right $ M.filterWithKey (\f _ -> isParent d f) fileMap
 
 				let
 					(errors, filteredMods) = partitionEithers $ catMaybes [projectMods, fileMods, dirMods]
-					rescanMods = if null filteredMods then databaseFilesIndex dbval else M.unions filteredMods
+					rescanMods = if null filteredMods then fileMap else M.unions filteredMods
 
 				if not $ null errors
 					then return $ err $ intercalate ", " errors
@@ -394,7 +394,7 @@ commands = [
 					if hasOpt "standalone" as then Just standalone else Nothing]
 				result = return . either (err . ("Unable to find declaration: " ++)) (ResultDeclarations . filter filters)
 			case ns of
-				[] -> result $ Right $ concatMap S.toList $ HM.elems $ databaseSymbolsIndex dbval
+				[] -> result $ Right $ allDeclarations dbval
 				[nm] -> runErrorT (findDeclaration dbval nm) >>= result
 				_ -> return $ err "Invalid arguments",
 	cmd ["list"] [] "list modules" [projectArg "project to list modules for", sandbox, sourced, standaloned] $ \as _ db -> do
@@ -480,11 +480,11 @@ commands = [
 		_ -> return $ err "Invalid arguments",
 	cmd_ ["dump", "files"] [] "dump file names loaded in database" $ \_ db -> do
 		dbval <- getDb db
-		return $ ResultOk $ M.fromList $ map (snd &&& fst) $ M.assocs $ M.map symbolName $ databaseFilesIndex dbval,
+		return $ ResultOk $ M.fromList $ map ((moduleName . snd) &&& fst) $ mapMaybe toPair $ selectModules byFile dbval,
 	cmd_ ["dump", "contents"] ["file name"] "dump file contents" $ \as db -> case as of
 		[file] -> do
 			dbval <- getDb db
-			return $ maybe (errArgs "File not found" [("file", file)]) (ResultModules . return) $ M.lookup file (databaseFilesIndex dbval)
+			return $ maybe (errArgs "File not found" [("file", file)]) (ResultModules . return) $ listToMaybe $ selectModules (inFile file) dbval
 		_ -> return $ err "Invalid arguments",
 	cmd ["cache", "dump", "cabal"] [] "dump cache of cabal modules" [
 		sandbox, cacheDir] $ \as _ db -> do
@@ -507,7 +507,7 @@ commands = [
 		dbval <- getDb db
 		createDirectoryIfMissing True (pathArg as </> "cabal")
 		createDirectoryIfMissing True (pathArg as </> "projects")
-		forM_ (M.keys $ databaseCabalIndex dbval) $ \c -> dump (pathArg as </> "cabal" </> cabalCache c) (cabalDB c dbval)
+		forM_ (nub $ mapMaybe modCabal $ allModules dbval) $ \c -> dump (pathArg as </> "cabal" </> cabalCache c) (cabalDB c dbval)
 		forM_ (M.keys $ databaseProjects dbval) $ \p -> dump (pathArg as </> "projects" </> projectCache (project p)) (projectDB (project p) dbval)
 		dump (pathArg as </> standaloneCache) (standaloneDB dbval)
 		return ok,
@@ -621,6 +621,16 @@ commands = [
 		isParent :: FilePath -> FilePath -> Bool
 		isParent dir file = norm dir `isPrefixOf` norm file where
 			norm = splitDirectories . normalise
+
+		toPair :: Module -> Maybe (FilePath, Module)
+		toPair m = case moduleLocation m of
+			FileModule f _ -> Just (f, m)
+			_ -> Nothing
+
+		modCabal :: Module -> Maybe Cabal
+		modCabal m = case moduleLocation m of
+			CabalModule c _ _ -> Just c
+			_ -> Nothing
 
 printMainUsage :: IO ()
 printMainUsage = do

@@ -1,30 +1,24 @@
 module HsDev.Database (
 	Database(..),
-	databaseIntersection, nullDatabase, allModules, createIndexes,
+	databaseIntersection, nullDatabase, allModules, allDeclarations,
 	fromModule, fromProject,
 	filterDB,
 	projectDB, cabalDB, standaloneDB,
-	selectModule, lookupModule, lookupFile,
+	selectModules, selectDeclarations, lookupModule, lookupFile,
 	getInspected,
 
 	append, remove
 	) where
 
-import Control.Arrow
 import Control.Monad
 import Control.DeepSeq
 import Data.Either (rights)
 import Data.Function (on)
 import Data.Group
-import Data.List
 import Data.Map (Map)
-import Data.Ord
-import Data.Set (Set)
 import Data.Maybe
 import Data.Monoid
 import qualified Data.Map as M
-import qualified Data.Set as S
-import qualified Data.HashMap as HM
 
 import HsDev.Symbols
 import HsDev.Symbols.Util
@@ -33,35 +27,23 @@ import HsDev.Project
 -- | HsDev database
 data Database = Database {
 	databaseModules :: Map ModuleLocation InspectedModule,
-	databaseProjects :: Map String Project,
-	databaseCabalIndex :: Map Cabal (Set Module),
-	databaseModulesIndex :: Map String (Set Module),
-	databaseFilesIndex :: Map FilePath Module,
-	databaseSymbolsIndex :: HM.Map String (Set ModuleDeclaration) }
+	databaseProjects :: Map String Project }
 		deriving (Eq, Ord)
 
 instance NFData Database where
-	rnf (Database ms ps mc mi fi si) = rnf ms `seq` rnf ps `seq` rnf mc `seq` rnf mi `seq` rnf fi `seq` rnf si
+	rnf (Database ms ps) = rnf ms `seq` rnf ps
 
 instance Group Database where
 	add old new = Database {
 		databaseModules = databaseModules new `M.union` databaseModules old,
-		databaseProjects = M.unionWith mergeProject (databaseProjects new) (databaseProjects old),
-		databaseCabalIndex = databaseCabalIndex old `add` databaseCabalIndex new,
-		databaseModulesIndex = databaseModulesIndex old `add` databaseModulesIndex new,
-		databaseFilesIndex = databaseFilesIndex old `M.union` databaseFilesIndex new,
-		databaseSymbolsIndex = databaseSymbolsIndex old `add` databaseSymbolsIndex new }
+		databaseProjects = M.unionWith mergeProject (databaseProjects new) (databaseProjects old) }
 		where
 			mergeProject pl pr = pl {
 				projectDescription = msum [projectDescription pl, projectDescription pr] }
 	sub old new = Database {
 		databaseModules = databaseModules old `M.difference` databaseModules new,
-		databaseProjects = databaseProjects old `M.difference` databaseProjects new,
-		databaseCabalIndex = databaseCabalIndex old `sub` databaseCabalIndex new,
-		databaseModulesIndex = databaseModulesIndex old `sub` databaseModulesIndex new,
-		databaseFilesIndex = databaseFilesIndex old `M.difference` databaseFilesIndex new,
-		databaseSymbolsIndex = databaseSymbolsIndex old `sub` databaseSymbolsIndex new }
-	zero = Database M.empty M.empty M.empty M.empty M.empty HM.empty
+		databaseProjects = databaseProjects old `M.difference` databaseProjects new }
+	zero = Database M.empty M.empty
 
 instance Monoid Database where
 	mempty = zero
@@ -81,23 +63,11 @@ nullDatabase db = M.null (databaseModules db) && M.null (databaseProjects db)
 allModules :: Database -> [Module]
 allModules = rights . map inspectionResult . M.elems . databaseModules
 
--- | Create indexes
-createIndexes :: Database -> Database
-createIndexes db = db {
-	databaseCabalIndex = M.fromList $ map ((head *** S.fromList) . unzip) $ groupSort fst $ mapMaybe getCabal ms,
-	databaseModulesIndex = M.fromList $ map ((moduleName . head) &&& S.fromList) $ groupSort moduleName ms,
-	databaseFilesIndex = M.fromList $ mapMaybe getSrc ms,
-	databaseSymbolsIndex = HM.fromList $ map ((declName . head) &&& S.fromList) $ groupSort declName $ concatMap moduleModuleDeclarations ms }
-	where
-		ms = allModules db
-		getCabal m = case moduleLocation m of
-			CabalModule c _ _ -> Just (c, m)
-			_ -> Nothing
-		getSrc m = case moduleLocation m of
-			FileModule f _ -> Just (f, m)
-			_ -> Nothing
-		declName = declarationName . moduleDeclaration
-		groupSort f = groupBy ((==) `on` f) . sortBy (comparing f)
+-- | All declarations
+allDeclarations :: Database -> [ModuleDeclaration]
+allDeclarations db = do
+	m <- allModules db
+	moduleModuleDeclarations m
 
 -- | Make database from module
 fromModule :: InspectedModule -> Database
@@ -130,8 +100,12 @@ standaloneDB db = filterDB noProject (const False) db where
 	ps = M.elems $ databaseProjects db
 
 -- | Select module by predicate
-selectModule :: Database -> (Module -> Bool) -> [Module]
-selectModule db p = filter p $ rights $ map inspectionResult $ M.elems $ databaseModules db
+selectModules :: (Module -> Bool) -> Database -> [Module]
+selectModules p = filter p . allModules
+
+-- | Select declaration by predicate
+selectDeclarations :: (ModuleDeclaration -> Bool) -> Database -> [ModuleDeclaration]
+selectDeclarations p = filter p . allDeclarations
 
 -- | Lookup module by its location and name
 lookupModule :: ModuleLocation -> Database -> Maybe Module
@@ -141,7 +115,7 @@ lookupModule mloc db = do
 
 -- | Lookup module by its source file
 lookupFile :: FilePath -> Database -> Maybe Module
-lookupFile f = M.lookup f . databaseFilesIndex
+lookupFile f = listToMaybe . selectModules (inFile f)
 
 -- | Get inspected module
 getInspected :: Database -> Module -> InspectedModule
