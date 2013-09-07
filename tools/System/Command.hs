@@ -42,6 +42,7 @@ instance Functor OptDescr where
 	fmap f (Option short long descr expl) = Option short long (fmap f descr) expl
 
 -- | Make command
+-- >cmd name args desc args' onCmd
 cmd :: Monoid c => [String] -> [String] -> String -> [OptDescr c] -> (c -> [String] -> a) -> Command a
 cmd name posArgs descr as act = Command {
 	commandName = name,

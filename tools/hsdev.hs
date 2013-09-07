@@ -4,6 +4,7 @@ module Main (
 	main
 	) where
 
+import Control.Applicative
 import Control.Arrow
 import Control.Concurrent
 import Control.Exception
@@ -13,6 +14,7 @@ import Control.Monad.Reader
 import Control.Monad.Error
 import qualified Data.ByteString.Lazy.Char8 as L (unpack, pack)
 import Data.Aeson
+import Data.Aeson.Encode.Pretty
 import Data.Aeson.Types (parseMaybe)
 import Data.Either (partitionEithers)
 import Data.Maybe
@@ -23,6 +25,7 @@ import qualified Data.Traversable as T (forM)
 import Data.Map (Map)
 import Data.String (fromString)
 import qualified Data.Map as M
+import qualified Data.HashMap.Strict as HM
 import Network.Socket
 import System.Command hiding (brief)
 import qualified System.Command as C (brief)
@@ -109,7 +112,11 @@ mainCommands = [
 					writeChan clientChan (Just timeoutWait)
 					req <- hGetLine h
 					outputStr $ show s' ++ ": " ++ req
-					r <- processCmd db req (hPutStrLn h)
+					r <- case eitherDecode (L.pack req) of
+						Left reqErr -> do
+							hPutStrLn h $ L.unpack $ encode $ errArgs "Invalid request" [("request", ResultString req), ("error", ResultString reqErr)]
+							return False
+						Right reqArgs -> processCmdArgs db reqArgs (hPutStrLn h)
 					unless r $ do
 						void $ tryPutMVar waitListen ()
 						killThread accepter
@@ -144,16 +151,18 @@ mainCommands = [
 
 data ClientOpts = ClientOpts {
 	clientPort :: First Int,
-	clientJson :: Any }
+	clientJson :: Any,
+	clientData :: Any }
 
 clientOpts :: [OptDescr ClientOpts]
 clientOpts = [
 	Option [] ["port"] (ReqArg (\p -> mempty { clientPort = First (readMaybe p) }) "number") "connection port",
-	Option [] ["json"] (NoArg (mempty { clientJson = Any True })) "json output"]
+	Option [] ["json"] (NoArg (mempty { clientJson = Any True })) "json output",
+	Option [] ["stdin"] (NoArg (mempty { clientData = Any True })) "pass data to stdin"]
 
 instance Monoid ClientOpts where
-	mempty = ClientOpts mempty mempty
-	l `mappend` r = ClientOpts (clientPort l `mappend` clientPort r) (clientJson l `mappend` clientJson r)
+	mempty = ClientOpts mempty mempty mempty
+	l `mappend` r = ClientOpts (clientPort l `mappend` clientPort r) (clientJson l `mappend` clientJson r) (clientData l `mappend` clientData r)
 
 main :: IO ()
 main = withSocketsDo $ do
@@ -168,56 +177,102 @@ main = withSocketsDo $ do
 	run mainCommands (onDef asr) onError asr
 	where
 		onError :: [String] -> IO ()
-		onError = mapM_ putStrLn
+		onError errs = do
+			mapM_ putStrLn errs
+			exitFailure
 
 		onDef :: [String] -> IO ()
 		onDef as = do
+			stdinData <- if getAny (clientData p)
+				then do
+					cdata <- liftM (eitherDecode . L.pack) getContents
+					case cdata of
+						Left cdataErr -> do
+							putStrLn $ "Invalid data: " ++ cdataErr
+							exitFailure
+						Right dataValue -> return $ Just dataValue
+				else return Nothing
+
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
 			connect s (SockAddrInet (maybe 4567 fromIntegral (getFirst $ clientPort p)) addr')
 			h <- socketToHandle s ReadWriteMode
-			hPutStrLn h $ unsplit $ (if getAny (clientJson p) then ("--json":) else id) as'
+			hPutStrLn h $ L.unpack $ encode (setJson $ setData stdinData as')
 			hGetContents h >>= putStrLn
 			where
 				(ps, as', _) = getOpt RequireOrder clientOpts as
 				p = mconcat ps
 
+				setJson
+					| getAny (clientJson p) = ("--json" :)
+					| otherwise = id
+				setData :: Maybe ResultValue -> [String] -> [String]
+				setData Nothing = id
+				setData (Just d) = (++ ["--data", L.unpack $ encode d])
+
+data ResultValue =
+	ResultDeclaration Declaration |
+	ResultModuleDeclaration ModuleDeclaration |
+	ResultModuleId ModuleId |
+	ResultModule Module |
+	ResultProject Project |
+	ResultList [ResultValue] |
+	ResultMap (Map String ResultValue) |
+	ResultString String |
+	ResultNone
+
+instance ToJSON ResultValue where
+	toJSON (ResultDeclaration d) = toJSON d
+	toJSON (ResultModuleDeclaration md) = toJSON md
+	toJSON (ResultModuleId mid) = toJSON mid
+	toJSON (ResultModule m) = toJSON m
+	toJSON (ResultProject p) = toJSON p
+	toJSON (ResultList l) = toJSON l
+	toJSON (ResultMap m) = toJSON m
+	toJSON (ResultString s) = toJSON s
+	toJSON ResultNone = toJSON $ object []
+
+instance FromJSON ResultValue where
+	parseJSON v = foldr1 (<|>) [
+		do
+			(Object m) <- parseJSON v
+			if HM.null m then return ResultNone else mzero,
+		ResultDeclaration <$> parseJSON v,
+		ResultModuleDeclaration <$> parseJSON v,
+		ResultModuleId <$> parseJSON v,
+		ResultModule <$> parseJSON v,
+		ResultProject <$> parseJSON v,
+		ResultList <$> parseJSON v,
+		ResultMap <$> parseJSON v,
+		ResultString <$> parseJSON v]
+
 data CommandResult =
-	ResultDeclarations [ModuleDeclaration] |
-	ResultModules [Module] |
-	ResultProjects [Project] |
-	ResultOk (Map String String) |
-	ResultError String (Map String String) |
+	ResultOk ResultValue |
+	ResultError String (Map String ResultValue) |
 	ResultProcess ((String -> IO ()) -> IO ()) |
 	ResultExit
 
 instance ToJSON CommandResult where
-	toJSON (ResultDeclarations decls) = object [
-		"result" .= ("ok" :: String),
-		"declarations" .= toJSON (map encodeModuleDeclaration decls)]
-	toJSON (ResultModules ms) = object [
-		"result" .= ("ok" :: String),
-		"modules" .= toJSON (map encodeModule ms)]
-	toJSON (ResultProjects ps) = object [
-		"result" .= ("ok" :: String),
-		"projects" .= toJSON (map toJSON ps)]
-	toJSON (ResultOk ps) = object $ ("result" .= ("ok" :: String)) : map (uncurry (.=) . first fromString) (M.toList ps)
+	toJSON (ResultOk v) = toJSON v
 	toJSON (ResultError e as) = object [
-		"result" .= ("error" :: String),
 		"error" .= e,
 		"details" .= as]
 	toJSON (ResultProcess _) = object [
-		"result" .= ("process" :: String)]
+		"status" .= ("process" :: String)]
 	toJSON ResultExit = object [
-		"result" .= ("exit" :: String)]
+		"status" .= ("exit" :: String)]
+
+instance Error CommandResult where
+	noMsg = ResultError noMsg mempty
+	strMsg s = ResultError s mempty
 
 ok :: CommandResult
-ok = ResultOk M.empty
+ok = ResultOk ResultNone
 
 err :: String -> CommandResult
 err s = ResultError s M.empty
 
-errArgs :: String -> [(String, String)] -> CommandResult
+errArgs :: String -> [(String, ResultValue)] -> CommandResult
 errArgs s as = ResultError s (M.fromList as)
 
 processPacks :: Monad m => Int -> [a] -> ([a] -> m ()) -> m ()
@@ -235,6 +290,36 @@ processM n vs onChunk convert = processPacks n vs $ (flip collectM convert >=> o
 
 commands :: [Command (Async Database -> IO CommandResult)]
 commands = [
+	cmd ["add"] [] "add info to database" [dataArg] $
+		\as _ db -> do
+			dbval <- getDb db
+			res <- runErrorT $ do
+				jsonData <- maybe (throwError $ err "Specify --data") return $ askOpt "data" as
+				decodedData <- either (\err -> throwError (errArgs "Unable to decode data" [("why", ResultString err), ("data", ResultString jsonData)])) return $ eitherDecode $ L.pack jsonData
+				let
+					updateData (ResultDeclaration d) = throwError $ errArgs "Can't insert declaration" [("declaration", ResultDeclaration d)]
+					updateData (ResultModuleDeclaration md) = do
+						let
+							ModuleId mname mloc = declarationModuleId md
+							defMod = Module mname Nothing mloc [] mempty mempty
+							defInspMod = InspectedModule InspectionNone mloc (Right defMod)
+							dbmod = maybe
+								defInspMod
+								(\i -> i { inspectionResult = inspectionResult i <|> (Right defMod) }) $
+								M.lookup mloc (databaseModules dbval)
+							updatedMod = dbmod {
+								inspectionResult = fmap (addDeclaration $ moduleDeclaration md) (inspectionResult dbmod) }
+						update db $ return $ fromModule updatedMod
+					updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
+						update db $ return $ fromModule $ InspectedModule InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
+					updateData (ResultModule m) = update db $ return $ fromModule $ InspectedModule InspectionNone (moduleLocation m) (Right m)
+					updateData (ResultProject p) = update db $ return $ fromProject p
+					updateData (ResultList l) = mapM_ updateData l
+					updateData (ResultMap m) = mapM_ updateData $ M.elems m
+					updateData (ResultString s) = throwError $ err "Can't insert string"
+					updateData ResultNone = return ()
+				updateData decodedData
+			return $ either id (const (ResultOk ResultNone)) res,
 	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (sandbox : ghcOpts : [wait, status, packSz]) $
 		\as _ db -> do
 			dbval <- getDb db
@@ -296,7 +381,7 @@ commands = [
 			dbval <- getDb db
 			file' <- canonicalizePath file
 			res <- runErrorT $ maybe (update db $ fmap fromModule $ inspectFile (getGhcOpts as) file') (update db . rescanModule (getGhcOpts as)) $ fmap (getInspected dbval) $ lookupFile file' dbval
-			return $ either (\e -> errArgs e []) (const ok) res
+			return $ either err (const ok) res
 		_ -> return $ err "Invalid arguments",
 	cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox, ghcOpts] $ \as ms db -> case ms of
 		[mname] -> do
@@ -304,7 +389,7 @@ commands = [
 			if (isNothing $ lookupModule (CabalModule (maybe Cabal Sandbox $ askOpt "cabal" as) Nothing mname) dbval)
 				then do
 					res <- runErrorT $ update db $ scanModule (getGhcOpts as) (maybe Cabal Sandbox $ askOpt "cabal" as) mname
-					return $ either (\e -> errArgs e []) (const ok) res
+					return $ either err (const ok) res
 				else return ok
 		_ -> return $ err "Invalid arguments",
 	cmd ["rescan"] [] "rescan sources" ([
@@ -358,19 +443,15 @@ commands = [
 					fmap inModule (askOpt "module" as),
 					fmap inCabal cabal]
 				toClean = filter (allOf filters . moduleId) (allModules dbval)
-				mkey m = case moduleLocation m of
-					FileModule _ _ -> "sources"
-					CabalModule c _ _ -> show c
-					MemoryModule mem -> fromMaybe "" mem
 				action
 					| null filters && cleanAll = do
 						modifyAsync db Clear
 						return ok
-					| null filters && not cleanAll = return $ errArgs "Specify filter or explicitely set flag --all" []
-					| cleanAll = return $ errArgs "--all flag can't be set with filters" []
+					| null filters && not cleanAll = return $ err "Specify filter or explicitely set flag --all"
+					| cleanAll = return $ err "--all flag can't be set with filters"
 					| otherwise = do
 						mapM_ (modifyAsync db . Remove . fromModule) $ map (getInspected dbval) $ toClean
-						return $ ResultOk $ M.map unlines $ M.unionsWith (++) $ map (uncurry M.singleton . (mkey &&& (return . symbolName))) toClean
+						return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) toClean
 			action,
 	cmd ["find"] ["symbol"] "find symbol" [
 		projectArg "project to find in",
@@ -391,7 +472,7 @@ commands = [
 					fmap inCabal cabal,
 					if hasOpt "source" as then Just byFile else Nothing,
 					if hasOpt "standalone" as then Just standalone else Nothing]
-				result = return . either (err . ("Unable to find declaration: " ++)) (ResultDeclarations . filter filters)
+				result = return . either (err . ("Unable to find declaration: " ++)) (ResultOk . ResultList . map ResultModuleDeclaration . filter filters)
 			case ns of
 				[] -> result $ Right $ allDeclarations dbval
 				[nm] -> runErrorT (findDeclaration dbval nm) >>= result
@@ -406,7 +487,7 @@ commands = [
 				fmap inCabal cabal,
 				if hasOpt "source" as then Just byFile else Nothing,
 				if hasOpt "standalone" as then Just standalone else Nothing]
-		return $ ResultOk $ M.singleton "modules" $ unlines $ map symbolName $ filter (filters . moduleId) $ allModules dbval,
+		return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) $ selectModules (filters . moduleId) dbval,
 	cmd ["browse"] [] "browse module" [
 		moduleArg "module to browse",
 		projectArg "project to look module in",
@@ -426,33 +507,33 @@ commands = [
 			case rs of
 				Left e -> return $ err e
 				Right rs' -> case rs' of
-					[] -> return $ errArgs "Module not found" []
-					[m] -> return $ ResultModules [m]
-					ms' -> return $ errArgs "Ambiguous modules" [("modules", unlines (map showModule ms'))],
+					[] -> return $ err "Module not found"
+					[m] -> return $ ResultOk $ ResultModule m
+					ms' -> return $ errArgs "Ambiguous modules" [("modules", ResultList $ map (ResultModuleId . moduleId) ms')],
 	cmd_ ["project"] ["project name"] "show project list or detailed project info" $ \ns db -> case ns of
 		[] -> do
 			dbval <- getDb db
-			return $ ResultOk $ M.singleton "projects" $ unlines $ map projectName $ M.elems $ databaseProjects dbval
+			return $ ResultOk $ ResultList $ map (ResultString . projectName) $ M.elems $ databaseProjects dbval
 		[pname] -> do
 			dbval <- getDb db
 			case filter ((== pname) . projectName) $ M.elems $ databaseProjects dbval of
-				[] -> return $ err $ "Project not found: " ++ pname
-				ps -> return $ ResultProjects ps
+				[] -> return $ errArgs "Project not found" [("project", ResultString pname)]
+				ps -> return $ ResultOk $ ResultList $ map ResultProject ps
 		_ -> return $ err "Invalid arguments",
 	cmd ["goto"] ["symbol"] "find symbol declaration" [contextFile] $ \as ns db -> case ns of
 		[nm] -> do
 			dbval <- getDb db
-			liftM (either err ResultDeclarations) $ runErrorT $ goToDeclaration dbval (askOpt "file" as) nm
+			liftM (either err (ResultOk . ResultList . map ResultModuleDeclaration)) $ runErrorT $ goToDeclaration dbval (askOpt "file" as) nm
 		_ -> return $ err "Invalid arguments",
 	cmd ["info"] ["symbol"] "get info for symbol" [contextFile] $ \as ns db -> case ns of
 		[nm] -> do
 			dbval <- getDb db
-			liftM (either err (ResultDeclarations . return)) $ runErrorT $ symbolInfo dbval (askOpt "file" as) nm
+			liftM (either err (ResultOk . ResultModuleDeclaration)) $ runErrorT $ symbolInfo dbval (askOpt "file" as) nm
 		_ -> return $ err "Invalid arguments",
 	cmd_ ["lookup"] ["source file", "symbol"] "find symbol" $ \ns db -> case ns of
 		[file, nm] -> do
 			dbval <- getDb db
-			r <- runErrorT $ liftM (either ResultDeclarations (ResultDeclarations . return)) (lookupSymbol dbval file nm)
+			r <- runErrorT $ liftM (ResultOk . either (ResultList . map ResultModuleDeclaration) (ResultModuleDeclaration)) (lookupSymbol dbval file nm)
 			return $ either err id r
 		_ -> return $ err "Invalid arguments",
 	cmd_ ["complete", "file"] ["source file", "input"] "autocompletion" $ \as db -> do
@@ -461,8 +542,8 @@ commands = [
 			complete' f i = do
 				file' <- canonicalizePath f
 				maybe
-					(return $ errArgs "File is not scanned" [("file", f)])
-					(\m -> liftM (either err ResultDeclarations) (runErrorT (completions dbval m i)))
+					(return $ errArgs "File is not scanned" [("file", ResultString f)])
+					(\m -> liftM (either err (ResultOk . ResultList . map ResultModuleDeclaration)) (runErrorT (completions dbval m i)))
 					(lookupFile file' dbval)
 		case as of
 			[file] -> complete' file ""
@@ -473,17 +554,17 @@ commands = [
 			dbval <- getDb db
 			cabal <- getCabal $ askOpt "cabal" p
 			maybe
-				(return $ errArgs "Unknown module" [("module", mname)])
-				(\m -> liftM (either err ResultDeclarations) (runErrorT (completions dbval m input)))
+				(return $ errArgs "Unknown module" [("module", ResultString mname)])
+				(\m -> liftM (either err (ResultOk . ResultList . map ResultModuleDeclaration)) (runErrorT (completions dbval m input)))
 				(lookupModule (CabalModule cabal Nothing mname) dbval)
 		_ -> return $ err "Invalid arguments",
 	cmd_ ["dump", "files"] [] "dump file names loaded in database" $ \_ db -> do
 		dbval <- getDb db
-		return $ ResultOk $ M.fromList $ map ((moduleName . snd) &&& fst) $ mapMaybe toPair $ selectModules (byFile . moduleId) dbval,
+		return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) $ selectModules (byFile . moduleId) dbval,
 	cmd_ ["dump", "contents"] ["file name"] "dump file contents" $ \as db -> case as of
 		[file] -> do
 			dbval <- getDb db
-			return $ maybe (errArgs "File not found" [("file", file)]) (ResultModules . return) $ listToMaybe $ selectModules (inFile file . moduleId) dbval
+			return $ maybe (errArgs "File not found" [("file", ResultString file)]) (ResultOk . ResultModule) $ listToMaybe $ selectModules (inFile file . moduleId) dbval
 		_ -> return $ err "Invalid arguments",
 	cmd ["cache", "dump", "cabal"] [] "dump cache of cabal modules" [
 		sandbox, cacheDir] $ \as _ db -> do
@@ -569,8 +650,6 @@ commands = [
 				stat $ "error scanning file " ++ src ++ ": " ++ e
 				return mempty
 
-		showModule = symbolName
-
 		getCabal :: Maybe String -> IO Cabal
 		getCabal = liftM (maybe Cabal Sandbox) . traverse canonicalizePath
 
@@ -607,6 +686,7 @@ commands = [
 		projectArg = Option ['p'] ["project"] (ReqArg (opt "project") "path")
 		fileArg = Option ['f'] ["file"] (ReqArg (opt "file") "path")
 		moduleArg = Option ['m'] ["module"] (ReqArg (opt "module") "name")
+		dataArg = Option [] ["data"] (ReqArg (opt "data") "contents") "data to pass to command"
 		contextFile = fileArg "context source file"
 		packSz = Option ['z'] ["packsize"] (ReqArg (opt "packsize") "packsize") "debug"
 
@@ -634,14 +714,17 @@ commands = [
 printMainUsage :: IO ()
 printMainUsage = do
 	mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) mainCommands
-	putStrLn "\thsdev [--port=number] [--json] interactive command... -- send command to server"
+	putStrLn "\thsdev [--port=number] [--json] [--stdin] interactive command... -- send command to server, use flag stdin to pass data argument through stdin"
 
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) commands
 
 processCmd :: Async Database -> String -> (String -> IO ()) -> IO Bool
-processCmd db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd . commandError) cmdArgs' db >>= processResult where
-	(isJsonArgs, cmdArgs', _) = getOpt RequireOrder [Option [] ["json"] (NoArg (Any True)) "json output"] (split cmdArgs)
+processCmd db cmdLine printResult = processCmdArgs db (split cmdLine) printResult
+
+processCmdArgs :: Async Database -> [String] -> (String -> IO ()) -> IO Bool
+processCmdArgs db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd . commandError) cmdArgs' db >>= processResult where
+	(isJsonArgs, cmdArgs', _) = getOpt RequireOrder [Option [] ["json"] (NoArg (Any True)) "json output"] cmdArgs
 	isJson = getAny $ mconcat isJsonArgs
 	asCmd :: CommandResult -> (Async Database -> IO CommandResult)
 	asCmd r _ = return r
@@ -649,7 +732,7 @@ processCmd db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd .
 	unknownCommand :: CommandResult
 	unknownCommand = err "Unknown command"
 	commandError :: [String] -> CommandResult
-	commandError errs = errArgs "Command syntax error" [("what", unlines errs)]
+	commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString errs)]
 
 	processResult :: CommandResult -> IO Bool
 	processResult (ResultProcess act) = do
@@ -660,7 +743,7 @@ processCmd db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd .
 		where
 			processFailed :: SomeException -> IO Bool
 			processFailed e = do
-				processResult $ errArgs "process throws exception" [("exception", show e)]
+				processResult $ errArgs "process throws exception" [("exception", ResultString $ show e)]
 				return True
 
 			showStatus s
@@ -668,36 +751,6 @@ processCmd db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd .
 				| otherwise = "status: " ++ s
 
 	processResult ResultExit = printResult (if isJson then L.unpack (encode ResultExit) else "bye") >> return False
-	processResult v
-		| isJson = (printResult $ L.unpack $ encode v) >> return True
-		| otherwise = printResult str >> return True where
-			str = case v of
-				ResultDeclarations decls -> unlines $ map (formatResult fmt) decls
-				ResultModules ms -> unlines $ map (formatModules fmt) ms
-				ResultProjects ps -> unlines $ map (formatProject fmt) ps
-				ResultOk ps -> unlines $ "ok" : map (('\t':) . uncurry showP) (M.toList ps)
-				ResultError e ds -> unlines $ ("error: " ++ e) : map (('\t':) . uncurry showP) (M.toList ds)
-				where
-					fmt :: String
-					fmt = "detailed" -- fromMaybe "raw" $ get "format" as
-					formatResult fmt' = case fmt' of
-						"raw" -> show
-						"name" -> symbolName
-						"brief" -> brief
-						"detailed" -> detailed
-						_ -> show
-					formatModules fmt' = case fmt' of
-						"raw" -> show
-						"name" -> symbolName
-						"brief" -> moduleBrief
-						"detailed" -> moduleDetailed
-						_ -> show
-					formatProject fmt' = case fmt' of
-						"raw" -> show
-						"name" -> projectName
-						"brief" -> projectCabal
-						"detailed" -> show
-					moduleBrief m = brief m
-					moduleDetailed m = detailed m
-	showP :: String -> String -> String
-	showP n v = n ++ ": " ++ v
+	processResult v = do
+		printResult $ L.unpack $ (if isJson then encode else encodePretty) v
+		return True

@@ -76,6 +76,7 @@ executable hsdev
     base == 4.6.*,
     hsdev,
     aeson == 0.6.*,
+    aeson-pretty == 0.7.*,
     bytestring == 0.10.*,
     containers == 0.5.*,
     deepseq == 1.3.*,

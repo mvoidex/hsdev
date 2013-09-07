@@ -154,8 +154,8 @@ instance ToJSON Module where
 		"docs" .= moduleDocs m,
 		"location" .= moduleLocation m,
 		"exports" .= moduleExports m,
-		"imports" .= moduleImports m,
-		"declarations" .= moduleDeclarations m]
+		"imports" .= M.elems (moduleImports m),
+		"declarations" .= M.elems (moduleDeclarations m)]
 
 instance FromJSON Module where
 	parseJSON = withObject "module" $ \v -> Module <$>
@@ -163,8 +163,8 @@ instance FromJSON Module where
 		v .:: "docs" <*>
 		v .:: "location" <*>
 		v .:: "exports" <*>
-		v .:: "imports" <*>
-		v .:: "declarations"
+		((M.fromList . map (importModuleName &&& id)) <$> v .:: "imports") <*>
+		((M.fromList . map (declarationName &&& id)) <$>v .:: "declarations")
 
 instance NFData Module where
 	rnf (Module n d s e i ds) = rnf n `seq` rnf d `seq` rnf s `seq` rnf e `seq` rnf i `seq` rnf ds

@@ -20,7 +20,6 @@ import System.FilePath
 
 import HsDev.Symbols
 import HsDev.Project
-import HsDev.Project.JSON ()
 import HsDev.Database
 import HsDev.Util
 
