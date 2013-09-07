@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module HsDev.Database (
 	Database(..),
 	databaseIntersection, nullDatabase, allModules, allDeclarations,
@@ -10,8 +12,10 @@ module HsDev.Database (
 	append, remove
 	) where
 
+import Control.Applicative
 import Control.Monad
 import Control.DeepSeq
+import Data.Aeson
 import Data.Either (rights)
 import Data.Function (on)
 import Data.Group
@@ -23,6 +27,7 @@ import qualified Data.Map as M
 import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Project
+import HsDev.Util ((.::))
 
 -- | HsDev database
 data Database = Database {
@@ -48,6 +53,19 @@ instance Group Database where
 instance Monoid Database where
 	mempty = zero
 	mappend = add
+
+instance ToJSON Database where
+	toJSON (Database ms ps) = object [
+		"modules" .= M.elems ms,
+		"projects" .= M.elems ps]
+
+instance FromJSON Database where
+	parseJSON = withObject "database" $ \v -> (Database <$>
+		((M.unions . map mkModule) <$> v .:: "modules") <*>
+		((M.unions . map mkProject) <$> v .:: "projects"))
+		where
+			mkModule m = M.singleton (inspectionModule m) m
+			mkProject p = M.singleton (projectCabal p) p
 
 -- | Database intersection, prefers first database data
 databaseIntersection :: Database -> Database -> Database
@@ -87,15 +105,15 @@ filterDB m p db = mempty {
 
 -- | Project database
 projectDB :: Project -> Database -> Database
-projectDB proj = filterDB (inProject proj) (((==) `on` projectCabal) proj)
+projectDB proj = filterDB (inProject proj . moduleId) (((==) `on` projectCabal) proj)
 
 -- | Cabal database
 cabalDB :: Cabal -> Database -> Database
-cabalDB cabal = filterDB (inCabal cabal) (const False)
+cabalDB cabal = filterDB (inCabal cabal . moduleId) (const False)
 
 -- | Standalone database
 standaloneDB :: Database -> Database
-standaloneDB db = filterDB noProject (const False) db where
+standaloneDB db = filterDB (noProject . moduleId) (const False) db where
 	noProject m = all (not . (flip inProject m)) ps
 	ps = M.elems $ databaseProjects db
 
@@ -115,7 +133,7 @@ lookupModule mloc db = do
 
 -- | Lookup module by its source file
 lookupFile :: FilePath -> Database -> Maybe Module
-lookupFile f = listToMaybe . selectModules (inFile f)
+lookupFile f = listToMaybe . selectModules (inFile f . moduleId)
 
 -- | Get inspected module
 getInspected :: Database -> Module -> InspectedModule

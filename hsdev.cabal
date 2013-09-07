@@ -26,7 +26,6 @@ library
     HsDev.Database.Async
     HsDev.Inspect
     HsDev.Project
-    HsDev.Project.JSON
     HsDev.Scan
     HsDev.Symbols
     HsDev.Symbols.Class

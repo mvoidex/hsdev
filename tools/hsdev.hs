@@ -40,7 +40,6 @@ import HsDev.Commands
 import HsDev.Database
 import HsDev.Database.Async
 import HsDev.Project
-import HsDev.Project.JSON ()
 import HsDev.Scan
 import HsDev.Symbols
 import HsDev.Symbols.Util
@@ -315,11 +314,11 @@ commands = [
 			\as _ db -> do
 				dbval <- getDb db
 				let
-					fileMap = M.fromList $ mapMaybe toPair $ selectModules byFile dbval
+					fileMap = M.fromList $ mapMaybe toPair $ selectModules (byFile . moduleId) dbval
 				projectMods <- T.forM (askOpt "project" as) $ \p -> do
 					p' <- getProject db p
 					let
-						res = M.fromList $ mapMaybe toPair $ selectModules byFile (projectDB p' dbval)
+						res = M.fromList $ mapMaybe toPair $ selectModules (byFile . moduleId) (projectDB p' dbval)
 					return $ if M.null res then Left ("Unknown project: " ++ p) else Right res
 				fileMods <- T.forM (askOpt "file" as) $ \f ->
 					return $ maybe (Left $ "Unknown file: " ++ f) (Right . M.singleton f) $ lookupFile f dbval
@@ -358,7 +357,7 @@ commands = [
 					fmap inFile file,
 					fmap inModule (askOpt "module" as),
 					fmap inCabal cabal]
-				toClean = filter (allOf filters) (allModules dbval)
+				toClean = filter (allOf filters . moduleId) (allModules dbval)
 				mkey m = case moduleLocation m of
 					FileModule _ _ -> "sources"
 					CabalModule c _ _ -> show c
@@ -407,7 +406,7 @@ commands = [
 				fmap inCabal cabal,
 				if hasOpt "source" as then Just byFile else Nothing,
 				if hasOpt "standalone" as then Just standalone else Nothing]
-		return $ ResultOk $ M.singleton "modules" $ unlines $ map symbolName $ filter filters $ allModules dbval,
+		return $ ResultOk $ M.singleton "modules" $ unlines $ map symbolName $ filter (filters . moduleId) $ allModules dbval,
 	cmd ["browse"] [] "browse module" [
 		moduleArg "module to browse",
 		projectArg "project to look module in",
@@ -423,7 +422,7 @@ commands = [
 					fmap inCabal cabal,
 					fmap inFile file',
 					fmap inModule (askOpt "module" as)]
-			rs <- maybe (return $ Right $ filter filters $ allModules dbval) (runErrorT . findModule dbval) $ askOpt "module" as
+			rs <- maybe (return $ Right $ filter (filters . moduleId) $ allModules dbval) (runErrorT . findModule dbval) $ askOpt "module" as
 			case rs of
 				Left e -> return $ err e
 				Right rs' -> case rs' of
@@ -480,11 +479,11 @@ commands = [
 		_ -> return $ err "Invalid arguments",
 	cmd_ ["dump", "files"] [] "dump file names loaded in database" $ \_ db -> do
 		dbval <- getDb db
-		return $ ResultOk $ M.fromList $ map ((moduleName . snd) &&& fst) $ mapMaybe toPair $ selectModules byFile dbval,
+		return $ ResultOk $ M.fromList $ map ((moduleName . snd) &&& fst) $ mapMaybe toPair $ selectModules (byFile . moduleId) dbval,
 	cmd_ ["dump", "contents"] ["file name"] "dump file contents" $ \as db -> case as of
 		[file] -> do
 			dbval <- getDb db
-			return $ maybe (errArgs "File not found" [("file", file)]) (ResultModules . return) $ listToMaybe $ selectModules (inFile file) dbval
+			return $ maybe (errArgs "File not found" [("file", file)]) (ResultModules . return) $ listToMaybe $ selectModules (inFile file . moduleId) dbval
 		_ -> return $ err "Invalid arguments",
 	cmd ["cache", "dump", "cabal"] [] "dump cache of cabal modules" [
 		sandbox, cacheDir] $ \as _ db -> do

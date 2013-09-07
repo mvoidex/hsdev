@@ -67,7 +67,7 @@ lookupSymbol db file ident = do
 	case reached of
 		[] -> return $ Left visible
 		[r] -> return $ Right r
-		rs -> throwError $ "Ambiguous symbol: " ++ intercalate ", " (map (brief . declarationModule) rs)
+		rs -> throwError $ "Ambiguous symbol: " ++ intercalate ", " (map (brief . declarationModuleId) rs)
 	where
 		(qname, iname) = splitIdentifier ident
 
@@ -84,14 +84,14 @@ symbolInfo db ctx ident = do
 	case cands of
 		[] -> throwError $ "Symbol '" ++ ident ++ "' not found"
 		[c] -> return c
-		cs -> throwError $ "Ambiguous symbols: " ++ intercalate ", " (map (brief . declarationModule) cs)
+		cs -> throwError $ "Ambiguous symbols: " ++ intercalate ", " (map (brief . declarationModuleId) cs)
 	where
 		(qname, iname) = splitIdentifier ident
 
 -- | Completions
 completions :: Database -> Module -> String -> ErrorT String IO [ModuleDeclaration]
 completions db m prefix = return prefixed where
-	modules = flip filter (rights $ map inspectionResult $ M.elems $ databaseModules db) $ allOf [visibleFrom m, reachableFrom qname m]
+	modules = flip filter (rights $ map inspectionResult $ M.elems $ databaseModules db) $ (allOf [visibleFrom m, reachableFrom qname m] . moduleId)
 	moduleScope = scope m
 
 	scope :: Module -> Map (Maybe String) [Module]
@@ -102,7 +102,7 @@ completions db m prefix = return prefixed where
 
 	imports :: Module -> Map (Maybe String) [Module]
 	imports m' = M.unionsWith (++) $ map (importScope m') $
-		(if byFile m' then (Import "Prelude" False Nothing Nothing :) else id) $
+		(if byFile (moduleId m') then (Import "Prelude" False Nothing Nothing :) else id) $
 			(M.elems (moduleImports m))
 
 	importScope :: Module -> Import -> Map (Maybe String) [Module]
@@ -128,22 +128,22 @@ moduleCompletions _ ms prefix = return $ nub $ completions' $ map moduleName ms 
 			| otherwise = Nothing
 
 -- | Check module
-checkModule :: (Module -> Bool) -> (ModuleDeclaration -> Bool)
-checkModule = (. declarationModule)
+checkModule :: (ModuleId -> Bool) -> (ModuleDeclaration -> Bool)
+checkModule = (. declarationModuleId)
 
 -- | Check declaration
 checkDeclaration :: (Declaration -> Bool) -> (ModuleDeclaration -> Bool)
 checkDeclaration = (. moduleDeclaration)
 
 -- | Check whether declaration is visible from source file
-visibleFrom :: Module -> (Module -> Bool)
+visibleFrom :: Module -> (ModuleId -> Bool)
 visibleFrom m = case moduleLocation m of
 	FileModule src proj -> anyOf [inCabal Cabal, maybe (const True) (inProject . project) proj, inFile src]
 	CabalModule cabal package _ -> allOf [inCabal cabal, maybe (const False) inPackage package]
 	MemoryModule m' -> inMemory m'
 
 -- | Check whether declaration is reachable from source file
-reachableFrom :: Maybe String -> Module -> (Module -> Bool)
+reachableFrom :: Maybe String -> Module -> (ModuleId -> Bool)
 reachableFrom q m = case moduleLocation m of
 	FileModule _ _ -> reachable q m
 	CabalModule cabal _ _ -> inCabal cabal

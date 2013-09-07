@@ -29,7 +29,7 @@ encodeModuleDeclaration :: ModuleDeclaration -> Value
 encodeModuleDeclaration m = object $ sym ++ decl (declaration . moduleDeclaration $ m) where
 	sym = [
 		"name" .= symbolName m,
-		"module" .= encodeModuleHead (declarationModule m),
+		"module" .= encodeModuleHead (declarationModuleId m),
 		"docs" .= symbolDocs m,
 		"location" .= fmap encodePosition (declarationPosition $ moduleDeclaration m)]
 	decl (Function t) = ["what" .= str "function", "type" .= t]
@@ -39,11 +39,11 @@ encodeModuleDeclaration m = object $ sym ++ decl (declaration . moduleDeclaratio
 	decl (Class ti) = ("what" .= str "class") : info ti
 	info ti = ["ctx" .= typeInfoContext ti, "args" .= typeInfoArgs ti, "def" .= typeInfoDefinition ti]
 
-encodeModuleHead :: Module -> Value
+encodeModuleHead :: ModuleId -> Value
 encodeModuleHead m = object $ sym where
 	sym = [
-		"name" .= symbolName m,
-		"location" .= encodeModuleLocation (moduleLocation m)]
+		"name" .= moduleIdName m,
+		"location" .= encodeModuleLocation (moduleIdLocation m)]
 
 encodeModule :: Module -> Value
 encodeModule m = object $ sym ++ moduleCts m where
@@ -96,14 +96,10 @@ decodeModuleDeclaration = withObject "declaration" $ \v -> ModuleDeclaration <$>
 				info :: Parser TypeInfo
 				info = TypeInfo <$> v .: "ctx" <*> v .: "args" <*> v .: "def"
 
-decodeModuleHead :: Value -> Parser Module
-decodeModuleHead = withObject "module" $ \v -> Module <$>
+decodeModuleHead :: Value -> Parser ModuleId
+decodeModuleHead = withObject "module id" $ \v -> ModuleId <$>
 	(v .: "name") <*>
-	pure Nothing <*>
-	((v .: "location") >>= decodeModuleLocation) <*>
-	pure [] <*>
-	pure M.empty <*>
-	pure M.empty
+	((v .: "location") >>= decodeModuleLocation)
 
 decodeModule :: Value -> Parser Module
 decodeModule = withObject "module" $ \v -> Module <$>

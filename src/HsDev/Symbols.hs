@@ -1,11 +1,11 @@
-{-# LANGUAGE  TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE  TypeSynonymInstances, FlexibleInstances, OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols (
 	-- * Information
 	Import(..),
 	Symbol(..),
-	Module(..), ModuleId(..), moduleId, moduleModuleDeclarations,
+	ModuleId(..), Module(..), moduleModuleDeclarations, moduleId,
 	Declaration(..),
 	TypeInfo(..),
 	DeclarationInfo(..),
@@ -34,9 +34,11 @@ module HsDev.Symbols (
 	module HsDev.Symbols.Documented
 	) where
 
+import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq
 import Control.Monad (liftM2)
+import Data.Aeson
 import Data.List
 import Data.Map (Map)
 import Data.Maybe
@@ -51,24 +53,6 @@ import HsDev.Symbols.Documented
 import HsDev.Project
 import HsDev.Util
 
----- | Location of symbol
---data Location = Location {
---	locationFile :: FilePath,
---	locationLine :: Int,
---	locationColumn :: Int,
---	locationProject :: Maybe Project,
---	locationTimeStamp :: Maybe UTCTime }
---		deriving (Eq, Ord)
-
---instance NFData Location where
---	rnf (Location f l c p t) = rnf f `seq` rnf l `seq` rnf c `seq` rnf p `seq` rnf t
-
---instance Read POSIXTime where
---	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
-
---instance Show Location where
---	show loc = intercalate ":" [locationFile loc, show $ locationLine loc, show $ locationColumn loc]
-
 -- | Module import
 data Import = Import {
 	importModuleName :: String,
@@ -82,6 +66,20 @@ instance NFData Import where
 
 instance Show Import where
 	show i = "import " ++ (if importIsQualified i then "qualified " else "") ++ importModuleName i ++ maybe "" (" as " ++) (importAs i)
+
+instance ToJSON Import where
+	toJSON i = object [
+		"name" .= importModuleName i,
+		"qualified" .= importIsQualified i,
+		"as" .= importAs i,
+		"pos" .= importPosition i]
+
+instance FromJSON Import where
+	parseJSON = withObject "import" $ \v -> Import <$>
+		v .:: "name" <*>
+		v .:: "qualified" <*>
+		v .:: "as" <*>
+		v .:: "pos"
 
 -- | Imported module can be accessed via qualifier
 importQualifier :: Maybe String -> Import -> Bool
@@ -99,6 +97,12 @@ instance Symbol Module where
 	symbolDocs = moduleDocs
 	symbolLocation m = Location (moduleLocation m) Nothing
 
+instance Symbol ModuleId where
+	symbolName = moduleIdName
+	symbolQualifiedName = moduleIdName
+	symbolDocs = const Nothing
+	symbolLocation m = Location (moduleIdLocation m) Nothing
+
 instance Symbol Declaration where
 	symbolName = declarationName
 	symbolQualifiedName = declarationName
@@ -107,10 +111,32 @@ instance Symbol Declaration where
 
 instance Symbol ModuleDeclaration where
 	symbolName = declarationName . moduleDeclaration
-	symbolQualifiedName d = qualifiedName (declarationModule d) (moduleDeclaration d)
+	symbolQualifiedName d = qualifiedName (declarationModuleId d) (moduleDeclaration d)
 	symbolDocs = declarationDocs . moduleDeclaration
-	symbolLocation d = (symbolLocation $ declarationModule d) {
+	symbolLocation d = (symbolLocation $ declarationModuleId d) {
 		locationPosition = declarationPosition $ moduleDeclaration d }
+
+-- | Module id
+data ModuleId = ModuleId {
+	moduleIdName :: String,
+	moduleIdLocation :: ModuleLocation }
+		deriving (Eq, Ord)
+
+instance NFData ModuleId where
+	rnf (ModuleId n l) = rnf n `seq` rnf l
+
+instance Show ModuleId where
+	show (ModuleId n l) = "module " ++ n ++ " from " ++ show l
+
+instance ToJSON ModuleId where
+	toJSON m = object [
+		"name" .= moduleIdName m,
+		"location" .= moduleIdLocation m]
+
+instance FromJSON ModuleId where
+	parseJSON = withObject "module id" $ \v -> ModuleId <$>
+		v .:: "name" <*>
+		v .:: "location"
 
 -- | Module
 data Module = Module {
@@ -121,6 +147,24 @@ data Module = Module {
 	moduleImports :: Map String Import,
 	moduleDeclarations :: Map String Declaration }
 		deriving (Ord)
+
+instance ToJSON Module where
+	toJSON m = object [
+		"name" .= moduleName m,
+		"docs" .= moduleDocs m,
+		"location" .= moduleLocation m,
+		"exports" .= moduleExports m,
+		"imports" .= moduleImports m,
+		"declarations" .= moduleDeclarations m]
+
+instance FromJSON Module where
+	parseJSON = withObject "module" $ \v -> Module <$>
+		v .:: "name" <*>
+		v .:: "docs" <*>
+		v .:: "location" <*>
+		v .:: "exports" <*>
+		v .:: "imports" <*>
+		v .:: "declarations"
 
 instance NFData Module where
 	rnf (Module n d s e i ds) = rnf n `seq` rnf d `seq` rnf s `seq` rnf e `seq` rnf i `seq` rnf ds
@@ -141,21 +185,9 @@ instance Show Module where
 
 -- | Get list of declarations as ModuleDeclaration
 moduleModuleDeclarations :: Module -> [ModuleDeclaration]
-moduleModuleDeclarations m = [ModuleDeclaration m d | d <- M.elems (moduleDeclarations m)]
+moduleModuleDeclarations m = [ModuleDeclaration (moduleId m) d | d <- M.elems (moduleDeclarations m)]
 
--- | Module id
-data ModuleId = ModuleId {
-	moduleIdName :: String,
-	moduleIdLocation :: ModuleLocation }
-		deriving (Eq, Ord)
-
-instance NFData ModuleId where
-	rnf (ModuleId n l) = rnf n `seq` rnf l
-
-instance Show ModuleId where
-	show (ModuleId n l) = "module " ++ n ++ " from " ++ show l
-
--- | Create module id from module
+-- Make ModuleId by Module
 moduleId :: Module -> ModuleId
 moduleId m = ModuleId {
 	moduleIdName = moduleName m,
@@ -178,6 +210,20 @@ instance Show Declaration where
 		maybe "" ("\tdocs: " ++) $ declarationDocs d,
 		maybe "" (("\tlocation: " ++ ) . show) $ declarationPosition d]
 
+instance ToJSON Declaration where
+	toJSON d = object [
+		"name" .= declarationName d,
+		"docs" .= declarationDocs d,
+		"pos" .= declarationPosition d,
+		"decl" .= declaration d]
+
+instance FromJSON Declaration where
+	parseJSON = withObject "declaration" $ \v -> Declaration <$>
+		v .:: "name" <*>
+		v .:: "docs" <*>
+		v .:: "pos" <*>
+		v .:: "decl"
+
 -- | Common info for type/newtype/data/class
 data TypeInfo = TypeInfo {
 	typeInfoContext :: Maybe String,
@@ -187,6 +233,18 @@ data TypeInfo = TypeInfo {
 
 instance NFData TypeInfo where
 	rnf (TypeInfo c a d) = rnf c `seq` rnf a `seq` rnf d
+
+instance ToJSON TypeInfo where
+	toJSON t = object [
+		"ctx" .= typeInfoContext t,
+		"args" .= typeInfoArgs t,
+		"def" .= typeInfoDefinition t]
+
+instance FromJSON TypeInfo where
+	parseJSON = withObject "type info" $ \v -> TypeInfo <$>
+		v .:: "ctx" <*>
+		v .:: "args" <*>
+		v .:: "def"
 
 showTypeInfo :: TypeInfo -> String -> String -> String
 showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ " " ++ name ++ " " ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
@@ -214,6 +272,18 @@ instance Eq DeclarationInfo where
 	(Data _) == (Data _) = True
 	(Class _) == (Class _) = True
 	_ == _ = False
+
+instance ToJSON DeclarationInfo where
+	toJSON i = case declarationInfo i of
+		Left t -> object ["what" .= ("function" :: String), "type" .= t]
+		Right ti -> object ["what" .= declarationTypeName i, "info" .= ti]
+
+instance FromJSON DeclarationInfo where
+	parseJSON = withObject "declaration info" $ \v -> do
+		w <- fmap (id :: String -> String) $ v .:: "what"
+		if w == "function"
+			then Function <$> v .:: "type"
+			else declarationTypeCtor w <$> v .:: "info"
 
 -- | Get function type of type info
 declarationInfo :: DeclarationInfo -> Either (Maybe String) TypeInfo
@@ -243,7 +313,7 @@ declarationTypeName _ = Nothing
 
 -- | Symbol in module
 data ModuleDeclaration = ModuleDeclaration {
-	declarationModule :: Module,
+	declarationModuleId :: ModuleId,
 	moduleDeclaration :: Declaration }
 		deriving (Eq, Ord)
 
@@ -253,11 +323,21 @@ instance NFData ModuleDeclaration where
 instance Show ModuleDeclaration where
 	show (ModuleDeclaration m s) = unlines $ filter (not . null) [
 		show s,
-		"\tmodule: " ++ show (moduleLocation m)]
+		"\tmodule: " ++ show (moduleIdLocation m)]
+
+instance ToJSON ModuleDeclaration where
+	toJSON d = object [
+		"module-id" .= declarationModuleId d,
+		"declaration" .= moduleDeclaration d]
+
+instance FromJSON ModuleDeclaration where
+	parseJSON = withObject "module declaration" $ \v -> ModuleDeclaration <$>
+		v .:: "module-id" <*>
+		v .:: "declaration"
 
 -- | Returns qualified name of symbol
-qualifiedName :: Module -> Declaration -> String
-qualifiedName m d = moduleName m ++ "." ++ declarationName d
+qualifiedName :: ModuleId -> Declaration -> String
+qualifiedName m d = moduleIdName m ++ "." ++ declarationName d
 
 class Canonicalize a where
 	canonicalize :: a -> IO a
@@ -295,6 +375,9 @@ addDeclaration decl m = m { moduleDeclarations = decls' } where
 -- | Unalias import name
 unalias :: Module -> String -> [String]
 unalias m alias = [importModuleName i | i <- M.elems (moduleImports m), importAs i == Just alias]
+
+instance Documented ModuleId where
+	brief m = moduleIdName m ++ " in " ++ show (moduleIdLocation m)
 
 instance Documented Module where
 	brief m = moduleName m ++ " in " ++ show (moduleLocation m)
@@ -342,6 +425,17 @@ instance Show Inspection where
 instance Read POSIXTime where
 	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
 
+instance ToJSON Inspection where
+	toJSON InspectionNone = object ["inspected" .= False]
+	toJSON (InspectionTime tm) = object ["mtime" .= (floor tm :: Integer)]
+	toJSON (InspectionFlags fs) = object ["flags" .= fs]
+
+instance FromJSON Inspection where
+	parseJSON = withObject "inspection" $ \v ->
+		((const InspectionNone :: Bool -> Inspection) <$> v .:: "inspected") <|>
+		((InspectionTime . fromInteger) <$> v .:: "mtime") <|>
+		(InspectionFlags <$> v .:: "flags")
+
 -- | Inspected module
 data InspectedModule = InspectedModule {
 	inspection :: Inspection,
@@ -359,3 +453,15 @@ instance Show InspectedModule where
 			FileModule f p -> ["file: " ++ f, "project: " ++ fromMaybe "" p]
 			CabalModule c p n -> ["cabal: " ++ show c, "package: " ++ fromMaybe "" p, "name: " ++ n]
 			MemoryModule mem -> ["mem: " ++ fromMaybe "" mem]
+
+instance ToJSON InspectedModule where
+	toJSON im = object [
+		"inspection" .= inspection im,
+		"location" .= inspectionModule im,
+		either ("error" .=) ("module" .=) (inspectionResult im)]
+
+instance FromJSON InspectedModule where
+	parseJSON = withObject "inspected module" $ \v -> InspectedModule <$>
+		v .:: "inspection" <*>
+		v .:: "location" <*>
+		((Left <$> v .:: "error") <|> (Right <$> v .:: "module"))
