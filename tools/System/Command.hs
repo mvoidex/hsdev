@@ -3,7 +3,8 @@
 
 module System.Command (
 	Command(..),
-	cmd, cmd_, addhelp,
+	cmd, cmd_,
+	Help(..), addHelpCommand, addHelp,
 	brief, help,
 	run,
 	Opts(..),
@@ -60,19 +61,35 @@ cmd_ name posArgs descr act = cmd name posArgs descr [] (act' act) where
 	act' :: a -> () -> a
 	act' = const
 
+data Help =
+	HelpUsage [String] |
+	HelpCommands [([String], [String])]
+		deriving (Eq, Ord, Read, Show)
+
 -- | Add help command
-addhelp :: String -> (IO () -> a) -> IO () -> [Command a] -> [Command a]
-addhelp tool toCmd usage cmds = fix addhelp' where
-	addhelp' hcmds = helpcmd : cmds where
-		helpcmd = fmap toCmd $ cmd_ ["help"] ["command"] "help" $ \as -> case as of
-			[] -> usage
-			cmdname -> do
-				let
-					addHeader [] = []
-					addHeader (h:hs) = map ('\t':) $ (tool ++ " " ++ h) : map ('\t':) hs
-				case filter ((cmdname `isPrefixOf`) . commandName) hcmds of
-					[] -> putStrLn $ "Unknown command: " ++ unwords cmdname
-					helps -> mapM_ (putStrLn . unlines . addHeader . help) helps
+addHelpCommand :: String -> (Either String Help -> a) -> [Command a] -> [Command a]
+addHelpCommand tool toCmd cmds = cmds' where
+	cmds' = helpcmd' : cmds
+	helpcmd = fmap toCmd $ cmd_ ["help"] ["command"] ("help command, also can be called in form '" ++ tool ++ " [command] -?'") onHelp
+	-- allow help by last argument '-?'
+	helpcmd' = helpcmd { commandRun = commandRun helpcmd . rewrite } where
+		rewrite as
+			| last as == "-?" = "help" : init as
+			| otherwise = as
+	onHelp [] = Right $ HelpUsage [tool ++ " " ++ brief c | c <- cmds']
+	onHelp cmdname = case filter ((cmdname `isPrefixOf`) . commandName) cmds' of
+		[] -> Left $ "Unknown command: " ++ unwords cmdname
+		helps -> Right $ HelpCommands $ map (commandName &&& (addHeader . help)) helps
+	addHeader [] = []
+	addHeader (h:hs) = (tool ++ " " ++ h) : hs
+
+-- | Add help commands, which outputs help to stdout
+addHelp :: String -> (IO () -> a) -> [Command a] -> [Command a]
+addHelp tool liftPrint cmds = addHelpCommand tool toCmd cmds where
+	toCmd = liftPrint . either putStrLn printHelp
+	printHelp :: Help -> IO ()
+	printHelp (HelpUsage u) = mapM_ putStrLn $ map ('\t':) u
+	printHelp (HelpCommands cs) = mapM_ putStrLn $ map ('\t':) $ concatMap snd cs
 
 -- | Show brief help for command
 brief :: Command a -> String

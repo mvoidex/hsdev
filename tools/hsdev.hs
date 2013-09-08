@@ -215,6 +215,7 @@ data ResultValue =
 	ResultModuleDeclaration ModuleDeclaration |
 	ResultModuleId ModuleId |
 	ResultModule Module |
+	ResultInspectedModule InspectedModule |
 	ResultProject Project |
 	ResultList [ResultValue] |
 	ResultMap (Map String ResultValue) |
@@ -226,6 +227,7 @@ instance ToJSON ResultValue where
 	toJSON (ResultModuleDeclaration md) = toJSON md
 	toJSON (ResultModuleId mid) = toJSON mid
 	toJSON (ResultModule m) = toJSON m
+	toJSON (ResultInspectedModule m) = toJSON m
 	toJSON (ResultProject p) = toJSON p
 	toJSON (ResultList l) = toJSON l
 	toJSON (ResultMap m) = toJSON m
@@ -241,6 +243,7 @@ instance FromJSON ResultValue where
 		ResultModuleDeclaration <$> parseJSON v,
 		ResultModuleId <$> parseJSON v,
 		ResultModule <$> parseJSON v,
+		ResultInspectedModule <$> parseJSON v,
 		ResultProject <$> parseJSON v,
 		ResultList <$> parseJSON v,
 		ResultMap <$> parseJSON v,
@@ -289,7 +292,7 @@ processM :: (Monad m, NFData b, Monoid b) => Int -> [a] -> (b -> m ()) -> (a -> 
 processM n vs onChunk convert = processPacks n vs $ (flip collectM convert >=> onChunk)
 
 commands :: [Command (Async Database -> IO CommandResult)]
-commands = [
+commands = addHelp "hsdev" liftHelp [
 	cmd ["add"] [] "add info to database" [dataArg] $
 		\as _ db -> do
 			dbval <- getDb db
@@ -313,6 +316,7 @@ commands = [
 					updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
 						update db $ return $ fromModule $ InspectedModule InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
 					updateData (ResultModule m) = update db $ return $ fromModule $ InspectedModule InspectionNone (moduleLocation m) (Right m)
+					updateData (ResultInspectedModule m) = update db $ return $ fromModule m
 					updateData (ResultProject p) = update db $ return $ fromProject p
 					updateData (ResultList l) = mapM_ updateData l
 					updateData (ResultMap m) = mapM_ updateData $ M.elems m
@@ -613,17 +617,11 @@ commands = [
 			when e $ cacheLoad db (load c)
 		waitDb as db
 		return ok,
-	cmd_ ["help"] ["command"] "this command" $ \as _ -> case as of
-		[] -> printUsage >> return ok
-		cmdname -> do
-			let
-				addHeader [] = []
-				addHeader (h:hs) = map ('\t':) $ ("hsdev " ++ h) : map ('\t':) hs
-			case filter ((cmdname `isPrefixOf`) . commandName) commands of
-				[] -> return $ err $  "Unknown command: " ++ unwords cmdname
-				helpCmds -> mapM_ (putStrLn . unlines . addHeader . help) helpCmds >> return ok,
 	cmd_ ["exit"] [] "exit" $ \_ _ -> return ResultExit]
 	where
+		liftHelp :: IO () -> Async Database -> IO CommandResult
+		liftHelp f _ = f >> return ok
+
 		getDirectoryContents' :: FilePath -> IO [FilePath]
 		getDirectoryContents' p = do
 			b <- doesDirectoryExist p

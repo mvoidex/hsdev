@@ -24,7 +24,7 @@ import HsDev.Symbols (InspectedModule(..))
 import HsDev.Symbols.JSON ()
 
 commands :: [Command (IO ())]
-commands = addhelp "hsinspect" id printUsage [
+commands = addHelp "hsinspect" id [
 	cmd ["module"] [] "inspect installed module" [
 		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
 			\ghc_opts as -> oneArg as toJSON (browse ghc_opts >=> loadDocs' ghc_opts),
