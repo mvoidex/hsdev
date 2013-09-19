@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Symbols.Location (
-	ModuleLocation(..),
+	ModuleLocation(..), moduleSource,
 	Position(..),
 	Location(..),
 	Cabal(..)
@@ -20,6 +20,10 @@ data ModuleLocation =
 	CabalModule { moduleCabal :: Cabal, modulePackage :: Maybe String, cabalModuleName :: String } |
 	MemoryModule { moduleMemory :: Maybe String }
 		deriving (Eq, Ord)
+
+moduleSource :: ModuleLocation -> Maybe FilePath
+moduleSource (FileModule f _) = Just f
+moduleSource _ = Nothing
 
 instance NFData ModuleLocation where
 	rnf (FileModule f p) = rnf f `seq` rnf p

@@ -356,7 +356,7 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		cmd ["dump", "project"] ["projects..."] "dump projects" [cacheDir, cacheFile] dumpProjects',
 		cmd ["dump", "standalone"] ["files..."] "dump standalone file module" [cacheDir, cacheFile] dumpFiles',
 		cmd ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
-		cmd ["load"] [] "load data" [cacheDir, cacheFile, dataArg] load',
+		cmd ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
 		-- Exit
 		cmd_ ["exit"] [] "exit" $ \_ _ -> return ResultExit]
 
@@ -417,20 +417,20 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		return $ either id (const (ResultOk ResultNone)) res
 	-- scan
 	scan' as _ db = updateProcess db as $
-		mapM_ (\(n, f) -> forM_ (askOpts n as) f) [
+		mapM_ (\(n, f) -> forM_ (askOpts n as) (f (getGhcOpts as))) [
 			("project", C.scanProject),
-			("file", C.scanFile),
-			("path", C.scanPath)]
+			("file", \g f -> C.scanModule g (FileModule f Nothing)),
+			("path", C.scanDirectory)]
 	-- scan cabal
 	scanCabal' as _ db = do
 		cabal <- askCabal as
-		updateProcess db as $ C.scanCabal cabal
+		updateProcess db as $ C.scanCabal (getGhcOpts as) cabal
 	-- scan cabal module
 	scanModule' as [] db = return $ err "Module name not specified"
 	scanModule' as ms db = do
 		cabal <- askCabal as
 		updateProcess db as $
-			forM_ ms (C.scanModule cabal)
+			forM_ ms (C.scanModule (getGhcOpts as) . CabalModule cabal Nothing)
 	-- rescan
 	rescan' as _ db = do
 		dbval <- getDb db
@@ -454,13 +454,15 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		let
 			(errors, filteredMods) = partitionEithers $
 				concat [projectMods, fileMods, dirMods]
-			rescanMods = if null filteredMods then fileMap else M.unions filteredMods
+			rescanMods = map (getInspected dbval) $
+				M.elems $ if null filteredMods then fileMap else M.unions filteredMods
+
 
 		if not (null errors)
 			then return $ err $ intercalate ", " errors
-			else startProcess as $ \onStatus -> forM_ (M.elems rescanMods) $
-				\m -> C.updateDB (C.Settings db onStatus (getGhcOpts as)) $ C.runScan "module" (moduleName m) mempty $
-					C.liftErrors $ rescanModule (getGhcOpts as) (getInspected dbval m)
+			else updateProcess db as $ C.runScan_ "rescan" "modules" $ do
+				needRescan <- C.liftErrors $ filterM (liftM not . upToDate (getGhcOpts as)) rescanMods
+				C.scanModules (getGhcOpts as) (map inspectionModule needRescan)
 	-- remove
 	remove' as _ db = do
 		dbval <- getDb db
@@ -576,11 +578,11 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		liftM (fromMaybe (ResultOk $ ResultDatabase dat)) $ runMaybeT $ msum [
 			do
 				p <- MaybeT $ return $ askOpt "path" as
-				liftIO $ dump (p </> cabalCache cabal) dat
+				liftIO $ forkIO $ dump (p </> cabalCache cabal) dat
 				return ok,
 			do
 				f <- MaybeT $ return $ askOpt "file" as
-				liftIO $ dump f dat
+				liftIO $ forkIO $ dump f dat
 				return ok]
 	-- dump projects
 	dumpProjects' as ns db = do
@@ -594,11 +596,11 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 			runMaybeT $ msum [
 				do
 					p <- MaybeT $ return $ askOpt "path" as
-					forM_ dats $ \(proj, dat) -> liftIO (dump (p </> projectCache proj) dat)
+					liftIO $ forkIO $ forM_ dats $ \(proj, dat) -> (dump (p </> projectCache proj) dat)
 					return ok,
 				do
 					f <- MaybeT $ return $ askOpt "file" as
-					liftIO $ dump f (mconcat $ map snd dats)
+					liftIO $ forkIO $ dump f (mconcat $ map snd dats)
 					return ok]
 	-- dump files
 	dumpFiles' as ns db = do
@@ -612,18 +614,18 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		liftM (fromMaybe (ResultOk $ ResultDatabase dat)) $ runMaybeT $ msum [
 			do
 				p <- MaybeT $ return $ askOpt "path" as
-				liftIO $ dump (p </> standaloneCache) dat
+				liftIO $ forkIO $ dump (p </> standaloneCache) dat
 				return ok,
 			do
 				f <- MaybeT $ return $ askOpt "file" as
-				liftIO $ dump f dat
+				liftIO $ forkIO $ dump f dat
 				return ok]
 	dump' as _ db = do
 		dbval <- getDb db
 		liftM (fromMaybe (ResultOk $ ResultDatabase dbval)) $ runMaybeT $ msum [
 			do
 				p <- MaybeT $ return $ askOpt "path" as
-				liftIO $ do
+				liftIO $ forkIO $ do
 					createDirectoryIfMissing True (p </> "cabal")
 					createDirectoryIfMissing True (p </> "projects")
 					forM_ (nub $ mapMaybe modCabal $ allModules dbval) $ \c ->
@@ -638,29 +640,30 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 				return ok,
 			do
 				f <- MaybeT $ return $ askOpt "file" as
-				liftIO $ dump f dbval
+				liftIO $ forkIO $ dump f dbval
 				return ok]
 	load' as _ db = do
 		res <- liftM (fromMaybe (err "Specify one of: --path, --file or --data")) $ runMaybeT $ msum [
 			do
 				p <- MaybeT $ return $ askOpt "path" as
-				cts <- liftIO $ liftM concat $ mapM
-					(liftM
-						(filter ((== ".json") . takeExtension)) .
-						getDirectoryContents')
-					[p, p </> "cabal", p </> "projects"]
-				liftIO $ forM_ cts $ \c -> do
-					e <- doesFileExist c
-					when e $ cacheLoad db (load c)
+				forkOrWait as $ do
+					cts <- liftM concat $ mapM
+						(liftM
+							(filter ((== ".json") . takeExtension)) .
+							getDirectoryContents')
+						[p, p </> "cabal", p </> "projects"]
+					forM_ cts $ \c -> do
+						e <- doesFileExist c
+						when e $ cacheLoad db (load c)
 				return ok,
 			do
 				f <- MaybeT $ return $ askOpt "file" as
 				e <- liftIO $ doesFileExist f
-				liftIO $ when e $ cacheLoad db (load f)
+				forkOrWait as $ when e $ cacheLoad db (load f)
 				return ok,
 			do
 				dat <- MaybeT $ return $ askOpt "data" as
-				liftIO $ cacheLoad db (return $ eitherDecode (L.pack dat))
+				forkOrWait as $ cacheLoad db (return $ eitherDecode (L.pack dat))
 				return ok]
 		waitDb as db
 		return res
@@ -695,6 +698,10 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		waitDbVar <- newEmptyMVar
 		modifyAsync db (Action $ \d -> putStrLn "db done!" >> putMVar waitDbVar () >> return d)
 		takeMVar waitDbVar
+
+	forkOrWait as act
+		| hasOpt "wait" as = liftIO act
+		| otherwise = liftIO $ void $ forkIO act
 
 	cacheLoad db act = do
 		db' <- act

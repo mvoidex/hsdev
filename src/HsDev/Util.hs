@@ -5,11 +5,15 @@ module HsDev.Util (
 	-- * String utils
 	tab, tabs,
 	-- * Helper
-	(.::)
+	(.::),
+	-- * Exceptions
+	liftException
 	) where
 
 import Control.Exception
 import Control.Monad
+import Control.Monad.Error
+import qualified Control.Monad.CatchIO as C
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.List
@@ -50,3 +54,8 @@ tabs n = unlines . map (tab n) . lines
 -- | Workaround, sometimes we get HM.lookup "foo" v == Nothing, but lookup "foo" (HM.toList v) == Just smth
 (.::) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser a
 v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lookup name $ HM.toList v
+
+-- | Lift IO exception to ErrorT
+liftException :: C.MonadCatchIO m => m a -> ErrorT String m a
+liftException act = ErrorT $ C.catch (liftM Right act) onError where
+	onError = return . Left . (show :: SomeException -> String)
