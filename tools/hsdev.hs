@@ -637,6 +637,10 @@ commands = addHelp "hsdev" liftHelp cmds where
 				f <- MaybeT $ return $ askOpt "file" as
 				e <- liftIO $ doesFileExist f
 				liftIO $ when e $ cacheLoad db (load f)
+				return ok,
+			do
+				dat <- MaybeT $ return $ askOpt "data" as
+				liftIO $ cacheLoad db (return $ eitherDecode (L.pack dat))
 				return ok]
 		waitDb as db
 		return res
