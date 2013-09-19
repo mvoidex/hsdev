@@ -1,23 +1,29 @@
 module HsDev.Symbols.Util (
-	inProject, inCabal, inPackage, inFile, inMemory, inModule, byFile, standalone,
+	projectOf, inProject, inCabal, inPackage, inFile, inMemory, inModule, byFile, standalone,
 	qualifier, imported, reachable,
-	sourceModule, visibleModule, preferredModule,
+	sourceModule, visibleModule, preferredModule, uniqueModules,
 	allOf, anyOf
 	) where
 
+import Data.Function (on)
 import Data.Maybe
+import Data.List (groupBy, sortBy)
 import qualified Data.Map as M
+import Data.Ord (comparing)
 import System.FilePath
 
 import HsDev.Symbols
 import HsDev.Project
 
+-- | Get module project
+projectOf :: ModuleId -> Maybe Project
+projectOf m = case moduleIdLocation m of
+	FileModule _ proj -> fmap project proj
+	_ -> Nothing
+
 -- | Check if module in project
 inProject :: Project -> ModuleId -> Bool
-inProject p m = case moduleIdLocation m of
-	FileModule _ proj -> Just (projectCabal p) == proj
-	_ -> False
-	where
+inProject p m = projectOf m == Just p
 
 -- | Check if module in cabal
 inCabal :: Cabal -> ModuleId -> Bool
@@ -81,13 +87,21 @@ visibleModule :: Cabal -> Maybe Project -> [Module] -> Maybe Module
 visibleModule cabal proj ms = listToMaybe $ maybe (const []) (filter . (. moduleId) . inProject) proj ms ++ filter (inCabal cabal . moduleId) ms
 
 -- | Select preferred visible module
-preferredModule :: Cabal -> Maybe Project -> [Module] -> Maybe Module
-preferredModule cabal proj ms = listToMaybe $ concatMap (`filter` ms) $ map (. moduleId) order where
+preferredModule :: Cabal -> Maybe Project -> [ModuleId] -> Maybe ModuleId
+preferredModule cabal proj ms = listToMaybe $ concatMap (`filter` ms) order where
 	order = [
 		maybe (const False) inProject proj,
-		inCabal cabal,
 		byFile,
+		inCabal cabal,
 		const True]
+
+-- | Remove duplicate modules, leave only `preferredModule`
+uniqueModules :: Cabal -> Maybe Project -> [ModuleId] -> [ModuleId]
+uniqueModules cabal proj =
+	catMaybes .
+	map (preferredModule cabal proj) .
+	groupBy ((==) `on` moduleIdName) .
+	sortBy (comparing moduleIdName)
 
 -- | Select value, satisfying to all predicates
 allOf :: [a -> Bool] -> a -> Bool

@@ -1,8 +1,9 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, DefaultSignatures, FlexibleInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module System.Command (
 	Command(..),
+	DefaultConfig(..),
 	cmd, cmd_,
 	Help(..), addHelpCommand, addHelp,
 	brief, help,
@@ -42,16 +43,25 @@ instance Functor ArgDescr where
 instance Functor OptDescr where
 	fmap f (Option short long descr expl) = Option short long (fmap f descr) expl
 
+-- | Default value for options
+class DefaultConfig a where
+	defaultConfig :: a
+	default defaultConfig :: Monoid a => a
+	defaultConfig = mempty
+
+instance DefaultConfig ()
+instance DefaultConfig [String]
+
 -- | Make command
 -- >cmd name args desc args' onCmd
-cmd :: Monoid c => [String] -> [String] -> String -> [OptDescr c] -> (c -> [String] -> a) -> Command a
+cmd :: (Monoid c, DefaultConfig c) => [String] -> [String] -> String -> [OptDescr c] -> (c -> [String] -> a) -> Command a
 cmd name posArgs descr as act = Command {
 	commandName = name,
 	commandPosArgs = posArgs,
 	commandDesc = descr',
 	commandUsage = lines $ usageInfo (unwords (name ++ map (\a -> "[" ++ a ++ "]") posArgs) ++ maybe "" (" -- " ++) descr') as,
 	commandRun = \opts -> case getOpt Permute as opts of
-		(opts', cs, errs) -> fmap (\cs' -> if null errs then return (act (mconcat opts') cs') else Left errs) (stripPrefix name cs) }
+		(opts', cs, errs) -> fmap (\cs' -> if null errs then return (act (mconcat opts' `mappend` defaultConfig) cs') else Left errs) (stripPrefix name cs) }
 	where
 		descr' = if null descr then Nothing else Just descr
 
@@ -110,6 +120,8 @@ newtype Opts = Opts { getOpts :: Map String [String] }
 instance Monoid Opts where
 	mempty = Opts mempty
 	(Opts l) `mappend` (Opts r) = Opts $ M.unionWith (++) l r
+
+instance DefaultConfig Opts
 
 opt :: String -> String -> Opts
 opt n v = Opts $ M.singleton n [v]

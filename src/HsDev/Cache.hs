@@ -9,19 +9,16 @@ module HsDev.Cache (
 	load,
 	) where
 
-import Control.Applicative
 import Data.Aeson
 import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Lazy.Char8 as BS
 import Data.Char
 import Data.List
-import qualified Data.Map as M
 import System.FilePath
 
 import HsDev.Symbols
 import HsDev.Project
 import HsDev.Database
-import HsDev.Util
 
 -- | Escape path
 escapePath :: FilePath -> FilePath

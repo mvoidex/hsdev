@@ -84,6 +84,7 @@ executable hsdev
     directory == 1.2.*,
     filepath == 1.3.*,
     monad-loops == 0.3.*,
+    MonadCatchIO-transformers == 0.3.*,
     mtl == 2.1.*,
     network == 2.4.*,
     process == 1.1.*,

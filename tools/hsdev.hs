@@ -37,6 +37,7 @@ import System.Directory (canonicalizePath, getDirectoryContents, doesFileExist, 
 import System.FilePath
 import System.IO
 import System.Process
+import System.Timeout
 import Text.Read (readMaybe)
 
 import HsDev.Cache
@@ -74,16 +75,16 @@ mainCommands = [
 			db <- newAsync
 			forever $ do
 				s <- getLine
-				r <- processCmd db s putStrLn
+				r <- processCmd db 10000 s putStrLn
 				unless r exitSuccess,
-	cmd ["server", "start"] [] "start remote server" clientOpts $ \copts _ -> do
+	cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
 		let
-			args = ["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts)
+			args = ["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts)
 		void $ runInteractiveProcess "powershell" ["-Command", "& {start-process hsdev " ++ intercalate ", " args ++ " -WindowStyle Hidden}"] Nothing Nothing
-		printOk copts $ "Server started at port " ++ show (fromMaybe 4567 (getFirst $ clientPort copts)),
-	cmd ["server", "run"] [] "start server" clientOpts $ \copts _ -> do
+		printOk sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts),
+	cmd ["server", "run"] [] "start server" serverOpts $ \sopts _ -> do
 		msgs <- newChan
-		forkIO $ getChanContents msgs >>= mapM_ (printOk copts)
+		forkIO $ getChanContents msgs >>= mapM_ (printOk sopts)
 		let
 			outputStr = writeChan msgs
 
@@ -95,7 +96,7 @@ mainCommands = [
 		forkIO $ do
 			accepter <- myThreadId
 			s <- socket AF_INET Stream defaultProtocol
-			bind s (SockAddrInet (maybe 4567 fromIntegral (getFirst $ clientPort copts)) iNADDR_ANY)
+			bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
 			listen s maxListenQueue
 			forever $ handle (ignoreIO outputStr) $ do
 				s' <- fmap fst $ accept s
@@ -119,7 +120,7 @@ mainCommands = [
 						Left reqErr -> do
 							hPutStrLn h $ L.unpack $ encode $ errArgs "Invalid request" [("request", ResultString req), ("error", ResultString reqErr)]
 							return False
-						Right reqArgs -> processCmdArgs db reqArgs (hPutStrLn h)
+						Right reqArgs -> processCmdArgs db (fromJust $ getFirst $ serverTimeout sopts) reqArgs (hPutStrLn h)
 					unless r $ do
 						void $ tryPutMVar waitListen ()
 						killThread accepter
@@ -131,31 +132,48 @@ mainCommands = [
 		writeChan clientChan Nothing
 		getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
 		outputStr "server shutdown",
-	cmd ["server", "stop"] [] "stop remote server" clientOpts $ \copts _ -> do
+	cmd ["server", "stop"] [] "stop remote server" serverOpts $ \sopts _ -> do
 		pname <- getExecutablePath
-		r <- readProcess pname (["--json"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ clientPort copts) ++ ["exit"]) ""
+		r <- readProcess pname (["--json"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
 		let
 			stopped = case decode (L.pack r) of
 				Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
 					res <- obj .: "result"
 					return (res == ("exit" :: String))
 				_ -> False
-		printOk copts $ if stopped then "Server stopped" else "Server returned: " ++ r]
+		printOk sopts $ if stopped then "Server stopped" else "Server returned: " ++ r]
 	where
 		ignoreIO :: (String -> IO ()) -> IOException -> IO ()
 		ignoreIO out = out . show
 
-		printOk :: ClientOpts -> String -> IO ()
-		printOk copts str
-			| getAny (clientJson copts) = putStrLn $ L.unpack $ encode $ object [
-				"result" .= ("ok" :: String),
-				"message" .= str]
-			| otherwise = putStrLn str
+		printOk :: ServerOpts -> String -> IO ()
+		printOk _ = putStrLn
+
+data ServerOpts = ServerOpts {
+	serverPort :: First Int,
+	serverTimeout :: First Int }
+
+instance DefaultConfig ServerOpts where
+	defaultConfig = ServerOpts (First $ Just 4567) (First $ Just 1000)
+
+serverOpts :: [OptDescr ServerOpts]
+serverOpts = [
+	Option [] ["port"] (ReqArg (\p -> mempty { serverPort = First (readMaybe p) }) "number") "listen port",
+	Option [] ["timeout"] (ReqArg (\t -> mempty { serverTimeout = First (readMaybe t) }) "msec") "query timeout"]
+
+instance Monoid ServerOpts where
+	mempty = ServerOpts mempty mempty
+	l `mappend` r = ServerOpts
+		(serverPort l `mappend` serverPort r)
+		(serverTimeout l `mappend` serverTimeout r)
 
 data ClientOpts = ClientOpts {
 	clientPort :: First Int,
 	clientJson :: Any,
 	clientData :: Any }
+
+instance DefaultConfig ClientOpts where
+	defaultConfig = ClientOpts (First $ Just 4567) mempty mempty
 
 clientOpts :: [OptDescr ClientOpts]
 clientOpts = [
@@ -165,7 +183,10 @@ clientOpts = [
 
 instance Monoid ClientOpts where
 	mempty = ClientOpts mempty mempty mempty
-	l `mappend` r = ClientOpts (clientPort l `mappend` clientPort r) (clientJson l `mappend` clientJson r) (clientData l `mappend` clientData r)
+	l `mappend` r = ClientOpts
+		(clientPort l `mappend` clientPort r)
+		(clientJson l `mappend` clientJson r)
+		(clientData l `mappend` clientData r)
 
 main :: IO ()
 main = withSocketsDo $ do
@@ -198,13 +219,13 @@ main = withSocketsDo $ do
 
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
-			connect s (SockAddrInet (maybe 4567 fromIntegral (getFirst $ clientPort p)) addr')
+			connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
 			h <- socketToHandle s ReadWriteMode
 			hPutStrLn h $ L.unpack $ encode (setJson $ setData stdinData as')
 			hGetContents h >>= putStrLn
 			where
 				(ps, as', _) = getOpt RequireOrder clientOpts as
-				p = mconcat ps
+				p = mconcat ps `mappend` defaultConfig
 
 				setJson
 					| getAny (clientJson p) = ("--json" :)
@@ -284,19 +305,22 @@ err s = ResultError s M.empty
 errArgs :: String -> [(String, ResultValue)] -> CommandResult
 errArgs s as = ResultError s (M.fromList as)
 
-commands :: [Command (Async Database -> IO CommandResult)]
-commands = addHelp "hsdev" liftHelp cmds where
+commands :: [Command (Int -> Async Database -> IO CommandResult)]
+commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
+	timeout' :: (Async Database -> IO CommandResult) -> (Int -> Async Database -> IO CommandResult)
+	timeout' f tm db = fmap (fromMaybe $ err "timeout") $ timeout (tm * 1000) $ f db
+
 	cmds = [
 		-- Database commands
 		cmd ["add"] [] "add info to database" [dataArg] add',
+		cmd ["scan", "cabal"] [] "scan modules installed in cabal" [
+			sandbox, ghcOpts, wait, status] scanCabal',
+		cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox, ghcOpts] scanModule',
 		cmd ["scan"] [] "scan sources" [
 			projectArg "project path or .cabal",
 			fileArg "source file",
 			pathArg "directory to scan for files and projects",
 			ghcOpts, wait, status] scan',
-		cmd ["scan", "cabal"] [] "scan modules installed in cabal" [
-			sandbox, ghcOpts, wait, status] scanCabal',
-		cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox, ghcOpts] scanModule',
 		cmd ["rescan"] [] "rescan sources" [
 			projectArg "project path, .cabal or name to rescan",
 			fileArg "source file",
@@ -402,11 +426,11 @@ commands = addHelp "hsdev" liftHelp cmds where
 		cabal <- askCabal as
 		updateProcess db as $ C.scanCabal cabal
 	-- scan cabal module
-	scanModule' as [mname] db = do
+	scanModule' as [] db = return $ err "Module name not specified"
+	scanModule' as ms db = do
 		cabal <- askCabal as
 		updateProcess db as $
-			forM_ (askOpts "module" as) (C.scanModule cabal)
-	scanModule' as _ db = return $ err "Invalid arguments"
+			forM_ ms (C.scanModule cabal)
 	-- rescan
 	rescan' as _ db = do
 		dbval <- getDb db
@@ -440,7 +464,7 @@ commands = addHelp "hsdev" liftHelp cmds where
 	-- remove
 	remove' as _ db = do
 		dbval <- getDb db
-		cabal <- traverse asCabal $ askOpt "cabal" as
+		cabal <- traverse asCabal $ askOpt "sandbox" as
 		proj <- traverse (getProject db) $ askOpt "project" as
 		file <- traverse canonicalizePath $ askOpt "file" as
 		let
@@ -465,7 +489,7 @@ commands = addHelp "hsdev" liftHelp cmds where
 	listModules' as _ db = do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
-		cabal <- traverse asCabal $ askOpt "cabal" as
+		cabal <- traverse asCabal $ askOpt "sandbox" as
 		let
 			filters = allOf $ catMaybes [
 				fmap inProject proj,
@@ -482,7 +506,7 @@ commands = addHelp "hsdev" liftHelp cmds where
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
 		file <- traverse canonicalizePath $ askOpt "file" as
-		cabal <- traverse asCabal $ askOpt "cabal" as
+		cabal <- traverse asCabal $ askOpt "sandbox" as
 		let
 			filters = checkModule $ allOf $ catMaybes [
 				fmap inProject proj,
@@ -501,7 +525,7 @@ commands = addHelp "hsdev" liftHelp cmds where
 	modul' as _ db = do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
-		cabal <- traverse asCabal $ askOpt "cabal" as
+		cabal <- traverse asCabal $ askOpt "sandbox" as
 		file' <- traverse canonicalizePath $ askOpt "file" as
 		let
 			filters = allOf $ catMaybes [
@@ -528,29 +552,25 @@ commands = addHelp "hsdev" liftHelp cmds where
 				("projects", ResultList $ map ResultString pnames)]
 			ps -> return $ ResultOk $ ResultList $ map ResultProject ps
 	-- get detailed info about symbol in source file
-	whois' as [nm] db = do
-		dbval <- getDb db
-		liftM (either err (ResultOk . ResultModuleDeclaration)) $
-			runErrorT $ symbolInfo dbval (askOpt "file" as) nm
+	whois' as [nm] db = errorT $ do
+		dbval <- liftIO $ getDb db
+		srcFile <- maybe (throwError $ "No file specified") (liftIO . canonicalizePath) $ askOpt "file" as
+		cabal <- liftIO $ getCabal (askOpt "sandbox" as)
+		liftM ResultModuleDeclaration $ whois dbval srcFile nm
 	whois' as _ db = return $ err "Invalid arguments"
 	-- completion
 	complete' as [] db = complete' as [""] db
-	complete' as [input] db = fmap (either id id) $ runErrorT $ do
-		srcFile <- maybe (throwError $ err "Must specify source file") (liftIO . canonicalizePath) $ askOpt "file" as
-		cabal <- liftIO $ getCabal (askOpt "cabal" as)
-		dbval <- liftIO $ getDb db
-		liftIO $ maybe
-			(return $ errArgs "File not found in database" [
-				("file", ResultString srcFile)])
-			(\m -> liftM
-				(either err (ResultOk . ResultList . map ResultModuleDeclaration))
-				(runErrorT (completions dbval m input)))
-			(lookupFile srcFile dbval)
+	complete' as [input] db = errorT $ do
+		dbval <- getDb db
+		srcFile <- maybe (throwError $ "No file specified") (liftIO . canonicalizePath) $ askOpt "file" as
+		mthis <- fileModule dbval srcFile
+		cabal <- liftIO $ getCabal (askOpt "sandbox" as)
+		liftM (ResultList . map ResultModuleDeclaration) $ completions dbval mthis input
 	complete' as _ db = return $ err "Invalid arguments"
 	-- dump cabal modules
 	dumpCabal' as _ db = do
 		dbval <- getDb db
-		cabal <- getCabal $ askOpt "cabal" as
+		cabal <- getCabal $ askOpt "sandbox" as
 		let
 			dat = cabalDB cabal dbval
 		liftM (fromMaybe (ResultOk $ ResultDatabase dat)) $ runMaybeT $ msum [
@@ -689,7 +709,7 @@ commands = addHelp "hsdev" liftHelp cmds where
 	asCabal p = fmap Sandbox $ canonicalizePath p
 
 	askCabal :: Opts -> IO Cabal
-	askCabal = maybe (return Cabal) asCabal . askOpt "cabal"
+	askCabal = maybe (return Cabal) asCabal . askOpt "sandbox"
 
 	getProject :: Async Database -> String -> IO Project
 	getProject db projName = do
@@ -709,6 +729,9 @@ commands = addHelp "hsdev" liftHelp cmds where
 		where
 			onMsg showMsg = if hasOpt "status" as then showMsg else (const $ return ())
 
+	errorT :: ErrorT String IO ResultValue -> IO CommandResult
+	errorT = liftM (either err ResultOk) . runErrorT
+
 	updateProcess :: Async Database -> Opts -> C.UpdateDB IO () -> IO CommandResult
 	updateProcess db as act = startProcess as $ \onStatus -> C.updateDB (C.Settings db onStatus (getGhcOpts as)) act
 
@@ -720,15 +743,15 @@ printMainUsage = do
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) commands
 
-processCmd :: Async Database -> String -> (String -> IO ()) -> IO Bool
-processCmd db cmdLine printResult = processCmdArgs db (split cmdLine) printResult
+processCmd :: Async Database -> Int -> String -> (String -> IO ()) -> IO Bool
+processCmd db tm cmdLine printResult = processCmdArgs db tm (split cmdLine) printResult
 
-processCmdArgs :: Async Database -> [String] -> (String -> IO ()) -> IO Bool
-processCmdArgs db cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd . commandError) cmdArgs' db >>= processResult where
+processCmdArgs :: Async Database -> Int -> [String] -> (String -> IO ()) -> IO Bool
+processCmdArgs db tm cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd . commandError) cmdArgs' tm db >>= processResult where
 	(isJsonArgs, cmdArgs', _) = getOpt RequireOrder [Option [] ["json"] (NoArg (Any True)) "json output"] cmdArgs
 	isJson = getAny $ mconcat isJsonArgs
-	asCmd :: CommandResult -> (Async Database -> IO CommandResult)
-	asCmd r _ = return r
+	asCmd :: CommandResult -> (Int -> Async Database -> IO CommandResult)
+	asCmd r _ _ = return r
 
 	unknownCommand :: CommandResult
 	unknownCommand = err "Unknown command"

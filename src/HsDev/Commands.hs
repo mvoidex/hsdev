@@ -6,7 +6,7 @@ module HsDev.Commands (
 	fileModule,
 	goToDeclaration,
 	lookupSymbol,
-	symbolInfo,
+	whois,
 	completions,
 	moduleCompletions,
 
@@ -71,22 +71,25 @@ lookupSymbol db file ident = do
 	where
 		(qname, iname) = splitIdentifier ident
 
--- | Find symbol info
-symbolInfo :: Database -> Maybe FilePath -> String -> ErrorT String IO ModuleDeclaration
-symbolInfo db ctx ident = do
-	mthis <- (traverse (liftIO . canonicalizePath) >=> traverse (fileModule db)) ctx
+-- | Get info about symbol
+whois :: Database -> FilePath -> String -> ErrorT String IO ModuleDeclaration
+whois db ctx ident = do
+	mthis <- fileModule db ctx
 	decls <- findDeclaration db iname
 	let
-		cands = flip filter decls $ checkModule $ allOf [
-			maybe (const True) visibleFrom mthis,
-			maybe (const True) (reachableFrom qname) mthis,
+		cands = unique mthis $ flip filter decls $ checkModule $ allOf [
+			visibleFrom mthis,
+			reachableFrom qname mthis,
 			not . inModule "Prelude"]
 	case cands of
-		[] -> throwError $ "Symbol '" ++ ident ++ "' not found"
+		[] -> throwError $ "Symbol " ++ ident ++ " not found"
 		[c] -> return c
 		cs -> throwError $ "Ambiguous symbols: " ++ intercalate ", " (map (brief . declarationModuleId) cs)
 	where
 		(qname, iname) = splitIdentifier ident
+		unique :: Module -> [ModuleDeclaration] -> [ModuleDeclaration]
+		unique m ms = filter ((`elem` uniqs) . declarationModuleId) ms where
+			uniqs = uniqueModules Cabal (projectOf . moduleId $ m) $ map declarationModuleId ms
 
 -- | Completions
 completions :: Database -> Module -> String -> ErrorT String IO [ModuleDeclaration]
