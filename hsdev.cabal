@@ -71,6 +71,7 @@ executable hsdev
   hs-source-dirs: tools
   ghc-options: -threaded
   other-modules:
+    Commands
     System.Command
   build-depends:
     base == 4.6.*,

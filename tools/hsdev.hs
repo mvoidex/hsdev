@@ -10,8 +10,9 @@ import Control.Concurrent
 import Control.Exception
 import Control.DeepSeq (force, NFData)
 import Control.Monad
-import Control.Monad.Reader
 import Control.Monad.Error
+import Control.Monad.Trans.Maybe
+import Control.Monad.Reader
 import qualified Data.ByteString.Lazy.Char8 as L (unpack, pack)
 import Data.Aeson
 import Data.Aeson.Encode.Pretty
@@ -50,6 +51,8 @@ import HsDev.Symbols.JSON
 import HsDev.Tools.GhcMod
 import HsDev.Util
 import HsDev.Inspect
+
+import qualified Commands as C
 
 mainCommands :: [Command (IO ())]
 mainCommands = [
@@ -211,6 +214,7 @@ main = withSocketsDo $ do
 				setData (Just d) = (++ ["--data", L.unpack $ encode d])
 
 data ResultValue =
+	ResultDatabase Database |
 	ResultDeclaration Declaration |
 	ResultModuleDeclaration ModuleDeclaration |
 	ResultModuleId ModuleId |
@@ -223,6 +227,7 @@ data ResultValue =
 	ResultNone
 
 instance ToJSON ResultValue where
+	toJSON (ResultDatabase db) = toJSON db
 	toJSON (ResultDeclaration d) = toJSON d
 	toJSON (ResultModuleDeclaration md) = toJSON md
 	toJSON (ResultModuleId mid) = toJSON mid
@@ -239,6 +244,7 @@ instance FromJSON ResultValue where
 		do
 			(Object m) <- parseJSON v
 			if HM.null m then return ResultNone else mzero,
+		ResultDatabase <$> parseJSON v,
 		ResultDeclaration <$> parseJSON v,
 		ResultModuleDeclaration <$> parseJSON v,
 		ResultModuleId <$> parseJSON v,
@@ -278,210 +284,185 @@ err s = ResultError s M.empty
 errArgs :: String -> [(String, ResultValue)] -> CommandResult
 errArgs s as = ResultError s (M.fromList as)
 
-processPacks :: Monad m => Int -> [a] -> ([a] -> m ()) -> m ()
-processPacks n vs f = mapM_ f ps where
-	ps = takeWhile (not . null) $ unfoldr (Just . (take n &&& drop n )) vs
-
-collectM :: (Monad m, NFData b, Monoid b) => [a] -> (a -> m b) -> m b
-collectM vs f = foldM f' mempty vs where
-	f' acc v = force acc `seq` do
-		res <- f v
-		return $ acc `mappend` res
-
-processM :: (Monad m, NFData b, Monoid b) => Int -> [a] -> (b -> m ()) -> (a -> m b) -> m ()
-processM n vs onChunk convert = processPacks n vs $ (flip collectM convert >=> onChunk)
-
 commands :: [Command (Async Database -> IO CommandResult)]
-commands = addHelp "hsdev" liftHelp [
-	cmd ["add"] [] "add info to database" [dataArg] $
-		\as _ db -> do
-			dbval <- getDb db
-			res <- runErrorT $ do
-				jsonData <- maybe (throwError $ err "Specify --data") return $ askOpt "data" as
-				decodedData <- either (\err -> throwError (errArgs "Unable to decode data" [("why", ResultString err), ("data", ResultString jsonData)])) return $ eitherDecode $ L.pack jsonData
-				let
-					updateData (ResultDeclaration d) = throwError $ errArgs "Can't insert declaration" [("declaration", ResultDeclaration d)]
-					updateData (ResultModuleDeclaration md) = do
-						let
-							ModuleId mname mloc = declarationModuleId md
-							defMod = Module mname Nothing mloc [] mempty mempty
-							defInspMod = InspectedModule InspectionNone mloc (Right defMod)
-							dbmod = maybe
-								defInspMod
-								(\i -> i { inspectionResult = inspectionResult i <|> (Right defMod) }) $
-								M.lookup mloc (databaseModules dbval)
-							updatedMod = dbmod {
-								inspectionResult = fmap (addDeclaration $ moduleDeclaration md) (inspectionResult dbmod) }
-						update db $ return $ fromModule updatedMod
-					updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
-						update db $ return $ fromModule $ InspectedModule InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
-					updateData (ResultModule m) = update db $ return $ fromModule $ InspectedModule InspectionNone (moduleLocation m) (Right m)
-					updateData (ResultInspectedModule m) = update db $ return $ fromModule m
-					updateData (ResultProject p) = update db $ return $ fromProject p
-					updateData (ResultList l) = mapM_ updateData l
-					updateData (ResultMap m) = mapM_ updateData $ M.elems m
-					updateData (ResultString s) = throwError $ err "Can't insert string"
-					updateData ResultNone = return ()
-				updateData decodedData
-			return $ either id (const (ResultOk ResultNone)) res,
-	cmd ["scan", "cabal"] [] "scan modules installed in cabal" (sandbox : ghcOpts : [wait, status, packSz]) $
-		\as _ db -> do
-			dbval <- getDb db
-			ms <- runErrorT $ list (getGhcOpts as)
-			cabal <- maybe (return Cabal) asCabal $ askOpt "cabal" as
-			case ms of
-				Left e -> return $ err $ "Failed to invoke ghc-mod 'list': " ++ e
-				Right r -> startProcess as $ \onStatus -> void $ runErrorT $ do
-					processM (packArg as) r (update db . return) $ \mname ->
-						if (isNothing $ lookupModule (CabalModule cabal Nothing mname) dbval)
-							then do
-								r' <- scanModule (getGhcOpts as) cabal mname
-								liftIO $ onStatus $ "module " ++ mname ++ " scanned"
-								return r'
-								`catchError`
-								\e -> do
-									liftIO $ onStatus $ "error scanning module " ++ mname ++ ": " ++ e
-									return mempty
-							else return mempty,
-	cmd ["scan", "project"] [] "scan project" (projectArg "project's .cabal file" : ghcOpts : [wait, status]) $
-		\as _ db -> do
-			dbval <- getDb db
-			proj <- locateProject $ fromMaybe "." $ askOpt "project" as
-			case proj of
-				Nothing -> return $ err $ "Project " ++ maybe "in current directory" (\p' -> "'" ++ p' ++ "'") (askOpt "project" as) ++ " not found"
-				Just proj' -> startProcess as $ \onStatus -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ projectName proj' ++ " fails with: ") ++)) $ do
-					proj'' <- loadProject proj'
-					update db $ return $ fromProject proj''
-					srcs <- projectSources proj''
-					update db $ collectM srcs $ \src -> scanFile_ src (liftIO . onStatus) $ do
-						maybe (fmap fromModule $ inspectFile (getGhcOpts as) src) (rescanModule (getGhcOpts as)) $ fmap (getInspected dbval) $ lookupFile src dbval,
-	cmd ["scan", "path"] ["path to scan"] "scan directory" (
-		Option ['p'] ["projects"] (NoArg (opt "projects" "")) "scan only for projects" : ghcOpts : [wait, status]) $ \as ps db -> case ps of
-		[dir] -> do
-			dbval <- getDb db
-			dir' <- canonicalizePath dir
-			exists <- doesDirectoryExist dir'
-			case exists of
-				False -> return $ err $ "Invalid directory: " ++ dir
-				True -> case hasOpt "projects" as of
-					False -> startProcess as $ \onStatus -> void $ runErrorT $ do
-						liftIO $ onStatus $ "scanning " ++ dir ++ " for haskell sources"
-						srcs <- liftM (filter haskellSource) $ liftIO $ traverseDirectory dir'
-						processM (packArg as) srcs (update db . return) $ \src -> scanFile_ src (liftIO . onStatus) $ do
-							maybe (fmap fromModule $ inspectFile (getGhcOpts as) src) (rescanModule (getGhcOpts as)) $ fmap (getInspected dbval) $ lookupFile src dbval
-					True -> startProcess as $ \onStatus -> do
-						onStatus $ "scanning " ++ dir ++ " for cabal projects"
-						cabals <- liftM (filter cabalFile) $ traverseDirectory dir'
-						forM_ cabals $ \cabal -> void $ runErrorT $ flip catchError (liftIO . onStatus . (("scanning project " ++ cabal ++ " fails with: ") ++)) $ do
-							proj <- loadProject $ project cabal
-							update db $ return $ fromProject proj
-							srcs <- projectSources proj
-							processM (packArg as) srcs (update db . return) $ \src -> scanFile_ src (liftIO . onStatus) $ do
-								maybe (fmap fromModule $ inspectFile (getGhcOpts as) src) (rescanModule (getGhcOpts as)) $ fmap (getInspected dbval) $ lookupFile src dbval
-							liftIO (onStatus $ "project " ++ projectName proj ++ " scanned")
-		_ -> return $ err "Invalid arguments",
-	cmd ["scan", "file"] ["source file"] "scan file" [ghcOpts] $ \as fs db -> case fs of
-		[file] -> do
-			dbval <- getDb db
-			file' <- canonicalizePath file
-			res <- runErrorT $ maybe (update db $ fmap fromModule $ inspectFile (getGhcOpts as) file') (update db . rescanModule (getGhcOpts as)) $ fmap (getInspected dbval) $ lookupFile file' dbval
-			return $ either err (const ok) res
-		_ -> return $ err "Invalid arguments",
-	cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox, ghcOpts] $ \as ms db -> case ms of
-		[mname] -> do
-			dbval <- getDb db
-			if (isNothing $ lookupModule (CabalModule (maybe Cabal Sandbox $ askOpt "cabal" as) Nothing mname) dbval)
-				then do
-					res <- runErrorT $ update db $ scanModule (getGhcOpts as) (maybe Cabal Sandbox $ askOpt "cabal" as) mname
-					return $ either err (const ok) res
-				else return ok
-		_ -> return $ err "Invalid arguments",
-	cmd ["rescan"] [] "rescan sources" ([
-		projectArg "project to rescan",
-		fileArg "file to rescan",
-		Option ['d'] ["dir"] (ReqArg (opt "dir") "directory") "directory to rescan"] ++ [ghcOpts, wait, status]) $
-			\as _ db -> do
-				dbval <- getDb db
-				let
-					fileMap = M.fromList $ mapMaybe toPair $ selectModules (byFile . moduleId) dbval
-				projectMods <- T.forM (askOpt "project" as) $ \p -> do
-					p' <- getProject db p
+commands = addHelp "hsdev" liftHelp cmds where
+	cmds = [
+		-- Database commands
+		cmd ["add"] [] "add info to database" [dataArg] add',
+		cmd ["scan"] [] "scan sources" [
+			projectArg "project path or .cabal",
+			fileArg "source file",
+			pathArg "directory to scan for files and projects",
+			ghcOpts, wait, status] scan',
+		cmd ["scan", "cabal"] [] "scan modules installed in cabal" [
+			sandbox, ghcOpts, wait, status] scanCabal',
+		cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox, ghcOpts] scanModule',
+		cmd ["rescan"] [] "rescan sources" [
+			projectArg "project path, .cabal or name to rescan",
+			fileArg "source file",
+			pathArg "path to rescan",
+			ghcOpts, wait, status] rescan',
+		cmd ["remove"] [] "remove modules info" [
+			sandbox,
+			projectArg "module project",
+			fileArg "module source file",
+			moduleArg "module name",
+			allFlag] remove',
+		-- | Context free commands
+		cmd ["list", "modules"] [] "list modules" [
+			projectArg "project to list modules from",
+			sandbox, sourced, standaloned] listModules',
+		cmd_ ["list", "projects"] [] "list projects" listProjects',
+		cmd ["symbol"] ["name"] "get symbol info" [
+			projectArg "related project",
+			fileArg "source file",
+			moduleArg "module name",
+			sandbox, sourced, standaloned] symbol',
+		cmd ["module"] [] "get module info" [
+			moduleArg "module name",
+			projectArg "module project",
+			fileArg "module source file",
+			sandbox] modul',
+		cmd_ ["project"] ["project name"] "show project info" project',
+		-- Context commands
+		cmd ["whois"] ["symbol"] "get info for symbol" ctx whois',
+		cmd ["complete"] ["input"] "show completions for input" ctx complete',
+		-- Dump/load commands
+		cmd ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
+		cmd ["dump", "project"] ["projects..."] "dump projects" [cacheDir, cacheFile] dumpProjects',
+		cmd ["dump", "standalone"] ["files..."] "dump standalone file module" [cacheDir, cacheFile] dumpFiles',
+		cmd ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
+		cmd ["load"] [] "load data" [cacheDir, cacheFile, dataArg] load',
+		-- Exit
+		cmd_ ["exit"] [] "exit" $ \_ _ -> return ResultExit]
+
+	-- Command arguments and flags
+	allFlag = Option ['a'] ["all"] (NoArg $ opt "all" "") "remove all"
+	cacheDir = pathArg "cache path"
+	cacheFile = fileArg "cache file"
+	ctx = [
+		fileArg "source file",
+		sandbox]
+	dataArg = Option [] ["data"] (ReqArg (opt "data") "contents") "data to pass to command"
+	fileArg = Option ['f'] ["file"] (ReqArg (opt "file") "file")
+	ghcOpts = Option ['g'] ["ghcopt"] (ReqArg (opt "ghc") "ghc options") "options to pass to GHC"
+	moduleArg = Option ['m'] ["module"] (ReqArg (opt "module") "module name")
+	pathArg = Option ['p'] ["path"] (ReqArg (opt "path") "path")
+	projectArg = Option [] ["project", "proj"] (ReqArg (opt "project") "project")
+	sandbox = Option [] ["sandbox"] (OptArg (opt "sandbox" . fromMaybe "") "path") "path to cabal sandbox"
+	sourced = Option [] ["src"] (NoArg $ opt "source" "") "source files"
+	standaloned = Option [] ["stand"] (NoArg $ opt "standalone" "") "standalone files"
+	status = Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"
+	wait = Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete"
+
+	-- add data
+	add' as _ db = do
+		dbval <- getDb db
+		res <- runErrorT $ do
+			jsonData <- maybe (throwError $ err "Specify --data") return $ askOpt "data" as
+			decodedData <- either
+				(\err -> throwError (errArgs "Unable to decode data" [
+					("why", ResultString err),
+					("data", ResultString jsonData)]))
+				return $
+				eitherDecode $ L.pack jsonData
+			let
+				updateData (ResultDeclaration d) = throwError $ errArgs "Can't insert declaration" [("declaration", ResultDeclaration d)]
+				updateData (ResultModuleDeclaration md) = do
 					let
-						res = M.fromList $ mapMaybe toPair $ selectModules (byFile . moduleId) (projectDB p' dbval)
-					return $ if M.null res then Left ("Unknown project: " ++ p) else Right res
-				fileMods <- T.forM (askOpt "file" as) $ \f ->
-					return $ maybe (Left $ "Unknown file: " ++ f) (Right . M.singleton f) $ lookupFile f dbval
-				dirMods <- T.forM (askOpt "dir" as) $ \d -> do
-					return $ Right $ M.filterWithKey (\f _ -> isParent d f) fileMap
-
-				let
-					(errors, filteredMods) = partitionEithers $ catMaybes [projectMods, fileMods, dirMods]
-					rescanMods = if null filteredMods then fileMap else M.unions filteredMods
-
-				if not $ null errors
-					then return $ err $ intercalate ", " errors
-					else startProcess as $ \onStatus -> void $ runErrorT $ do
-						processM (packArg as) (M.elems rescanMods) (update db . return) $ \m -> do
-							r <- rescanModule (getGhcOpts as) (getInspected dbval m)
-							liftIO $ onStatus $ "module " ++ brief m ++ " rescanned"
-							return r
-							`catchError`
-							\e -> do
-								liftIO $ onStatus $ "error rescanning module " ++ brief m ++ ": " ++ e
-								return mempty,
-	cmd ["clean"] [] "clean info about modules" [
-		sandbox,
-		projectArg "module project",
-		fileArg "module source file",
-		moduleArg "module name",
-		Option ['a'] ["all"] (NoArg (opt "all" "")) "clear all"] $ \as _ db -> do
-			dbval <- getDb db
-			cabal <- traverse asCabal $ askOpt "cabal" as
-			proj <- traverse (getProject db) $ askOpt "project" as
-			file <- traverse canonicalizePath $ askOpt "file" as
+						ModuleId mname mloc = declarationModuleId md
+						defMod = Module mname Nothing mloc [] mempty mempty
+						defInspMod = InspectedModule InspectionNone mloc (Right defMod)
+						dbmod = maybe
+							defInspMod
+							(\i -> i { inspectionResult = inspectionResult i <|> (Right defMod) }) $
+							M.lookup mloc (databaseModules dbval)
+						updatedMod = dbmod {
+							inspectionResult = fmap (addDeclaration $ moduleDeclaration md) (inspectionResult dbmod) }
+					update db $ return $ fromModule updatedMod
+				updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
+					update db $ return $ fromModule $ InspectedModule InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
+				updateData (ResultModule m) = update db $ return $ fromModule $ InspectedModule InspectionNone (moduleLocation m) (Right m)
+				updateData (ResultInspectedModule m) = update db $ return $ fromModule m
+				updateData (ResultProject p) = update db $ return $ fromProject p
+				updateData (ResultList l) = mapM_ updateData l
+				updateData (ResultMap m) = mapM_ updateData $ M.elems m
+				updateData (ResultString s) = throwError $ err "Can't insert string"
+				updateData ResultNone = return ()
+			updateData decodedData
+		return $ either id (const (ResultOk ResultNone)) res
+	-- scan
+	scan' as _ db = updateProcess db as $
+		mapM_ (\(n, f) -> forM_ (askOpts n as) f) [
+			("project", C.scanProject),
+			("file", C.scanFile),
+			("path", C.scanPath)]
+	-- scan cabal
+	scanCabal' as _ db = do
+		cabal <- askCabal as
+		updateProcess db as $ C.scanCabal cabal
+	-- scan cabal module
+	scanModule' as [mname] db = do
+		cabal <- askCabal as
+		updateProcess db as $
+			forM_ (askOpts "module" as) (C.scanModule cabal)
+	scanModule' as _ db = return $ err "Invalid arguments"
+	-- rescan
+	rescan' as _ db = do
+		dbval <- getDb db
+		let
+			fileMap = M.fromList $ mapMaybe toPair $
+				selectModules (byFile . moduleId) dbval
+		projectMods <- T.forM (askOpts "project" as) $ \p -> do
+			p' <- getProject db p
 			let
-				cleanAll = hasOpt "all" as
-				filters = catMaybes [
-					fmap inProject proj,
-					fmap inFile file,
-					fmap inModule (askOpt "module" as),
-					fmap inCabal cabal]
-				toClean = filter (allOf filters . moduleId) (allModules dbval)
-				action
-					| null filters && cleanAll = do
-						modifyAsync db Clear
-						return ok
-					| null filters && not cleanAll = return $ err "Specify filter or explicitely set flag --all"
-					| cleanAll = return $ err "--all flag can't be set with filters"
-					| otherwise = do
-						mapM_ (modifyAsync db . Remove . fromModule) $ map (getInspected dbval) $ toClean
-						return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) toClean
-			action,
-	cmd ["find"] ["symbol"] "find symbol" [
-		projectArg "project to find in",
-		fileArg "file to find in",
-		moduleArg "module to find in",
-		sandbox,
-		sourced,
-		standaloned] $ \as ns db -> do
-			dbval <- getDb db
-			proj <- traverse (getProject db) $ askOpt "project" as
-			file <- traverse canonicalizePath (askOpt "file" as)
-			cabal <- traverse asCabal $ askOpt "cabal" as
-			let
-				filters = checkModule $ allOf $ catMaybes [
-					fmap inProject proj,
-					fmap inFile file,
-					fmap inModule (askOpt "module" as),
-					fmap inCabal cabal,
-					if hasOpt "source" as then Just byFile else Nothing,
-					if hasOpt "standalone" as then Just standalone else Nothing]
-				result = return . either (err . ("Unable to find declaration: " ++)) (ResultOk . ResultList . map ResultModuleDeclaration . filter filters)
-			case ns of
-				[] -> result $ Right $ allDeclarations dbval
-				[nm] -> runErrorT (findDeclaration dbval nm) >>= result
-				_ -> return $ err "Invalid arguments",
-	cmd ["list"] [] "list modules" [projectArg "project to list modules for", sandbox, sourced, standaloned] $ \as _ db -> do
+				res = M.fromList $ mapMaybe toPair $
+					selectModules (byFile . moduleId) dbval
+			return $ if M.null res then Left ("Unknown project: " ++ p) else Right res
+		fileMods <- T.forM (askOpts "file" as) $ \f ->
+			return $ maybe
+				(Left $ "Unknown file: " ++ f)
+				(Right . M.singleton f) $
+				lookupFile f dbval
+		dirMods <- T.forM (askOpts "path" as) $ \d -> do
+			return $ Right $ M.filterWithKey (\f _ -> isParent d f) fileMap
+
+		let
+			(errors, filteredMods) = partitionEithers $
+				concat [projectMods, fileMods, dirMods]
+			rescanMods = if null filteredMods then fileMap else M.unions filteredMods
+
+		if not (null errors)
+			then return $ err $ intercalate ", " errors
+			else startProcess as $ \onStatus -> forM_ (M.elems rescanMods) $
+				\m -> C.updateDB (C.Settings db onStatus (getGhcOpts as)) $ C.runScan "module" (moduleName m) mempty $
+					C.liftErrors $ rescanModule (getGhcOpts as) (getInspected dbval m)
+	-- remove
+	remove' as _ db = do
+		dbval <- getDb db
+		cabal <- traverse asCabal $ askOpt "cabal" as
+		proj <- traverse (getProject db) $ askOpt "project" as
+		file <- traverse canonicalizePath $ askOpt "file" as
+		let
+			cleanAll = hasOpt "all" as
+			filters = catMaybes [
+				fmap inProject proj,
+				fmap inFile file,
+				fmap inModule (askOpt "module" as),
+				fmap inCabal cabal]
+			toClean = filter (allOf filters . moduleId) (allModules dbval)
+			action
+				| null filters && cleanAll = do
+					modifyAsync db Clear
+					return ok
+				| null filters && not cleanAll = return $ err "Specify filter or explicitely set flag --all"
+				| cleanAll = return $ err "--all flag can't be set with filters"
+				| otherwise = do
+					mapM_ (modifyAsync db . Remove . fromModule) $ map (getInspected dbval) $ toClean
+					return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) toClean
+		action
+	-- list modules
+	listModules' as _ db = do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
 		cabal <- traverse asCabal $ askOpt "cabal" as
@@ -491,223 +472,241 @@ commands = addHelp "hsdev" liftHelp [
 				fmap inCabal cabal,
 				if hasOpt "source" as then Just byFile else Nothing,
 				if hasOpt "standalone" as then Just standalone else Nothing]
-		return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) $ selectModules (filters . moduleId) dbval,
-	cmd ["browse"] [] "browse module" [
-		moduleArg "module to browse",
-		projectArg "project to look module in",
-		fileArg "source file to look in",
-		sandbox] $ \as _ db -> do
-			dbval <- getDb db
-			proj <- traverse (getProject db) $ askOpt "project" as
-			cabal <- traverse asCabal $ askOpt "cabal" as
-			file' <- traverse canonicalizePath $ askOpt "file" as
-			let
-				filters = allOf $ catMaybes [
-					fmap inProject proj,
-					fmap inCabal cabal,
-					fmap inFile file',
-					fmap inModule (askOpt "module" as)]
-			rs <- maybe (return $ Right $ filter (filters . moduleId) $ allModules dbval) (runErrorT . findModule dbval) $ askOpt "module" as
-			case rs of
-				Left e -> return $ err e
-				Right rs' -> case rs' of
-					[] -> return $ err "Module not found"
-					[m] -> return $ ResultOk $ ResultModule m
-					ms' -> return $ errArgs "Ambiguous modules" [("modules", ResultList $ map (ResultModuleId . moduleId) ms')],
-	cmd_ ["project"] ["project name"] "show project list or detailed project info" $ \ns db -> case ns of
-		[] -> do
-			dbval <- getDb db
-			return $ ResultOk $ ResultList $ map (ResultString . projectName) $ M.elems $ databaseProjects dbval
-		[pname] -> do
-			dbval <- getDb db
-			case filter ((== pname) . projectName) $ M.elems $ databaseProjects dbval of
-				[] -> return $ errArgs "Project not found" [("project", ResultString pname)]
-				ps -> return $ ResultOk $ ResultList $ map ResultProject ps
-		_ -> return $ err "Invalid arguments",
-	cmd ["goto"] ["symbol"] "find symbol declaration" [contextFile] $ \as ns db -> case ns of
-		[nm] -> do
-			dbval <- getDb db
-			liftM (either err (ResultOk . ResultList . map ResultModuleDeclaration)) $ runErrorT $ goToDeclaration dbval (askOpt "file" as) nm
-		_ -> return $ err "Invalid arguments",
-	cmd ["info"] ["symbol"] "get info for symbol" [contextFile] $ \as ns db -> case ns of
-		[nm] -> do
-			dbval <- getDb db
-			liftM (either err (ResultOk . ResultModuleDeclaration)) $ runErrorT $ symbolInfo dbval (askOpt "file" as) nm
-		_ -> return $ err "Invalid arguments",
-	cmd_ ["lookup"] ["source file", "symbol"] "find symbol" $ \ns db -> case ns of
-		[file, nm] -> do
-			dbval <- getDb db
-			r <- runErrorT $ liftM (ResultOk . either (ResultList . map ResultModuleDeclaration) (ResultModuleDeclaration)) (lookupSymbol dbval file nm)
-			return $ either err id r
-		_ -> return $ err "Invalid arguments",
-	cmd_ ["complete", "file"] ["source file", "input"] "autocompletion" $ \as db -> do
+		return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) $ selectModules (filters . moduleId) dbval
+	-- list projects
+	listProjects' _ db = do
 		dbval <- getDb db
+		return $ ResultOk $ ResultList $ map (ResultString . projectName) $ M.elems $ databaseProjects dbval
+	-- get symbol info
+	symbol' as ns db = do
+		dbval <- getDb db
+		proj <- traverse (getProject db) $ askOpt "project" as
+		file <- traverse canonicalizePath $ askOpt "file" as
+		cabal <- traverse asCabal $ askOpt "cabal" as
 		let
-			complete' f i = do
-				file' <- canonicalizePath f
-				maybe
-					(return $ errArgs "File is not scanned" [("file", ResultString f)])
-					(\m -> liftM (either err (ResultOk . ResultList . map ResultModuleDeclaration)) (runErrorT (completions dbval m i)))
-					(lookupFile file' dbval)
-		case as of
-			[file] -> complete' file ""
-			[file, input] -> complete' file input
-			_ -> return $ err "Invalid arguments",
-	cmd ["complete", "module"] ["module name", "input"] "autocompletion" [sandbox] $ \p as db -> case as of
-		[mname, input] -> do
-			dbval <- getDb db
-			cabal <- getCabal $ askOpt "cabal" p
-			maybe
-				(return $ errArgs "Unknown module" [("module", ResultString mname)])
-				(\m -> liftM (either err (ResultOk . ResultList . map ResultModuleDeclaration)) (runErrorT (completions dbval m input)))
-				(lookupModule (CabalModule cabal Nothing mname) dbval)
-		_ -> return $ err "Invalid arguments",
-	cmd_ ["dump", "files"] [] "dump file names loaded in database" $ \_ db -> do
+			filters = checkModule $ allOf $ catMaybes [
+				fmap inProject proj,
+				fmap inFile file,
+				fmap inModule (askOpt "module" as),
+				if hasOpt "source" as then Just byFile else Nothing,
+				if hasOpt "standalone" as then Just standalone else Nothing]
+			result = return . either
+				(\e -> err ("Can't find symbol: " ++ e))
+				(ResultOk . ResultList . map ResultModuleDeclaration . filter filters)
+		case ns of
+			[] -> result $ Right $ allDeclarations dbval
+			[nm] -> runErrorT (findDeclaration dbval nm) >>= result
+			_ -> return $ err "Too much arguments"
+	-- get module info
+	modul' as _ db = do
 		dbval <- getDb db
-		return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) $ selectModules (byFile . moduleId) dbval,
-	cmd_ ["dump", "contents"] ["file name"] "dump file contents" $ \as db -> case as of
-		[file] -> do
-			dbval <- getDb db
-			return $ maybe (errArgs "File not found" [("file", ResultString file)]) (ResultOk . ResultModule) $ listToMaybe $ selectModules (inFile file . moduleId) dbval
-		_ -> return $ err "Invalid arguments",
-	cmd ["cache", "dump", "cabal"] [] "dump cache of cabal modules" [
-		sandbox, cacheDir] $ \as _ db -> do
-			dbval <- getDb db
-			cabal <- getCabal $ askOpt "cabal" as
-			dump (pathArg as </> cabalCache cabal) (cabalDB cabal dbval)
-			return ok,
-	cmd ["cache", "dump", "project"] ["projects..."] "dump cache of project" [cacheDir] $ \as ns db -> do
+		proj <- traverse (getProject db) $ askOpt "project" as
+		cabal <- traverse asCabal $ askOpt "cabal" as
+		file' <- traverse canonicalizePath $ askOpt "file" as
+		let
+			filters = allOf $ catMaybes [
+				fmap inProject proj,
+				fmap inCabal cabal,
+				fmap inFile file',
+				fmap inModule (askOpt "module" as)]
+		rs <- maybe
+			(return $ Right $ filter (filters . moduleId) $ allModules dbval)
+			(runErrorT . findModule dbval) $
+			askOpt "module" as
+		case rs of
+			Left e -> return $ err e
+			Right rs' -> case rs' of
+				[] -> return $ err "Module not found"
+				[m] -> return $ ResultOk $ ResultModule m
+				ms' -> return $ errArgs "Ambiguous modules" [("modules", ResultList $ map (ResultModuleId . moduleId) ms')]
+	-- get project info
+	project' [] db = return $ err "Project name not specified"
+	project' pnames db = do
+		dbval <- getDb db
+		case filter ((`elem` pnames) . projectName) $ M.elems $ databaseProjects dbval of
+			[] -> return $ errArgs "Projects not found" [
+				("projects", ResultList $ map ResultString pnames)]
+			ps -> return $ ResultOk $ ResultList $ map ResultProject ps
+	-- get detailed info about symbol in source file
+	whois' as [nm] db = do
+		dbval <- getDb db
+		liftM (either err (ResultOk . ResultModuleDeclaration)) $
+			runErrorT $ symbolInfo dbval (askOpt "file" as) nm
+	whois' as _ db = return $ err "Invalid arguments"
+	-- completion
+	complete' as [] db = complete' as [""] db
+	complete' as [input] db = fmap (either id id) $ runErrorT $ do
+		srcFile <- maybe (throwError $ err "Must specify source file") (liftIO . canonicalizePath) $ askOpt "file" as
+		cabal <- liftIO $ getCabal (askOpt "cabal" as)
+		dbval <- liftIO $ getDb db
+		liftIO $ maybe
+			(return $ errArgs "File not found in database" [
+				("file", ResultString srcFile)])
+			(\m -> liftM
+				(either err (ResultOk . ResultList . map ResultModuleDeclaration))
+				(runErrorT (completions dbval m input)))
+			(lookupFile srcFile dbval)
+	complete' as _ db = return $ err "Invalid arguments"
+	-- dump cabal modules
+	dumpCabal' as _ db = do
+		dbval <- getDb db
+		cabal <- getCabal $ askOpt "cabal" as
+		let
+			dat = cabalDB cabal dbval
+		liftM (fromMaybe (ResultOk $ ResultDatabase dat)) $ runMaybeT $ msum [
+			do
+				p <- MaybeT $ return $ askOpt "path" as
+				liftIO $ dump (p </> cabalCache cabal) dat
+				return ok,
+			do
+				f <- MaybeT $ return $ askOpt "file" as
+				liftIO $ dump f dat
+				return ok]
+	-- dump projects
+	dumpProjects' as ns db = do
 		dbval <- getDb db
 		ps <- if null ns
 			then return (M.elems $ databaseProjects dbval)
 			else mapM (getProject db) ns
-		forM_ ps $ \p -> dump (pathArg as </> projectCache p) (projectDB p dbval)
-		return ok,
-	cmd ["cache", "dump", "standalone"] [] "dump cache of standalone files" [cacheDir] $ \as _ db -> do
+		let
+			dats = map (id &&& flip projectDB dbval) ps
+		liftM (fromMaybe (ResultOk $ ResultList $ map (ResultDatabase . snd) dats)) $
+			runMaybeT $ msum [
+				do
+					p <- MaybeT $ return $ askOpt "path" as
+					forM_ dats $ \(proj, dat) -> liftIO (dump (p </> projectCache proj) dat)
+					return ok,
+				do
+					f <- MaybeT $ return $ askOpt "file" as
+					liftIO $ dump f (mconcat $ map snd dats)
+					return ok]
+	-- dump files
+	dumpFiles' as ns db = do
 		dbval <- getDb db
-		dump (pathArg as </> standaloneCache) (standaloneDB dbval)
-		return ok,
-	cmd ["cache", "dump"] [] "dump all" [cacheDir] $ \as _ db -> do
+		fs <- mapM canonicalizePath ns
+		let
+			dat = filterDB
+				(\m -> any (\f -> inFile f (moduleId m)) fs)
+				(const False) $
+				standaloneDB dbval
+		liftM (fromMaybe (ResultOk $ ResultDatabase dat)) $ runMaybeT $ msum [
+			do
+				p <- MaybeT $ return $ askOpt "path" as
+				liftIO $ dump (p </> standaloneCache) dat
+				return ok,
+			do
+				f <- MaybeT $ return $ askOpt "file" as
+				liftIO $ dump f dat
+				return ok]
+	dump' as _ db = do
 		dbval <- getDb db
-		createDirectoryIfMissing True (pathArg as </> "cabal")
-		createDirectoryIfMissing True (pathArg as </> "projects")
-		forM_ (nub $ mapMaybe modCabal $ allModules dbval) $ \c -> dump (pathArg as </> "cabal" </> cabalCache c) (cabalDB c dbval)
-		forM_ (M.keys $ databaseProjects dbval) $ \p -> dump (pathArg as </> "projects" </> projectCache (project p)) (projectDB (project p) dbval)
-		dump (pathArg as </> standaloneCache) (standaloneDB dbval)
-		return ok,
-	cmd ["cache", "load", "cabal"] [] "load cache for cabal packages" [
-		sandbox, cacheDir, wait] $ \as _ db -> do
-			cabal <- getCabal $ askOpt "cabal" as
-			cacheLoad db $ load (pathArg as </> cabalCache cabal)
-			waitDb as db
-			return ok,
-	cmd ["cache", "load", "project"] ["projects..."] "load cache for projects" [cacheDir, wait] $ \as ns db -> do
-		ps <- mapM getProj ns
-		forM_ ps $ \p -> cacheLoad db (load (pathArg as </> projectCache p))
+		liftM (fromMaybe (ResultOk $ ResultDatabase dbval)) $ runMaybeT $ msum [
+			do
+				p <- MaybeT $ return $ askOpt "path" as
+				liftIO $ do
+					createDirectoryIfMissing True (p </> "cabal")
+					createDirectoryIfMissing True (p </> "projects")
+					forM_ (nub $ mapMaybe modCabal $ allModules dbval) $ \c ->
+						dump
+							(p </> "cabal" </> cabalCache c)
+							(cabalDB c dbval)
+					forM_ (M.keys $ databaseProjects dbval) $ \pr ->
+						dump
+							(p </> "projects" </> projectCache (project pr))
+							(projectDB (project pr) dbval)
+					dump (p </> standaloneCache) (standaloneDB dbval)
+				return ok,
+			do
+				f <- MaybeT $ return $ askOpt "file" as
+				liftIO $ dump f dbval
+				return ok]
+	load' as _ db = do
+		res <- liftM (fromMaybe (err "Specify one of: --path, --file or --data")) $ runMaybeT $ msum [
+			do
+				p <- MaybeT $ return $ askOpt "path" as
+				cts <- liftIO $ liftM concat $ mapM
+					(liftM
+						(filter ((== ".json") . takeExtension)) .
+						getDirectoryContents')
+					[p, p </> "cabal", p </> "projects"]
+				liftIO $ forM_ cts $ \c -> do
+					e <- doesFileExist c
+					when e $ cacheLoad db (load c)
+				return ok,
+			do
+				f <- MaybeT $ return $ askOpt "file" as
+				e <- liftIO $ doesFileExist f
+				liftIO $ when e $ cacheLoad db (load f)
+				return ok]
 		waitDb as db
-		return ok,
-	cmd ["cache", "load", "standalone"] [] "load cache for standalone files" [cacheDir, wait] $ \as _ db -> do
-		cacheLoad db (load $ pathArg as </> standaloneCache)
-		waitDb as db
-		return ok,
-	cmd ["cache", "load"] [] "load cache from directories" [cacheDir, wait] $ \as _ db -> do
-		cts <- liftM concat $ mapM (liftM (filter ((== ".json") . takeExtension)) . getDirectoryContents') [pathArg as, pathArg as </> "cabal", pathArg as </> "projects"]
-		forM_ cts $ \c -> do
-			e <- doesFileExist c
-			when e $ cacheLoad db (load c)
-		waitDb as db
-		return ok,
-	cmd_ ["exit"] [] "exit" $ \_ _ -> return ResultExit]
-	where
-		liftHelp :: IO () -> Async Database -> IO CommandResult
-		liftHelp f _ = f >> return ok
+		return res
 
-		getDirectoryContents' :: FilePath -> IO [FilePath]
-		getDirectoryContents' p = do
-			b <- doesDirectoryExist p
-			if b then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p) else return []
+	-- Helper functions
+	getGhcOpts = askOpts "ghc"
 
-		waitDb as db = when (hasOpt "wait" as) $ do
-			putStrLn "wait for db"
-			waitDbVar <- newEmptyMVar
-			modifyAsync db (Action $ \d -> putStrLn "db done!" >> putMVar waitDbVar () >> return d)
-			takeMVar waitDbVar
+	isParent :: FilePath -> FilePath -> Bool
+	isParent dir file = norm dir `isPrefixOf` norm file where
+		norm = splitDirectories . normalise
 
-		cacheLoad db act = do
-			db' <- act
-			case db' of
-				Left e -> putStrLn e
-				Right database -> update db (return database)
+	toPair :: Module -> Maybe (FilePath, Module)
+	toPair m = case moduleLocation m of
+		FileModule f _ -> Just (f, m)
+		_ -> Nothing
 
-		scanFile_ src stat f = do
-			v <- f
-			stat $ "file " ++ src ++ " scanned"
-			return v
-			`catchError`
-			\e -> do
-				stat $ "error scanning file " ++ src ++ ": " ++ e
-				return mempty
+	modCabal :: Module -> Maybe Cabal
+	modCabal m = case moduleLocation m of
+		CabalModule c _ _ -> Just c
+		_ -> Nothing
 
-		getCabal :: Maybe String -> IO Cabal
-		getCabal = liftM (maybe Cabal Sandbox) . traverse canonicalizePath
+	liftHelp :: IO () -> Async Database -> IO CommandResult
+	liftHelp f _ = f >> return ok
 
-		getProj :: String -> IO Project
-		getProj = fmap project . canonicalizePath
+	getDirectoryContents' :: FilePath -> IO [FilePath]
+	getDirectoryContents' p = do
+		b <- doesDirectoryExist p
+		if b then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p) else return []
 
-		asCabal "" = return Cabal
-		asCabal p = fmap Sandbox $ canonicalizePath p
+	waitDb as db = when (hasOpt "wait" as) $ do
+		putStrLn "wait for db"
+		waitDbVar <- newEmptyMVar
+		modifyAsync db (Action $ \d -> putStrLn "db done!" >> putMVar waitDbVar () >> return d)
+		takeMVar waitDbVar
 
-		getProject :: Async Database -> String -> IO Project
-		getProject db projName = do
-			db' <- getDb db
-			let
-				foundProject = find ((== projName) . projectName) $ M.elems $ databaseProjects db'
-			projCabal <- canonicalizePath projName
-			return $ fromMaybe (error "Impossible happened") $ msum [foundProject, Just $ project projCabal]
+	cacheLoad db act = do
+		db' <- act
+		case db' of
+			Left e -> putStrLn e
+			Right database -> update db (return database)
 
-		getDb :: (MonadIO m) => Async Database -> m Database
-		getDb = liftIO . readAsync
+	getCabal :: Maybe String -> IO Cabal
+	getCabal = liftM (maybe Cabal Sandbox) . traverse canonicalizePath
 
-		startProcess :: Opts -> ((String -> IO ()) -> IO ()) -> IO CommandResult
-		startProcess as f
-			| hasOpt "wait" as = return $ ResultProcess (f . onMsg)
-			| otherwise = forkIO (f $ const $ return ()) >> return ok
-			where
-				onMsg showMsg = if hasOpt "status" as then showMsg else (const $ return ())
+	asCabal "" = return Cabal
+	asCabal p = fmap Sandbox $ canonicalizePath p
 
-		wait = Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete"
-		status = Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"
-		cacheDir = Option ['p'] ["path"] (ReqArg (opt "path") "path") "cache path"
-		sandbox = Option ['c'] ["cabal"] (OptArg (opt "cabal" . fromMaybe "") "path") "path to cabal sandbox"
-		sourced = Option [] ["src"] (NoArg $ opt "source" "") "source files"
-		standaloned = Option [] ["stand"] (NoArg $ opt "standalone" "") "standalone files"
-		projectArg = Option ['p'] ["project"] (ReqArg (opt "project") "path")
-		fileArg = Option ['f'] ["file"] (ReqArg (opt "file") "path")
-		moduleArg = Option ['m'] ["module"] (ReqArg (opt "module") "name")
-		dataArg = Option [] ["data"] (ReqArg (opt "data") "contents") "data to pass to command"
-		contextFile = fileArg "context source file"
-		packSz = Option ['z'] ["packsize"] (ReqArg (opt "packsize") "packsize") "debug"
+	askCabal :: Opts -> IO Cabal
+	askCabal = maybe (return Cabal) asCabal . askOpt "cabal"
 
-		pathArg = fromMaybe "." . askOpt "path"
-		packArg a = fromMaybe 50 $ askOpt "packsize" a >>= readMaybe
+	getProject :: Async Database -> String -> IO Project
+	getProject db projName = do
+		db' <- getDb db
+		let
+			foundProject = find ((== projName) . projectName) $ M.elems $ databaseProjects db'
+		projCabal <- canonicalizePath projName
+		return $ fromMaybe (error "Impossible happened") $ msum [foundProject, Just $ project projCabal]
 
-		ghcOpts = Option ['g'] ["ghcopt"] (ReqArg (opt "ghc") "ghc flags") "flags to pass to GHC"
+	getDb :: (MonadIO m) => Async Database -> m Database
+	getDb = liftIO . readAsync
 
-		getGhcOpts = askOpts "ghc"
+	startProcess :: Opts -> ((String -> IO ()) -> IO ()) -> IO CommandResult
+	startProcess as f
+		| hasOpt "wait" as = return $ ResultProcess (f . onMsg)
+		| otherwise = forkIO (f $ const $ return ()) >> return ok
+		where
+			onMsg showMsg = if hasOpt "status" as then showMsg else (const $ return ())
 
-		isParent :: FilePath -> FilePath -> Bool
-		isParent dir file = norm dir `isPrefixOf` norm file where
-			norm = splitDirectories . normalise
-
-		toPair :: Module -> Maybe (FilePath, Module)
-		toPair m = case moduleLocation m of
-			FileModule f _ -> Just (f, m)
-			_ -> Nothing
-
-		modCabal :: Module -> Maybe Cabal
-		modCabal m = case moduleLocation m of
-			CabalModule c _ _ -> Just c
-			_ -> Nothing
+	updateProcess :: Async Database -> Opts -> C.UpdateDB IO () -> IO CommandResult
+	updateProcess db as act = startProcess as $ \onStatus -> C.updateDB (C.Settings db onStatus (getGhcOpts as)) act
 
 printMainUsage :: IO ()
 printMainUsage = do
