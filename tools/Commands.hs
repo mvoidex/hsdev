@@ -16,7 +16,6 @@ module Commands (
 
 import Control.Arrow
 import Control.Exception (SomeException)
-import Control.DeepSeq
 import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
@@ -81,8 +80,9 @@ scanModules opts ms = do
 	projects <- mapM (liftErrors . S.scanProjectFile opts) ps
 	update db $ return $ mconcat $ map fromProject projects
 	ms' <- liftErrors $ S.changedModules dbval opts ms
-	scanned <- lift $ mapM (scanModule_ opts) ms'
-	update db $ return $ mconcat $ map fromModule scanned
+	lift $ forM_ ms' $ \m -> do
+		im <- scanModule_ opts m
+		update db $ return $ fromModule im
 	where
 		ps = mapMaybe toProj ms
 		toProj (FileModule _ p) = p

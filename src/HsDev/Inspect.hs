@@ -9,6 +9,7 @@ module HsDev.Inspect (
 
 import Control.Arrow
 import Control.Applicative
+import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
@@ -175,7 +176,6 @@ inspectFile opts file = do
 		noReturn :: E.SomeException -> IO [Doc.Interface]
 		noReturn _ = return []
 	proj <- liftIO $ locateProject file
-	source <- liftIO $ readFileUtf8 file
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	liftIO $ inspect (FileModule file (fmap projectCabal proj)) (fileInspection file) $ do
 		docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
@@ -183,7 +183,8 @@ inspectFile opts file = do
 			forM is $ \i -> do
 				mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 				return (mfile, i)
-		forced <- ErrorT $ E.catch (E.evaluate $ analyzeModule source) onError
+		forced <- ErrorT $ E.handle onError
+			(liftIO (readFileUtf8 file) >>= E.evaluate . force . analyzeModule)
 		return $ setLoc absFilename (fmap projectCabal proj) . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }
