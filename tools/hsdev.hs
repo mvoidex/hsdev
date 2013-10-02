@@ -134,7 +134,7 @@ mainCommands = [
 		outputStr "server shutdown",
 	cmd ["server", "stop"] [] "stop remote server" serverOpts $ \sopts _ -> do
 		pname <- getExecutablePath
-		r <- readProcess pname (["--json"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
+		r <- readProcess pname (maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
 		let
 			stopped = case decode (L.pack r) of
 				Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
@@ -169,7 +169,7 @@ instance Monoid ServerOpts where
 
 data ClientOpts = ClientOpts {
 	clientPort :: First Int,
-	clientJson :: Any,
+	clientPretty :: Any,
 	clientData :: Any }
 
 instance DefaultConfig ClientOpts where
@@ -178,14 +178,14 @@ instance DefaultConfig ClientOpts where
 clientOpts :: [OptDescr ClientOpts]
 clientOpts = [
 	Option [] ["port"] (ReqArg (\p -> mempty { clientPort = First (readMaybe p) }) "number") "connection port",
-	Option [] ["json"] (NoArg (mempty { clientJson = Any True })) "json output",
+	Option [] ["pretty"] (NoArg (mempty { clientPretty = Any True })) "pretty json output",
 	Option [] ["stdin"] (NoArg (mempty { clientData = Any True })) "pass data to stdin"]
 
 instance Monoid ClientOpts where
 	mempty = ClientOpts mempty mempty mempty
 	l `mappend` r = ClientOpts
 		(clientPort l `mappend` clientPort r)
-		(clientJson l `mappend` clientJson r)
+		(clientPretty l `mappend` clientPretty r)
 		(clientData l `mappend` clientData r)
 
 main :: IO ()
@@ -221,14 +221,14 @@ main = withSocketsDo $ do
 			addr' <- inet_addr "127.0.0.1"
 			connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
 			h <- socketToHandle s ReadWriteMode
-			hPutStrLn h $ L.unpack $ encode (setJson $ setData stdinData as')
+			hPutStrLn h $ L.unpack $ encode (setPretty $ setData stdinData as')
 			hGetContents h >>= putStrLn
 			where
 				(ps, as', _) = getOpt RequireOrder clientOpts as
 				p = mconcat ps `mappend` defaultConfig
 
-				setJson
-					| getAny (clientJson p) = ("--json" :)
+				setPretty
+					| getAny (clientPretty p) = ("--pretty" :)
 					| otherwise = id
 				setData :: Maybe ResultValue -> [String] -> [String]
 				setData Nothing = id
@@ -745,7 +745,7 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 printMainUsage :: IO ()
 printMainUsage = do
 	mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) mainCommands
-	putStrLn "\thsdev [--port=number] [--json] [--stdin] interactive command... -- send command to server, use flag stdin to pass data argument through stdin"
+	putStrLn "\thsdev [--port=number] [--pretty] [--stdin] interactive command... -- send command to server, use flag stdin to pass data argument through stdin"
 
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) commands
@@ -755,8 +755,8 @@ processCmd db tm cmdLine printResult = processCmdArgs db tm (split cmdLine) prin
 
 processCmdArgs :: Async Database -> Int -> [String] -> (String -> IO ()) -> IO Bool
 processCmdArgs db tm cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd . commandError) cmdArgs' tm db >>= processResult where
-	(isJsonArgs, cmdArgs', _) = getOpt RequireOrder [Option [] ["json"] (NoArg (Any True)) "json output"] cmdArgs
-	isJson = getAny $ mconcat isJsonArgs
+	(isPrettyArgs, cmdArgs', _) = getOpt RequireOrder [Option [] ["pretty"] (NoArg (Any True)) "pretty json output"] cmdArgs
+	isPretty = getAny $ mconcat isPrettyArgs
 	asCmd :: CommandResult -> (Int -> Async Database -> IO CommandResult)
 	asCmd r _ _ = return r
 
@@ -764,6 +764,11 @@ processCmdArgs db tm cmdArgs printResult = run commands (asCmd unknownCommand) (
 	unknownCommand = err "Unknown command"
 	commandError :: [String] -> CommandResult
 	commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString errs)]
+
+	encodeResult :: ToJSON a => a -> String
+	encodeResult
+		| isPretty = L.unpack . encodePretty
+		| otherwise = L.unpack . encode
 
 	processResult :: CommandResult -> IO Bool
 	processResult (ResultProcess act) = do
@@ -777,11 +782,11 @@ processCmdArgs db tm cmdArgs printResult = run commands (asCmd unknownCommand) (
 				processResult $ errArgs "process throws exception" [("exception", ResultString $ show e)]
 				return True
 
-			showStatus s
-				| isJson = L.unpack $ encode $ object ["status" .= s]
-				| otherwise = "status: " ++ s
+			showStatus s = encodeResult $ object ["status" .= s]
 
-	processResult ResultExit = printResult (if isJson then L.unpack (encode ResultExit) else "bye") >> return False
+	processResult ResultExit = do
+		printResult $ encodeResult ResultExit
+		return False
 	processResult v = do
-		printResult $ L.unpack $ (if isJson then encode else encodePretty) v
+		printResult $ encodeResult v
 		return True
