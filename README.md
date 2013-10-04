@@ -34,8 +34,48 @@ foldM_
 foldM
 foldM_
 foldMapDefault
-PS> hsdev symbol partitionEithers
-[{"module-id":{"name":"Data.Either","location":{"package":null,"name":"Data.Either","cabal":"\u003ccabal\u003e"}},"declaration":{"pos":null,"decl":{"what":"function","type":"[Either a b] -\u003e ([a], [b])"},"name":"partitionEithers","docs":"Partitions a list of Either into two lists\n All the Left elements are extracted, in order, to the first\n component of the output. Similarly the Right elements are extracted\n to the second component of the output."}}]
-PS> hsdev whois selectModules -f hsdev\src\HsDev\Commands.hs
-{"module-id":{"name":"HsDev.Database","location":{"project":"C:\\Users\\Alexandr\\Documents\\Projects\\hsdev\\hsdev.cabal","file":"C:\\Users\\Alexandr\\Documents\\Projects\\hsdev\\src\\HsDev\\Database.hs"}},"declaration":{"pos":{"line":121,"column":1},"decl":{"what":"function","type":"(Module -\u003e Bool) -\u003e Database -\u003e [Module]"},"name":"selectModules","docs":null}}
+PS> hsdev --pretty symbol partitionEithers
+[
+    {
+        "module-id": {
+            "name": "Data.Either",
+            "location": {
+                "package": null,
+                "name": "Data.Either",
+                "cabal": "\u003ccabal\u003e"
+            }
+        },
+        "declaration": {
+            "pos": null,
+            "decl": {
+                "what": "function",
+                "type": "[Either a b] -\u003e ([a], [b])"
+            },
+            "name": "partitionEithers",
+            "docs": "Partitions a list of Either into two lists\n All the Left elements are extracted, in order, to the first\n component of the output. Similarly the Right elements are extracted\n to the second component of the output."
+        }
+    }
+]
+PS> hsdev --pretty whois selectModules -f hsdev\src\HsDev\Commands.hs
+{
+    "module-id": {
+        "name": "HsDev.Database",
+        "location": {
+            "project": "E:\\users\\voidex\\Documents\\Projects\\hsdev\\hsdev.cabal",
+            "file": "E:\\users\\voidex\\Documents\\Projects\\hsdev\\src\\HsDev\\Database.hs"
+        }
+    },
+    "declaration": {
+        "pos": {
+            "line": 121,
+            "column": 1
+        },
+        "decl": {
+            "what": "function",
+            "type": "(Module -\u003e Bool) -\u003e Database -\u003e [Module]"
+        },
+        "name": "selectModules",
+        "docs": null
+    }
+}
 ```
