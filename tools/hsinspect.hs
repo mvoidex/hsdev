@@ -4,11 +4,10 @@ module Main (
 	main
 	) where
 
-import Control.Exception (handle, SomeException)
-import Control.Monad ((>=>))
-import Control.Monad.Error (ErrorT, runErrorT)
+import Control.Monad.Error (ErrorT, runErrorT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson
+import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as L (unpack)
 import System.Environment (getArgs)
 import System.IO
@@ -25,20 +24,38 @@ import HsDev.Symbols.JSON ()
 
 commands :: [Command (IO ())]
 commands = addHelp "hsinspect" id [
-	cmd ["module"] [] "inspect installed module" [
-		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
-			\ghc_opts as -> oneArg as toJSON (browse ghc_opts >=> loadDocs' ghc_opts),
-	cmd ["file"] [] "inspect file" [
-		Option ['g'] ["ghc"] (ReqArg return "opt") "option to pass to GHC"] $
-			\ghc_opts as -> oneArg as toJSON (inspectFile ghc_opts),
-	cmd_ ["cabal"] [] "inspect cabal" $ \as -> oneArg as toJSON readProject]
+	cmd ["module"] ["module name"] "inspect installed module" [ghcOpts, prettyOpt] inspectModule',
+	cmd ["file"] ["source file"] "inspect file" [ghcOpts, prettyOpt] inspectFile',
+	cmd ["cabal"] ["project file"] "inspect .cabal file" [prettyOpt] inspectCabal']
 	where
-		oneArg :: [String] -> (a -> Value) -> (String -> ErrorT String IO a) -> IO ()
-		oneArg [] _ _ = putJSON $ errorStr "Not enough arguments"
-		oneArg [s] toj onArg = do
-			r <- runErrorT $ onArg s
-			putJSON $ either errorStr toj r
-		oneArg _ _ _ = putJSON $ errorStr "Too much arguments"
+		ghcOpts = Option ['g'] ["ghc"] (ReqArg (opt "ghc") "ghc options") "options to pass to GHC"
+		prettyOpt = Option [] ["pretty"] (NoArg $ opt "pretty" "") "pretty JSON output"
+
+		isPretty = hasOpt "pretty"
+		ghcs = askOpts "ghc"
+
+		output :: ToJSON a => Opts -> ErrorT String IO a -> IO ()
+		output as act = do
+			r <- runErrorT act
+			putStrLn $ either (toStr . errorStr) toStr r
+			where
+				toStr :: ToJSON a => a -> String
+				toStr
+					| isPretty as = L.unpack . encodePretty
+					| otherwise = L.unpack . encode
+
+		err :: String -> ErrorT String IO ()
+		err = throwError
+
+		inspectModule' as [mname] = output as $
+			browse (ghcs as) mname >>= loadDocs' (ghcs as)
+		inspectModule' as _ = output as $ err "Specify module name"
+
+		inspectFile' as [fname] = output as $ inspectFile (ghcs as) fname
+		inspectFile' as _ = output as $ err "Specify source file name"
+
+		inspectCabal' as [fcabal] = output as $ readProject fcabal
+		inspectCabal' as _ = output as $ err "Specify project .cabal file"
 
 		loadDocs' opts m = case inspectionResult m of
 			Left _ -> return m
@@ -48,7 +65,7 @@ commands = addHelp "hsinspect" id [
 					inspectionResult = Right m'' }
 
 main :: IO ()
-main = handle handleError $ do
+main = do
 	hSetBuffering stdout LineBuffering
 	hSetEncoding stdout utf8
 	as <- getArgs
@@ -63,12 +80,6 @@ main = handle handleError $ do
 		onUnknown = do
 			putStrLn "Unknown command"
 			printUsage
-
-		handleError :: SomeException -> IO ()
-		handleError = putJSON . errorStr . show
-
-putJSON :: Value -> IO ()
-putJSON = putStrLn . L.unpack . encode
 
 errorStr :: String -> Value
 errorStr s = object ["error" .= s]

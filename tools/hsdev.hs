@@ -55,6 +55,52 @@ import HsDev.Inspect
 
 import qualified Commands as C
 
+main :: IO ()
+main = withSocketsDo $ do
+	hSetBuffering stdout LineBuffering
+	hSetEncoding stdout utf8
+	as <- getArgs
+	when (null as) $ do
+		printMainUsage
+		exitSuccess
+	let
+		asr = if last as == "-?" then "help" : init as else as 
+	run mainCommands (onDef asr) onError asr
+	where
+		onError :: [String] -> IO ()
+		onError errs = do
+			mapM_ putStrLn errs
+			exitFailure
+
+		onDef :: [String] -> IO ()
+		onDef as = do
+			stdinData <- if getAny (clientData p)
+				then do
+					cdata <- liftM (eitherDecode . L.pack) getContents
+					case cdata of
+						Left cdataErr -> do
+							putStrLn $ "Invalid data: " ++ cdataErr
+							exitFailure
+						Right dataValue -> return $ Just dataValue
+				else return Nothing
+
+			s <- socket AF_INET Stream defaultProtocol
+			addr' <- inet_addr "127.0.0.1"
+			connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
+			h <- socketToHandle s ReadWriteMode
+			hPutStrLn h $ L.unpack $ encode (setPretty $ setData stdinData as')
+			hGetContents h >>= putStrLn
+			where
+				(ps, as', _) = getOpt RequireOrder clientOpts as
+				p = mconcat ps `mappend` defaultConfig
+
+				setPretty
+					| getAny (clientPretty p) = ("--pretty" :)
+					| otherwise = id
+				setData :: Maybe ResultValue -> [String] -> [String]
+				setData Nothing = id
+				setData (Just d) = (++ ["--data", L.unpack $ encode d])
+
 mainCommands :: [Command (IO ())]
 mainCommands = [
 	cmd_ ["help"] ["command"] "help" $ \as -> case as of
@@ -187,52 +233,6 @@ instance Monoid ClientOpts where
 		(clientPort l `mappend` clientPort r)
 		(clientPretty l `mappend` clientPretty r)
 		(clientData l `mappend` clientData r)
-
-main :: IO ()
-main = withSocketsDo $ do
-	hSetBuffering stdout LineBuffering
-	hSetEncoding stdout utf8
-	as <- getArgs
-	when (null as) $ do
-		printMainUsage
-		exitSuccess
-	let
-		asr = if last as == "-?" then "help" : init as else as 
-	run mainCommands (onDef asr) onError asr
-	where
-		onError :: [String] -> IO ()
-		onError errs = do
-			mapM_ putStrLn errs
-			exitFailure
-
-		onDef :: [String] -> IO ()
-		onDef as = do
-			stdinData <- if getAny (clientData p)
-				then do
-					cdata <- liftM (eitherDecode . L.pack) getContents
-					case cdata of
-						Left cdataErr -> do
-							putStrLn $ "Invalid data: " ++ cdataErr
-							exitFailure
-						Right dataValue -> return $ Just dataValue
-				else return Nothing
-
-			s <- socket AF_INET Stream defaultProtocol
-			addr' <- inet_addr "127.0.0.1"
-			connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
-			h <- socketToHandle s ReadWriteMode
-			hPutStrLn h $ L.unpack $ encode (setPretty $ setData stdinData as')
-			hGetContents h >>= putStrLn
-			where
-				(ps, as', _) = getOpt RequireOrder clientOpts as
-				p = mconcat ps `mappend` defaultConfig
-
-				setPretty
-					| getAny (clientPretty p) = ("--pretty" :)
-					| otherwise = id
-				setData :: Maybe ResultValue -> [String] -> [String]
-				setData Nothing = id
-				setData (Just d) = (++ ["--data", L.unpack $ encode d])
 
 data ResultValue =
 	ResultDatabase Database |
@@ -369,7 +369,7 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		sandbox]
 	dataArg = Option [] ["data"] (ReqArg (opt "data") "contents") "data to pass to command"
 	fileArg = Option ['f'] ["file"] (ReqArg (opt "file") "file")
-	ghcOpts = Option ['g'] ["ghcopt"] (ReqArg (opt "ghc") "ghc options") "options to pass to GHC"
+	ghcOpts = Option ['g'] ["ghc"] (ReqArg (opt "ghc") "ghc options") "options to pass to GHC"
 	moduleArg = Option ['m'] ["module"] (ReqArg (opt "module") "module name")
 	pathArg = Option ['p'] ["path"] (ReqArg (opt "path") "path")
 	projectArg = Option [] ["project", "proj"] (ReqArg (opt "project") "project")
