@@ -65,135 +65,133 @@ main = withSocketsDo $ do
 		exitSuccess
 	let
 		asr = if last as == "-?" then "help" : init as else as 
-	run mainCommands (onDef asr) onError asr
+	run mainCommands onDef onError asr
 	where
 		onError :: [String] -> IO ()
 		onError errs = do
 			mapM_ putStrLn errs
 			exitFailure
 
-		onDef :: [String] -> IO ()
-		onDef as = do
-			stdinData <- if getAny (clientData p)
-				then do
-					cdata <- liftM (eitherDecode . L.pack) getContents
-					case cdata of
-						Left cdataErr -> do
-							putStrLn $ "Invalid data: " ++ cdataErr
-							exitFailure
-						Right dataValue -> return $ Just dataValue
-				else return Nothing
-
-			s <- socket AF_INET Stream defaultProtocol
-			addr' <- inet_addr "127.0.0.1"
-			connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
-			h <- socketToHandle s ReadWriteMode
-			hPutStrLn h $ L.unpack $ encode (setPretty $ setData stdinData as')
-			hGetContents h >>= putStrLn
-			where
-				(ps, as', _) = getOpt RequireOrder clientOpts as
-				p = mconcat ps `mappend` defaultConfig
-
-				setPretty
-					| getAny (clientPretty p) = ("--pretty" :)
-					| otherwise = id
-				setData :: Maybe ResultValue -> [String] -> [String]
-				setData Nothing = id
-				setData (Just d) = (++ ["--data", L.unpack $ encode d])
+		onDef :: IO ()
+		onDef = do
+			putStrLn "Unknown command"
+			exitFailure
 
 mainCommands :: [Command (IO ())]
-mainCommands = [
-	cmd_ ["help"] ["command"] "help" $ \as -> case as of
-		[] -> do
-			printMainUsage
-			putStrLn ""
-			putStrLn "Interactive commands:"
-			putStrLn ""
-			printUsage
-		cmdname -> do
-			let
-				addHeader [] = []
-				addHeader (h:hs) = map ('\t':) $ ("hsdev " ++ h) : map ('\t':) hs
-			case filter ((cmdname `isPrefixOf`) . commandName) commands of
-				[] -> putStrLn $ "Unknown command: " ++ unwords cmdname
-				helpCmds -> mapM_ (putStrLn . unlines . addHeader . help) helpCmds,
-	cmd_ ["run"] [] "run interactive" $ \_ -> do
+mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts . fmap withOptsArgs) commands where
+	srvCmds = [
+		cmd_ ["run"] [] "run interactive" $ \_ -> do
 			db <- newAsync
 			forever $ do
 				s <- getLine
 				r <- processCmd db 10000 s putStrLn
 				unless r exitSuccess,
-	cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
-		let
-			args = ["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts)
-		void $ runInteractiveProcess "powershell" ["-Command", "& {start-process hsdev " ++ intercalate ", " args ++ " -WindowStyle Hidden}"] Nothing Nothing
-		printOk sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts),
-	cmd ["server", "run"] [] "start server" serverOpts $ \sopts _ -> do
-		msgs <- newChan
-		forkIO $ getChanContents msgs >>= mapM_ (printOk sopts)
-		let
-			outputStr = writeChan msgs
+		cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
+			let
+				args = ["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts)
+			void $ runInteractiveProcess "powershell" ["-Command", "& {start-process hsdev " ++ intercalate ", " args ++ " -WindowStyle Hidden}"] Nothing Nothing
+			printOk sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts),
+		cmd ["server", "run"] [] "start server" serverOpts $ \sopts _ -> do
+			msgs <- newChan
+			forkIO $ getChanContents msgs >>= mapM_ (printOk sopts)
+			let
+				outputStr = writeChan msgs
 
-		db <- newAsync
+			db <- newAsync
 
-		waitListen <- newEmptyMVar
-		clientChan <- newChan
+			waitListen <- newEmptyMVar
+			clientChan <- newChan
 
-		forkIO $ do
-			accepter <- myThreadId
-			s <- socket AF_INET Stream defaultProtocol
-			bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
-			listen s maxListenQueue
-			forever $ handle (ignoreIO outputStr) $ do
-				s' <- fmap fst $ accept s
-				outputStr $ show s' ++ " connected"
-				void $ forkIO $ bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-					me <- myThreadId
-					done <- newEmptyMVar
-					let
-						timeoutWait = do
-							notDone <- isEmptyMVar done
-							when notDone $ do
-								void $ forkIO $ do
-									threadDelay 1000000
-									tryPutMVar done ()
-									killThread me
-								void $ takeMVar done
-					writeChan clientChan (Just timeoutWait)
-					req <- hGetLine h
-					outputStr $ show s' ++ ": " ++ req
-					r <- case eitherDecode (L.pack req) of
-						Left reqErr -> do
-							hPutStrLn h $ L.unpack $ encode $ errArgs "Invalid request" [("request", ResultString req), ("error", ResultString reqErr)]
-							return False
-						Right reqArgs -> processCmdArgs db (fromJust $ getFirst $ serverTimeout sopts) reqArgs (hPutStrLn h)
-					unless r $ do
-						void $ tryPutMVar waitListen ()
-						killThread accepter
-					putMVar done ()
+			forkIO $ do
+				accepter <- myThreadId
+				s <- socket AF_INET Stream defaultProtocol
+				bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
+				listen s maxListenQueue
+				forever $ handle (ignoreIO outputStr) $ do
+					s' <- fmap fst $ accept s
+					outputStr $ show s' ++ " connected"
+					void $ forkIO $ bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
+						me <- myThreadId
+						done <- newEmptyMVar
+						let
+							timeoutWait = do
+								notDone <- isEmptyMVar done
+								when notDone $ do
+									void $ forkIO $ do
+										threadDelay 1000000
+										tryPutMVar done ()
+										killThread me
+									void $ takeMVar done
+						writeChan clientChan (Just timeoutWait)
+						req <- hGetLine h
+						outputStr $ show s' ++ ": " ++ req
+						r <- case eitherDecode (L.pack req) of
+							Left reqErr -> do
+								hPutStrLn h $ L.unpack $ encode $ errArgs "Invalid request" [("request", ResultString req), ("error", ResultString reqErr)]
+								return False
+							Right reqArgs -> processCmdArgs db (fromJust $ getFirst $ serverTimeout sopts) reqArgs (hPutStrLn h)
+						unless r $ do
+							void $ tryPutMVar waitListen ()
+							killThread accepter
+						putMVar done ()
 
 
-		takeMVar waitListen
-		outputStr "waiting for clients"
-		writeChan clientChan Nothing
-		getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
-		outputStr "server shutdown",
-	cmd ["server", "stop"] [] "stop remote server" serverOpts $ \sopts _ -> do
-		pname <- getExecutablePath
-		r <- readProcess pname (maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
-		let
-			stopped = case decode (L.pack r) of
-				Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
-					res <- obj .: "result"
-					return (res == ("exit" :: String))
-				_ -> False
-		printOk sopts $ if stopped then "Server stopped" else "Server returned: " ++ r]
-	where
-		ignoreIO :: (String -> IO ()) -> IOException -> IO ()
-		ignoreIO out = out . show
+			takeMVar waitListen
+			outputStr "waiting for clients"
+			writeChan clientChan Nothing
+			getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
+			outputStr "server shutdown",
+		cmd ["server", "stop"] [] "stop remote server" serverOpts $ \sopts _ -> do
+			pname <- getExecutablePath
+			r <- readProcess pname (maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
+			let
+				stopped = case decode (L.pack r) of
+					Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
+						res <- obj .: "result"
+						return (res == ("exit" :: String))
+					_ -> False
+			printOk sopts $ if stopped then "Server stopped" else "Server returned: " ++ r]
+		where
+			ignoreIO :: (String -> IO ()) -> IOException -> IO ()
+			ignoreIO out = out . show
 
-		printOk :: ServerOpts -> String -> IO ()
-		printOk _ = putStrLn
+			printOk :: ServerOpts -> String -> IO ()
+			printOk _ = putStrLn
+
+	-- Send command to server
+	sendCmd :: IO (ClientOpts, [String]) -> IO ()
+	sendCmd get' = do
+		(p, as) <- get'
+		stdinData <- if getAny (clientData p)
+			then do
+				cdata <- liftM (eitherDecode . L.pack) getContents
+				case cdata of
+					Left cdataErr -> do
+						putStrLn $ "Invalid data: " ++ cdataErr
+						exitFailure
+					Right dataValue -> return $ Just dataValue
+			else return Nothing
+
+		s <- socket AF_INET Stream defaultProtocol
+		addr' <- inet_addr "127.0.0.1"
+		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
+		h <- socketToHandle s ReadWriteMode
+		hPutStrLn h $ L.unpack $ encode (setPretty (getAny $ clientPretty p) $ setData stdinData as)
+		hGetContents h >>= putStrLn
+		where
+			setPretty True = ("--pretty" :)
+			setPretty False = id
+
+			setData :: Maybe ResultValue -> [String] -> [String]
+			setData Nothing = id
+			setData (Just d) = (++ ["--data", L.unpack $ encode d])
+
+	-- Add parsing 'ClieptOpts'
+	addClientOpts :: Command (IO [String]) -> Command (IO (ClientOpts, [String]))
+	addClientOpts c = c { commandRun = run' } where
+		run' args = fmap (fmap (fmap $ (,) p)) $ commandRun c args' where
+			(ps, args', _) = getOpt RequireOrder clientOpts args
+			p = mconcat ps `mappend` defaultConfig
 
 data ServerOpts = ServerOpts {
 	serverPort :: First Int,
@@ -305,79 +303,86 @@ err s = ResultError s M.empty
 errArgs :: String -> [(String, ResultValue)] -> CommandResult
 errArgs s as = ResultError s (M.fromList as)
 
-commands :: [Command (Int -> Async Database -> IO CommandResult)]
-commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
+data WithOpts a = WithOpts {
+	withOptsAct :: a,
+	withOptsArgs :: IO [String] }
+
+instance Functor WithOpts where
+	fmap f (WithOpts x as) = WithOpts (f x) as
+
+type CommandAction = WithOpts (Int -> Async Database -> IO CommandResult)
+
+commands :: [Command CommandAction]
+commands = map (fmap (fmap timeout')) cmds where
 	timeout' :: (Async Database -> IO CommandResult) -> (Int -> Async Database -> IO CommandResult)
 	timeout' f tm db = fmap (fromMaybe $ err "timeout") $ timeout (tm * 1000) $ f db
 
 	cmds = [
 		-- Database commands
-		cmd ["add"] [] "add info to database" [dataArg] add',
-		cmd ["scan", "cabal"] [] "scan modules installed in cabal" [
+		cmd' ["add"] [] "add info to database" [dataArg] add',
+		cmd' ["scan", "cabal"] [] "scan modules installed in cabal" [
 			sandbox, ghcOpts, wait, status] scanCabal',
-		cmd ["scan", "module"] ["module name"] "scan module in cabal" [sandbox, ghcOpts] scanModule',
-		cmd ["scan"] [] "scan sources" [
+		cmd' ["scan", "module"] ["module name"] "scan module in cabal" [sandbox, ghcOpts] scanModule',
+		cmd' ["scan"] [] "scan sources" [
 			projectArg "project path or .cabal",
 			fileArg "source file",
 			pathArg "directory to scan for files and projects",
 			ghcOpts, wait, status] scan',
-		cmd ["rescan"] [] "rescan sources" [
+		cmd' ["rescan"] [] "rescan sources" [
 			projectArg "project path, .cabal or name to rescan",
 			fileArg "source file",
 			pathArg "path to rescan",
 			ghcOpts, wait, status] rescan',
-		cmd ["remove"] [] "remove modules info" [
+		cmd' ["remove"] [] "remove modules info" [
 			sandbox,
 			projectArg "module project",
 			fileArg "module source file",
 			moduleArg "module name",
 			allFlag] remove',
 		-- | Context free commands
-		cmd ["list", "modules"] [] "list modules" [
+		cmd' ["list", "modules"] [] "list modules" [
 			projectArg "project to list modules from",
 			sandbox, sourced, standaloned] listModules',
-		cmd_ ["list", "projects"] [] "list projects" listProjects',
-		cmd ["symbol"] ["name"] "get symbol info" [
+		cmd_' ["list", "projects"] [] "list projects" listProjects',
+		cmd' ["symbol"] ["name"] "get symbol info" [
 			projectArg "related project",
 			fileArg "source file",
 			moduleArg "module name",
 			sandbox, sourced, standaloned] symbol',
-		cmd ["module"] [] "get module info" [
+		cmd' ["module"] [] "get module info" [
 			moduleArg "module name",
 			projectArg "module project",
 			fileArg "module source file",
 			sandbox] modul',
-		cmd_ ["project"] ["project name"] "show project info" project',
+		cmd_' ["project"] ["project name"] "show project info" project',
 		-- Context commands
-		cmd ["whois"] ["symbol"] "get info for symbol" ctx whois',
-		cmd ["complete"] ["input"] "show completions for input" ctx complete',
+		cmd' ["whois"] ["symbol"] "get info for symbol" ctx whois',
+		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
 		-- Dump/load commands
-		cmd ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
-		cmd ["dump", "project"] ["projects..."] "dump projects" [cacheDir, cacheFile] dumpProjects',
-		cmd ["dump", "standalone"] ["files..."] "dump standalone file module" [cacheDir, cacheFile] dumpFiles',
-		cmd ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
-		cmd ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
+		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
+		cmd' ["dump", "project"] ["projects..."] "dump projects" [cacheDir, cacheFile] dumpProjects',
+		cmd' ["dump", "standalone"] ["files..."] "dump standalone file module" [cacheDir, cacheFile] dumpFiles',
+		cmd' ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
+		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
 		-- Exit
-		cmd_ ["exit"] [] "exit" $ \_ _ -> return ResultExit]
+		cmd_' ["exit"] [] "exit" $ \_ _ -> return ResultExit]
 
 	-- Command arguments and flags
-	allFlag = Option ['a'] ["all"] (NoArg $ opt "all" "") "remove all"
+	allFlag = option_ ['a'] "all" flag "remove all"
 	cacheDir = pathArg "cache path"
 	cacheFile = fileArg "cache file"
-	ctx = [
-		fileArg "source file",
-		sandbox]
-	dataArg = Option [] ["data"] (ReqArg (opt "data") "contents") "data to pass to command"
-	fileArg = Option ['f'] ["file"] (ReqArg (opt "file") "file")
-	ghcOpts = Option ['g'] ["ghc"] (ReqArg (opt "ghc") "ghc options") "options to pass to GHC"
-	moduleArg = Option ['m'] ["module"] (ReqArg (opt "module") "module name")
-	pathArg = Option ['p'] ["path"] (ReqArg (opt "path") "path")
-	projectArg = Option [] ["project", "proj"] (ReqArg (opt "project") "project")
-	sandbox = Option [] ["sandbox"] (OptArg (opt "sandbox" . fromMaybe "") "path") "path to cabal sandbox"
-	sourced = Option [] ["src"] (NoArg $ opt "source" "") "source files"
-	standaloned = Option [] ["stand"] (NoArg $ opt "standalone" "") "standalone files"
-	status = Option ['s'] ["status"] (NoArg $ opt "status" "") "show status of operation, works only with --wait"
-	wait = Option ['w'] ["wait"] (NoArg $ opt "wait" "") "wait for operation to complete"
+	ctx = [fileArg "source file", sandbox]
+	dataArg = option_ [] "data" (req "contents") "data to pass to command"
+	fileArg = option_ ['f'] "file" (req "file")
+	ghcOpts = option_ ['f'] "ghc" (req "ghc options") "options to pass to GHC"
+	moduleArg = option_ ['m'] "module" (req "module name")
+	pathArg = option_ ['p'] "path" (req "path")
+	projectArg = option [] "project" ["proj"] (req "project")
+	sandbox = option_ [] "sandbox" (noreq "path") "path to cabal sandbox"
+	sourced = option_ [] "src" flag "source files"
+	standaloned = option_ [] "stand" flag "standalone files"
+	status = option_ ['s'] "status" flag "show status of operation, works only with --wait"
+	wait = option_ ['w'] "wait" flag "wait for operation to complete"
 
 	-- add data
 	add' as _ db = do
@@ -466,7 +471,7 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 	-- remove
 	remove' as _ db = do
 		dbval <- getDb db
-		cabal <- traverse asCabal $ askOpt "sandbox" as
+		cabal <- traverse asCabal $ askOptDef "sandbox" "." as
 		proj <- traverse (getProject db) $ askOpt "project" as
 		file <- traverse canonicalizePath $ askOpt "file" as
 		let
@@ -491,13 +496,13 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 	listModules' as _ db = do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
-		cabal <- traverse asCabal $ askOpt "sandbox" as
+		cabal <- traverse asCabal $ askOptDef "sandbox" "." as
 		let
 			filters = allOf $ catMaybes [
 				fmap inProject proj,
 				fmap inCabal cabal,
-				if hasOpt "source" as then Just byFile else Nothing,
-				if hasOpt "standalone" as then Just standalone else Nothing]
+				if hasOpt "src" as then Just byFile else Nothing,
+				if hasOpt "stand" as then Just standalone else Nothing]
 		return $ ResultOk $ ResultList $ map (ResultModuleId . moduleId) $ selectModules (filters . moduleId) dbval
 	-- list projects
 	listProjects' _ db = do
@@ -508,14 +513,14 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
 		file <- traverse canonicalizePath $ askOpt "file" as
-		cabal <- traverse asCabal $ askOpt "sandbox" as
+		cabal <- traverse asCabal $ askOptDef "sandbox" "." as
 		let
 			filters = checkModule $ allOf $ catMaybes [
 				fmap inProject proj,
 				fmap inFile file,
 				fmap inModule (askOpt "module" as),
-				if hasOpt "source" as then Just byFile else Nothing,
-				if hasOpt "standalone" as then Just standalone else Nothing]
+				if hasOpt "src" as then Just byFile else Nothing,
+				if hasOpt "stand" as then Just standalone else Nothing]
 			result = return . either
 				(\e -> err ("Can't find symbol: " ++ e))
 				(ResultOk . ResultList . map ResultModuleDeclaration . filter filters)
@@ -527,7 +532,7 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 	modul' as _ db = do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
-		cabal <- traverse asCabal $ askOpt "sandbox" as
+		cabal <- traverse asCabal $ askOptDef "sandbox" "." as
 		file' <- traverse canonicalizePath $ askOpt "file" as
 		let
 			filters = allOf $ catMaybes [
@@ -557,7 +562,7 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 	whois' as [nm] db = errorT $ do
 		dbval <- liftIO $ getDb db
 		srcFile <- maybe (throwError $ "No file specified") (liftIO . canonicalizePath) $ askOpt "file" as
-		cabal <- liftIO $ getCabal (askOpt "sandbox" as)
+		cabal <- liftIO $ getCabal (askOptDef "sandbox" "." as)
 		liftM ResultModuleDeclaration $ whois dbval srcFile nm
 	whois' as _ db = return $ err "Invalid arguments"
 	-- completion
@@ -566,13 +571,13 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		dbval <- getDb db
 		srcFile <- maybe (throwError $ "No file specified") (liftIO . canonicalizePath) $ askOpt "file" as
 		mthis <- fileModule dbval srcFile
-		cabal <- liftIO $ getCabal (askOpt "sandbox" as)
+		cabal <- liftIO $ getCabal (askOptDef "sandbox" "." as)
 		liftM (ResultList . map ResultModuleDeclaration) $ completions dbval mthis input
 	complete' as _ db = return $ err "Invalid arguments"
 	-- dump cabal modules
 	dumpCabal' as _ db = do
 		dbval <- getDb db
-		cabal <- getCabal $ askOpt "sandbox" as
+		cabal <- getCabal $ askOptDef "sandbox" "." as
 		let
 			dat = cabalDB cabal dbval
 		liftM (fromMaybe (ResultOk $ ResultDatabase dat)) $ runMaybeT $ msum [
@@ -669,6 +674,23 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 		return res
 
 	-- Helper functions
+	cmd' :: [String] -> [String] -> String -> [OptDescr Opts] -> (Opts -> [String] -> a) -> Command (WithOpts a)
+	cmd' name posArgs descr as act = cmd name posArgs descr as act' where
+		act' os args = WithOpts (act os args) $ do
+			os' <- traverseOpts unwrap os
+			return $ name ++ args ++ optsToArgs os'
+
+	cmd_' :: [String] -> [String] -> String -> ([String] -> a) -> Command (WithOpts a)
+	cmd_' name posArgs descr act = cmd_ name posArgs descr act' where
+		act' args = WithOpts (act args) $ do
+			os' <- traverseOpts unwrap defaultConfig
+			return $ name ++ args ++ optsToArgs os'
+
+	unwrap :: String -> String -> IO String
+	unwrap k
+		| k `elem` ["file", "path", "project", "sandbox", "src"] = canonicalizePath
+		| otherwise = return
+
 	getGhcOpts = askOpts "ghc"
 
 	isParent :: FilePath -> FilePath -> Bool
@@ -684,9 +706,6 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 	modCabal m = case moduleLocation m of
 		CabalModule c _ _ -> Just c
 		_ -> Nothing
-
-	liftHelp :: IO () -> Async Database -> IO CommandResult
-	liftHelp f _ = f >> return ok
 
 	getDirectoryContents' :: FilePath -> IO [FilePath]
 	getDirectoryContents' p = do
@@ -716,7 +735,7 @@ commands = map (fmap timeout') $ addHelp "hsdev" liftHelp cmds where
 	asCabal p = fmap Sandbox $ canonicalizePath p
 
 	askCabal :: Opts -> IO Cabal
-	askCabal = maybe (return Cabal) asCabal . askOpt "sandbox"
+	askCabal = maybe (return Cabal) asCabal . askOptDef "sandbox" "."
 
 	getProject :: Async Database -> String -> IO Project
 	getProject db projName = do
@@ -754,7 +773,7 @@ processCmd :: Async Database -> Int -> String -> (String -> IO ()) -> IO Bool
 processCmd db tm cmdLine printResult = processCmdArgs db tm (split cmdLine) printResult
 
 processCmdArgs :: Async Database -> Int -> [String] -> (String -> IO ()) -> IO Bool
-processCmdArgs db tm cmdArgs printResult = run commands (asCmd unknownCommand) (asCmd . commandError) cmdArgs' tm db >>= processResult where
+processCmdArgs db tm cmdArgs printResult = run (map (fmap withOptsAct) commands) (asCmd unknownCommand) (asCmd . commandError) cmdArgs' tm db >>= processResult where
 	(isPrettyArgs, cmdArgs', _) = getOpt RequireOrder [Option [] ["pretty"] (NoArg (Any True)) "pretty json output"] cmdArgs
 	isPretty = getAny $ mconcat isPrettyArgs
 	asCmd :: CommandResult -> (Int -> Async Database -> IO CommandResult)

@@ -9,18 +9,23 @@ module System.Command (
 	brief, help,
 	run,
 	Opts(..),
-	opt, hasOpt, askOpt, askOpts,
+	mapOpts, traverseOpts,
+	option, option_, req, noreq, flag,
+	opt, optMaybe, hasOpt, askOpt, askOptDef, askOpts,
+	optsToArgs,
 	split, unsplit
 	) where
 
 import Control.Arrow
+import Control.Applicative
 import Data.Char
 import Data.List (stripPrefix, unfoldr, isPrefixOf)
-import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, mapMaybe, listToMaybe, maybeToList)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Monoid
 import Data.Function (fix)
+import Data.Traversable (traverse)
 import System.Console.GetOpt
 
 -- | Command
@@ -123,8 +128,39 @@ instance Monoid Opts where
 
 instance DefaultConfig Opts
 
+-- | Map 'Opts'
+mapOpts :: (String -> String) -> Opts -> Opts
+mapOpts f = Opts . M.mapKeys f . getOpts
+
+-- | Traverse 'Opts'
+traverseOpts :: Applicative f => (String -> String -> f String) -> Opts -> f Opts
+traverseOpts f = fmap Opts . M.traverseWithKey (traverse . f) . getOpts
+
+option :: [Char] -> String -> [String] -> (String -> ArgDescr Opts) -> String -> OptDescr Opts
+option fs name names onOption d = Option fs (name:names) (onOption name) d
+
+option_ :: [Char] -> String -> (String -> ArgDescr Opts) -> String -> OptDescr Opts
+option_ fs name = option fs name []
+
+-- | Required option
+req :: String -> String -> ArgDescr Opts
+req nm n = ReqArg (opt n) nm
+
+-- | Optional option
+noreq :: String -> String -> ArgDescr Opts
+noreq nm n = OptArg (optMaybe n) nm
+
+-- | Flag option
+flag :: String -> ArgDescr Opts
+flag n = NoArg flag' where
+	flag' :: Opts
+	flag' = Opts $ M.singleton n []
+
 opt :: String -> String -> Opts
 opt n v = Opts $ M.singleton n [v]
+
+optMaybe :: String -> Maybe String -> Opts
+optMaybe n = Opts . M.singleton n . maybeToList
 
 hasOpt :: String -> Opts -> Bool
 hasOpt n = M.member n . getOpts
@@ -132,8 +168,20 @@ hasOpt n = M.member n . getOpts
 askOpt :: String -> Opts -> Maybe String
 askOpt n = listToMaybe . askOpts n
 
+askOptDef :: String -> String -> Opts -> Maybe String
+askOptDef n def o
+	| hasOpt n o = (listToMaybe $ askOpts n o) <|> Just def
+	| otherwise = Nothing
+
 askOpts :: String -> Opts -> [String]
 askOpts n = fromMaybe [] . M.lookup n . getOpts
+
+-- | Print 'Opts' as args
+optsToArgs :: Opts -> [String]
+optsToArgs = concatMap optToArgs . M.toList . getOpts where
+	optToArgs :: (String, [String]) -> [String]
+	optToArgs (n, []) = ["--" ++ n]
+	optToArgs (n, vs) = concat [["--" ++ n, v] | v <- vs]
 
 -- | Split string to words
 split :: String -> [String]
