@@ -21,6 +21,7 @@ import Data.Either (partitionEithers)
 import Data.Maybe
 import Data.Monoid
 import Data.List
+import qualified Data.Text as T (unpack)
 import Data.Traversable (traverse)
 import qualified Data.Traversable as T (forM)
 import Data.Map (Map)
@@ -38,6 +39,7 @@ import System.FilePath
 import System.IO
 import System.Process
 import System.Timeout
+import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import Text.Read (readMaybe)
 
 import HsDev.Cache
@@ -177,7 +179,11 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
 		h <- socketToHandle s ReadWriteMode
 		hPutStrLn h $ L.unpack $ encode (setPretty (getAny $ clientPretty p) $ setData stdinData as)
-		hGetContents h >>= putStrLn
+		res <- hGetContents h
+		case decode (L.pack res) >>= parseMaybe (withObject "map view of file" (.: "file")) of
+			Nothing -> putStrLn res
+			Just f -> void $ runErrorT $
+				readMapFile (T.unpack f) >>= liftIO . putStrLn
 		where
 			setPretty True = ("--pretty" :)
 			setPretty False = id
@@ -278,6 +284,7 @@ data CommandResult =
 	ResultOk ResultValue |
 	ResultError String (Map String ResultValue) |
 	ResultProcess ((String -> IO ()) -> IO ()) |
+	ResultMapFile String |
 	ResultExit
 
 instance ToJSON CommandResult where
@@ -287,6 +294,8 @@ instance ToJSON CommandResult where
 		"details" .= as]
 	toJSON (ResultProcess _) = object [
 		"status" .= ("process" :: String)]
+	toJSON (ResultMapFile nm) = object [
+		"file" .= nm]
 	toJSON ResultExit = object [
 		"status" .= ("exit" :: String)]
 
@@ -807,5 +816,14 @@ processCmdArgs db tm cmdArgs printResult = run (map (fmap withOptsAct) commands)
 		printResult $ encodeResult ResultExit
 		return False
 	processResult v = do
-		printResult $ encodeResult v
+		sync <- newEmptyMVar
+		forkIO $ void $ runErrorT $ flip catchError
+			(\e -> do
+				liftIO . printResult . encodeResult . err $ e
+				liftIO $ putMVar sync ())
+			(withMapFile "hsdev" (encodeResult v) $ do
+				printResult $ encodeResult $ ResultMapFile "hsdev"
+				putMVar sync ()
+				threadDelay 1000000)
+		takeMVar sync
 		return True
