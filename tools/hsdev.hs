@@ -178,19 +178,32 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 		addr' <- inet_addr "127.0.0.1"
 		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
 		h <- socketToHandle s ReadWriteMode
-		hPutStrLn h $ L.unpack $ encode (setPretty (getAny $ clientPretty p) $ setData stdinData as)
-		res <- hGetContents h
-		case decode (L.pack res) >>= parseMaybe (withObject "map view of file" (.: "file")) of
-			Nothing -> putStrLn res
-			Just f -> void $ runErrorT $
-				readMapFile (T.unpack f) >>= liftIO . putStrLn
+		hPutStrLn h $ L.unpack $ encode $ setData stdinData as
+		responses <- liftM lines $ hGetContents h
+		values <- mapM parseResponse responses
+		mapM_ (putStrLn . encodeValue (getAny $ clientPretty p)) values
 		where
-			setPretty True = ("--pretty" :)
-			setPretty False = id
-
 			setData :: Maybe ResultValue -> [String] -> [String]
 			setData Nothing = id
 			setData (Just d) = (++ ["--data", L.unpack $ encode d])
+
+			parseResponse r = fmap (either err' id) $ runErrorT $ do
+				v <- errT (eitherDecode (L.pack r)) `orFail`
+					(\e -> "Can't decode response " ++ r ++ " due to: " ++ e)
+				case parseMaybe (withObject "map view of file" (.: "file")) v of
+					Nothing -> return v
+					Just viewFile -> do
+						str <- readMapFile viewFile `orFail`
+							(\e -> "Can't read map view of file " ++ viewFile ++ " due to: " ++ e)
+						errT (eitherDecode (L.pack str)) `orFail`
+							(\e -> "Can't decode map view of file contents " ++ str ++ " due to: " ++ e)
+				where
+					errT act = ErrorT $ return act
+					orFail act msg = act `catchError` (throwError . msg)
+					err' msg = object ["error" .= msg]
+
+			encodeValue True = L.unpack . encodePretty
+			encodeValue False = L.unpack . encode
 
 	-- Add parsing 'ClieptOpts'
 	addClientOpts :: Command (IO [String]) -> Command (IO (ClientOpts, [String]))
