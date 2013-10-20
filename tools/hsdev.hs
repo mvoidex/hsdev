@@ -40,6 +40,7 @@ import System.IO
 import System.Process
 import System.Timeout
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
+import System.Win32.FileMapping.NamePool
 import Text.Read (readMaybe)
 
 import HsDev.Cache
@@ -104,6 +105,25 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			waitListen <- newEmptyMVar
 			clientChan <- newChan
 
+			mmapPool <- createPool "hsdev"
+			let
+				-- | Send response as is or via memory mapped file
+				sendResponseToClient :: Handle -> String -> IO ()
+				sendResponseToClient h msg
+					| length msg <= 1024 = hPutStrLn h msg
+					| otherwise = withName mmapPool $ \mmapName -> do
+						sync <- newEmptyMVar
+						forkIO $ void $ runErrorT $ flip catchError
+							(\e -> liftIO $ do
+								hPutStrLn h (L.unpack $ encode $ err e)
+								putMVar sync ())
+							(withMapFile mmapName msg $ liftIO $ do
+								hPutStrLn h $ L.unpack $ encode $ ResultMapFile mmapName
+								putMVar sync ()
+								-- Give 10 seconds for client to read it
+								threadDelay 10000000)
+						takeMVar sync
+
 			forkIO $ do
 				accepter <- myThreadId
 				s <- socket AF_INET Stream defaultProtocol
@@ -131,7 +151,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 							Left reqErr -> do
 								hPutStrLn h $ L.unpack $ encode $ errArgs "Invalid request" [("request", ResultString req), ("error", ResultString reqErr)]
 								return False
-							Right reqArgs -> processCmdArgs db (fromJust $ getFirst $ serverTimeout sopts) reqArgs (hPutStrLn h)
+							Right reqArgs -> processCmdArgs db (fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponseToClient h)
 						unless r $ do
 							void $ tryPutMVar waitListen ()
 							killThread accepter
@@ -829,14 +849,5 @@ processCmdArgs db tm cmdArgs printResult = run (map (fmap withOptsAct) commands)
 		printResult $ encodeResult ResultExit
 		return False
 	processResult v = do
-		sync <- newEmptyMVar
-		forkIO $ void $ runErrorT $ flip catchError
-			(\e -> do
-				liftIO . printResult . encodeResult . err $ e
-				liftIO $ putMVar sync ())
-			(withMapFile "hsdev" (encodeResult v) $ do
-				printResult $ encodeResult $ ResultMapFile "hsdev"
-				putMVar sync ()
-				threadDelay 1000000)
-		takeMVar sync
+		printResult $ encodeResult v
 		return True

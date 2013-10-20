@@ -75,6 +75,7 @@ executable hsdev
     Commands
     System.Command
     System.Win32.FileMapping.Memory
+    System.Win32.FileMapping.NamePool
   build-depends:
     base == 4.6.*,
     hsdev,
