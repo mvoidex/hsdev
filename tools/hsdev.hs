@@ -559,7 +559,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	-- list projects
 	listProjects' _ db = do
 		dbval <- getDb db
-		return $ ResultOk $ ResultList $ map (ResultString . projectName) $ M.elems $ databaseProjects dbval
+		return $ ResultOk $ ResultList $ map ResultProject $ M.elems $ databaseProjects dbval
 	-- get symbol info
 	symbol' as ns db = do
 		dbval <- getDb db
