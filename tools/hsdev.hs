@@ -825,9 +825,7 @@ processCmd :: Async Database -> Int -> String -> (String -> IO ()) -> IO Bool
 processCmd db tm cmdLine printResult = processCmdArgs db tm (split cmdLine) printResult
 
 processCmdArgs :: Async Database -> Int -> [String] -> (String -> IO ()) -> IO Bool
-processCmdArgs db tm cmdArgs printResult = run (map (fmap withOptsAct) commands) (asCmd unknownCommand) (asCmd . commandError) cmdArgs' tm db >>= processResult where
-	(isPrettyArgs, cmdArgs', _) = getOpt RequireOrder [Option [] ["pretty"] (NoArg (Any True)) "pretty json output"] cmdArgs
-	isPretty = getAny $ mconcat isPrettyArgs
+processCmdArgs db tm cmdArgs printResult = run (map (fmap withOptsAct) commands) (asCmd unknownCommand) (asCmd . commandError) cmdArgs tm db >>= processResult where
 	asCmd :: CommandResult -> (Int -> Async Database -> IO CommandResult)
 	asCmd r _ _ = return r
 
@@ -835,11 +833,6 @@ processCmdArgs db tm cmdArgs printResult = run (map (fmap withOptsAct) commands)
 	unknownCommand = err "Unknown command"
 	commandError :: [String] -> CommandResult
 	commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString errs)]
-
-	encodeResult :: ToJSON a => a -> String
-	encodeResult
-		| isPretty = L.unpack . encodePretty
-		| otherwise = L.unpack . encode
 
 	processResult :: CommandResult -> IO Bool
 	processResult (ResultProcess act) = do
@@ -853,11 +846,11 @@ processCmdArgs db tm cmdArgs printResult = run (map (fmap withOptsAct) commands)
 				processResult $ errArgs "process throws exception" [("exception", ResultString $ show e)]
 				return True
 
-			showStatus s = encodeResult $ object ["status" .= s]
+			showStatus s = L.unpack $ encode $ object ["status" .= s]
 
 	processResult ResultExit = do
-		printResult $ encodeResult ResultExit
+		printResult $ L.unpack $ encode ResultExit
 		return False
 	processResult v = do
-		printResult $ encodeResult v
+		printResult $ L.unpack $ encode v
 		return True
