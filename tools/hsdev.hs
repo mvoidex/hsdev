@@ -523,7 +523,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	-- remove
 	remove' as _ db = do
 		dbval <- getDb db
-		cabal <- traverse asCabal $ askOptDef "sandbox" "." as
+		cabal <- traverse asCabal $ askOptDef "sandbox" "" as
 		proj <- traverse (getProject db) $ askOpt "project" as
 		file <- traverse canonicalizePath $ askOpt "file" as
 		let
@@ -548,7 +548,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	listModules' as _ db = do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
-		cabal <- traverse asCabal $ askOptDef "sandbox" "." as
+		cabal <- traverse asCabal $ askOptDef "sandbox" "" as
 		let
 			filters = allOf $ catMaybes [
 				fmap inProject proj,
@@ -565,7 +565,7 @@ commands = map (fmap (fmap timeout')) cmds where
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
 		file <- traverse canonicalizePath $ askOpt "file" as
-		cabal <- traverse asCabal $ askOptDef "sandbox" "." as
+		cabal <- traverse asCabal $ askOptDef "sandbox" "" as
 		let
 			filters = checkModule $ allOf $ catMaybes [
 				fmap inProject proj,
@@ -584,7 +584,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	modul' as _ db = do
 		dbval <- getDb db
 		proj <- traverse (getProject db) $ askOpt "project" as
-		cabal <- traverse asCabal $ askOptDef "sandbox" "." as
+		cabal <- traverse asCabal $ askOptDef "sandbox" "" as
 		file' <- traverse canonicalizePath $ askOpt "file" as
 		let
 			filters = allOf $ catMaybes [
@@ -614,7 +614,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	whois' as [nm] db = errorT $ do
 		dbval <- liftIO $ getDb db
 		srcFile <- maybe (throwError $ "No file specified") (liftIO . canonicalizePath) $ askOpt "file" as
-		cabal <- liftIO $ getCabal (askOptDef "sandbox" "." as)
+		cabal <- liftIO $ getCabal (askOptDef "sandbox" "" as)
 		liftM ResultModuleDeclaration $ whois dbval srcFile nm
 	whois' as _ db = return $ err "Invalid arguments"
 	-- completion
@@ -623,13 +623,13 @@ commands = map (fmap (fmap timeout')) cmds where
 		dbval <- getDb db
 		srcFile <- maybe (throwError $ "No file specified") (liftIO . canonicalizePath) $ askOpt "file" as
 		mthis <- fileModule dbval srcFile
-		cabal <- liftIO $ getCabal (askOptDef "sandbox" "." as)
+		cabal <- liftIO $ getCabal (askOptDef "sandbox" "" as)
 		liftM (ResultList . map ResultModuleDeclaration) $ completions dbval mthis input
 	complete' as _ db = return $ err "Invalid arguments"
 	-- dump cabal modules
 	dumpCabal' as _ db = do
 		dbval <- getDb db
-		cabal <- getCabal $ askOptDef "sandbox" "." as
+		cabal <- getCabal $ askOptDef "sandbox" "" as
 		let
 			dat = cabalDB cabal dbval
 		liftM (fromMaybe (ResultOk $ ResultDatabase dat)) $ runMaybeT $ msum [
@@ -787,7 +787,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	asCabal p = fmap Sandbox $ canonicalizePath p
 
 	askCabal :: Opts -> IO Cabal
-	askCabal = maybe (return Cabal) asCabal . askOptDef "sandbox" "."
+	askCabal = maybe (return Cabal) asCabal . askOptDef "sandbox" ""
 
 	getProject :: Async Database -> String -> IO Project
 	getProject db projName = do
