@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, FlexibleContexts, OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, FlexibleContexts, OverloadedStrings, CPP #-}
 
 module Main (
 	main
@@ -39,8 +39,12 @@ import System.FilePath
 import System.IO
 import System.Process
 import System.Timeout
+
+#ifdef mingw32_HOST_OS
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
+#endif
+
 import Text.Read (readMaybe)
 
 import HsDev.Cache
@@ -105,24 +109,30 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			waitListen <- newEmptyMVar
 			clientChan <- newChan
 
+#ifdef mingw32_HOST_OS
 			mmapPool <- createPool "hsdev"
 			let
 				-- | Send response as is or via memory mapped file
 				sendResponseToClient :: Handle -> String -> IO ()
 				sendResponseToClient h msg
 					| length msg <= 1024 = hPutStrLn h msg
-					| otherwise = withName mmapPool $ \mmapName -> do
+					| otherwise = do
 						sync <- newEmptyMVar
-						forkIO $ void $ runErrorT $ flip catchError
-							(\e -> liftIO $ do
-								hPutStrLn h (L.unpack $ encode $ err e)
-								putMVar sync ())
-							(withMapFile mmapName msg $ liftIO $ do
-								hPutStrLn h $ L.unpack $ encode $ ResultMapFile mmapName
-								putMVar sync ()
-								-- Give 10 seconds for client to read it
-								threadDelay 10000000)
+						forkIO $ void $ withName mmapPool $ \mmapName -> do
+							runErrorT $ flip catchError
+								(\e -> liftIO $ do
+									hPutStrLn h (L.unpack $ encode $ err e)
+									putMVar sync ())
+								(withMapFile mmapName msg $ liftIO $ do
+									hPutStrLn h $ L.unpack $ encode $ ResultMapFile mmapName
+									putMVar sync ()
+									-- Give 10 seconds for client to read it
+									threadDelay 10000000)
 						takeMVar sync
+#else
+			let
+				sendResponseToClient = hPutStrLn
+#endif
 
 			forkIO $ do
 				accepter <- myThreadId

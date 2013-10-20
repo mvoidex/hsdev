@@ -62,7 +62,6 @@ library
     process == 1.1.*,
     regexpr == 0.5.*,
     time == 1.4.*,
-
     attoparsec == 0.10.*,
     unordered-containers == 0.2.*,
     text == 0.11.*
@@ -74,8 +73,12 @@ executable hsdev
   other-modules:
     Commands
     System.Command
-    System.Win32.FileMapping.Memory
-    System.Win32.FileMapping.NamePool
+
+  if os(windows)
+    other-modules:
+      System.Win32.FileMapping.Memory
+      System.Win32.FileMapping.NamePool
+
   build-depends:
     base == 4.6.*,
     hsdev,
@@ -94,8 +97,11 @@ executable hsdev
     text == 0.11.*,
     transformers == 0.3.*,
     unordered-containers == 0.2.*,
-    vector == 0.10.*,
-    Win32 == 2.3.*
+    vector == 0.10.*
+
+  if os(windows)
+    build-depends:
+      Win32 == 2.3.*
 
 executable hsinspect
   main-is: hsinspect.hs
