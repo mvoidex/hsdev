@@ -13,12 +13,13 @@ import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
-import Data.List (intercalate)
+import Data.List (intercalate, stripPrefix)
 import Data.Map (Map)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
+import qualified Language.Haskell.Exts.Extension as H
 import qualified Documentation.Haddock as Doc
 import qualified System.Directory as Dir
 import System.IO
@@ -36,16 +37,22 @@ import HsDev.Tools.Base
 import HsDev.Util
 
 -- | Analize source contents
-analyzeModule :: String -> Either String Module
-analyzeModule source = case H.parseFileContents source of
-	H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
-	H.ParseOk (H.Module _ (H.ModuleName mname) _ _ _ imports declarations) -> Right $ Module {
-		moduleName = mname,
-		moduleDocs =  Nothing,
-		moduleLocation = MemoryModule Nothing,
-		moduleExports = [],
-		moduleImports = M.fromList $ map ((importModuleName &&& id) . getImport) imports,
-		moduleDeclarations = M.fromList $ map (declarationName &&& id) $ getDecls declarations }
+analyzeModule :: [String] -> Maybe FilePath -> String -> Either String Module
+analyzeModule exts file source = case H.parseFileContentsWithMode pmode source of
+		H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
+		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ _ imports declarations) -> Right $ Module {
+			moduleName = mname,
+			moduleDocs =  Nothing,
+			moduleLocation = MemoryModule Nothing,
+			moduleExports = [],
+			moduleImports = M.fromList $ map ((importModuleName &&& id) . getImport) imports,
+			moduleDeclarations = M.fromList $ map (declarationName &&& id) $ getDecls declarations }
+	where
+		pmode :: H.ParseMode
+		pmode = H.defaultParseMode {
+			H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
+			H.baseLanguage = H.Haskell2010,
+			H.extensions = map H.parseExtension exts }
 
 getImport :: H.ImportDecl -> Import
 getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mname $ H.importAs d) (Just $ toPosition $ H.importLoc d) where
@@ -184,12 +191,14 @@ inspectFile opts file = do
 				mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 				return (mfile, i)
 		forced <- ErrorT $ E.handle onError
-			(liftIO (readFileUtf8 file) >>= E.evaluate . force . analyzeModule)
+			(liftIO (readFileUtf8 file) >>= E.evaluate . force . analyzeModule exts (Just file))
 		return $ setLoc absFilename (fmap projectCabal proj) . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }
 		onError :: E.ErrorCall -> IO (Either String Module)
 		onError = return . Left . show
+
+		exts = mapMaybe flagExtension opts
 
 -- | File inspection data
 fileInspection :: FilePath -> ErrorT String IO Inspection
@@ -219,3 +228,7 @@ readFileUtf8 f = withFile f ReadMode $ \h -> do
 	hSetEncoding h utf8
 	cts <- hGetContents h
 	length cts `seq` return cts
+
+-- | Convert -Xext to ext
+flagExtension :: String -> Maybe String
+flagExtension = stripPrefix "-X"
