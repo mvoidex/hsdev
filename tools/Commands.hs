@@ -15,7 +15,9 @@ module Commands (
 	) where
 
 import Control.Arrow
+import Control.Applicative (pure)
 import Control.Exception (SomeException)
+import Control.Monad (filterM)
 import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
@@ -73,18 +75,18 @@ scanModule opts mloc = do
 	update db $ return $ fromModule im
 
 -- | Scan modules with logging
-scanModules :: MonadCatchIO m => [String] -> [ModuleLocation] -> ErrorT String (UpdateDB m) ()
+scanModules :: MonadCatchIO m => [String] -> [([String], ModuleLocation)] -> ErrorT String (UpdateDB m) ()
 scanModules opts ms = do
 	db <- asks database
 	dbval <- lift readDB
 	projects <- mapM (liftErrors . S.scanProjectFile opts) ps
 	update db $ return $ mconcat $ map fromProject projects
-	ms' <- liftErrors $ S.changedModules dbval opts ms
+	ms' <- liftErrors $ filterM (S.changedModule dbval opts . snd) ms
 	lift $ forM_ ms' $ \m -> do
-		im <- scanModule_ opts m
+		im <- scanModule_ (opts ++ fst m) (snd m)
 		update db $ return $ fromModule im
 	where
-		ps = mapMaybe toProj ms
+		ps = mapMaybe (toProj . snd) ms
 		toProj (FileModule _ p) = p
 		toProj _ = Nothing
 
@@ -92,7 +94,7 @@ scanModules opts ms = do
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> UpdateDB m ()
 scanCabal opts sandbox = runScan_ "cabal" (show sandbox) $ do
 	modules <- liftErrors $ S.enumCabal opts sandbox
-	scanModules opts modules
+	scanModules opts [([], m) | m <- modules]
 
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> UpdateDB m ()

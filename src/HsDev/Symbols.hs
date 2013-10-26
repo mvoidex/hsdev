@@ -10,7 +10,7 @@ module HsDev.Symbols (
 	TypeInfo(..),
 	DeclarationInfo(..),
 	ModuleDeclaration(..),
-	Inspection(..),
+	Inspection(..), inspectionOpts,
 	InspectedModule(..),
 
 	-- * Functions
@@ -406,35 +406,36 @@ moduleContents = map showDecl . M.elems . moduleDeclarations where
 data Inspection =
 	-- | No inspection
 	InspectionNone |
-	-- | Time of file inspection
-	InspectionTime POSIXTime |
-	-- | Flags of cabal module inspection
-	InspectionFlags [String]
+	-- | Time and flags of inspection
+	InspectionAt POSIXTime [String]
 		deriving (Eq, Ord)
+
+-- | Get inspection opts
+inspectionOpts :: Inspection -> [String]
+inspectionOpts InspectionNone = []
+inspectionOpts (InspectionAt _ opts) = opts
 
 instance NFData Inspection where
 	rnf InspectionNone = ()
-	rnf (InspectionTime t) = rnf t
-	rnf (InspectionFlags fs) = rnf fs
+	rnf (InspectionAt t fs) = rnf t `seq` rnf fs
 
 instance Show Inspection where
 	show InspectionNone = "none"
-	show (InspectionTime tm) = "mtime " ++ show tm
-	show (InspectionFlags fs) = "flags [" ++ intercalate ", " fs ++ "]"
+	show (InspectionAt tm fs) = "mtime " ++ show tm ++ ", flags [" ++ intercalate ", " fs ++ "]"
 
 instance Read POSIXTime where
 	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
 
 instance ToJSON Inspection where
 	toJSON InspectionNone = object ["inspected" .= False]
-	toJSON (InspectionTime tm) = object ["mtime" .= (floor tm :: Integer)]
-	toJSON (InspectionFlags fs) = object ["flags" .= fs]
+	toJSON (InspectionAt tm fs) = object [
+		"mtime" .= (floor tm :: Integer),
+		"flags" .= fs]
 
 instance FromJSON Inspection where
 	parseJSON = withObject "inspection" $ \v ->
 		((const InspectionNone :: Bool -> Inspection) <$> v .:: "inspected") <|>
-		((InspectionTime . fromInteger) <$> v .:: "mtime") <|>
-		(InspectionFlags <$> v .:: "flags")
+		(InspectionAt <$> (fromInteger <$> v .:: "mtime") <*> (v .:: "flags"))
 
 -- | Inspected module
 data InspectedModule = InspectedModule {

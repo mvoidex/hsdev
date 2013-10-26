@@ -518,8 +518,8 @@ commands = map (fmap (fmap timeout')) cmds where
 		if not (null errors)
 			then return $ err $ intercalate ", " errors
 			else updateProcess db as $ C.runScan_ "rescan" "modules" $ do
-				needRescan <- C.liftErrors $ filterM (liftM not . upToDate (getGhcOpts as)) rescanMods
-				C.scanModules (getGhcOpts as) (map inspectionModule needRescan)
+				needRescan <- C.liftErrors $ filterM (changedModule dbval (getGhcOpts as) . inspectionModule) rescanMods
+				C.scanModules (getGhcOpts as) (map (inspectionOpts . inspection &&& inspectionModule) needRescan)
 	-- remove
 	remove' as _ db = do
 		dbval <- getDb db
