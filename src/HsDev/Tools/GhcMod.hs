@@ -45,7 +45,7 @@ browse opts mname = liftIO $ inspect (CabalModule Cabal Nothing mname) (browseIn
 		parseDecl s = parseFunction s `mplus` parseType s
 
 browseInspection :: [String] -> String -> ErrorT String IO Inspection
-browseInspection opts _ = return $ InspectionFlags opts
+browseInspection opts _ = return $ InspectionAt 0 opts
 
 info :: [String] -> FilePath -> String -> String -> Cabal -> ErrorT String IO Declaration
 info opts file mname sname cabal = do

@@ -5,7 +5,12 @@ module HsDev.Project (
 	ProjectDescription(..), Library(..), Executable(..), Test(..), Info(..),
 	readProject, loadProject,
 	project,
-	sourceDirs
+	Extensions(..), withExtensions,
+	infos, sourceDirs,
+
+	-- * Helpers
+	showExtension, flagExtension, extensionFlag,
+	extensionsOpts
 	) where
 
 import Control.Applicative
@@ -14,11 +19,18 @@ import Control.DeepSeq
 import Control.Exception (handle, IOException)
 import Control.Monad.Error
 import Data.Aeson
-import Data.List (intercalate, unfoldr)
+import Data.Aeson.Types (Parser)
+import Data.List (intercalate, unfoldr, stripPrefix)
 import Data.Maybe (maybeToList, isJust)
+import Data.Foldable (Foldable(..))
+import Data.Traversable
+import Data.Text (unpack)
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
 import Distribution.ModuleName (components)
+import Distribution.Text (display, simpleParse)
+import qualified Distribution.Text
+import Language.Haskell.Extension
 import System.FilePath
 
 import HsDev.Util
@@ -64,7 +76,7 @@ data ProjectDescription = ProjectDescription {
 	projectLibrary :: Maybe Library,
 	projectExecutables :: [Executable],
 	projectTests :: [Test] }
-		deriving (Eq, Ord, Read)
+		deriving (Eq, Read)
 
 instance Show ProjectDescription where
 	show pd = unlines $
@@ -88,7 +100,7 @@ instance FromJSON ProjectDescription where
 data Library = Library {
 	libraryModules :: [[String]],
 	libraryBuildInfo :: Info }
-		deriving (Eq, Ord, Read)
+		deriving (Eq, Read)
 
 instance Show Library where
 	show l = unlines $
@@ -111,7 +123,7 @@ data Executable = Executable {
 	executableName :: String,
 	executablePath :: FilePath,
 	executableBuildInfo :: Info }
-		deriving (Eq, Ord, Read)
+		deriving (Eq, Read)
 
 instance Show Executable where
 	show e = unlines $
@@ -135,7 +147,7 @@ data Test = Test {
 	testName :: String,
 	testEnabled :: Bool,
 	testBuildInfo :: Info }
-		deriving (Eq, Ord, Read)
+		deriving (Eq, Read)
 
 instance Show Test where
 	show t = unlines $
@@ -156,19 +168,31 @@ instance FromJSON Test where
 
 -- | Build info
 data Info = Info {
+	infoLanguage :: Maybe Language,
+	infoExtensions :: [Extension],
 	infoSourceDirs :: [FilePath] }
-		deriving (Eq, Ord, Read)
+		deriving (Eq, Read)
 
 instance Show Info where
-	show i = unlines $
-		["source-dirs:"] ++
-		(map (tab 1) $ infoSourceDirs i)
+	show i = unlines $ lang ++ exts ++ sources where
+		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ infoLanguage i
+		exts
+			| null (infoExtensions i) = []
+			| otherwise = ["extensions:"] ++ map (tab 1) (map display (infoExtensions i))
+		sources = ["source-dirs:"] ++
+			(map (tab 1) $ infoSourceDirs i)
 
 instance ToJSON Info where
-	toJSON i = object ["source-dirs" .= infoSourceDirs i]
+	toJSON i = object [
+		"language" .= fmap display (infoLanguage i),
+		"extensions" .= map display (infoExtensions i),
+		"source-dirs" .= infoSourceDirs i]
 
 instance FromJSON Info where
-	parseJSON = withObject "info" $ \v -> Info <$> v .:: "source-dirs"
+	parseJSON = withObject "info" $ \v -> Info <$>
+		((v .:: "language") >>= traverse (parseDT "Language")) <*>
+		((v .:: "extensions") >>= traverse (parseDT "Extension")) <*>
+		v .:: "source-dirs"
 
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
@@ -182,7 +206,10 @@ analyzeCabal source = case parsePackageDescription source of
 		toLibrary (PD.Library exposeds _ info) = Library (map components exposeds) (toInfo info)
 		toExecutable (name, PD.Executable _ path info) = Executable name path (toInfo info)
 		toTest (name, PD.TestSuite _ _ info enabled) = Test name enabled (toInfo info)
-		toInfo info = Info { infoSourceDirs = PD.hsSourceDirs info }
+		toInfo info = Info {
+			infoLanguage = PD.defaultLanguage info,
+			infoExtensions = PD.defaultExtensions info,
+			infoSourceDirs = PD.hsSourceDirs info }
 
 -- | Read project info from .cabal
 readProject :: FilePath -> ErrorT String IO Project
@@ -207,7 +234,58 @@ project file = Project {
 	projectCabal = file,
 	projectDescription = Nothing }
 
+-- | Entity with project extensions
+data Extensions a = Extensions {
+	extensions :: [Extension],
+	entity :: a }
+
+instance Functor Extensions where
+	fmap f (Extensions e x) = Extensions e (f x)
+
+instance Applicative Extensions where
+	pure = Extensions []
+	(Extensions l f) <*> (Extensions r x) = Extensions (l ++ r) (f x)
+
+instance Foldable Extensions where
+	foldMap f (Extensions _ x) = f x
+
+instance Traversable Extensions where
+	traverse f (Extensions e x) = Extensions e <$> f x
+
+-- | Extensions for target
+withExtensions :: a -> Info -> Extensions a
+withExtensions x i = Extensions {
+	extensions = infoExtensions i,
+	entity = x }
+
+-- | Returns build targets infos
+infos :: ProjectDescription -> [Info]
+infos p =
+	maybe [] (return . libraryBuildInfo) (projectLibrary p) ++
+	map executableBuildInfo (projectExecutables p) ++
+	map testBuildInfo (projectTests p)
+
 -- | Returns source dirs for library, executables and tests
-sourceDirs :: ProjectDescription -> [FilePath]
-sourceDirs p = concatMap infoSourceDirs infos where
-	infos = maybe [] (return . libraryBuildInfo) (projectLibrary p) ++ map executableBuildInfo (projectExecutables p) ++ map testBuildInfo (projectTests p)
+sourceDirs :: ProjectDescription -> [Extensions FilePath]
+sourceDirs = concatMap dirs . infos where
+	dirs i = map (`withExtensions` i) $ infoSourceDirs i
+
+parseDT :: Distribution.Text.Text a => String -> String -> Parser a
+parseDT typeName v = maybe err return (simpleParse v) where
+	err = fail $ "Can't parse " ++ typeName ++ ": " ++ v
+
+-- | Extension as flag name
+showExtension :: Extension -> String
+showExtension = display
+
+-- | Convert -Xext to ext
+flagExtension :: String -> Maybe String
+flagExtension = stripPrefix "-X"
+
+-- | Convert ext to -Xext
+extensionFlag :: String -> String
+extensionFlag = ("-X" ++)
+
+-- | Extensions as opts to GHC
+extensionsOpts :: [Extension] -> [String]
+extensionsOpts = map (extensionFlag . showExtension)

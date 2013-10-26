@@ -15,8 +15,9 @@ import Control.Monad
 import Control.Monad.Error
 import Data.List (intercalate, stripPrefix)
 import Data.Map (Map)
-import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import Data.Traversable (traverse, sequenceA)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
 import qualified Language.Haskell.Exts.Extension as H
@@ -184,7 +185,7 @@ inspectFile opts file = do
 		noReturn _ = return []
 	proj <- liftIO $ locateProject file
 	absFilename <- liftIO $ Dir.canonicalizePath file
-	liftIO $ inspect (FileModule file (fmap projectCabal proj)) (fileInspection file) $ do
+	liftIO $ inspect (FileModule file (fmap projectCabal proj)) (fileInspection file opts) $ do
 		docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
 			is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
 			forM is $ \i -> do
@@ -201,26 +202,29 @@ inspectFile opts file = do
 		exts = mapMaybe flagExtension opts
 
 -- | File inspection data
-fileInspection :: FilePath -> ErrorT String IO Inspection
-fileInspection = fmap (InspectionTime . utcTimeToPOSIXSeconds) . liftIO . Dir.getModificationTime
+fileInspection :: FilePath -> [String] -> ErrorT String IO Inspection
+fileInspection f opts = do
+	tm <- liftIO $ Dir.getModificationTime f
+	return $ InspectionAt (utcTimeToPOSIXSeconds tm) opts
 
 -- | Enumerate project source files
-projectSources :: Project -> ErrorT String IO [FilePath]
+projectSources :: Project -> ErrorT String IO [Extensions FilePath]
 projectSources p = do
 	p' <- loadProject p
 	let
-		dirs = maybe [] (map (projectPath p' </>) . sourceDirs) $ projectDescription p'
-	liftIO $ liftM (filter haskellSource . concat) $ mapM traverseDirectory dirs
+		dirs = map (fmap (projectPath p' </>)) $ maybe [] sourceDirs $ projectDescription p'
+		enumHs = liftM (filter haskellSource) . traverseDirectory
+	liftIO $ liftM concat $ mapM (liftM sequenceA . traverse (liftIO . enumHs)) dirs
 
 -- | Inspect project
 inspectProject :: [String] -> Project -> ErrorT String IO (Project, [InspectedModule])
 inspectProject opts p = do
 	p' <- loadProject p
-	sourceFiles <- projectSources p'
-	modules <- liftM concat $ mapM inspectFile' sourceFiles
-	return (p', modules)
+	srcs <- projectSources p'
+	modules <- mapM inspectFile' srcs
+	return (p', catMaybes modules)
 	where
-		inspectFile' f = liftM return (inspectFile opts f) <|> return []
+		inspectFile' exts = liftM return (inspectFile (opts ++ extensionsOpts (extensions exts)) (entity exts)) <|> return Nothing
 
 -- | Read file in UTF8
 readFileUtf8 :: FilePath -> IO String
@@ -228,7 +232,3 @@ readFileUtf8 f = withFile f ReadMode $ \h -> do
 	hSetEncoding h utf8
 	cts <- hGetContents h
 	length cts `seq` return cts
-
--- | Convert -Xext to ext
-flagExtension :: String -> Maybe String
-flagExtension = stripPrefix "-X"
