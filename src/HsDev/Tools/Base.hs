@@ -31,8 +31,8 @@ match pat str = do
 at :: (Int -> Maybe String) -> Int -> String
 at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
 
-inspect :: Monad m => ModuleLocation -> ErrorT String m Inspection -> ErrorT String m Module -> m InspectedModule
-inspect mloc insp act = execStateT inspect' (InspectedModule InspectionNone mloc (Left "not inspected")) where
+inspect :: Monad m => ModuleLocation -> ErrorT String m Inspection -> ErrorT String m Module -> ErrorT String m InspectedModule
+inspect mloc insp act = liftResult $ execStateT inspect' (InspectedModule InspectionNone mloc (Left "not inspected")) where
 	inspect' = runErrorT $ do
 		i <- mapErrorT lift insp
 		modify (\im -> im { inspection = i })
@@ -40,3 +40,6 @@ inspect mloc insp act = execStateT inspect' (InspectedModule InspectionNone mloc
 		modify (\im -> im { inspectionResult = Right v })
 		`catchError`
 		\e -> modify (\im -> im { inspectionResult = Left e })
+	liftResult im = do
+		im' <- lift im
+		ErrorT $ return $ inspectionResult im' >> return im'

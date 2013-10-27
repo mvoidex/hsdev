@@ -3,7 +3,7 @@
 module HsDev.Inspect (
 	analyzeModule,
 	inspectFile, fileInspection,
-	projectSources,
+	projectDirs, projectSources,
 	inspectProject
 	) where
 
@@ -185,14 +185,15 @@ inspectFile opts file = do
 		noReturn _ = return []
 	proj <- liftIO $ locateProject file
 	absFilename <- liftIO $ Dir.canonicalizePath file
-	liftIO $ inspect (FileModule file (fmap projectCabal proj)) (fileInspection file opts) $ do
+	inspect (FileModule absFilename (fmap projectCabal proj)) (fileInspection absFilename opts) $ do
 		docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
 			is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
 			forM is $ \i -> do
 				mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
 				return (mfile, i)
-		forced <- ErrorT $ E.handle onError
-			(liftIO (readFileUtf8 file) >>= E.evaluate . force . analyzeModule exts (Just file))
+		forced <- ErrorT $ E.handle onError $ do
+			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
+			E.evaluate $ force analyzed
 		return $ setLoc absFilename (fmap projectCabal proj) . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }
@@ -207,12 +208,17 @@ fileInspection f opts = do
 	tm <- liftIO $ Dir.getModificationTime f
 	return $ InspectionAt (utcTimeToPOSIXSeconds tm) opts
 
+-- | Enumerate project dirs
+projectDirs :: Project -> ErrorT String IO [Extensions FilePath]
+projectDirs p = do
+	p' <- loadProject p
+	return $ map (fmap (projectPath p' </>)) $ maybe [] sourceDirs $ projectDescription p'
+
 -- | Enumerate project source files
 projectSources :: Project -> ErrorT String IO [Extensions FilePath]
 projectSources p = do
-	p' <- loadProject p
+	dirs <- projectDirs p
 	let
-		dirs = map (fmap (projectPath p' </>)) $ maybe [] sourceDirs $ projectDescription p'
 		enumHs = liftM (filter haskellSource) . traverseDirectory
 	liftIO $ liftM concat $ mapM (liftM sequenceA . traverse (liftIO . enumHs)) dirs
 

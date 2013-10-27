@@ -7,7 +7,7 @@ module Commands (
 	updateDB,
 
 	scanModule_, scanModule, scanModules,
-	scanCabal, scanProject, scanDirectory,
+	scanFile, scanCabal, scanProject, scanDirectory,
 
 	-- * Helpers
 	liftErrors,
@@ -21,9 +21,10 @@ import Control.Monad (filterM)
 import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
-import Data.List (unfoldr, partition)
-import Data.Maybe (isNothing, fromMaybe, mapMaybe)
+import Data.List (unfoldr, partition, isPrefixOf)
+import Data.Maybe (isNothing, fromMaybe, mapMaybe, listToMaybe)
 import Data.Monoid
+import Data.Traversable (traverse)
 import System.Directory (canonicalizePath, doesFileExist, doesDirectoryExist)
 
 import HsDev.Database
@@ -89,6 +90,19 @@ scanModules opts ms = do
 		ps = mapMaybe (toProj . snd) ms
 		toProj (FileModule _ p) = p
 		toProj _ = Nothing
+
+-- | Scan source file
+scanFile :: MonadCatchIO m => [String] -> FilePath -> UpdateDB m ()
+scanFile opts fpath = do
+	fpath' <- liftIO $ canonicalizePath fpath
+	mproj <- liftIO $ locateProject fpath'
+	srcDirs <- liftIO $ liftM (either (const []) id) $ runErrorT $ maybe (return []) projectDirs mproj
+	let
+		fileDirs = filter ((`isPrefixOf` fpath') . entity) srcDirs
+		fileExts = maybe [] (extensionsOpts . extensions) $ listToMaybe fileDirs
+
+	runScan_ "file" fpath' $ do
+		lift $ scanModule (opts ++ fileExts) (FileModule fpath' $ fmap projectCabal mproj)
 
 -- | Scan cabal modules
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> UpdateDB m ()

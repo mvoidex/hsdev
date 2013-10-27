@@ -23,7 +23,7 @@ list :: [String] -> ErrorT String IO [String]
 list opts = tryGhc $ GhcMod.listMods (GhcMod.defaultOptions { GhcMod.ghcOpts = opts })
 
 browse :: [String] -> String -> ErrorT String IO InspectedModule
-browse opts mname = liftIO $ inspect (CabalModule Cabal Nothing mname) (browseInspection opts mname) $ do
+browse opts mname = inspect (CabalModule Cabal Nothing mname) (browseInspection opts mname) $ do
 	ts <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = opts }) mname
 	return $ Module {
 		moduleName = mname,

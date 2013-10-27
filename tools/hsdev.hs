@@ -476,7 +476,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	scan' as _ db = updateProcess db as $
 		mapM_ (\(n, f) -> forM_ (askOpts n as) (f (getGhcOpts as))) [
 			("project", C.scanProject),
-			("file", \g f -> C.scanModule g (FileModule f Nothing)),
+			("file", C.scanFile),
 			("path", C.scanDirectory)]
 	-- scan cabal
 	scanCabal' as _ db = do
