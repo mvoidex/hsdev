@@ -20,11 +20,14 @@ import HsDev.Symbols
 import HsDev.Tools.Base
 
 list :: [String] -> ErrorT String IO [String]
-list opts = tryGhc $ GhcMod.listMods (GhcMod.defaultOptions { GhcMod.ghcOpts = opts })
+list opts = do
+	cradle <- getCradle Cabal
+	tryGhc $ GhcMod.listMods (GhcMod.defaultOptions { GhcMod.ghcOpts = opts }) cradle
 
 browse :: [String] -> String -> ErrorT String IO InspectedModule
 browse opts mname = inspect (CabalModule Cabal Nothing mname) (browseInspection opts mname) $ do
-	ts <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = opts }) mname
+	cradle <- getCradle Cabal
+	ts <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = opts }) cradle mname
 	return $ Module {
 		moduleName = mname,
 		moduleDocs = Nothing,
@@ -68,13 +71,7 @@ info opts file mname sname cabal = do
 			p = reverse . dropWhile isSpace
 
 getCradle :: MonadIO m => Cabal -> m GhcMod.Cradle
-getCradle cabal = liftIO $ do
-	(strVer, _) <- GhcMod.getGHCVersion
-	GhcMod.findCradle sandbox strVer
-	where
-		sandbox = case cabal of
-			Cabal -> Nothing
-			Sandbox p -> Just p
+getCradle _ = liftIO GhcMod.findCradle -- FIXME
 
 tryGhc :: Ghc a -> ErrorT String IO a
 tryGhc act = ErrorT $ ghandle rethrow $ liftM Right $ runGhc (Just libdir) $ do
