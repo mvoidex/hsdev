@@ -15,10 +15,12 @@ import Data.List
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
 import Data.Monoid
+import Data.Traversable (traverse)
 
 import HsDev.Symbols
 import HsDev.Database
 import HsDev.Tools.GhcMod
+import HsDev.Tools.GhcMod.InferType (inferTypes)
 import HsDev.Tools.HDocs
 import HsDev.Inspect
 import HsDev.Project
@@ -56,19 +58,13 @@ scanProjectFile opts f = do
 
 -- | Scan module
 scanModule :: [String] -> ModuleLocation -> ErrorT String IO InspectedModule
-scanModule opts (FileModule f p) = inspectFile opts f
-scanModule opts (CabalModule c p n) = browse opts n >>= loadDocs' where
-	loadDocs' m = case inspectionResult m of
-		Left _ -> return m
-		Right m' -> do
-			m'' <- liftIO (loadDocs opts m')
-			return $ m {
-				inspectionResult = Right m'' }
+scanModule opts (FileModule f p) = inspectFile opts f >>= traverse (inferTypes opts)
+scanModule opts (CabalModule c p n) = browse opts n >>= traverse (liftIO . loadDocs opts)
 scanModule opts (MemoryModule _) = throwError "Can't inspect memory module"
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> ErrorT String IO Bool
-upToDate opts (InspectedModule insp m _) = case m of
+upToDate opts (Inspected insp m _) = case m of
 	FileModule f p -> liftM (== insp) $ fileInspection f opts
 	CabalModule c p n -> liftM (== insp) $ browseInspection opts n
 	_ -> return False
@@ -79,7 +75,7 @@ rescanModule opts im = do
 	up <- upToDate opts im
 	if up
 		then return Nothing
-		else fmap Just $ scanModule opts (inspectionModule im)
+		else fmap Just $ scanModule opts (inspectedId im)
 
 -- | Is module new or recently changed
 changedModule :: Database -> [String] -> ModuleLocation -> ErrorT String IO Bool

@@ -64,7 +64,7 @@ instance FromJSON Database where
 		((M.unions . map mkModule) <$> v .:: "modules") <*>
 		((M.unions . map mkProject) <$> v .:: "projects"))
 		where
-			mkModule m = M.singleton (inspectionModule m) m
+			mkModule m = M.singleton (inspectedId m) m
 			mkProject p = M.singleton (projectCabal p) p
 
 -- | Database intersection, prefers first database data
@@ -90,7 +90,7 @@ allDeclarations db = do
 -- | Make database from module
 fromModule :: InspectedModule -> Database
 fromModule m = zero {
-	databaseModules = M.singleton (inspectionModule m) m }
+	databaseModules = M.singleton (inspectedId m) m }
 
 -- | Make database from project
 fromProject :: Project -> Database

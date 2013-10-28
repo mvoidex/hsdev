@@ -15,11 +15,9 @@ import System.Console.GetOpt
 
 import System.Command
 
-import HsDev.Inspect (inspectFile)
 import HsDev.Project (readProject)
-import HsDev.Tools.GhcMod (browse)
-import HsDev.Tools.HDocs (loadDocs)
-import HsDev.Symbols (InspectedModule(..))
+import HsDev.Scan (scanModule)
+import HsDev.Symbols.Location (ModuleLocation(..), Cabal(..))
 import HsDev.Symbols.JSON ()
 
 commands :: [Command (IO ())]
@@ -47,22 +45,14 @@ commands = addHelp "hsinspect" id [
 		err :: String -> ErrorT String IO ()
 		err = throwError
 
-		inspectModule' as [mname] = output as $
-			browse (ghcs as) mname >>= loadDocs' (ghcs as)
+		inspectModule' as [mname] = output as $ scanModule (ghcs as) (CabalModule Cabal Nothing mname)
 		inspectModule' as _ = output as $ err "Specify module name"
 
-		inspectFile' as [fname] = output as $ inspectFile (ghcs as) fname
+		inspectFile' as [fname] = output as $ scanModule (ghcs as) (FileModule fname Nothing)
 		inspectFile' as _ = output as $ err "Specify source file name"
 
 		inspectCabal' as [fcabal] = output as $ readProject fcabal
 		inspectCabal' as _ = output as $ err "Specify project .cabal file"
-
-		loadDocs' opts m = case inspectionResult m of
-			Left _ -> return m
-			Right m' -> do
-				m'' <- liftIO $ loadDocs opts m'
-				return $ m {
-					inspectionResult = Right m'' }
 
 main :: IO ()
 main = do

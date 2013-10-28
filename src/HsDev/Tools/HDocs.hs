@@ -1,13 +1,20 @@
 module HsDev.Tools.HDocs (
 	hdocs,
 	setDocs,
-	loadDocs
+	loadDocs,
+
+	hdocsProcess
 	) where
 
 import Control.Exception
+import Control.Monad (liftM)
 
+import Data.Aeson
+import qualified Data.ByteString.Lazy.Char8 as L (pack)
 import Data.Map (Map)
 import qualified Data.Map as M
+import Data.Maybe (fromMaybe)
+import System.Process (readProcess)
 
 import HDocs.Module (docs, runDocsM, formatDoc)
 
@@ -32,3 +39,7 @@ loadDocs :: [String] -> Module -> IO Module
 loadDocs opts m = do
 	d <- hdocs (moduleName m) opts
 	return $ setDocs d m
+
+hdocsProcess :: String -> [String] -> IO (Maybe (Map String String))
+hdocsProcess mname opts = liftM (decode . L.pack) $ readProcess "hdocs" opts' "" where
+	opts' = mname : concat [["-g", opt] | opt <- opts]

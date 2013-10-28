@@ -11,7 +11,7 @@ module HsDev.Symbols (
 	DeclarationInfo(..),
 	ModuleDeclaration(..),
 	Inspection(..), inspectionOpts,
-	InspectedModule(..),
+	Inspected(..), InspectedModule(..),
 
 	-- * Functions
 	showTypeInfo,
@@ -43,8 +43,10 @@ import Data.List
 import Data.Map (Map)
 import Data.Maybe
 import qualified Data.Map as M
+import Data.Monoid
 import Data.Time.Clock.POSIX
-import Data.Traversable (traverse)
+import Data.Foldable (Foldable(..))
+import Data.Traversable (Traversable(..))
 import System.Directory
 import System.FilePath
 
@@ -437,18 +439,31 @@ instance FromJSON Inspection where
 		((const InspectionNone :: Bool -> Inspection) <$> v .:: "inspected") <|>
 		(InspectionAt <$> (fromInteger <$> v .:: "mtime") <*> (v .:: "flags"))
 
--- | Inspected module
-data InspectedModule = InspectedModule {
+-- | Inspected entity
+data Inspected i a = Inspected {
 	inspection :: Inspection,
-	inspectionModule :: ModuleLocation,
-	inspectionResult :: Either String Module }
+	inspectedId :: i,
+	inspectionResult :: Either String a }
 		deriving (Eq, Ord)
 
-instance NFData InspectedModule where
-	rnf (InspectedModule i mi m) = rnf i `seq` rnf mi `seq` rnf m
+instance Functor (Inspected i) where
+	fmap f insp = insp {
+		inspectionResult = fmap f (inspectionResult insp) }
+
+instance Foldable (Inspected i) where
+	foldMap f = either mempty f . inspectionResult
+
+instance Traversable (Inspected i) where
+	traverse f (Inspected insp i r) = Inspected insp i <$> either (pure . Left) (liftA Right . f) r
+
+instance (NFData i, NFData a) => NFData (Inspected i a) where
+	rnf (Inspected t i r) = rnf t `seq` rnf i `seq` rnf r
+
+-- | Inspected module
+type InspectedModule = Inspected ModuleLocation Module
 
 instance Show InspectedModule where
-	show (InspectedModule i mi m) = unlines [either showError show m, "\tinspected: " ++ show i] where
+	show (Inspected i mi m) = unlines [either showError show m, "\tinspected: " ++ show i] where
 		showError :: String -> String
 		showError e = unlines $ ("\terror: " ++ e) : case mi of
 			FileModule f p -> ["file: " ++ f, "project: " ++ fromMaybe "" p]
@@ -458,11 +473,11 @@ instance Show InspectedModule where
 instance ToJSON InspectedModule where
 	toJSON im = object [
 		"inspection" .= inspection im,
-		"location" .= inspectionModule im,
+		"location" .= inspectedId im,
 		either ("error" .=) ("module" .=) (inspectionResult im)]
 
 instance FromJSON InspectedModule where
-	parseJSON = withObject "inspected module" $ \v -> InspectedModule <$>
+	parseJSON = withObject "inspected module" $ \v -> Inspected <$>
 		v .:: "inspection" <*>
 		v .:: "location" <*>
 		((Left <$> v .:: "error") <|> (Right <$> v .:: "module"))

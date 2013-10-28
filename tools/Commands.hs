@@ -62,7 +62,7 @@ readDB = do
 
 -- | Scan module with logging
 scanModule_ :: MonadCatchIO m => [String] -> ModuleLocation -> UpdateDB m InspectedModule
-scanModule_ opts mloc = runScan mtype mname (InspectedModule InspectionNone mloc . Left) $ liftErrors $ S.scanModule opts mloc where
+scanModule_ opts mloc = runScan mtype mname (Inspected InspectionNone mloc . Left) $ liftErrors $ S.scanModule opts mloc where
 	(mtype, mname) = case mloc of
 		FileModule f _ -> ("file", f)
 		CabalModule _ _ n -> ("module", n)

@@ -35,6 +35,7 @@ library
     HsDev.Symbols.Util
     HsDev.Tools.Base
     HsDev.Tools.GhcMod
+    HsDev.Tools.GhcMod.InferType
     HsDev.Tools.HDocs
     HsDev.Util
   other-modules:

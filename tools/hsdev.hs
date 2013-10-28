@@ -210,8 +210,9 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 		h <- socketToHandle s ReadWriteMode
 		hPutStrLn h $ L.unpack $ encode $ setData stdinData as
 		responses <- liftM lines $ hGetContents h
-		values <- mapM parseResponse responses
-		mapM_ (putStrLn . encodeValue (getAny $ clientPretty p)) values
+		forM_ responses $
+			parseResponse >=>
+			(putStrLn . encodeValue (getAny $ clientPretty p))
 		where
 			setData :: Maybe ResultValue -> [String] -> [String]
 			setData Nothing = id
@@ -453,7 +454,7 @@ commands = map (fmap (fmap timeout')) cmds where
 					let
 						ModuleId mname mloc = declarationModuleId md
 						defMod = Module mname Nothing mloc [] mempty mempty
-						defInspMod = InspectedModule InspectionNone mloc (Right defMod)
+						defInspMod = Inspected InspectionNone mloc (Right defMod)
 						dbmod = maybe
 							defInspMod
 							(\i -> i { inspectionResult = inspectionResult i <|> (Right defMod) }) $
@@ -462,8 +463,8 @@ commands = map (fmap (fmap timeout')) cmds where
 							inspectionResult = fmap (addDeclaration $ moduleDeclaration md) (inspectionResult dbmod) }
 					update db $ return $ fromModule updatedMod
 				updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
-					update db $ return $ fromModule $ InspectedModule InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
-				updateData (ResultModule m) = update db $ return $ fromModule $ InspectedModule InspectionNone (moduleLocation m) (Right m)
+					update db $ return $ fromModule $ Inspected InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
+				updateData (ResultModule m) = update db $ return $ fromModule $ Inspected InspectionNone (moduleLocation m) (Right m)
 				updateData (ResultInspectedModule m) = update db $ return $ fromModule m
 				updateData (ResultProject p) = update db $ return $ fromProject p
 				updateData (ResultList l) = mapM_ updateData l
@@ -518,8 +519,8 @@ commands = map (fmap (fmap timeout')) cmds where
 		if not (null errors)
 			then return $ err $ intercalate ", " errors
 			else updateProcess db as $ C.runScan_ "rescan" "modules" $ do
-				needRescan <- C.liftErrors $ filterM (changedModule dbval (getGhcOpts as) . inspectionModule) rescanMods
-				C.scanModules (getGhcOpts as) (map (inspectionOpts . inspection &&& inspectionModule) needRescan)
+				needRescan <- C.liftErrors $ filterM (changedModule dbval (getGhcOpts as) . inspectedId) rescanMods
+				C.scanModules (getGhcOpts as) (map (inspectionOpts . inspection &&& inspectedId) needRescan)
 	-- remove
 	remove' as _ db = do
 		dbval <- getDb db

@@ -35,6 +35,7 @@ import qualified HsBinds
 import HsDev.Symbols
 import HsDev.Project
 import HsDev.Tools.Base
+import HsDev.Tools.HDocs (hdocsProcess)
 import HsDev.Util
 
 -- | Analize source contents
@@ -186,11 +187,12 @@ inspectFile opts file = do
 	proj <- liftIO $ locateProject file
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	inspect (FileModule absFilename (fmap projectCabal proj)) (fileInspection absFilename opts) $ do
-		docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
-			is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
-			forM is $ \i -> do
-				mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
-				return (mfile, i)
+		docsMap <- liftIO $ hdocsProcess absFilename opts
+		--docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
+		--	is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
+		--	forM is $ \i -> do
+		--		mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
+		--		return (mfile, i)
 		forced <- ErrorT $ E.handle onError $ do
 			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
 			E.evaluate $ force analyzed
