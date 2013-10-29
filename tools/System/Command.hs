@@ -168,10 +168,8 @@ hasOpt n = M.member n . getOpts
 askOpt :: String -> Opts -> Maybe String
 askOpt n = listToMaybe . askOpts n
 
-askOptDef :: String -> String -> Opts -> Maybe String
-askOptDef n def o
-	| hasOpt n o = (listToMaybe $ askOpts n o) <|> Just def
-	| otherwise = Nothing
+askOptDef :: String -> Opts -> Maybe (Maybe String)
+askOptDef n = fmap listToMaybe . M.lookup n . getOpts
 
 askOpts :: String -> Opts -> [String]
 askOpts n = fromMaybe [] . M.lookup n . getOpts

@@ -186,7 +186,7 @@ inspectFile opts file = do
 		noReturn _ = return []
 	proj <- liftIO $ locateProject file
 	absFilename <- liftIO $ Dir.canonicalizePath file
-	inspect (FileModule absFilename (fmap projectCabal proj)) (fileInspection absFilename opts) $ do
+	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
 		docsMap <- liftIO $ hdocsProcess absFilename opts
 		--docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
 		--	is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
@@ -196,7 +196,7 @@ inspectFile opts file = do
 		forced <- ErrorT $ E.handle onError $ do
 			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
 			E.evaluate $ force analyzed
-		return $ setLoc absFilename (fmap projectCabal proj) . maybe id addDocs docsMap $ forced
+		return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }
 		onError :: E.ErrorCall -> IO (Either String Module)

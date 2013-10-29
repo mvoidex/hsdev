@@ -13,7 +13,9 @@ import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Trans.Maybe
 import Control.Monad.Reader
-import qualified Data.ByteString.Lazy.Char8 as L (unpack, pack)
+import Data.ByteString.Lazy.Char8 (ByteString)
+import qualified Data.ByteString.Lazy.Char8 as L
+import qualified Data.ByteString.Char8 as B
 import Data.Aeson
 import Data.Aeson.Encode.Pretty
 import Data.Aeson.Types (parseMaybe)
@@ -21,7 +23,8 @@ import Data.Either (partitionEithers)
 import Data.Maybe
 import Data.Monoid
 import Data.List
-import qualified Data.Text as T (unpack)
+import qualified Data.Text.Lazy as T (pack, unpack)
+import qualified Data.Text.Lazy.Encoding as T (decodeUtf8, encodeUtf8)
 import Data.Traversable (traverse)
 import qualified Data.Traversable as T (forM)
 import Data.Map (Map)
@@ -47,6 +50,7 @@ import System.Win32.FileMapping.NamePool
 
 import Text.Read (readMaybe)
 
+import HsDev.Cabal
 import HsDev.Cache
 import HsDev.Commands
 import HsDev.Database
@@ -92,7 +96,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			db <- newAsync
 			forever $ do
 				s <- getLine
-				r <- processCmd (CommandOptions db dir) 10000 s putStrLn
+				r <- processCmd (CommandOptions db dir) 10000 s L.putStrLn
 				unless r exitSuccess,
 		cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
 			let
@@ -114,25 +118,25 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			mmapPool <- createPool "hsdev"
 			let
 				-- | Send response as is or via memory mapped file
-				sendResponseToClient :: Handle -> String -> IO ()
+				sendResponseToClient :: Handle -> ByteString -> IO ()
 				sendResponseToClient h msg
-					| length msg <= 1024 = hPutStrLn h msg
+					| L.length msg <= 1024 = L.hPutStrLn h msg
 					| otherwise = do
 						sync <- newEmptyMVar
 						forkIO $ void $ withName mmapPool $ \mmapName -> do
 							runErrorT $ flip catchError
 								(\e -> liftIO $ do
-									hPutStrLn h (L.unpack $ encode $ err e)
+									L.hPutStrLn h $ encode $ err e
 									putMVar sync ())
-								(withMapFile mmapName msg $ liftIO $ do
-									hPutStrLn h $ L.unpack $ encode $ ResultMapFile mmapName
+								(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
+									L.hPutStrLn h $ encode $ ResultMapFile mmapName
 									putMVar sync ()
 									-- Give 10 seconds for client to read it
 									threadDelay 10000000)
 						takeMVar sync
 #else
 			let
-				sendResponseToClient = hPutStrLn
+				sendResponseToClient = L.hPutStrLn
 #endif
 
 			forkIO $ do
@@ -156,11 +160,11 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 										killThread me
 									void $ takeMVar done
 						writeChan clientChan (Just timeoutWait)
-						req <- hGetLine h
-						outputStr $ show s' ++ ": " ++ req
-						r <- case fmap extractCurrentDir $ eitherDecode (L.pack req) of
+						req <- hGetLine' h
+						outputStr $ show s' ++ ": " ++ fromUtf8 req
+						r <- case fmap extractCurrentDir $ eitherDecode req of
 							Left reqErr -> do
-								hPutStrLn h $ L.unpack $ encode $ errArgs "Invalid request" [("request", ResultString req), ("error", ResultString reqErr)]
+								L.hPutStrLn h $ encode $ errArgs "Invalid request" [("request", ResultString $ fromUtf8 req), ("error", ResultString reqErr)]
 								return False
 							Right (clientDir, reqArgs) -> processCmdArgs
 								(CommandOptions db clientDir)
@@ -180,7 +184,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			pname <- getExecutablePath
 			r <- readProcess pname (maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
 			let
-				stopped = case decode (L.pack r) of
+				stopped = case decode (toUtf8 r) of
 					Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
 						res <- obj .: "result"
 						return (res == ("exit" :: String))
@@ -200,7 +204,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 		(p, as) <- get'
 		stdinData <- if getAny (clientData p)
 			then do
-				cdata <- liftM (eitherDecode . L.pack) getContents
+				cdata <- liftM eitherDecode L.getContents
 				case cdata of
 					Left cdataErr -> do
 						putStrLn $ "Invalid data: " ++ cdataErr
@@ -212,33 +216,33 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 		addr' <- inet_addr "127.0.0.1"
 		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
 		h <- socketToHandle s ReadWriteMode
-		hPutStrLn h $ L.unpack $ encode $ ["--current-directory", curDir] ++ setData stdinData as
-		responses <- liftM lines $ hGetContents h
+		L.hPutStrLn h $ encode $ ["--current-directory", curDir] ++ setData stdinData as
+		responses <- liftM L.lines $ L.hGetContents h
 		forM_ responses $
 			parseResponse >=>
-			(putStrLn . encodeValue (getAny $ clientPretty p))
+			(L.putStrLn . encodeValue (getAny $ clientPretty p))
 		where
 			setData :: Maybe ResultValue -> [String] -> [String]
 			setData Nothing = id
-			setData (Just d) = (++ ["--data", L.unpack $ encode d])
+			setData (Just d) = (++ ["--data", fromUtf8 $ encode d])
 
 			parseResponse r = fmap (either err' id) $ runErrorT $ do
-				v <- errT (eitherDecode (L.pack r)) `orFail`
-					(\e -> "Can't decode response " ++ r ++ " due to: " ++ e)
+				v <- errT (eitherDecode r) `orFail`
+					(\e -> "Can't decode response " ++ fromUtf8 r ++ " due to: " ++ e)
 				case parseMaybe (withObject "map view of file" (.: "file")) v of
 					Nothing -> return v
 					Just viewFile -> do
-						str <- readMapFile viewFile `orFail`
+						str <- fmap L.fromStrict (readMapFile viewFile) `orFail`
 							(\e -> "Can't read map view of file " ++ viewFile ++ " due to: " ++ e)
-						errT (eitherDecode (L.pack str)) `orFail`
-							(\e -> "Can't decode map view of file contents " ++ str ++ " due to: " ++ e)
+						errT (eitherDecode str) `orFail`
+							(\e -> "Can't decode map view of file contents " ++ fromUtf8 str ++ " due to: " ++ e)
 				where
 					errT act = ErrorT $ return act
 					orFail act msg = act `catchError` (throwError . msg)
 					err' msg = object ["error" .= msg]
 
-			encodeValue True = L.unpack . encodePretty
-			encodeValue False = L.unpack . encode
+			encodeValue True = encodePretty
+			encodeValue False = encode
 
 	-- Add parsing 'ClieptOpts'
 	addClientOpts :: Command (IO [String]) -> Command (IO (ClientOpts, [String]))
@@ -424,10 +428,13 @@ commands = map (fmap (fmap timeout')) cmds where
 			projectArg "module project",
 			projectNameArg "module project name",
 			fileArg "module source file",
-			sandbox] modul',
+			sandbox, sourced] modul',
 		cmd_' ["project"] ["project name"] "show project info" project',
 		-- Context commands
+		cmd' ["lookup"] ["symbol"] "lookup for symbol" ctx lookup',
 		cmd' ["whois"] ["symbol"] "get info for symbol" ctx whois',
+		cmd' ["scope", "modules"] [] "get modules accesible from module" ctx scopeModules',
+		cmd' ["scope"] [] "get declarations accessible from module" (ctx ++ [globalArg]) scope',
 		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
@@ -446,6 +453,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	dataArg = option_ [] "data" (req "contents") "data to pass to command"
 	fileArg = option_ ['f'] "file" (req "file")
 	ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
+	globalArg = option_ [] "global" flag "scope of project"
 	moduleArg = option_ ['m'] "module" (req "module name")
 	pathArg = option_ ['p'] "path" (req "path")
 	projectArg = option [] "project" ["proj"] (req "project")
@@ -466,7 +474,7 @@ commands = map (fmap (fmap timeout')) cmds where
 					("why", ResultString err),
 					("data", ResultString jsonData)]))
 				return $
-				eitherDecode $ L.pack jsonData
+				eitherDecode $ toUtf8 jsonData
 			let
 				updateData (ResultDeclaration d) = throwError $ errArgs "Can't insert declaration" [("declaration", ResultDeclaration d)]
 				updateData (ResultModuleDeclaration md) = do
@@ -499,14 +507,14 @@ commands = map (fmap (fmap timeout')) cmds where
 			("file", C.scanFile),
 			("path", C.scanDirectory)]
 	-- scan cabal
-	scanCabal' as _ copts = do
-		cabal <- askCabal copts as
-		updateProcess (dbVar copts) as $ C.scanCabal (getGhcOpts as) cabal
+	scanCabal' as _ copts = error_ $ do
+		cabal <- getCabal copts as
+		lift $ updateProcess (dbVar copts) as $ C.scanCabal (getGhcOpts as) cabal
 	-- scan cabal module
 	scanModule' as [] copts = return $ err "Module name not specified"
-	scanModule' as ms copts = do
-		cabal <- askCabal copts as
-		updateProcess (dbVar copts) as $
+	scanModule' as ms copts = error_ $ do
+		cabal <- getCabal copts as
+		lift $ updateProcess (dbVar copts) as $
 			forM_ ms (C.scanModule (getGhcOpts as) . CabalModule cabal Nothing)
 	-- rescan
 	rescan' as _ copts = do
@@ -543,7 +551,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	-- remove
 	remove' as _ copts = errorT $ do
 		dbval <- liftIO $ getDb copts
-		cabal <- traverse (asCabal copts) $ askOptDef "sandbox" "" as
+		cabal <- askCabal copts as
 		proj <- askProject copts as
 		file <- traverse (canonicalizePath' copts) $ askOpt "file" as
 		let
@@ -568,7 +576,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	listModules' as _ copts = errorT $ do
 		dbval <- liftIO $ getDb copts
 		proj <- askProject copts as
-		cabal <- traverse (asCabal copts) $ askOptDef "sandbox" "" as
+		cabal <- askCabal copts as
 		let
 			filters = allOf $ catMaybes [
 				fmap inProject proj,
@@ -585,12 +593,13 @@ commands = map (fmap (fmap timeout')) cmds where
 		dbval <- liftIO $ getDb copts
 		proj <- askProject copts as
 		file <- traverse (canonicalizePath' copts) $ askOpt "file" as
-		cabal <- traverse (asCabal copts) $ askOptDef "sandbox" "" as
+		cabal <- askCabal copts as
 		let
 			filters = checkModule $ allOf $ catMaybes [
 				fmap inProject proj,
 				fmap inFile file,
 				fmap inModule (askOpt "module" as),
+				fmap inCabal cabal,
 				if hasOpt "src" as then Just byFile else Nothing,
 				if hasOpt "stand" as then Just standalone else Nothing]
 			toResult = ResultList . map ResultModuleDeclaration . filter filters
@@ -603,14 +612,15 @@ commands = map (fmap (fmap timeout')) cmds where
 	modul' as _ copts = errorT' $ do
 		dbval <- liftIO $ getDb copts
 		proj <- mapErrorT (fmap $ strMsg +++ id) $ askProject copts as
-		cabal <- traverse (asCabal copts) $ askOptDef "sandbox" "" as
+		cabal <- mapErrorT (fmap $ strMsg +++ id) $ askCabal copts as
 		file' <- traverse (canonicalizePath' copts) $ askOpt "file" as
 		let
 			filters = allOf $ catMaybes [
 				fmap inProject proj,
 				fmap inCabal cabal,
 				fmap inFile file',
-				fmap inModule (askOpt "module" as)]
+				fmap inModule (askOpt "module" as),
+				if hasOpt "src" as then Just byFile else Nothing]
 		rs <- mapErrorT (fmap $ strMsg +++ id) $
 			filter (filters . moduleId) <$> maybe
 				(return $ allModules dbval)
@@ -628,29 +638,44 @@ commands = map (fmap (fmap timeout')) cmds where
 			[] -> return $ errArgs "Projects not found" [
 				("projects", ResultList $ map ResultString pnames)]
 			ps -> return $ ResultOk $ ResultList $ map ResultProject ps
+	-- lookup info about symbol
+	lookup' as [nm] copts = errorT $ do
+		dbval <- liftIO $ getDb copts
+		(srcFile, cabal) <- askCtx copts as
+		liftM (ResultList . map ResultModuleDeclaration) $ lookupSymbol dbval cabal srcFile nm
+	lookup' as _ copts = return $ err "Invalid arguments"
 	-- get detailed info about symbol in source file
 	whois' as [nm] copts = errorT $ do
 		dbval <- liftIO $ getDb copts
-		srcFile <- maybe (throwError $ "No file specified") (canonicalizePath' copts) $ askOpt "file" as
-		cabal <- getCabal copts (askOptDef "sandbox" "" as)
-		liftM ResultModuleDeclaration $ whois dbval srcFile nm
+		(srcFile, cabal) <- askCtx copts as
+		liftM (ResultList . map ResultModuleDeclaration) $ whois dbval cabal srcFile nm
 	whois' as _ copts = return $ err "Invalid arguments"
+	-- get modules accessible from module
+	scopeModules' as [] copts = errorT $ do
+		dbval <- liftIO $ getDb copts
+		(srcFile, cabal) <- askCtx copts as
+		liftM (ResultList . map (ResultModuleId . moduleId)) $ scopeModules dbval cabal srcFile
+	scopeModules' as _ copts = return $ err "Invalid arguments"
+	-- get declarations accessible from module
+	scope' as [] copts = errorT $ do
+		dbval <- liftIO $ getDb copts
+		(srcFile, cabal) <- askCtx copts as
+		liftM (ResultList . map ResultModuleDeclaration) $ scope dbval cabal srcFile (hasOpt "global" as)
+	scope' as _ copts = return $ err "Invalid arguments"
 	-- completion
 	complete' as [] copts = complete' as [""] copts
 	complete' as [input] copts = errorT $ do
 		dbval <- getDb copts
-		srcFile <- maybe (throwError $ "No file specified") (canonicalizePath' copts) $ askOpt "file" as
-		mthis <- fileModule dbval srcFile
-		cabal <- getCabal copts (askOptDef "sandbox" "" as)
-		liftM (ResultList . map ResultModuleDeclaration) $ completions dbval mthis input
+		(srcFile, cabal) <- askCtx copts as
+		liftM (ResultList . map ResultModuleDeclaration) $ completions dbval cabal srcFile input
 	complete' as _ copts = return $ err "Invalid arguments"
 	-- dump cabal modules
-	dumpCabal' as _ copts = do
-		dbval <- getDb copts
-		cabal <- getCabal copts $ askOptDef "sandbox" "" as
+	dumpCabal' as _ copts = errorT $ do
+		dbval <- liftIO $ getDb copts
+		cabal <- getCabal copts as
 		let
 			dat = cabalDB cabal dbval
-		liftM (ResultOk . fromMaybe (ResultDatabase dat)) $ runMaybeT $ msum [
+		liftM (fromMaybe (ResultDatabase dat)) $ runMaybeT $ msum [
 			maybeOpt "path" as $ \p -> fork (dump (p </> cabalCache cabal) dat),
 			maybeOpt "file" as $ \f -> fork (dump f dat)]
 	-- dump projects
@@ -721,7 +746,7 @@ commands = map (fmap (fmap timeout')) cmds where
 				return ok,
 			do
 				dat <- MaybeT $ return $ askOpt "data" as
-				forkOrWait as $ cacheLoad (dbVar copts) (return $ eitherDecode (L.pack dat))
+				forkOrWait as $ cacheLoad (dbVar copts) (return $ eitherDecode (toUtf8 dat))
 				return ok]
 		waitDb as (dbVar copts)
 		return res
@@ -774,15 +799,16 @@ commands = map (fmap (fmap timeout')) cmds where
 			Left e -> putStrLn e
 			Right database -> update db (return database)
 
-	getCabal :: (Applicative m, MonadIO m) => CommandOptions -> Maybe String -> m Cabal
-	getCabal copts = liftM (maybe Cabal Sandbox) . traverse (canonicalizePath' copts)
+	asCabal :: CommandOptions -> Maybe FilePath -> ErrorT String IO Cabal
+	asCabal copts = maybe
+		(return Cabal)
+		(canonicalizePath' copts >=> locateSandbox)
 
-	asCabal :: MonadIO m => CommandOptions -> FilePath -> m Cabal
-	asCabal _ "" = return Cabal
-	asCabal copts p = liftM Sandbox $ (canonicalizePath' copts) p
+	askCabal :: CommandOptions -> Opts -> ErrorT String IO (Maybe Cabal)
+	askCabal copts as = traverse (asCabal copts) $ askOptDef "sandbox" as
 
-	askCabal :: MonadIO m => CommandOptions -> Opts -> m Cabal
-	askCabal copts = maybe (return Cabal) (asCabal copts) . askOptDef "sandbox" ""
+	getCabal :: CommandOptions -> Opts -> ErrorT String IO Cabal
+	getCabal copts as = asCabal copts $ askOpt "sandbox" as
 
 	getProject :: CommandOptions -> String -> ErrorT String IO Project
 	getProject copts proj = do
@@ -800,6 +826,11 @@ commands = map (fmap (fmap timeout')) cmds where
 
 	askProject :: CommandOptions -> Opts -> ErrorT String IO (Maybe Project)
 	askProject copts = traverse (getProject copts) . askOpt "project"
+
+	askCtx :: CommandOptions -> Opts -> ErrorT String IO (FilePath, Cabal)
+	askCtx copts as = liftM2 (,)
+		(maybe (throwError "No file specified") (canonicalizePath' copts) $ askOpt "file" as)
+		(getCabal copts as)
 
 	getDb :: (MonadIO m) => CommandOptions -> m Database
 	getDb = liftIO . readAsync . commandDatabase
@@ -819,6 +850,9 @@ commands = map (fmap (fmap timeout')) cmds where
 		| otherwise = forkIO (f $ const $ return ()) >> return ok
 		where
 			onMsg showMsg = if hasOpt "status" as then showMsg else (const $ return ())
+
+	error_ :: ErrorT String IO CommandResult -> IO CommandResult
+	error_ = liftM (either err id) . runErrorT
 
 	errorT :: ErrorT String IO ResultValue -> IO CommandResult
 	errorT = liftM (either err ResultOk) . runErrorT
@@ -849,10 +883,10 @@ printMainUsage = do
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) commands
 
-processCmd :: CommandOptions -> Int -> String -> (String -> IO ()) -> IO Bool
+processCmd :: CommandOptions -> Int -> String -> (ByteString -> IO ()) -> IO Bool
 processCmd copts tm cmdLine printResult = processCmdArgs copts tm (split cmdLine) printResult
 
-processCmdArgs :: CommandOptions -> Int -> [String] -> (String -> IO ()) -> IO Bool
+processCmdArgs :: CommandOptions -> Int -> [String] -> (ByteString -> IO ()) -> IO Bool
 processCmdArgs copts tm cmdArgs printResult = run (map (fmap withOptsAct) commands) (asCmd unknownCommand) (asCmd . commandError) cmdArgs tm copts >>= processResult where
 	asCmd :: CommandResult -> (Int -> CommandOptions -> IO CommandResult)
 	asCmd r _ _ = return r
@@ -874,11 +908,20 @@ processCmdArgs copts tm cmdArgs printResult = run (map (fmap withOptsAct) comman
 				processResult $ errArgs "process throws exception" [("exception", ResultString $ show e)]
 				return True
 
-			showStatus s = L.unpack $ encode $ object ["status" .= s]
+			showStatus s = encode $ object ["status" .= s]
 
 	processResult ResultExit = do
-		printResult $ L.unpack $ encode ResultExit
+		printResult $ encode ResultExit
 		return False
 	processResult v = do
-		printResult $ L.unpack $ encode v
+		printResult $ encode v
 		return True
+
+fromUtf8 :: ByteString -> String
+fromUtf8 = T.unpack . T.decodeUtf8
+
+toUtf8 :: String -> ByteString
+toUtf8 = T.encodeUtf8 . T.pack
+
+hGetLine' :: Handle -> IO ByteString
+hGetLine' = fmap L.fromStrict . B.hGetLine

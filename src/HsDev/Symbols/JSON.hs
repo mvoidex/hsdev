@@ -16,13 +16,16 @@ module HsDev.Symbols.JSON (
 
 import Control.Arrow
 import Control.Applicative
+import Control.Monad (join)
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Traversable (traverse)
+import Text.Read (readMaybe)
 
 import HsDev.Symbols
+import HsDev.Project
 import HsDev.Cache ()
 
 encodeModuleDeclaration :: ModuleDeclaration -> Value
@@ -56,8 +59,8 @@ encodeModule m = object $ sym ++ moduleCts m where
 		"decls" .= map encodeModuleDeclaration (moduleModuleDeclarations m')]
 
 encodeModuleLocation :: ModuleLocation -> Value
-encodeModuleLocation (FileModule f p) = object ["file" .= f, "project" .= p]
-encodeModuleLocation (CabalModule c p n) = object ["cabal" .= c, "package" .= p, "name" .= n]
+encodeModuleLocation (FileModule f p) = object ["file" .= f, "project" .= fmap projectCabal p]
+encodeModuleLocation (CabalModule c p n) = object ["cabal" .= c, "package" .= fmap show p, "name" .= n]
 encodeModuleLocation (MemoryModule m) = object ["mem" .= m]
 
 encodePosition :: Position -> Value
@@ -118,8 +121,8 @@ decodeModule = withObject "module" $ \v -> Module <$>
 
 decodeModuleLocation :: Value -> Parser ModuleLocation
 decodeModuleLocation = withObject "module location" $ \v ->
-	(FileModule <$> v .: "file" <*> v .: "project") <|>
-	(CabalModule <$> v .: "cabal" <*> v .: "package" <*> v .: "name") <|>
+	(FileModule <$> v .: "file" <*> (fmap project <$> v .: "project")) <|>
+	(CabalModule <$> v .: "cabal" <*> ((join . readMaybe) <$> v .: "package") <*> v .: "name") <|>
 	(MemoryModule <$> v .: "mem")
 
 decodePosition :: Value -> Parser Position

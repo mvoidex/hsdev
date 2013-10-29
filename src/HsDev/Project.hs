@@ -6,7 +6,7 @@ module HsDev.Project (
 	readProject, loadProject,
 	project,
 	Extensions(..), withExtensions,
-	infos, sourceDirs,
+	infos, inTarget, fileTarget, sourceDirs,
 
 	-- * Helpers
 	showExtension, flagExtension, extensionFlag,
@@ -20,11 +20,13 @@ import Control.Exception (handle, IOException)
 import Control.Monad.Error
 import Data.Aeson
 import Data.Aeson.Types (Parser)
-import Data.List (intercalate, unfoldr, stripPrefix)
+import Data.List (find, intercalate, unfoldr, stripPrefix, isPrefixOf)
 import Data.Maybe (maybeToList, isJust)
+import Data.Monoid
 import Data.Foldable (Foldable(..))
 import Data.Traversable
 import Data.Text (unpack)
+import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
 import Distribution.ModuleName (components)
@@ -168,6 +170,7 @@ instance FromJSON Test where
 
 -- | Build info
 data Info = Info {
+	infoDepends :: [String],
 	infoLanguage :: Maybe Language,
 	infoExtensions :: [Extension],
 	infoSourceDirs :: [FilePath] }
@@ -184,32 +187,59 @@ instance Show Info where
 
 instance ToJSON Info where
 	toJSON i = object [
+		"build-depends" .= infoDepends i,
 		"language" .= fmap display (infoLanguage i),
 		"extensions" .= map display (infoExtensions i),
 		"source-dirs" .= infoSourceDirs i]
 
 instance FromJSON Info where
 	parseJSON = withObject "info" $ \v -> Info <$>
+		v .: "build-depends" <*>
 		((v .:: "language") >>= traverse (parseDT "Language")) <*>
 		((v .:: "extensions") >>= traverse (parseDT "Extension")) <*>
 		v .:: "source-dirs"
 
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
-analyzeCabal source = case parsePackageDescription source of
+analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source of
 	ParseOk _ r -> Right ProjectDescription {
-		projectLibrary = fmap (toLibrary . PD.condTreeData) $ PD.condLibrary r,
-		projectExecutables = fmap (toExecutable . second PD.condTreeData) $ PD.condExecutables r,
-		projectTests = fmap (toTest . second PD.condTreeData) $ PD.condTestSuites r }
+		projectLibrary = fmap toLibrary $ PD.library r,
+		projectExecutables = fmap toExecutable $ PD.executables r,
+		projectTests = fmap toTest $ PD.testSuites r }
 	ParseFailed e -> Left $ "Parse failed: " ++ show e
 	where
 		toLibrary (PD.Library exposeds _ info) = Library (map components exposeds) (toInfo info)
-		toExecutable (name, PD.Executable _ path info) = Executable name path (toInfo info)
-		toTest (name, PD.TestSuite _ _ info enabled) = Test name enabled (toInfo info)
+		toExecutable (PD.Executable name path info) = Executable name path (toInfo info)
+		toTest (PD.TestSuite name _ info enabled) = Test name enabled (toInfo info)
 		toInfo info = Info {
+			infoDepends = map pkgName (PD.targetBuildDepends info),
 			infoLanguage = PD.defaultLanguage info,
 			infoExtensions = PD.defaultExtensions info,
 			infoSourceDirs = PD.hsSourceDirs info }
+
+		pkgName :: P.Dependency -> String
+		pkgName (P.Dependency (P.PackageName s) _) = s
+
+		flattenDescr :: PD.GenericPackageDescription -> PD.PackageDescription
+		flattenDescr (PD.GenericPackageDescription pkg _ mlib mexes mtests _) = pkg {
+			PD.library = flip fmap mlib $ flattenTree
+				(insert PD.libBuildInfo (\i l -> l { PD.libBuildInfo = i })),
+			PD.executables = flip fmap mexes $
+				second (flattenTree (insert PD.buildInfo (\i l -> l { PD.buildInfo = i }))) >>>
+				(\(n, e) -> e { PD.exeName = n }),
+			PD.testSuites = flip fmap mtests $
+				second (flattenTree (insert PD.testBuildInfo (\i l -> l { PD.testBuildInfo = i }))) >>>
+				(\(n, t) -> t { PD.testName = n }) }
+			where
+				insert :: (a -> PD.BuildInfo) -> (PD.BuildInfo -> a -> a) -> [P.Dependency] -> a -> a
+				insert f s deps x = s ((f x) { PD.targetBuildDepends = deps }) x
+
+				setName :: (String -> a -> a) -> (String, a) -> a
+				setName s (n, v) = s n v
+
+		flattenTree :: Monoid a => (c -> a -> a) -> PD.CondTree v c a -> a
+		flattenTree f (PD.CondNode x cs cmps) = f cs x `mappend` mconcat (concatMap flattenBranch cmps) where
+			flattenBranch (_, t, mb) = flattenTree f t : map (flattenTree f) (maybeToList mb)
 
 -- | Read project info from .cabal
 readProject :: FilePath -> ErrorT String IO Project
@@ -264,6 +294,15 @@ infos p =
 	maybe [] (return . libraryBuildInfo) (projectLibrary p) ++
 	map executableBuildInfo (projectExecutables p) ++
 	map testBuildInfo (projectTests p)
+
+-- | Check if source related to target, source must be relative to project directory
+inTarget :: FilePath -> Info -> Bool
+inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ infoSourceDirs info
+
+-- | Get target for source file
+fileTarget :: Project -> FilePath -> Maybe Info
+fileTarget p f = find (makeRelative (projectPath p) f `inTarget`) $
+	maybe [] infos $ projectDescription p
 
 -- | Returns source dirs for library, executables and tests
 sourceDirs :: ProjectDescription -> [Extensions FilePath]

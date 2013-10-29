@@ -32,7 +32,7 @@ import HsDev.Util ((.::))
 -- | HsDev database
 data Database = Database {
 	databaseModules :: Map ModuleLocation InspectedModule,
-	databaseProjects :: Map String Project }
+	databaseProjects :: Map FilePath Project }
 		deriving (Eq, Ord)
 
 instance NFData Database where

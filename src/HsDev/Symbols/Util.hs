@@ -1,6 +1,6 @@
 module HsDev.Symbols.Util (
-	projectOf, inProject, inCabal, inPackage, inFile, inMemory, inModule, byFile, standalone,
-	qualifier, imported, reachable,
+	projectOf, inProject, inCabal, inPackage, inFile, inMemory, inModule, byFile, byCabal, standalone,
+	imports, qualifier, imported, visible, inScope,
 	sourceModule, visibleModule, preferredModule, uniqueModules,
 	allOf, anyOf
 	) where
@@ -18,7 +18,7 @@ import HsDev.Project
 -- | Get module project
 projectOf :: ModuleId -> Maybe Project
 projectOf m = case moduleIdLocation m of
-	FileModule _ proj -> fmap project proj
+	FileModule _ proj -> proj
 	_ -> Nothing
 
 -- | Check if module in project
@@ -34,7 +34,7 @@ inCabal c m = case moduleIdLocation m of
 -- | Check if module in package
 inPackage :: String -> ModuleId -> Bool
 inPackage p m = case moduleIdLocation m of
-	CabalModule _ package _ -> Just p == package
+	CabalModule _ package _ -> Just p == fmap packageName package
 	_ -> False
 
 -- | Check if module in file
@@ -59,24 +59,41 @@ byFile m = case moduleIdLocation m of
 	FileModule _ _ -> True
 	_ -> False
 
+-- | Check if module got from cabal database
+byCabal :: ModuleId -> Bool
+byCabal m = case moduleIdLocation m of
+	CabalModule _ _ _ -> True
+	_ -> False
+
 -- | Check if module is standalone
 standalone :: ModuleId -> Bool
 standalone m = case moduleIdLocation m of
 	FileModule _ Nothing -> True
 	_ -> False
 
--- | Get list of imports accessible via qualifier
+-- | Get list of imports
+imports :: Module -> [Import]
+imports = M.elems . moduleImports
+
+-- | Get list of imports, which can be accessed with specified qualifier or unqualified
 qualifier :: Module -> Maybe String -> [Import]
-qualifier m q = filter (importQualifier q) $ (Import "Prelude" False Nothing Nothing : Import (moduleName m) False Nothing Nothing : M.elems (moduleImports m))
+qualifier m q = filter (importQualifier q) $ (Import "Prelude" False Nothing Nothing : Import (moduleName m) False Nothing Nothing : imports m)
 
--- | Check if module imported via import statement
-imported :: ModuleId -> Import -> Bool
-imported m i = moduleIdName m == importModuleName i
+-- | Check if module imported via imports specified
+imported :: ModuleId -> [Import] -> Bool
+imported m = any (\i -> moduleIdName m == importModuleName i)
 
--- | Check if module reachable from this module via qualifier
--- >reachable m q this -- module `m` reachable from `this`
-reachable :: Maybe String -> Module -> ModuleId -> Bool
-reachable q this m = any (imported m) $ qualifier this q
+-- | Check if module visible from this module within this project
+visible :: Project -> ModuleId -> ModuleId -> Bool
+visible p (ModuleId mname (FileModule src _)) m =
+	inProject p m || any (`inPackage` m) deps || maybe False ((`elem` deps) . projectName) (projectOf m)
+	where
+		deps = maybe [] infoDepends $ fileTarget p src
+visible _ _ _ = False
+
+-- | Check if module is in scope with qualifier
+inScope :: Module -> Maybe String -> ModuleId -> Bool
+inScope this q m = m `imported` qualifier this q
 
 -- | Select module, defined by sources
 sourceModule :: Maybe Project -> [Module] -> Maybe Module

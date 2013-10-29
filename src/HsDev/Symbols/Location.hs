@@ -1,23 +1,54 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Symbols.Location (
-	ModuleLocation(..), moduleSource,
+	ModulePackage(..), ModuleLocation(..), moduleSource,
 	Position(..),
 	Location(..),
-	Cabal(..)
+
+	module HsDev.Cabal
 	) where
 
 import Control.Applicative
 import Control.DeepSeq
+import Control.Monad (join)
 import Data.Aeson
+import Data.Char (isSpace, isDigit)
 import Data.Maybe (fromMaybe)
+import Text.Read (readMaybe)
 
+import HsDev.Cabal
+import HsDev.Project
 import HsDev.Util ((.::))
+
+data ModulePackage = ModulePackage {
+	packageName :: String,
+	packageVersion :: String }
+		deriving (Eq, Ord)
+
+instance NFData ModulePackage where
+	rnf (ModulePackage n v) = rnf n `seq` rnf v
+
+instance Show ModulePackage where
+	show (ModulePackage n "") = n
+	show (ModulePackage n v) = n ++ "-" ++ v
+
+instance Read ModulePackage where
+	readsPrec _ str = case pkg of
+		"" -> []
+		_ -> [(ModulePackage n v, str')]
+		where
+			(pkg, str') = break isSpace str
+			(rv, rn) = span versionChar $ reverse pkg
+			v = reverse rv
+			n = reverse $ dropWhile (== '-') rn
+
+			versionChar ch = isDigit ch || ch == '.'
+
 
 -- | Location of module
 data ModuleLocation =
-	FileModule { moduleFile :: FilePath, moduleProject :: Maybe FilePath } |
-	CabalModule { moduleCabal :: Cabal, modulePackage :: Maybe String, cabalModuleName :: String } |
+	FileModule { moduleFile :: FilePath, moduleProject :: Maybe Project } |
+	CabalModule { moduleCabal :: Cabal, modulePackage :: Maybe ModulePackage, cabalModuleName :: String } |
 	MemoryModule { moduleMemory :: Maybe String }
 		deriving (Eq, Ord)
 
@@ -31,19 +62,19 @@ instance NFData ModuleLocation where
 	rnf (MemoryModule m) = rnf m
 
 instance Show ModuleLocation where
-	show (FileModule f p) = f ++ maybe "" (" in " ++) p
-	show (CabalModule c p _) = show c ++ maybe "" (" in package " ++) p
+	show (FileModule f p) = f ++ maybe "" (" in " ++) (fmap projectPath p)
+	show (CabalModule c p _) = show c ++ maybe "" (" in package " ++) (fmap show p)
 	show (MemoryModule m) = "<" ++ fromMaybe "null" m ++ ">"
 
 instance ToJSON ModuleLocation where
-	toJSON (FileModule f p) = object ["file" .= f, "project" .= p]
-	toJSON (CabalModule c p n) = object ["cabal" .= c, "package" .= p, "name" .= n]
+	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap projectCabal p]
+	toJSON (CabalModule c p n) = object ["cabal" .= c, "package" .= fmap show p, "name" .= n]
 	toJSON (MemoryModule s) = object ["mem" .= s]
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
-		(FileModule <$> v .:: "file" <*> v .:: "project") <|>
-		(CabalModule <$> v .:: "cabal" <*> v .:: "package" <*> v .:: "name") <|>
+		(FileModule <$> v .:: "file" <*> ((fmap project) <$> (v .:: "project"))) <|>
+		(CabalModule <$> v .:: "cabal" <*> (fmap (join . readMaybe) (v .:: "package")) <*> v .:: "name") <|>
 		(MemoryModule <$> v .:: "mem")
 
 data Position = Position {
@@ -88,23 +119,3 @@ instance FromJSON Location where
 	parseJSON = withObject "location" $ \v -> Location <$>
 		v .:: "module" <*>
 		v .:: "pos"
-
--- | Cabal or sandbox
-data Cabal = Cabal | Sandbox FilePath deriving (Eq, Ord)
-
-instance NFData Cabal where
-	rnf Cabal = ()
-	rnf (Sandbox p) = rnf p
-
-instance Show Cabal where
-	show Cabal = "<cabal>"
-	show (Sandbox p) = p
-
-instance ToJSON Cabal where
-	toJSON Cabal = toJSON ("<cabal>" :: String)
-	toJSON (Sandbox p) = toJSON p
-
-instance FromJSON Cabal where
-	parseJSON v = do
-		p <- parseJSON v
-		return $ if p == "<cabal>" then Cabal else Sandbox p

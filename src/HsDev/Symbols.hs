@@ -37,7 +37,7 @@ module HsDev.Symbols (
 import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq
-import Control.Monad (liftM2)
+import Control.Monad (liftM2, liftM3)
 import Data.Aeson
 import Data.List
 import Data.Map (Map)
@@ -348,8 +348,11 @@ instance Canonicalize Cabal where
 	canonicalize Cabal = return Cabal
 	canonicalize (Sandbox p) = fmap Sandbox $ canonicalizePath p
 
+instance Canonicalize Project where
+	canonicalize (Project nm p c desc) = liftM3 (Project nm) (canonicalizePath p) (canonicalizePath c) (return desc)
+
 instance Canonicalize ModuleLocation where
-	canonicalize (FileModule f p) = liftM2 FileModule (canonicalizePath f) (traverse canonicalizePath p)
+	canonicalize (FileModule f p) = liftM2 FileModule (canonicalizePath f) (traverse canonicalize p)
 	canonicalize (CabalModule c p n) = fmap (\c' -> CabalModule c' p n) $ canonicalize c
 	canonicalize (MemoryModule m) = return $ MemoryModule m
 
@@ -466,8 +469,8 @@ instance Show InspectedModule where
 	show (Inspected i mi m) = unlines [either showError show m, "\tinspected: " ++ show i] where
 		showError :: String -> String
 		showError e = unlines $ ("\terror: " ++ e) : case mi of
-			FileModule f p -> ["file: " ++ f, "project: " ++ fromMaybe "" p]
-			CabalModule c p n -> ["cabal: " ++ show c, "package: " ++ fromMaybe "" p, "name: " ++ n]
+			FileModule f p -> ["file: " ++ f, "project: " ++ maybe "" projectPath p]
+			CabalModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ n]
 			MemoryModule mem -> ["mem: " ++ fromMaybe "" mem]
 
 instance ToJSON InspectedModule where

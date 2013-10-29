@@ -13,29 +13,36 @@ import qualified Data.Map as M
 import Exception (ghandle)
 import GHC (Ghc, runGhc, getSessionDynFlags, defaultCleanupHandler)
 import GHC.Paths (libdir)
+import Text.Read (readMaybe)
+import System.Directory (getCurrentDirectory)
 
 import qualified Language.Haskell.GhcMod as GhcMod
 
+import HsDev.Cabal
+import HsDev.Project
 import HsDev.Symbols
+import HsDev.Symbols.Location
 import HsDev.Tools.Base
 
-list :: [String] -> ErrorT String IO [String]
-list opts = do
-	cradle <- getCradle Cabal
-	tryGhc $ GhcMod.listMods (GhcMod.defaultOptions { GhcMod.ghcOpts = opts }) cradle
+list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
+list opts cabal = do
+	cradle <- liftIO $ cradle cabal Nothing
+	ms <- tryGhc $ GhcMod.listMods (GhcMod.defaultOptions { GhcMod.ghcOpts = opts }) cradle
+	return [CabalModule cabal (readMaybe p) m | (m, p) <- ms]
 
-browse :: [String] -> String -> ErrorT String IO InspectedModule
-browse opts mname = inspect (CabalModule Cabal Nothing mname) (browseInspection opts mname) $ do
-	cradle <- getCradle Cabal
-	ts <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = opts }) cradle mname
+browse :: [String] -> Cabal -> String -> Maybe String -> ErrorT String IO InspectedModule
+browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ do
+	cradle <- liftIO $ cradle cabal Nothing
+	ts <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = packageOpt mpackage++ opts, GhcMod.packageId = mpackage }) cradle mname
 	return $ Module {
 		moduleName = mname,
 		moduleDocs = Nothing,
-		moduleLocation = CabalModule Cabal Nothing mname,
+		moduleLocation = mloc,
 		moduleExports = [],
 		moduleImports = M.empty,
 		moduleDeclarations = decls ts }
 	where
+		mloc = CabalModule cabal (mpackage >>= readMaybe) mname
 		decls rs = M.fromList $ map (declarationName &&& id) $ mapMaybe parseDecl rs
 		parseFunction s = do
 			groups <- match "(\\w+)\\s+::\\s+(.*)" s
@@ -47,13 +54,13 @@ browse opts mname = inspect (CabalModule Cabal Nothing mname) (browseInspection 
 			return $ Declaration (groups `at` 2) Nothing Nothing (declarationTypeCtor (groups `at` 1) $ TypeInfo Nothing args Nothing)
 		parseDecl s = parseFunction s `mplus` parseType s
 
-browseInspection :: [String] -> String -> ErrorT String IO Inspection
-browseInspection opts _ = return $ InspectionAt 0 opts
+browseInspection :: [String] -> Inspection
+browseInspection = InspectionAt 0
 
-info :: [String] -> FilePath -> String -> String -> Cabal -> ErrorT String IO Declaration
-info opts file mname sname cabal = do
-	cradle <- getCradle cabal
-	rs <- tryGhc $ GhcMod.info (GhcMod.defaultOptions { GhcMod.ghcOpts = opts }) cradle file mname sname
+info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> ErrorT String IO Declaration
+info opts cabal file mproj mname sname = do
+	cradle <- liftIO $ cradle cabal mproj
+	rs <- tryGhc $ GhcMod.info (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) cradle file mname sname
 	toDecl rs
 	where
 		toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
@@ -70,9 +77,6 @@ info opts file mname sname cabal = do
 		trim = p . p where
 			p = reverse . dropWhile isSpace
 
-getCradle :: MonadIO m => Cabal -> m GhcMod.Cradle
-getCradle _ = liftIO GhcMod.findCradle -- FIXME
-
 tryGhc :: Ghc a -> ErrorT String IO a
 tryGhc act = ErrorT $ ghandle rethrow $ liftM Right $ runGhc (Just libdir) $ do
 	dflags <- getSessionDynFlags
@@ -80,3 +84,13 @@ tryGhc act = ErrorT $ ghandle rethrow $ liftM Right $ runGhc (Just libdir) $ do
 	where
 		rethrow :: SomeException -> IO (Either String a)
 		rethrow = return . Left . show
+
+cradle :: Cabal -> Maybe Project -> IO GhcMod.Cradle
+cradle cabal Nothing = do
+	dir <- getCurrentDirectory
+	return $ GhcMod.Cradle dir Nothing Nothing (cabalOpt cabal)
+cradle cabal (Just proj) = return $ GhcMod.Cradle
+	(projectPath proj)
+	(Just $ projectPath proj)
+	(Just $ projectCabal proj)
+	(cabalOpt cabal)

@@ -28,14 +28,14 @@ import HsDev.Util
 
 -- | Enum cabal modules
 enumCabal :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
-enumCabal opts cabal = liftM (map $ CabalModule cabal Nothing) $ list opts
+enumCabal = list
 
 -- | Enum project sources
 enumProject :: Project -> ErrorT String IO [([String], ModuleLocation)]
 enumProject p = do
 	p' <- loadProject p
 	srcs <- projectSources p'
-	return [(extensionsOpts (extensions src), FileModule (entity src) (Just $ projectCabal p')) | src <- srcs]
+	return [(extensionsOpts (extensions src), FileModule (entity src) (Just p')) | src <- srcs]
 
 -- | Enum directory modules
 enumDirectory :: FilePath -> ErrorT String IO [([String], ModuleLocation)]
@@ -58,15 +58,16 @@ scanProjectFile opts f = do
 
 -- | Scan module
 scanModule :: [String] -> ModuleLocation -> ErrorT String IO InspectedModule
-scanModule opts (FileModule f p) = inspectFile opts f >>= traverse (inferTypes opts)
-scanModule opts (CabalModule c p n) = browse opts n >>= traverse (liftIO . loadDocs opts)
+scanModule opts (FileModule f p) = inspectFile opts f >>= traverse (inferTypes opts Cabal)
+scanModule opts (CabalModule c p n) = browse opts c n (fmap packageName p) >>= traverse (liftIO . loadDocs opts') where
+	opts' = cabalOpt c ++ packageOpt (fmap packageName p) ++ opts
 scanModule opts (MemoryModule _) = throwError "Can't inspect memory module"
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> ErrorT String IO Bool
 upToDate opts (Inspected insp m _) = case m of
 	FileModule f p -> liftM (== insp) $ fileInspection f opts
-	CabalModule c p n -> liftM (== insp) $ browseInspection opts n
+	CabalModule c p n -> return $ insp == browseInspection opts
 	_ -> return False
 
 -- | Rescan inspected module

@@ -21,11 +21,12 @@ import Control.Monad (filterM)
 import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
-import Data.List (unfoldr, partition, isPrefixOf)
+import Data.List (find, unfoldr, partition, isPrefixOf)
 import Data.Maybe (isNothing, fromMaybe, mapMaybe, listToMaybe)
 import Data.Monoid
 import Data.Traversable (traverse)
 import System.Directory (canonicalizePath, doesFileExist, doesDirectoryExist)
+import System.FilePath (makeRelative)
 
 import HsDev.Database
 import HsDev.Database.Async
@@ -88,7 +89,7 @@ scanModules opts ms = do
 		update db $ return $ fromModule im
 	where
 		ps = mapMaybe (toProj . snd) ms
-		toProj (FileModule _ p) = p
+		toProj (FileModule _ p) = fmap projectCabal p
 		toProj _ = Nothing
 
 -- | Scan source file
@@ -96,13 +97,12 @@ scanFile :: MonadCatchIO m => [String] -> FilePath -> UpdateDB m ()
 scanFile opts fpath = do
 	fpath' <- liftIO $ canonicalizePath fpath
 	mproj <- liftIO $ locateProject fpath'
-	srcDirs <- liftIO $ liftM (either (const []) id) $ runErrorT $ maybe (return []) projectDirs mproj
 	let
-		fileDirs = filter ((`isPrefixOf` fpath') . entity) srcDirs
-		fileExts = maybe [] (extensionsOpts . extensions) $ listToMaybe fileDirs
+		mtarget = mproj >>= (`fileTarget` fpath')
+		fileExts = maybe [] (extensionsOpts . infoExtensions) mtarget
 
 	runScan_ "file" fpath' $ do
-		lift $ scanModule (opts ++ fileExts) (FileModule fpath' $ fmap projectCabal mproj)
+		lift $ scanModule (opts ++ fileExts) (FileModule fpath' mproj)
 
 -- | Scan cabal modules
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> UpdateDB m ()
