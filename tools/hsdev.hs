@@ -676,8 +676,10 @@ commands = map (fmap (fmap timeout')) cmds where
 		let
 			dat = cabalDB cabal dbval
 		liftM (fromMaybe (ResultDatabase dat)) $ runMaybeT $ msum [
-			maybeOpt "path" as $ \p -> fork (dump (p </> cabalCache cabal) dat),
-			maybeOpt "file" as $ \f -> fork (dump f dat)]
+			maybeOpt "path" as $ canonicalizePath' copts >=> \p ->
+				fork (dump (p </> cabalCache cabal) dat),
+			maybeOpt "file" as $ canonicalizePath' copts >=> \f ->
+				fork (dump f dat)]
 	-- dump projects
 	dumpProjects' as [] copts = errorT $ do
 		dbval <- liftIO $ getDb copts
@@ -687,9 +689,9 @@ commands = map (fmap (fmap timeout')) cmds where
 			dats = map (id &&& flip projectDB dbval) ps
 		liftM (fromMaybe (ResultList $ map (ResultDatabase . snd) dats)) $
 			runMaybeT $ msum [
-				maybeOpt "path" as $ \p ->
+				maybeOpt "path" as $ canonicalizePath' copts >=> \p ->
 					fork (forM_ dats $ \(proj, dat) -> (dump (p </> projectCache proj) dat)),
-				maybeOpt "file" as $ \f ->
+				maybeOpt "file" as $ canonicalizePath' copts >=> \f ->
 					fork (dump f (mconcat $ map snd dats))]
 	dumpProjects' as _ copts = return $ err "Invalid arguments"
 	-- dump files
@@ -698,15 +700,17 @@ commands = map (fmap (fmap timeout')) cmds where
 		let
 			dat = standaloneDB dbval
 		liftM (ResultOk . fromMaybe (ResultDatabase dat)) $ runMaybeT $ msum [
-			maybeOpt "path" as $ \p -> fork (dump (p </> standaloneCache) dat),
-			maybeOpt "file" as $ \f -> fork (dump f dat)]
+			maybeOpt "path" as $ canonicalizePath' copts >=> \p ->
+				fork (dump (p </> standaloneCache) dat),
+			maybeOpt "file" as $ canonicalizePath' copts >=> \f ->
+				fork (dump f dat)]
 	dumpFiles' as _ copts = return $ err "Invalid arguments"
 	-- dump database
 	dump' as _ copts = do
 		dbval <- getDb copts
 		liftM (fromMaybe (ResultOk $ ResultDatabase dbval)) $ runMaybeT $ msum [
 			do
-				p <- MaybeT $ return $ askOpt "path" as
+				p <- MaybeT $ traverse (canonicalizePath' copts) $ askOpt "path" as
 				fork $ do
 					createDirectoryIfMissing True (p </> "cabal")
 					createDirectoryIfMissing True (p </> "projects")
@@ -721,7 +725,7 @@ commands = map (fmap (fmap timeout')) cmds where
 					dump (p </> standaloneCache) (standaloneDB dbval)
 				return ok,
 			do
-				f <- MaybeT $ return $ askOpt "file" as
+				f <- MaybeT $ traverse (canonicalizePath' copts) $ askOpt "file" as
 				fork $ dump f dbval
 				return ok]
 	-- load database
