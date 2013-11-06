@@ -96,11 +96,11 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			db <- newAsync
 			forever $ do
 				s <- getLine
-				r <- processCmd (CommandOptions db dir) 10000 s L.putStrLn
+				r <- processCmd (CommandOptions db dir) 10000 s (L.putStrLn . encode)
 				unless r exitSuccess,
 		cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
 			let
-				args = ["server", "run"] ++ maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts)
+				args = ["server", "run"] ++ maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts)
 			void $ runInteractiveProcess "powershell" ["-Command", "& {start-process hsdev " ++ intercalate ", " args ++ " -WindowStyle Hidden}"] Nothing Nothing
 			printOk sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts),
 		cmd ["server", "run"] [] "start server" serverOpts $ \sopts _ -> do
@@ -118,25 +118,28 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			mmapPool <- createPool "hsdev"
 			let
 				-- | Send response as is or via memory mapped file
-				sendResponseToClient :: Handle -> ByteString -> IO ()
-				sendResponseToClient h msg
+				sendResponse :: Handle -> Response -> IO ()
+				sendResponse h r@(ResponseMapFile _) = L.hPutStrLn h $ encode r
+				sendResponse h r
 					| L.length msg <= 1024 = L.hPutStrLn h msg
 					| otherwise = do
 						sync <- newEmptyMVar
 						forkIO $ void $ withName mmapPool $ \mmapName -> do
 							runErrorT $ flip catchError
 								(\e -> liftIO $ do
-									L.hPutStrLn h $ encode $ err e
+									sendResponse h $ Response $ object ["error" .= e]
 									putMVar sync ())
 								(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
-									L.hPutStrLn h $ encode $ ResultMapFile mmapName
+									sendResponse h $ ResponseMapFile mmapName
 									putMVar sync ()
-									-- Give 10 seconds for client to read it
+									-- Dirty: give 10 seconds for client to read it
 									threadDelay 10000000)
 						takeMVar sync
+					where
+						msg = encode r
 #else
 			let
-				sendResponseToClient = L.hPutStrLn
+				sendResponse h = L.hPutStrLn h . encode
 #endif
 
 			forkIO $ do
@@ -148,32 +151,38 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 					s' <- fmap fst $ accept s
 					outputStr $ show s' ++ " connected"
 					void $ forkIO $ bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-						me <- myThreadId
-						done <- newEmptyMVar
-						let
-							timeoutWait = do
-								notDone <- isEmptyMVar done
-								when notDone $ do
-									void $ forkIO $ do
-										threadDelay 1000000
-										tryPutMVar done ()
-										killThread me
-									void $ takeMVar done
-						writeChan clientChan (Just timeoutWait)
-						req <- hGetLine' h
-						outputStr $ show s' ++ ": " ++ fromUtf8 req
-						r <- case fmap extractCurrentDir $ eitherDecode req of
-							Left reqErr -> do
-								L.hPutStrLn h $ encode $ errArgs "Invalid request" [("request", ResultString $ fromUtf8 req), ("error", ResultString reqErr)]
-								return False
-							Right (clientDir, reqArgs) -> processCmdArgs
-								(CommandOptions db clientDir)
-								(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponseToClient h)
-						unless r $ do
-							void $ tryPutMVar waitListen ()
-							killThread accepter
-						putMVar done ()
-
+						bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+							me <- myThreadId
+							let
+								timeoutWait = do
+									notDone <- isEmptyMVar done
+									when notDone $ do
+										void $ forkIO $ do
+											threadDelay 1000000
+											tryPutMVar done ()
+											killThread me
+										void $ takeMVar done
+							writeChan clientChan (Just timeoutWait)
+							req <- hGetLine' h
+							outputStr $ show s' ++ ": " ++ fromUtf8 req
+							r <- case fmap extractCurrentDir $ eitherDecode req of
+								Left reqErr -> do
+									sendResponse h $ Response $ object [
+										"error" .= ("Invalid request" :: String),
+										"request" .= fromUtf8 req,
+										"what" .= reqErr]
+									return False
+								Right (clientDir, reqArgs) -> processCmdArgs
+									(CommandOptions db clientDir)
+									(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
+							unless r $ do
+								outputStr $ show s' ++ " requests to stop server"
+								void $ tryPutMVar waitListen ()
+								killThread accepter
+							-- Send 'end' message and wait client
+							L.hPutStrLn h L.empty
+							outputStr $ "waiting " ++ show s'
+							void $ hGetLine' h
 
 			takeMVar waitListen
 			outputStr "waiting for clients"
@@ -182,7 +191,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			outputStr "server shutdown",
 		cmd ["server", "stop"] [] "stop remote server" serverOpts $ \sopts _ -> do
 			pname <- getExecutablePath
-			r <- readProcess pname (maybe [] (\p' -> ["--port", show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
+			r <- readProcess pname (maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
 			let
 				stopped = case decode (toUtf8 r) of
 					Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
@@ -216,26 +225,25 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 		addr' <- inet_addr "127.0.0.1"
 		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
 		h <- socketToHandle s ReadWriteMode
-		L.hPutStrLn h $ encode $ ["--current-directory", curDir] ++ setData stdinData as
-		responses <- liftM L.lines $ L.hGetContents h
+		L.hPutStrLn h $ encode $ ["--current-directory=" ++ curDir] ++ setData stdinData as
+		responses <- liftM (takeWhile (not . L.null) . L.lines) $ L.hGetContents h
 		forM_ responses $
 			parseResponse >=>
 			(L.putStrLn . encodeValue (getAny $ clientPretty p))
 		where
 			setData :: Maybe ResultValue -> [String] -> [String]
 			setData Nothing = id
-			setData (Just d) = (++ ["--data", fromUtf8 $ encode d])
+			setData (Just d) = (++ ["--data=" ++ (fromUtf8 $ encode d)])
 
 			parseResponse r = fmap (either err' id) $ runErrorT $ do
-				v <- errT (eitherDecode r) `orFail`
-					(\e -> "Can't decode response " ++ fromUtf8 r ++ " due to: " ++ e)
-				case parseMaybe (withObject "map view of file" (.: "file")) v of
-					Nothing -> return v
-					Just viewFile -> do
+				v <- errT (eitherDecode r) `orFail` (\e -> "Can't decode response")
+				case v of
+					Response rv -> return rv
+					ResponseStatus sv -> return sv
+					ResponseMapFile viewFile -> do
 						str <- fmap L.fromStrict (readMapFile viewFile) `orFail`
-							(\e -> "Can't read map view of file " ++ viewFile ++ " due to: " ++ e)
-						errT (eitherDecode str) `orFail`
-							(\e -> "Can't decode map view of file contents " ++ fromUtf8 str ++ " due to: " ++ e)
+							(\e -> "Can't read map view of file")
+						lift $ parseResponse str
 				where
 					errT act = ErrorT $ return act
 					orFail act msg = act `catchError` (throwError . msg)
@@ -337,24 +345,26 @@ instance FromJSON ResultValue where
 		ResultMap <$> parseJSON v,
 		ResultString <$> parseJSON v]
 
+data Response =
+	Response Value |
+	ResponseStatus Value |
+	ResponseMapFile String
+
+instance ToJSON Response where
+	toJSON (Response v) = object ["result" .= v]
+	toJSON (ResponseStatus v) = object ["status" .= v]
+	toJSON (ResponseMapFile s) = object ["file" .= s]
+
+instance FromJSON Response where
+	parseJSON = withObject "response" (\v ->
+		(Response <$> (v .: "result")) <|>
+		(ResponseStatus <$> (v .: "status")) <|>
+		(ResponseMapFile <$> (v .: "file")))
+
 data CommandResult =
 	ResultOk ResultValue |
 	ResultError String (Map String ResultValue) |
-	ResultProcess ((String -> IO ()) -> IO ()) |
-	ResultMapFile String |
-	ResultExit
-
-instance ToJSON CommandResult where
-	toJSON (ResultOk v) = toJSON v
-	toJSON (ResultError e as) = object [
-		"error" .= e,
-		"details" .= as]
-	toJSON (ResultProcess _) = object [
-		"status" .= ("process" :: String)]
-	toJSON (ResultMapFile nm) = object [
-		"file" .= nm]
-	toJSON ResultExit = object [
-		"status" .= ("exit" :: String)]
+	ResultProcess ((Value -> IO ()) -> IO ())
 
 instance Error CommandResult where
 	noMsg = ResultError noMsg mempty
@@ -380,14 +390,20 @@ data CommandOptions = CommandOptions {
 	commandDatabase :: Async Database,
 	commandRoot :: FilePath }
 
-type CommandAction = WithOpts (Int -> CommandOptions -> IO CommandResult)
+type CommandAction = WithOpts (Int -> CommandOptions -> IO (Maybe CommandResult))
 
 commands :: [Command CommandAction]
 commands = map (fmap (fmap timeout')) cmds where
-	timeout' :: (CommandOptions -> IO CommandResult) -> (Int -> CommandOptions -> IO CommandResult)
-	timeout' f tm copts = fmap (fromMaybe $ err "timeout") $ timeout (tm * 1000) $ f copts
+	timeout' :: (CommandOptions -> IO (Maybe CommandResult)) -> (Int -> CommandOptions -> IO (Maybe CommandResult))
+	timeout' f tm copts = fmap (fromMaybe $ Just (err "timeout")) $ timeout (tm * 1000) $ f copts
 
-	cmds = [
+	action :: (a -> IO b) -> (a -> IO (Maybe b))
+	action f = fmap Just . f
+
+	cmds = map (fmap (fmap action)) actions ++ [
+		cmd_' ["exit"] [] "exit" $ \_ _ -> return Nothing]
+
+	actions = [
 		-- Database commands
 		cmd' ["add"] [] "add info to database" [dataArg] add',
 		cmd' ["scan", "cabal"] [] "scan modules installed in cabal" [
@@ -441,9 +457,7 @@ commands = map (fmap (fmap timeout')) cmds where
 		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project .cabal", projectNameArg "project name", cacheDir, cacheFile] dumpProjects',
 		cmd' ["dump", "files"] [] "dump standalone files" [cacheDir, cacheFile] dumpFiles',
 		cmd' ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
-		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
-		-- Exit
-		cmd_' ["exit"] [] "exit" $ \_ _ -> return ResultExit]
+		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load']
 
 	-- Command arguments and flags
 	allFlag = option_ ['a'] "all" flag "remove all"
@@ -502,7 +516,7 @@ commands = map (fmap (fmap timeout')) cmds where
 		return $ either id (const (ResultOk ResultNone)) res
 	-- scan
 	scan' as _ copts = updateProcess (dbVar copts) as $
-		mapM_ (\(n, f) -> forM_ (askOpts n as) (f (getGhcOpts as))) [
+		mapM_ (\(n, f) -> forM_ (askOpts n as) (canonicalizePath' copts >=> f (getGhcOpts as))) [
 			("project", C.scanProject),
 			("file", C.scanFile),
 			("path", C.scanDirectory)]
@@ -545,7 +559,7 @@ commands = map (fmap (fmap timeout')) cmds where
 
 		if not (null errors)
 			then return $ err $ intercalate ", " errors
-			else updateProcess (dbVar copts) as $ C.runScan_ "rescan" "modules" $ do
+			else updateProcess (dbVar copts) as $ C.runTask (toJSON $ ("rescanning modules" :: String)) $ do
 				needRescan <- C.liftErrors $ filterM (changedModule dbval (getGhcOpts as) . inspectedId) rescanMods
 				C.scanModules (getGhcOpts as) (map (inspectionOpts . inspection &&& inspectedId) needRescan)
 	-- remove
@@ -848,12 +862,14 @@ commands = map (fmap (fmap timeout')) cmds where
 			| isRelative f = commandRoot copts </> f
 			| otherwise = f
 
-	startProcess :: Opts -> ((String -> IO ()) -> IO ()) -> IO CommandResult
+	startProcess :: Opts -> ((Value -> IO ()) -> IO ()) -> IO CommandResult
 	startProcess as f
 		| hasOpt "wait" as = return $ ResultProcess (f . onMsg)
 		| otherwise = forkIO (f $ const $ return ()) >> return ok
 		where
-			onMsg showMsg = if hasOpt "status" as then showMsg else (const $ return ())
+			onMsg showMsg
+				| hasOpt "status" as = showMsg
+				| otherwise = const $ return ()
 
 	error_ :: ErrorT String IO CommandResult -> IO CommandResult
 	error_ = liftM (either err id) . runErrorT
@@ -864,7 +880,7 @@ commands = map (fmap (fmap timeout')) cmds where
 	errorT' :: ErrorT CommandResult IO ResultValue -> IO CommandResult
 	errorT' = liftM (either id ResultOk) . runErrorT
 
-	updateProcess :: Async Database -> Opts -> C.UpdateDB IO () -> IO CommandResult
+	updateProcess :: Async Database -> Opts -> ErrorT String (C.UpdateDB IO) () -> IO CommandResult
 	updateProcess db as act = startProcess as $ \onStatus -> C.updateDB (C.Settings db onStatus (getGhcOpts as)) act
 
 	fork :: MonadIO m => IO () -> m ()
@@ -887,39 +903,38 @@ printMainUsage = do
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) commands
 
-processCmd :: CommandOptions -> Int -> String -> (ByteString -> IO ()) -> IO Bool
-processCmd copts tm cmdLine printResult = processCmdArgs copts tm (split cmdLine) printResult
+processCmd :: CommandOptions -> Int -> String -> (Response -> IO ()) -> IO Bool
+processCmd copts tm cmdLine sendResponse = processCmdArgs copts tm (split cmdLine) sendResponse
 
-processCmdArgs :: CommandOptions -> Int -> [String] -> (ByteString -> IO ()) -> IO Bool
-processCmdArgs copts tm cmdArgs printResult = run (map (fmap withOptsAct) commands) (asCmd unknownCommand) (asCmd . commandError) cmdArgs tm copts >>= processResult where
-	asCmd :: CommandResult -> (Int -> CommandOptions -> IO CommandResult)
-	asCmd r _ _ = return r
+-- | Process command, returns 'False' if exit requested
+processCmdArgs :: CommandOptions -> Int -> [String] -> (Response -> IO ()) -> IO Bool
+processCmdArgs copts tm cmdArgs sendResponse = do
+	r <- run (map (fmap withOptsAct) commands) (asCmd unknownCommand) (asCmd . commandError) cmdArgs tm copts
+	maybe (sendResponse $ Response (object [])) sendResponses r
+	return $ isJust r
+	where
+		asCmd :: CommandResult -> (Int -> CommandOptions -> IO (Maybe CommandResult))
+		asCmd r _ _ = return (Just r)
 
-	unknownCommand :: CommandResult
-	unknownCommand = err "Unknown command"
-	commandError :: [String] -> CommandResult
-	commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString errs)]
+		unknownCommand :: CommandResult
+		unknownCommand = err "Unknown command"
+		commandError :: [String] -> CommandResult
+		commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString errs)]
 
-	processResult :: CommandResult -> IO Bool
-	processResult (ResultProcess act) = do
-		act (printResult . showStatus)
-		processResult ok
-		`catch`
-		processFailed
-		where
-			processFailed :: SomeException -> IO Bool
-			processFailed e = do
-				processResult $ errArgs "process throws exception" [("exception", ResultString $ show e)]
-				return True
-
-			showStatus s = encode $ object ["status" .= s]
-
-	processResult ResultExit = do
-		printResult $ encode ResultExit
-		return False
-	processResult v = do
-		printResult $ encode v
-		return True
+		sendResponses :: CommandResult -> IO ()
+		sendResponses (ResultOk v) = sendResponse $ Response $ toJSON v
+		sendResponses (ResultError e args) = sendResponse $ Response $ object [
+			"error" .= e,
+			"details" .= args]
+		sendResponses (ResultProcess act) = do
+			act (sendResponse . ResponseStatus)
+			sendResponses ok
+			`catch`
+			processFailed
+			where
+				processFailed :: SomeException -> IO ()
+				processFailed e = sendResponses $ errArgs "process throws exception" [
+					("exception", ResultString $ show e)]
 
 fromUtf8 :: ByteString -> String
 fromUtf8 = T.unpack . T.decodeUtf8

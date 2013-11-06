@@ -179,7 +179,7 @@ optsToArgs :: Opts -> [String]
 optsToArgs = concatMap optToArgs . M.toList . getOpts where
 	optToArgs :: (String, [String]) -> [String]
 	optToArgs (n, []) = ["--" ++ n]
-	optToArgs (n, vs) = concat [["--" ++ n, v] | v <- vs]
+	optToArgs (n, vs) = ["--"++ n ++ "=" ++ v | v <- vs]
 
 -- | Split string to words
 split :: String -> [String]
