@@ -96,8 +96,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			db <- newAsync
 			forever $ do
 				s <- getLine
-				r <- processCmd (CommandOptions db dir) 10000 s (L.putStrLn . encode)
-				unless r exitSuccess,
+				processCmd (CommandOptions db dir exitSuccess) 10000 s (L.putStrLn . encode),
 		cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
 			let
 				args = ["server", "run"] ++ maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts)
@@ -144,6 +143,12 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 
 			forkIO $ do
 				accepter <- myThreadId
+
+				let
+					serverStop = do
+						void $ tryPutMVar waitListen ()
+						killThread accepter
+
 				s <- socket AF_INET Stream defaultProtocol
 				bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
 				listen s maxListenQueue
@@ -165,20 +170,14 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 							writeChan clientChan (Just timeoutWait)
 							req <- hGetLine' h
 							outputStr $ show s' ++ ": " ++ fromUtf8 req
-							r <- case fmap extractCurrentDir $ eitherDecode req of
-								Left reqErr -> do
-									sendResponse h $ Response $ object [
-										"error" .= ("Invalid request" :: String),
-										"request" .= fromUtf8 req,
-										"what" .= reqErr]
-									return False
+							case fmap extractCurrentDir $ eitherDecode req of
+								Left reqErr -> sendResponse h $ Response $ object [
+									"error" .= ("Invalid request" :: String),
+									"request" .= fromUtf8 req,
+									"what" .= reqErr]
 								Right (clientDir, reqArgs) -> processCmdArgs
-									(CommandOptions db clientDir)
+									(CommandOptions db clientDir serverStop)
 									(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
-							unless r $ do
-								outputStr $ show s' ++ " requests to stop server"
-								void $ tryPutMVar waitListen ()
-								killThread accepter
 							-- Send 'end' message and wait client
 							L.hPutStrLn h L.empty
 							outputStr $ "waiting " ++ show s'
@@ -388,22 +387,17 @@ instance Functor WithOpts where
 
 data CommandOptions = CommandOptions {
 	commandDatabase :: Async Database,
-	commandRoot :: FilePath }
+	commandRoot :: FilePath,
+	commandExit :: IO () }
 
-type CommandAction = WithOpts (Int -> CommandOptions -> IO (Maybe CommandResult))
+type CommandAction = WithOpts (Int -> CommandOptions -> IO CommandResult)
 
 commands :: [Command CommandAction]
 commands = map (fmap (fmap timeout')) cmds where
-	timeout' :: (CommandOptions -> IO (Maybe CommandResult)) -> (Int -> CommandOptions -> IO (Maybe CommandResult))
-	timeout' f tm copts = fmap (fromMaybe $ Just (err "timeout")) $ timeout (tm * 1000) $ f copts
+	timeout' :: (CommandOptions -> IO CommandResult) -> (Int -> CommandOptions -> IO CommandResult)
+	timeout' f tm copts = fmap (fromMaybe $ err "timeout") $ timeout (tm * 1000) $ f copts
 
-	action :: (a -> IO b) -> (a -> IO (Maybe b))
-	action f = fmap Just . f
-
-	cmds = map (fmap (fmap action)) actions ++ [
-		cmd_' ["exit"] [] "exit" $ \_ _ -> return Nothing]
-
-	actions = [
+	cmds = [
 		-- Database commands
 		cmd' ["add"] [] "add info to database" [dataArg] add',
 		cmd' ["scan", "cabal"] [] "scan modules installed in cabal" [
@@ -457,7 +451,9 @@ commands = map (fmap (fmap timeout')) cmds where
 		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project .cabal", projectNameArg "project name", cacheDir, cacheFile] dumpProjects',
 		cmd' ["dump", "files"] [] "dump standalone files" [cacheDir, cacheFile] dumpFiles',
 		cmd' ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
-		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load']
+		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
+		-- Exit
+		cmd_' ["exit"] [] "exit" exit']
 
 	-- Command arguments and flags
 	allFlag = option_ ['a'] "all" flag "remove all"
@@ -768,6 +764,10 @@ commands = map (fmap (fmap timeout')) cmds where
 				return ok]
 		waitDb as (dbVar copts)
 		return res
+	-- exit
+	exit' _ copts = do
+		commandExit copts
+		return ok
 
 	-- Helper functions
 	cmd' :: [String] -> [String] -> String -> [OptDescr Opts] -> (Opts -> [String] -> a) -> Command (WithOpts a)
@@ -903,38 +903,34 @@ printMainUsage = do
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) commands
 
-processCmd :: CommandOptions -> Int -> String -> (Response -> IO ()) -> IO Bool
+processCmd :: CommandOptions -> Int -> String -> (Response -> IO ()) -> IO ()
 processCmd copts tm cmdLine sendResponse = processCmdArgs copts tm (split cmdLine) sendResponse
 
 -- | Process command, returns 'False' if exit requested
-processCmdArgs :: CommandOptions -> Int -> [String] -> (Response -> IO ()) -> IO Bool
-processCmdArgs copts tm cmdArgs sendResponse = do
-	r <- run (map (fmap withOptsAct) commands) (asCmd unknownCommand) (asCmd . commandError) cmdArgs tm copts
-	maybe (sendResponse $ Response (object [])) sendResponses r
-	return $ isJust r
-	where
-		asCmd :: CommandResult -> (Int -> CommandOptions -> IO (Maybe CommandResult))
-		asCmd r _ _ = return (Just r)
+processCmdArgs :: CommandOptions -> Int -> [String] -> (Response -> IO ()) -> IO ()
+processCmdArgs copts tm cmdArgs sendResponse = run (map (fmap withOptsAct) commands) (asCmd unknownCommand) (asCmd . commandError) cmdArgs tm copts >>= sendResponses where
+	asCmd :: CommandResult -> (Int -> CommandOptions -> IO CommandResult)
+	asCmd r _ _ = return r
 
-		unknownCommand :: CommandResult
-		unknownCommand = err "Unknown command"
-		commandError :: [String] -> CommandResult
-		commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString errs)]
+	unknownCommand :: CommandResult
+	unknownCommand = err "Unknown command"
+	commandError :: [String] -> CommandResult
+	commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString errs)]
 
-		sendResponses :: CommandResult -> IO ()
-		sendResponses (ResultOk v) = sendResponse $ Response $ toJSON v
-		sendResponses (ResultError e args) = sendResponse $ Response $ object [
-			"error" .= e,
-			"details" .= args]
-		sendResponses (ResultProcess act) = do
-			act (sendResponse . ResponseStatus)
-			sendResponses ok
-			`catch`
-			processFailed
-			where
-				processFailed :: SomeException -> IO ()
-				processFailed e = sendResponses $ errArgs "process throws exception" [
-					("exception", ResultString $ show e)]
+	sendResponses :: CommandResult -> IO ()
+	sendResponses (ResultOk v) = sendResponse $ Response $ toJSON v
+	sendResponses (ResultError e args) = sendResponse $ Response $ object [
+		"error" .= e,
+		"details" .= args]
+	sendResponses (ResultProcess act) = do
+		act (sendResponse . ResponseStatus)
+		sendResponses ok
+		`catch`
+		processFailed
+		where
+			processFailed :: SomeException -> IO ()
+			processFailed e = sendResponses $ errArgs "process throws exception" [
+				("exception", ResultString $ show e)]
 
 fromUtf8 :: ByteString -> String
 fromUtf8 = T.unpack . T.decodeUtf8
