@@ -96,10 +96,11 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			db <- newAsync
 			forever $ do
 				s <- getLine
-				processCmd (CommandOptions db dir exitSuccess) 10000 s (L.putStrLn . encode),
+				processCmd (CommandOptions db dir putStrLn exitSuccess) 1000 s (L.putStrLn . encode),
 		cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
 			let
-				args = ["server", "run"] ++ maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts)
+				args = ["server", "run"] ++ serverOptsToArgs sopts
+				-- TODO: use exe name and escape it!
 			void $ runInteractiveProcess "powershell" ["-Command", "& {start-process hsdev " ++ intercalate ", " args ++ " -WindowStyle Hidden}"] Nothing Nothing
 			printOk sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts),
 		cmd ["server", "run"] [] "start server" serverOpts $ \sopts _ -> do
@@ -113,89 +114,89 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 				outputStr = writeChan msgs . Just
 				waitOutput = writeChan msgs Nothing >> takeMVar outputDone
 
-			db <- newAsync
+			logIO "server exception: " outputStr $ flip finally waitOutput $ do
+				db <- newAsync
 
-			waitListen <- newEmptyMVar
-			clientChan <- newChan
+				waitListen <- newEmptyMVar
+				clientChan <- newChan
 
 #ifdef mingw32_HOST_OS
-			mmapPool <- createPool "hsdev"
-			let
-				-- | Send response as is or via memory mapped file
-				sendResponse :: Handle -> Response -> IO ()
-				sendResponse h r@(ResponseMapFile _) = L.hPutStrLn h $ encode r
-				sendResponse h r
-					| L.length msg <= 1024 = L.hPutStrLn h msg
-					| otherwise = do
-						sync <- newEmptyMVar
-						forkIO $ void $ withName mmapPool $ \mmapName -> do
-							runErrorT $ flip catchError
-								(\e -> liftIO $ do
-									sendResponse h $ Response $ object ["error" .= e]
-									putMVar sync ())
-								(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
-									sendResponse h $ ResponseMapFile mmapName
-									putMVar sync ()
-									-- Dirty: give 10 seconds for client to read it
-									threadDelay 10000000)
-						takeMVar sync
-					where
-						msg = encode r
+				mmapPool <- createPool "hsdev"
+				let
+					-- | Send response as is or via memory mapped file
+					sendResponse :: Handle -> Response -> IO ()
+					sendResponse h r@(ResponseMapFile _) = L.hPutStrLn h $ encode r
+					sendResponse h r
+						| L.length msg <= 1024 = L.hPutStrLn h msg
+						| otherwise = do
+							sync <- newEmptyMVar
+							forkIO $ void $ withName mmapPool $ \mmapName -> do
+								runErrorT $ flip catchError
+									(\e -> liftIO $ do
+										sendResponse h $ Response $ object ["error" .= e]
+										putMVar sync ())
+									(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
+										sendResponse h $ ResponseMapFile mmapName
+										putMVar sync ()
+										-- Dirty: give 10 seconds for client to read it
+										threadDelay 10000000)
+							takeMVar sync
+						where
+							msg = encode r
 #else
-			let
-				sendResponse h = L.hPutStrLn h . encode
+				let
+					sendResponse h = L.hPutStrLn h . encode
 #endif
 
-			forkIO $ do
-				accepter <- myThreadId
+				forkIO $ do
+					accepter <- myThreadId
 
-				let
-					serverStop = void $ forkIO $ do
-						void $ tryPutMVar waitListen ()
-						killThread accepter
+					let
+						serverStop = void $ forkIO $ do
+							void $ tryPutMVar waitListen ()
+							killThread accepter
 
-				s <- socket AF_INET Stream defaultProtocol
-				bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
-				listen s maxListenQueue
-				forever $ logIO "accept client exception: " outputStr $ do
-					s' <- fmap fst $ accept s
-					outputStr $ show s' ++ " connected"
-					void $ forkIO $ logIO (show s' ++ " exception: ") outputStr $
-						bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-								me <- myThreadId
-								let
-									timeoutWait = do
-										notDone <- isEmptyMVar done
-										when notDone $ do
-											void $ forkIO $ do
-												threadDelay 10000000
-												tryPutMVar done ()
-												killThread me
-											void $ takeMVar done
-								writeChan clientChan (Just timeoutWait)
-								req <- hGetLine' h
-								outputStr $ show s' ++ ": " ++ fromUtf8 req
-								case fmap extractCurrentDir $ eitherDecode req of
-									Left reqErr -> sendResponse h $ Response $ object [
-										"error" .= ("Invalid request" :: String),
-										"request" .= fromUtf8 req,
-										"what" .= reqErr]
-									Right (clientDir, reqArgs) -> processCmdArgs
-										(CommandOptions db clientDir serverStop)
-										(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
-								-- Send 'end' message and wait client
-								L.hPutStrLn h L.empty
-								outputStr $ "waiting " ++ show s'
-								ignoreIO $ void $ hGetLine' h
-								outputStr $ show s' ++ " disconnected"
+					s <- socket AF_INET Stream defaultProtocol
+					bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
+					listen s maxListenQueue
+					forever $ logIO "accept client exception: " outputStr $ do
+						s' <- fmap fst $ accept s
+						outputStr $ show s' ++ " connected"
+						void $ forkIO $ logIO (show s' ++ " exception: ") outputStr $
+							bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
+								bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+									me <- myThreadId
+									let
+										timeoutWait = do
+											notDone <- isEmptyMVar done
+											when notDone $ do
+												void $ forkIO $ do
+													threadDelay 10000000
+													tryPutMVar done ()
+													killThread me
+												void $ takeMVar done
+									writeChan clientChan (Just timeoutWait)
+									req <- hGetLine' h
+									outputStr $ show s' ++ ": " ++ fromUtf8 req
+									case fmap extractCurrentDir $ eitherDecode req of
+										Left reqErr -> sendResponse h $ Response $ object [
+											"error" .= ("Invalid request" :: String),
+											"request" .= fromUtf8 req,
+											"what" .= reqErr]
+										Right (clientDir, reqArgs) -> processCmdArgs
+											(CommandOptions db clientDir outputStr serverStop)
+											(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
+									-- Send 'end' message and wait client
+									L.hPutStrLn h L.empty
+									outputStr $ "waiting " ++ show s'
+									ignoreIO $ void $ hGetLine' h
+									outputStr $ show s' ++ " disconnected"
 
-			takeMVar waitListen
-			outputStr "waiting for clients"
-			writeChan clientChan Nothing
-			getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
-			outputStr "server shutdown"
-			waitOutput,
+				takeMVar waitListen
+				outputStr "waiting for clients"
+				writeChan clientChan Nothing
+				getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
+				outputStr "server shutdown",
 		cmd ["server", "stop"] [] "stop remote server" serverOpts $ \sopts _ -> do
 			pname <- getExecutablePath
 			r <- readProcess pname (maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
@@ -216,7 +217,11 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			ignoreIO = handle (const (return ()) :: IOException -> IO ())
 
 			printOk :: ServerOpts -> String -> IO ()
-			printOk _ = putStrLn
+			printOk sopts s = ignoreIO $ do
+				putStrLn s
+				case getFirst (serverLog sopts) of
+					Nothing -> return ()
+					Just f -> withFile f AppendMode (`hPutStrLn` s)
 
 	-- Send command to server
 	sendCmd :: IO (ClientOpts, [String]) -> IO ()
@@ -278,21 +283,33 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 
 data ServerOpts = ServerOpts {
 	serverPort :: First Int,
-	serverTimeout :: First Int }
+	serverTimeout :: First Int,
+	serverLog :: First String }
 
 instance DefaultConfig ServerOpts where
-	defaultConfig = ServerOpts (First $ Just 4567) (First $ Just 1000)
+	defaultConfig = ServerOpts (First $ Just 4567) (First $ Just 1000) (First Nothing)
 
 serverOpts :: [OptDescr ServerOpts]
 serverOpts = [
 	Option [] ["port"] (ReqArg (\p -> mempty { serverPort = First (readMaybe p) }) "number") "listen port",
-	Option [] ["timeout"] (ReqArg (\t -> mempty { serverTimeout = First (readMaybe t) }) "msec") "query timeout"]
+	Option [] ["timeout"] (ReqArg (\t -> mempty { serverTimeout = First (readMaybe t) }) "msec") "query timeout",
+	Option ['l'] ["log"] (ReqArg (\l -> mempty { serverLog = First (Just l) }) "file") "log file"]
+
+serverOptsToArgs :: ServerOpts -> [String]
+serverOptsToArgs sopts = concat [
+	arg' "port" show $ serverPort sopts,
+	arg' "timeout" show $ serverTimeout sopts,
+	arg' "log" id $ serverLog sopts]
+	where
+		arg' :: String -> (a -> String) -> First a -> [String]
+		arg' name str = maybe [] (\v -> ["--" ++ name, str v]) . getFirst
 
 instance Monoid ServerOpts where
-	mempty = ServerOpts mempty mempty
+	mempty = ServerOpts mempty mempty mempty
 	l `mappend` r = ServerOpts
 		(serverPort l `mappend` serverPort r)
 		(serverTimeout l `mappend` serverTimeout r)
+		(serverLog l `mappend` serverLog r)
 
 data ClientOpts = ClientOpts {
 	clientPort :: First Int,
@@ -401,6 +418,7 @@ instance Functor WithOpts where
 data CommandOptions = CommandOptions {
 	commandDatabase :: Async Database,
 	commandRoot :: FilePath,
+	commandLog :: String -> IO (),
 	commandExit :: IO () }
 
 type CommandAction = WithOpts (Int -> CommandOptions -> IO CommandResult)
@@ -764,18 +782,18 @@ commands = map (fmap (fmap timeout')) cmds where
 						[p, p </> "cabal", p </> "projects"]
 					forM_ cts $ \c -> do
 						e <- doesFileExist c
-						when e $ cacheLoad (dbVar copts) (load c)
+						when e $ cacheLoad copts (load c)
 				return ok,
 			do
 				f <- MaybeT $ return $ askOpt "file" as
 				e <- liftIO $ doesFileExist f
-				forkOrWait as $ when e $ cacheLoad (dbVar copts) (load f)
+				forkOrWait as $ when e $ cacheLoad copts (load f)
 				return ok,
 			do
 				dat <- MaybeT $ return $ askOpt "data" as
-				forkOrWait as $ cacheLoad (dbVar copts) (return $ eitherDecode (toUtf8 dat))
+				forkOrWait as $ cacheLoad copts (return $ eitherDecode (toUtf8 dat))
 				return ok]
-		waitDb as (dbVar copts)
+		waitDb copts as
 		return res
 	-- exit
 	exit' _ copts = do
@@ -814,21 +832,21 @@ commands = map (fmap (fmap timeout')) cmds where
 		b <- doesDirectoryExist p
 		if b then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p) else return []
 
-	waitDb as db = when (hasOpt "wait" as) $ do
-		putStrLn "wait for db"
+	waitDb copts as = when (hasOpt "wait" as) $ do
+		commandLog copts "wait for db"
 		waitDbVar <- newEmptyMVar
-		modifyAsync db (Action $ \d -> putStrLn "db done!" >> putMVar waitDbVar () >> return d)
+		modifyAsync (dbVar copts) (Action $ \d -> commandLog copts "db done!" >> putMVar waitDbVar () >> return d)
 		takeMVar waitDbVar
 
 	forkOrWait as act
 		| hasOpt "wait" as = liftIO act
 		| otherwise = liftIO $ void $ forkIO act
 
-	cacheLoad db act = do
+	cacheLoad copts act = do
 		db' <- act
 		case db' of
-			Left e -> putStrLn e
-			Right database -> update db (return database)
+			Left e -> commandLog copts e
+			Right database -> update (dbVar copts) (return database)
 
 	asCabal :: CommandOptions -> Maybe FilePath -> ErrorT String IO Cabal
 	asCabal copts = maybe
