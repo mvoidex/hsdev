@@ -43,7 +43,7 @@ import System.IO
 import System.Process
 import System.Timeout
 
-#ifdef mingw32_HOST_OS
+#if mingw32_HOST_OS
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
 #endif
@@ -88,6 +88,17 @@ main = withSocketsDo $ do
 			putStrLn "Unknown command"
 			exitFailure
 
+#if mingw32_HOST_OS
+
+translate :: String -> String
+translate str = '"' : snd (foldr escape (True,"\"") str)
+  where escape '"'  (b,     str) = (True,  '\\' : '"'  : str)
+        escape '\\' (True,  str) = (True,  '\\' : '\\' : str)
+        escape '\\' (False, str) = (False, '\\' : str)
+        escape c    (b,     str) = (False, c : str)
+
+#endif
+
 mainCommands :: [Command (IO ())]
 mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts . fmap withOptsArgs) commands where
 	srvCmds = [
@@ -98,16 +109,27 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 				s <- getLine
 				processCmd (CommandOptions db dir putStrLn exitSuccess) 1000 s (L.putStrLn . encode),
 		cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
+#if mingw32_HOST_OS
 			let
 				args = ["server", "run"] ++ serverOptsToArgs sopts
-				-- TODO: use exe name and escape it!
-			void $ runInteractiveProcess "powershell" ["-Command", "& {start-process hsdev " ++ intercalate ", " args ++ " -WindowStyle Hidden}"] Nothing Nothing
-			printOk sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts),
+			myExe <- getExecutablePath
+			void $ runInteractiveProcess "powershell"
+				["-Command",
+				unwords [
+					"&", "{", "start-process",
+					translate myExe,
+					intercalate ", " args,
+					"-WindowStyle Hidden",
+					"}"]] Nothing Nothing
+			logMsg sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts),
+#else
+			logMsg sopts "Not implemented",
+#endif
 		cmd ["server", "run"] [] "start server" serverOpts $ \sopts _ -> do
 			msgs <- newChan
 			outputDone <- newEmptyMVar
 			forkIO $ finally
-				(getChanContents msgs >>= mapM_ (printOk sopts) . catMaybes . takeWhile isJust)
+				(getChanContents msgs >>= mapM_ (logMsg sopts) . catMaybes . takeWhile isJust)
 				(putMVar outputDone ())
 
 			let
@@ -120,7 +142,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 				waitListen <- newEmptyMVar
 				clientChan <- newChan
 
-#ifdef mingw32_HOST_OS
+#if mingw32_HOST_OS
 				mmapPool <- createPool "hsdev"
 				let
 					-- | Send response as is or via memory mapped file
@@ -198,15 +220,15 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 				getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
 				outputStr "server shutdown",
 		cmd ["server", "stop"] [] "stop remote server" serverOpts $ \sopts _ -> do
-			pname <- getExecutablePath
-			r <- readProcess pname (maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
+			myExe <- getExecutablePath
+			r <- readProcess myExe (maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
 			let
 				stopped = case decode (toUtf8 r) of
 					Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
 						res <- obj .: "result"
 						return (res == ("exit" :: String))
 					_ -> False
-			printOk sopts $ if stopped then "Server stopped" else "Server returned: " ++ r]
+			logMsg sopts $ if stopped then "Server stopped" else "Server returned: " ++ r]
 		where
 			logIO :: String -> (String -> IO ()) -> IO () -> IO ()
 			logIO pre out act = handle onIO act where
@@ -216,8 +238,8 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			ignoreIO :: IO () -> IO ()
 			ignoreIO = handle (const (return ()) :: IOException -> IO ())
 
-			printOk :: ServerOpts -> String -> IO ()
-			printOk sopts s = ignoreIO $ do
+			logMsg :: ServerOpts -> String -> IO ()
+			logMsg sopts s = ignoreIO $ do
 				putStrLn s
 				case getFirst (serverLog sopts) of
 					Nothing -> return ()
