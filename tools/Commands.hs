@@ -98,11 +98,7 @@ readDB = asks database >>= liftIO . readAsync
 -- | Scan module
 scanModule :: MonadCatchIO m => [String] -> ModuleLocation -> ErrorT String (UpdateDB m) ()
 scanModule opts mloc = runTask task' $ updater $ liftM fromModule $ liftErrors $ S.scanModule opts mloc where
-	task' = object ["scanning" .= obj]
-	obj = case mloc of
-		FileModule f _ -> object ["file" .= f]
-		CabalModule c _ n -> object ["module" .= n, "cabal" .= show c]
-		MemoryModule m -> object ["module" .= m]
+	task' = object ["scanning" .= mloc]
 
 -- | Scan modules
 scanModules :: MonadCatchIO m => [String] -> [([String], ModuleLocation)] -> ErrorT String (UpdateDB m) ()
@@ -136,9 +132,6 @@ scanCabal opts sandbox = do
 	modules <- runTask (toJSON ("getting list of modules" :: String)) $ liftErrors $
 		S.enumCabal opts sandbox
 	scanModules opts [([], m) | m <- modules]
-	where
-		conv Cabal = toJSON ("cabal" :: String)
-		conv (Sandbox p) = object ["sandbox" .= p]
 
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
