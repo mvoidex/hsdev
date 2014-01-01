@@ -73,6 +73,7 @@ executable hsdev
   hs-source-dirs: tools
   ghc-options: -threaded
   other-modules:
+    Control.Concurrent.FiniteChan
     Commands
     System.Command
 

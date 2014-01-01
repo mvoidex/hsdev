@@ -32,8 +32,6 @@ import Data.String (fromString)
 import qualified Data.Map as M
 import qualified Data.HashMap.Strict as HM
 import Network.Socket
-import System.Command hiding (brief)
-import qualified System.Command as C (brief)
 import System.Environment
 import System.Exit
 import System.Console.GetOpt
@@ -42,6 +40,10 @@ import System.FilePath
 import System.IO
 import System.Process
 import System.Timeout
+
+import qualified Control.Concurrent.FiniteChan as F
+import System.Command hiding (brief)
+import qualified System.Command as C (brief)
 
 #if mingw32_HOST_OS
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
@@ -114,7 +116,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		db <- newAsync
 		forever $ do
 			s <- getLine
-			processCmd (CommandOptions db dir putStrLn getLine exitSuccess) 1000 s (L.putStrLn . encode)
+			processCmd (CommandOptions db dir putStrLn getLine (error "Not supported") exitSuccess) 1000 s (L.putStrLn . encode)
 	start' sopts _ = do
 #if mingw32_HOST_OS
 		let
@@ -133,21 +135,29 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		logMsg sopts "Not implemented"
 #endif
 	run' sopts _ = do
-		msgs <- newChan
+		msgs <- F.newChan
 		outputDone <- newEmptyMVar
 		forkIO $ finally
-			(getChanContents msgs >>= mapM_ (logMsg sopts) . catMaybes . takeWhile isJust)
+			(F.readChan msgs >>= mapM_ (logMsg sopts))
 			(putMVar outputDone ())
 
 		let
-			outputStr = writeChan msgs . Just
-			waitOutput = writeChan msgs Nothing >> takeMVar outputDone
+			outputStr = F.putChan msgs
+			waitOutput = F.closeChan msgs >> takeMVar outputDone
 
 		logIO "server exception: " outputStr $ flip finally waitOutput $ do
 			db <- newAsync
 
 			waitListen <- newEmptyMVar
-			clientChan <- newChan
+			clientChan <- F.newChan
+
+			linkChan <- F.newChan
+			let
+				linkToSrv :: IO ()
+				linkToSrv = do
+					v <- newEmptyMVar
+					F.putChan linkChan (putMVar v ())
+					takeMVar v
 
 #if mingw32_HOST_OS
 			mmapPool <- createPool "hsdev"
@@ -204,7 +214,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 												tryPutMVar done ()
 												killThread me
 											void $ takeMVar done
-								writeChan clientChan (Just timeoutWait)
+								F.putChan clientChan timeoutWait
 								req <- hGetLine' h
 								outputStr $ show s' ++ ": " ++ fromUtf8 req
 								case fmap extractCurrentDir $ eitherDecode req of
@@ -213,7 +223,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 										"request" .= fromUtf8 req,
 										"what" .= reqErr]
 									Right (clientDir, reqArgs) -> processCmdArgs
-										(CommandOptions db clientDir outputStr (fromUtf8 <$> hGetLine' h) serverStop)
+										(CommandOptions db clientDir outputStr (fromUtf8 <$> hGetLine' h) linkToSrv serverStop)
 										(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
 								-- Send 'end' message and wait client
 								L.hPutStrLn h L.empty
@@ -222,9 +232,10 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 								outputStr $ show s' ++ " disconnected"
 
 			takeMVar waitListen
+			outputStr "closing links"
+			F.stopChan linkChan >>= sequence_
 			outputStr "waiting for clients"
-			writeChan clientChan Nothing
-			getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
+			F.stopChan clientChan >>= sequence_
 			outputStr "server shutdown"
 	stop' sopts _ = run (map wrapCmd commands) onDef onError ["exit"] where
 		onDef = logMsg sopts $ "Command 'exit' not found"
@@ -248,12 +259,6 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 	-- Send command to server
 	sendCmd :: IO (ClientOpts, [String]) -> IO ()
 	sendCmd get' = race [void getLine, waitResponse] where
-		race :: [IO ()] -> IO ()
-		race acts = do
-			v <- newEmptyMVar
-			forM_ acts $ \a -> forkIO (a `finally` putMVar v ())
-			takeMVar v
-
 		waitResponse = do
 			curDir <- getCurrentDirectory
 			(p, as) <- get'
@@ -449,14 +454,25 @@ data CommandOptions = CommandOptions {
 	commandRoot :: FilePath,
 	commandLog :: String -> IO (),
 	commandWaitInput :: IO String,
+	commandLink :: IO (),
 	commandExit :: IO () }
 
 type CommandAction = WithOpts (Int -> CommandOptions -> IO CommandResult)
 
 commands :: [Command CommandAction]
-commands = map (fmap (fmap timeout')) cmds where
+commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap noTimeout)) linkCmd where
 	timeout' :: (CommandOptions -> IO CommandResult) -> (Int -> CommandOptions -> IO CommandResult)
 	timeout' f tm copts = fmap (fromMaybe $ err "timeout") $ timeout (tm * 1000) $ f copts
+	noTimeout :: (CommandOptions -> IO CommandResult) -> (Int -> CommandOptions -> IO CommandResult)
+	noTimeout f _ copts = f copts
+
+	handleErrors :: (Int -> CommandOptions -> IO CommandResult) -> (Int -> CommandOptions -> IO CommandResult)
+	handleErrors act tm copts = handle onCmdErr (act tm copts) where
+		onCmdErr :: SomeException -> IO CommandResult
+		onCmdErr = return . err . show
+
+	wrapErrors :: Command CommandAction -> Command CommandAction
+	wrapErrors = fmap (fmap handleErrors)
 
 	cmds = [
 		-- Database commands
@@ -513,9 +529,9 @@ commands = map (fmap (fmap timeout')) cmds where
 		cmd' ["dump", "files"] [] "dump standalone files" [cacheDir, cacheFile] dumpFiles',
 		cmd' ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
 		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
-		cmd_' ["link"] [] "link to server" link',
 		-- Exit
 		cmd_' ["exit"] [] "exit" exit']
+	linkCmd = [cmd_' ["link"] [] "link to server" link']
 
 	-- Command arguments and flags
 	allFlag = option_ ['a'] "all" flag "remove all"
@@ -828,7 +844,7 @@ commands = map (fmap (fmap timeout')) cmds where
 		return res
 	-- link to server
 	link' _ copts = do
-		commandWaitInput copts `onException` commandExit copts
+		race [void (commandWaitInput copts) `onException` commandExit copts, commandLink copts]
 		return ok
 	-- exit
 	exit' _ copts = do
@@ -1006,3 +1022,12 @@ toUtf8 = T.encodeUtf8 . T.pack
 
 hGetLine' :: Handle -> IO ByteString
 hGetLine' = fmap L.fromStrict . B.hGetLine
+
+race :: [IO ()] -> IO ()
+race acts = do
+	v <- newEmptyMVar
+	forM_ acts $ \a -> forkIO ((a `finally` putMVar v ()) `catch` ignoreError)
+	takeMVar v
+	where
+		ignoreError :: SomeException -> IO ()
+		ignoreError _ = return ()
