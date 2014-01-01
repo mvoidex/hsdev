@@ -117,7 +117,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		db <- newAsync
 		forever $ do
 			s <- getLine
-			processCmd (CommandOptions db dir putStrLn getLine (error "Not supported") exitSuccess) 1000 s (L.putStrLn . encode)
+			processCmd (CommandOptions db (const $ return ()) dir putStrLn getLine (error "Not supported") exitSuccess) 1000 s (L.putStrLn . encode)
 	start' sopts _ = do
 #if mingw32_HOST_OS
 		let
@@ -145,9 +145,24 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		let
 			outputStr = F.putChan msgs
 			waitOutput = F.closeChan msgs >> takeMVar outputDone
+			withCache :: (FilePath -> IO ()) -> IO ()
+			withCache onCache = case getFirst (serverCache sopts) of
+				Nothing -> return ()
+				Just cdir -> onCache cdir
+			writeCache :: Database -> IO ()
+			writeCache d = withCache $ \cdir -> do
+				outputStr "writing cache"
+				SC.dump cdir (structurize d)
 
 		logIO "server exception: " outputStr $ flip finally waitOutput $ do
 			db <- newAsync
+
+			when (getAny $ serverLoadCache sopts) $ withCache $ \cdir -> do
+				outputStr $ "Loading cache from " ++ cdir
+				dbCache <- liftA merge <$> SC.load cdir
+				case dbCache of
+					Left err -> outputStr $ "Failed to load cache: " ++ err
+					Right dbCache' -> update db (return dbCache')
 
 			waitListen <- newEmptyMVar
 			clientChan <- F.newChan
@@ -224,7 +239,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 										"request" .= fromUtf8 req,
 										"what" .= reqErr]
 									Right (clientDir, reqArgs) -> processCmdArgs
-										(CommandOptions db clientDir outputStr (fromUtf8 <$> hGetLine' h) linkToSrv serverStop)
+										(CommandOptions db writeCache clientDir outputStr (fromUtf8 <$> hGetLine' h) linkToSrv serverStop)
 										(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
 								-- Send 'end' message and wait client
 								L.hPutStrLn h L.empty
@@ -233,6 +248,10 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 								outputStr $ show s' ++ " disconnected"
 
 			takeMVar waitListen
+			withCache $ \cdir -> do
+				outputStr $ "saving cache to " ++ cdir
+				dbval <- readAsync db
+				SC.dump cdir $ structurize dbval
 			outputStr "closing links"
 			F.stopChan linkChan >>= sequence_
 			outputStr "waiting for clients"
@@ -320,32 +339,40 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 data ServerOpts = ServerOpts {
 	serverPort :: First Int,
 	serverTimeout :: First Int,
-	serverLog :: First String }
+	serverLog :: First String,
+	serverCache :: First FilePath,
+	serverLoadCache :: Any }
 
 instance DefaultConfig ServerOpts where
-	defaultConfig = ServerOpts (First $ Just 4567) (First $ Just 1000) (First Nothing)
+	defaultConfig = ServerOpts (First $ Just 4567) (First $ Just 1000) (First Nothing) (First Nothing) mempty
 
 serverOpts :: [OptDescr ServerOpts]
 serverOpts = [
 	Option [] ["port"] (ReqArg (\p -> mempty { serverPort = First (readMaybe p) }) "number") "listen port",
 	Option [] ["timeout"] (ReqArg (\t -> mempty { serverTimeout = First (readMaybe t) }) "msec") "query timeout",
-	Option ['l'] ["log"] (ReqArg (\l -> mempty { serverLog = First (Just l) }) "file") "log file"]
+	Option ['l'] ["log"] (ReqArg (\l -> mempty { serverLog = First (Just l) }) "file") "log file",
+	Option [] ["cache"] (ReqArg (\p -> mempty { serverCache = First (Just p) }) "path") "cache directory",
+	Option [] ["load"] (NoArg (mempty { serverLoadCache = Any True })) "force load all data from cache on startup"]
 
 serverOptsToArgs :: ServerOpts -> [String]
 serverOptsToArgs sopts = concat [
 	arg' "port" show $ serverPort sopts,
 	arg' "timeout" show $ serverTimeout sopts,
-	arg' "log" id $ serverLog sopts]
+	arg' "log" id $ serverLog sopts,
+	arg' "cache" id $ serverCache sopts,
+	if getAny (serverLoadCache sopts) then ["--load"] else []]
 	where
 		arg' :: String -> (a -> String) -> First a -> [String]
 		arg' name str = maybe [] (\v -> ["--" ++ name, str v]) . getFirst
 
 instance Monoid ServerOpts where
-	mempty = ServerOpts mempty mempty mempty
+	mempty = ServerOpts mempty mempty mempty mempty mempty
 	l `mappend` r = ServerOpts
 		(serverPort l `mappend` serverPort r)
 		(serverTimeout l `mappend` serverTimeout r)
 		(serverLog l `mappend` serverLog r)
+		(serverCache l `mappend` serverCache r)
+		(serverLoadCache l `mappend` serverLoadCache r)
 
 data ClientOpts = ClientOpts {
 	clientPort :: First Int,
@@ -453,6 +480,7 @@ instance Functor WithOpts where
 
 data CommandOptions = CommandOptions {
 	commandDatabase :: Async Database,
+	commandWriteCache :: Database -> IO (),
 	commandRoot :: FilePath,
 	commandLog :: String -> IO (),
 	commandWaitInput :: IO String,
