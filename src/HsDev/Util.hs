@@ -8,7 +8,7 @@ module HsDev.Util (
 	-- * Helper
 	(.::),
 	-- * Exceptions
-	liftException
+	liftException, liftExceptionM
 	) where
 
 import Control.Exception
@@ -70,3 +70,8 @@ v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lo
 liftException :: C.MonadCatchIO m => m a -> ErrorT String m a
 liftException act = ErrorT $ C.catch (liftM Right act) onError where
 	onError = return . Left . (show :: SomeException -> String)
+
+-- | Lift IO exception to MonadError
+liftExceptionM :: (C.MonadCatchIO m, Error e, MonadError e m) => m a -> m a
+liftExceptionM act = C.catch act onError where
+	onError = throwError . strMsg . (show :: SomeException -> String)
