@@ -9,7 +9,10 @@ module HsDev.Database (
 	selectModules, selectDeclarations, lookupModule, lookupFile,
 	getInspected,
 
-	append, remove
+	append, remove,
+
+	Structured(..),
+	structured, structurize, merge
 	) where
 
 import Control.Applicative
@@ -19,6 +22,7 @@ import Data.Aeson
 import Data.Either (rights)
 import Data.Function (on)
 import Data.Group
+import Data.List (nub)
 import Data.Map (Map)
 import Data.Maybe
 import Data.Monoid
@@ -60,9 +64,9 @@ instance ToJSON Database where
 		"projects" .= M.elems ps]
 
 instance FromJSON Database where
-	parseJSON = withObject "database" $ \v -> (Database <$>
+	parseJSON = withObject "database" $ \v -> Database <$>
 		((M.unions . map mkModule) <$> v .:: "modules") <*>
-		((M.unions . map mkProject) <$> v .:: "projects"))
+		((M.unions . map mkProject) <$> v .:: "projects")
 		where
 			mkModule m = M.singleton (inspectedId m) m
 			mkProject p = M.singleton (projectCabal p) p
@@ -114,7 +118,7 @@ cabalDB cabal = filterDB (inCabal cabal . moduleId) (const False)
 -- | Standalone database
 standaloneDB :: Database -> Database
 standaloneDB db = filterDB (noProject . moduleId) (const False) db where
-	noProject m = all (not . (flip inProject m)) ps
+	noProject m = all (not . flip inProject m) ps
 	ps = M.elems $ databaseProjects db
 
 -- | Select module by predicate
@@ -147,3 +151,82 @@ append = add
 -- | Remove database
 remove :: Database -> Database -> Database
 remove = sub
+
+-- | Structured database
+data Structured = Structured {
+	structuredCabals :: Map Cabal Database,
+	structuredProjects :: Map FilePath Database,
+	structuredFiles :: Database }
+		deriving (Eq, Ord)
+
+instance NFData Structured where
+	rnf (Structured cs ps fs) = rnf cs `seq` rnf ps `seq` rnf fs
+
+instance Group Structured where
+	add old new = Structured {
+		structuredCabals = structuredCabals new `M.union` structuredCabals old,
+		structuredProjects = structuredProjects new `M.union` structuredProjects old,
+		structuredFiles = structuredFiles old `add` structuredFiles new }
+	sub old new = Structured {
+		structuredCabals = structuredCabals old `M.difference` structuredCabals new,
+		structuredProjects = structuredProjects old `M.difference` structuredProjects new,
+		structuredFiles = structuredFiles old `sub` structuredFiles new }
+	zero = Structured zero zero zero
+
+instance Monoid Structured where
+	mempty = zero
+	mappend = add
+
+instance ToJSON Structured where
+	toJSON (Structured cs ps fs) = object [
+		"cabals" .= M.elems cs,
+		"projects" .= M.elems ps,
+		"files" .= fs]
+
+instance FromJSON Structured where
+	parseJSON = withObject "structured" $ \v -> join $
+		either fail return <$> (structured <$>
+			(v .:: "cabals") <*>
+			(v .:: "projects") <*>
+			(v .:: "files"))
+
+structured :: [Database] -> [Database] -> Database -> Either String Structured
+structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> pure fs where
+	mkMap :: Ord a => (Database -> Either String a) -> [Database] -> Either String (Map a Database)
+	mkMap key dbs = do
+		keys <- mapM key dbs
+		return $ M.fromList $ zip keys dbs
+	keyCabal :: Database -> Either String Cabal
+	keyCabal db = unique
+		"No cabal"
+		"Different module cabals"
+		(mapM getCabal (allModules db))
+		where
+			getCabal m = case moduleLocation m of
+				CabalModule c _ _ -> Right c
+				_ -> Left "Module have no cabal"
+	keyProj :: Database -> Either String FilePath
+	keyProj db = unique
+		"No project"
+		"Different module projects"
+		(return (M.keys (databaseProjects db)))
+	-- Check that list results in one element
+	unique :: (Eq a) => String -> String -> Either String [a] -> Either String a
+	unique _ _ (Left e) = Left e
+	unique no _ (Right []) = Left no
+	unique _ _ (Right [x]) = Right x
+	unique _ much (Right _) = Left much
+
+structurize :: Database -> Structured
+structurize db = Structured cs ps fs where
+	cs = M.fromList [(c, cabalDB c db) | c <- nub (mapMaybe modCabal (allModules db))]
+	ps = M.fromList [(pname, projectDB (project pname) db) | pname <- M.keys (databaseProjects db)]
+	fs = standaloneDB db
+
+merge :: Structured -> Database
+merge (Structured cs ps fs) = mconcat $ M.elems cs ++ M.elems ps ++ [fs]
+
+modCabal :: Module -> Maybe Cabal
+modCabal m = case moduleLocation m of
+	CabalModule c _ _ -> Just c
+	_ -> Nothing

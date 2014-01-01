@@ -11,7 +11,7 @@ module HsDev.Symbols (
 	DeclarationInfo(..),
 	ModuleDeclaration(..),
 	Inspection(..), inspectionOpts,
-	Inspected(..), InspectedModule(..),
+	Inspected(..), InspectedModule,
 
 	-- * Functions
 	showTypeInfo,

@@ -25,7 +25,6 @@ import Data.Maybe (maybeToList, isJust)
 import Data.Monoid
 import Data.Foldable (Foldable(..))
 import Data.Traversable
-import Data.Text (unpack)
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse

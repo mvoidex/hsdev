@@ -22,6 +22,7 @@ library
     HsDev
     HsDev.Cabal
     HsDev.Cache
+    HsDev.Cache.Structured
     HsDev.Commands
     HsDev.Database
     HsDev.Database.Async
