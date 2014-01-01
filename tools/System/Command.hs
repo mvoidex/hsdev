@@ -7,7 +7,7 @@ module System.Command (
 	cmd, cmd_,
 	Help(..), addHelpCommand, addHelp,
 	brief, help,
-	run,
+	run, runCmd,
 	Opts(..),
 	mapOpts, traverseOpts,
 	option, option_, req, noreq, flag,
@@ -18,6 +18,7 @@ module System.Command (
 
 import Control.Arrow
 import Control.Applicative
+import Control.Monad (join)
 import Data.Char
 import Data.List (stripPrefix, unfoldr, isPrefixOf)
 import Data.Maybe (fromMaybe, mapMaybe, listToMaybe, maybeToList)
@@ -118,6 +119,12 @@ help = commandUsage
 run :: [Command a] -> a -> ([String] -> a) -> [String] -> a
 run cmds onDef onError as = maybe onDef (either onError id) found where
 	found = listToMaybe $ mapMaybe (`commandRun` as) cmds
+
+-- | Try run command, wrapping any negative result to 'Maybe'
+runCmd :: Command a -> [String] -> Maybe a
+runCmd cmd = join . fmap toMaybe . commandRun cmd where
+	toMaybe :: Either b c -> Maybe c
+	toMaybe = either (const Nothing) Just
 
 -- | Options holder
 newtype Opts = Opts { getOpts :: Map String [String] }

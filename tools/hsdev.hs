@@ -100,7 +100,9 @@ translate str = '"' : snd (foldr escape (True,"\"") str)
 #endif
 
 mainCommands :: [Command (IO ())]
-mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts . fmap withOptsArgs) commands where
+mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
+	wrapCmd :: Command CommandAction -> Command (IO ())
+	wrapCmd = fmap sendCmd . addClientOpts . fmap withOptsArgs
 	srvCmds = [
 		cmd_ ["run"] [] "run interactive" runi',
 		cmd ["server", "start"] [] "start remote server" serverOpts start',
@@ -112,7 +114,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 		db <- newAsync
 		forever $ do
 			s <- getLine
-			processCmd (CommandOptions db dir putStrLn exitSuccess) 1000 s (L.putStrLn . encode)
+			processCmd (CommandOptions db dir putStrLn getLine exitSuccess) 1000 s (L.putStrLn . encode)
 	start' sopts _ = do
 #if mingw32_HOST_OS
 		let
@@ -211,7 +213,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 										"request" .= fromUtf8 req,
 										"what" .= reqErr]
 									Right (clientDir, reqArgs) -> processCmdArgs
-										(CommandOptions db clientDir outputStr serverStop)
+										(CommandOptions db clientDir outputStr (fromUtf8 <$> hGetLine' h) serverStop)
 										(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
 								-- Send 'end' message and wait client
 								L.hPutStrLn h L.empty
@@ -224,16 +226,9 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 			writeChan clientChan Nothing
 			getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
 			outputStr "server shutdown"
-	stop' sopts _ = do
-		myExe <- getExecutablePath
-		r <- readProcess myExe (maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
-		let
-			stopped = case decode (toUtf8 r) of
-				Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
-					res <- obj .: "result"
-					return (res == ("exit" :: String))
-				_ -> False
-		logMsg sopts $ if stopped then "Server stopped" else "Server returned: " ++ r
+	stop' sopts _ = run (map wrapCmd commands) onDef onError ["exit"] where
+		onDef = logMsg sopts $ "Command 'exit' not found"
+		onError es = logMsg sopts $ "Failed to stop server: " ++ intercalate ", " es
 
 	logIO :: String -> (String -> IO ()) -> IO () -> IO ()
 	logIO pre out act = handle onIO act where
@@ -252,49 +247,56 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts
 
 	-- Send command to server
 	sendCmd :: IO (ClientOpts, [String]) -> IO ()
-	sendCmd get' = do
-		curDir <- getCurrentDirectory
-		(p, as) <- get'
-		stdinData <- if getAny (clientData p)
-			then do
-				cdata <- liftM eitherDecode L.getContents
-				case cdata of
-					Left cdataErr -> do
-						putStrLn $ "Invalid data: " ++ cdataErr
-						exitFailure
-					Right dataValue -> return $ Just dataValue
-			else return Nothing
+	sendCmd get' = race [void getLine, waitResponse] where
+		race :: [IO ()] -> IO ()
+		race acts = do
+			v <- newEmptyMVar
+			forM_ acts $ \a -> forkIO (a `finally` putMVar v ())
+			takeMVar v
 
-		s <- socket AF_INET Stream defaultProtocol
-		addr' <- inet_addr "127.0.0.1"
-		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
-		h <- socketToHandle s ReadWriteMode
-		L.hPutStrLn h $ encode $ ["--current-directory=" ++ curDir] ++ setData stdinData as
-		responses <- liftM (takeWhile (not . L.null) . L.lines) $ L.hGetContents h
-		forM_ responses $
-			parseResponse >=>
-			(L.putStrLn . encodeValue (getAny $ clientPretty p))
-		where
-			setData :: Maybe ResultValue -> [String] -> [String]
-			setData Nothing = id
-			setData (Just d) = (++ ["--data=" ++ (fromUtf8 $ encode d)])
+		waitResponse = do
+			curDir <- getCurrentDirectory
+			(p, as) <- get'
+			stdinData <- if getAny (clientData p)
+				then do
+					cdata <- liftM eitherDecode L.getContents
+					case cdata of
+						Left cdataErr -> do
+							putStrLn $ "Invalid data: " ++ cdataErr
+							exitFailure
+						Right dataValue -> return $ Just dataValue
+				else return Nothing
 
-			parseResponse r = fmap (either err' id) $ runErrorT $ do
-				v <- errT (eitherDecode r) `orFail` (\e -> "Can't decode response")
-				case v of
-					Response rv -> return rv
-					ResponseStatus sv -> return sv
-					ResponseMapFile viewFile -> do
-						str <- fmap L.fromStrict (readMapFile viewFile) `orFail`
-							(\e -> "Can't read map view of file")
-						lift $ parseResponse str
-				where
-					errT act = ErrorT $ return act
-					orFail act msg = act `catchError` (throwError . msg)
-					err' msg = object ["error" .= msg]
+			s <- socket AF_INET Stream defaultProtocol
+			addr' <- inet_addr "127.0.0.1"
+			connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
+			h <- socketToHandle s ReadWriteMode
+			L.hPutStrLn h $ encode $ ["--current-directory=" ++ curDir] ++ setData stdinData as
+			responses <- liftM (takeWhile (not . L.null) . L.lines) $ L.hGetContents h
+			forM_ responses $
+				parseResponse >=>
+				(L.putStrLn . encodeValue (getAny $ clientPretty p))
 
-			encodeValue True = encodePretty
-			encodeValue False = encode
+		setData :: Maybe ResultValue -> [String] -> [String]
+		setData Nothing = id
+		setData (Just d) = (++ ["--data=" ++ (fromUtf8 $ encode d)])
+
+		parseResponse r = fmap (either err' id) $ runErrorT $ do
+			v <- errT (eitherDecode r) `orFail` (\e -> "Can't decode response")
+			case v of
+				Response rv -> return rv
+				ResponseStatus sv -> return sv
+				ResponseMapFile viewFile -> do
+					str <- fmap L.fromStrict (readMapFile viewFile) `orFail`
+						(\e -> "Can't read map view of file")
+					lift $ parseResponse str
+			where
+				errT act = ErrorT $ return act
+				orFail act msg = act `catchError` (throwError . msg)
+				err' msg = object ["error" .= msg]
+
+		encodeValue True = encodePretty
+		encodeValue False = encode
 
 	-- Add parsing 'ClieptOpts'
 	addClientOpts :: Command (IO [String]) -> Command (IO (ClientOpts, [String]))
@@ -446,6 +448,7 @@ data CommandOptions = CommandOptions {
 	commandDatabase :: Async Database,
 	commandRoot :: FilePath,
 	commandLog :: String -> IO (),
+	commandWaitInput :: IO String,
 	commandExit :: IO () }
 
 type CommandAction = WithOpts (Int -> CommandOptions -> IO CommandResult)
@@ -510,6 +513,7 @@ commands = map (fmap (fmap timeout')) cmds where
 		cmd' ["dump", "files"] [] "dump standalone files" [cacheDir, cacheFile] dumpFiles',
 		cmd' ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
 		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
+		cmd_' ["link"] [] "link to server" link',
 		-- Exit
 		cmd_' ["exit"] [] "exit" exit']
 
@@ -822,6 +826,10 @@ commands = map (fmap (fmap timeout')) cmds where
 				return ok]
 		waitDb copts as
 		return res
+	-- link to server
+	link' _ copts = do
+		commandWaitInput copts `onException` commandExit copts
+		return ok
 	-- exit
 	exit' _ copts = do
 		commandExit copts
