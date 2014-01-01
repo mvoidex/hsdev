@@ -102,148 +102,153 @@ translate str = '"' : snd (foldr escape (True,"\"") str)
 mainCommands :: [Command (IO ())]
 mainCommands = addHelp "hsdev" id $ srvCmds ++ map (fmap sendCmd . addClientOpts . fmap withOptsArgs) commands where
 	srvCmds = [
-		cmd_ ["run"] [] "run interactive" $ \_ -> do
-			dir <- getCurrentDirectory
+		cmd_ ["run"] [] "run interactive" runi',
+		cmd ["server", "start"] [] "start remote server" serverOpts start',
+		cmd ["server", "run"] [] "start server" serverOpts run',
+		cmd ["server", "stop"] [] "stop remote server" serverOpts stop']
+
+	runi' _ = do
+		dir <- getCurrentDirectory
+		db <- newAsync
+		forever $ do
+			s <- getLine
+			processCmd (CommandOptions db dir putStrLn exitSuccess) 1000 s (L.putStrLn . encode)
+	start' sopts _ = do
+#if mingw32_HOST_OS
+		let
+			args = ["server", "run"] ++ serverOptsToArgs sopts
+		myExe <- getExecutablePath
+		void $ runInteractiveProcess "powershell"
+			["-Command",
+			unwords [
+				"&", "{", "start-process",
+				translate myExe,
+				intercalate ", " args,
+				"-WindowStyle Hidden",
+				"}"]] Nothing Nothing
+		logMsg sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+#else
+		logMsg sopts "Not implemented"
+#endif
+	run' sopts _ = do
+		msgs <- newChan
+		outputDone <- newEmptyMVar
+		forkIO $ finally
+			(getChanContents msgs >>= mapM_ (logMsg sopts) . catMaybes . takeWhile isJust)
+			(putMVar outputDone ())
+
+		let
+			outputStr = writeChan msgs . Just
+			waitOutput = writeChan msgs Nothing >> takeMVar outputDone
+
+		logIO "server exception: " outputStr $ flip finally waitOutput $ do
 			db <- newAsync
-			forever $ do
-				s <- getLine
-				processCmd (CommandOptions db dir putStrLn exitSuccess) 1000 s (L.putStrLn . encode),
-		cmd ["server", "start"] [] "start remote server" serverOpts $ \sopts _ -> do
-#if mingw32_HOST_OS
-			let
-				args = ["server", "run"] ++ serverOptsToArgs sopts
-			myExe <- getExecutablePath
-			void $ runInteractiveProcess "powershell"
-				["-Command",
-				unwords [
-					"&", "{", "start-process",
-					translate myExe,
-					intercalate ", " args,
-					"-WindowStyle Hidden",
-					"}"]] Nothing Nothing
-			logMsg sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts),
-#else
-			logMsg sopts "Not implemented",
-#endif
-		cmd ["server", "run"] [] "start server" serverOpts $ \sopts _ -> do
-			msgs <- newChan
-			outputDone <- newEmptyMVar
-			forkIO $ finally
-				(getChanContents msgs >>= mapM_ (logMsg sopts) . catMaybes . takeWhile isJust)
-				(putMVar outputDone ())
 
-			let
-				outputStr = writeChan msgs . Just
-				waitOutput = writeChan msgs Nothing >> takeMVar outputDone
-
-			logIO "server exception: " outputStr $ flip finally waitOutput $ do
-				db <- newAsync
-
-				waitListen <- newEmptyMVar
-				clientChan <- newChan
+			waitListen <- newEmptyMVar
+			clientChan <- newChan
 
 #if mingw32_HOST_OS
-				mmapPool <- createPool "hsdev"
-				let
-					-- | Send response as is or via memory mapped file
-					sendResponse :: Handle -> Response -> IO ()
-					sendResponse h r@(ResponseMapFile _) = L.hPutStrLn h $ encode r
-					sendResponse h r
-						| L.length msg <= 1024 = L.hPutStrLn h msg
-						| otherwise = do
-							sync <- newEmptyMVar
-							forkIO $ void $ withName mmapPool $ \mmapName -> do
-								runErrorT $ flip catchError
-									(\e -> liftIO $ do
-										sendResponse h $ Response $ object ["error" .= e]
-										putMVar sync ())
-									(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
-										sendResponse h $ ResponseMapFile mmapName
-										putMVar sync ()
-										-- Dirty: give 10 seconds for client to read it
-										threadDelay 10000000)
-							takeMVar sync
-						where
-							msg = encode r
+			mmapPool <- createPool "hsdev"
+			let
+				-- | Send response as is or via memory mapped file
+				sendResponse :: Handle -> Response -> IO ()
+				sendResponse h r@(ResponseMapFile _) = L.hPutStrLn h $ encode r
+				sendResponse h r
+					| L.length msg <= 1024 = L.hPutStrLn h msg
+					| otherwise = do
+						sync <- newEmptyMVar
+						forkIO $ void $ withName mmapPool $ \mmapName -> do
+							runErrorT $ flip catchError
+								(\e -> liftIO $ do
+									sendResponse h $ Response $ object ["error" .= e]
+									putMVar sync ())
+								(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
+									sendResponse h $ ResponseMapFile mmapName
+									putMVar sync ()
+									-- Dirty: give 10 seconds for client to read it
+									threadDelay 10000000)
+						takeMVar sync
+					where
+						msg = encode r
 #else
-				let
-					sendResponse h = L.hPutStrLn h . encode
+			let
+				sendResponse h = L.hPutStrLn h . encode
 #endif
 
-				forkIO $ do
-					accepter <- myThreadId
+			forkIO $ do
+				accepter <- myThreadId
 
-					let
-						serverStop = void $ forkIO $ do
-							void $ tryPutMVar waitListen ()
-							killThread accepter
+				let
+					serverStop = void $ forkIO $ do
+						void $ tryPutMVar waitListen ()
+						killThread accepter
 
-					s <- socket AF_INET Stream defaultProtocol
-					bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
-					listen s maxListenQueue
-					forever $ logIO "accept client exception: " outputStr $ do
-						s' <- fmap fst $ accept s
-						outputStr $ show s' ++ " connected"
-						void $ forkIO $ logIO (show s' ++ " exception: ") outputStr $
-							bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-								bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-									me <- myThreadId
-									let
-										timeoutWait = do
-											notDone <- isEmptyMVar done
-											when notDone $ do
-												void $ forkIO $ do
-													threadDelay 10000000
-													tryPutMVar done ()
-													killThread me
-												void $ takeMVar done
-									writeChan clientChan (Just timeoutWait)
-									req <- hGetLine' h
-									outputStr $ show s' ++ ": " ++ fromUtf8 req
-									case fmap extractCurrentDir $ eitherDecode req of
-										Left reqErr -> sendResponse h $ Response $ object [
-											"error" .= ("Invalid request" :: String),
-											"request" .= fromUtf8 req,
-											"what" .= reqErr]
-										Right (clientDir, reqArgs) -> processCmdArgs
-											(CommandOptions db clientDir outputStr serverStop)
-											(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
-									-- Send 'end' message and wait client
-									L.hPutStrLn h L.empty
-									outputStr $ "waiting " ++ show s'
-									ignoreIO $ void $ hGetLine' h
-									outputStr $ show s' ++ " disconnected"
+				s <- socket AF_INET Stream defaultProtocol
+				bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
+				listen s maxListenQueue
+				forever $ logIO "accept client exception: " outputStr $ do
+					s' <- fmap fst $ accept s
+					outputStr $ show s' ++ " connected"
+					void $ forkIO $ logIO (show s' ++ " exception: ") outputStr $
+						bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
+							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+								me <- myThreadId
+								let
+									timeoutWait = do
+										notDone <- isEmptyMVar done
+										when notDone $ do
+											void $ forkIO $ do
+												threadDelay 10000000
+												tryPutMVar done ()
+												killThread me
+											void $ takeMVar done
+								writeChan clientChan (Just timeoutWait)
+								req <- hGetLine' h
+								outputStr $ show s' ++ ": " ++ fromUtf8 req
+								case fmap extractCurrentDir $ eitherDecode req of
+									Left reqErr -> sendResponse h $ Response $ object [
+										"error" .= ("Invalid request" :: String),
+										"request" .= fromUtf8 req,
+										"what" .= reqErr]
+									Right (clientDir, reqArgs) -> processCmdArgs
+										(CommandOptions db clientDir outputStr serverStop)
+										(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
+								-- Send 'end' message and wait client
+								L.hPutStrLn h L.empty
+								outputStr $ "waiting " ++ show s'
+								ignoreIO $ void $ hGetLine' h
+								outputStr $ show s' ++ " disconnected"
 
-				takeMVar waitListen
-				outputStr "waiting for clients"
-				writeChan clientChan Nothing
-				getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
-				outputStr "server shutdown",
-		cmd ["server", "stop"] [] "stop remote server" serverOpts $ \sopts _ -> do
-			myExe <- getExecutablePath
-			r <- readProcess myExe (maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
-			let
-				stopped = case decode (toUtf8 r) of
-					Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
-						res <- obj .: "result"
-						return (res == ("exit" :: String))
-					_ -> False
-			logMsg sopts $ if stopped then "Server stopped" else "Server returned: " ++ r]
-		where
-			logIO :: String -> (String -> IO ()) -> IO () -> IO ()
-			logIO pre out act = handle onIO act where
-				onIO :: IOException -> IO ()
-				onIO e = out $ pre ++ show e
+			takeMVar waitListen
+			outputStr "waiting for clients"
+			writeChan clientChan Nothing
+			getChanContents clientChan >>= sequence_ . catMaybes . takeWhile isJust
+			outputStr "server shutdown"
+	stop' sopts _ = do
+		myExe <- getExecutablePath
+		r <- readProcess myExe (maybe [] (\p' -> ["--port=" ++ show p']) (getFirst $ serverPort sopts) ++ ["exit"]) ""
+		let
+			stopped = case decode (toUtf8 r) of
+				Just (Object obj) -> fromMaybe False $ flip parseMaybe obj $ \_ -> do
+					res <- obj .: "result"
+					return (res == ("exit" :: String))
+				_ -> False
+		logMsg sopts $ if stopped then "Server stopped" else "Server returned: " ++ r
 
-			ignoreIO :: IO () -> IO ()
-			ignoreIO = handle (const (return ()) :: IOException -> IO ())
+	logIO :: String -> (String -> IO ()) -> IO () -> IO ()
+	logIO pre out act = handle onIO act where
+		onIO :: IOException -> IO ()
+		onIO e = out $ pre ++ show e
 
-			logMsg :: ServerOpts -> String -> IO ()
-			logMsg sopts s = ignoreIO $ do
-				putStrLn s
-				case getFirst (serverLog sopts) of
-					Nothing -> return ()
-					Just f -> withFile f AppendMode (`hPutStrLn` s)
+	ignoreIO :: IO () -> IO ()
+	ignoreIO = handle (const (return ()) :: IOException -> IO ())
+
+	logMsg :: ServerOpts -> String -> IO ()
+	logMsg sopts s = ignoreIO $ do
+		putStrLn s
+		case getFirst (serverLog sopts) of
+			Nothing -> return ()
+			Just f -> withFile f AppendMode (`hPutStrLn` s)
 
 	-- Send command to server
 	sendCmd :: IO (ClientOpts, [String]) -> IO ()
