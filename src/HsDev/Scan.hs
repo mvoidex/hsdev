@@ -1,20 +1,17 @@
 module HsDev.Scan (
 	-- * Enumerate functions
-	enumCabal, enumProject, enumDirectory,
+	enumCabal, CompileFlag, ModuleToScan, ProjectToScan,
+	enumProject, enumDirectory,
 
 	-- * Scan
 	scanProjectFile,
 	scanModule, upToDate, rescanModule, changedModule, changedModules
 	) where
 
-import Control.Applicative
-import Control.Exception
 import Control.Monad.Error
-import Data.Either
 import Data.List
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
-import Data.Monoid
 import Data.Traversable (traverse)
 
 import HsDev.Symbols
@@ -30,25 +27,32 @@ import HsDev.Util
 enumCabal :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
 enumCabal = list
 
+-- | Compile flags
+type CompileFlag = String
+-- | Module with flags ready to scan
+type ModuleToScan = (ModuleLocation, [CompileFlag])
+-- | Project ready to scan
+type ProjectToScan = (Project, [ModuleToScan])
+
 -- | Enum project sources
-enumProject :: Project -> ErrorT String IO [([String], ModuleLocation)]
+enumProject :: Project -> ErrorT String IO ProjectToScan
 enumProject p = do
 	p' <- loadProject p
 	srcs <- projectSources p'
-	return [(extensionsOpts (extensions src), FileModule (entity src) (Just p')) | src <- srcs]
+	return (p', [(FileModule (entity src) (Just p'), extensionsOpts (extensions src)) | src <- srcs])
 
 -- | Enum directory modules
-enumDirectory :: FilePath -> ErrorT String IO [([String], ModuleLocation)]
+enumDirectory :: FilePath -> ErrorT String IO ([ProjectToScan], [ModuleToScan])
 enumDirectory dir = do
 	files <- liftException $ traverseDirectory dir
 	let
 		projects = filter cabalFile files
 		sources = filter haskellSource files
-	projMods <- liftM concat $ mapM (enumProject . project) projects
+	projs <- mapM (enumProject . project) projects
 	let
-		projSources = mapMaybe (moduleSource . snd) projMods
+		projSources = concatMap (mapMaybe (moduleSource . fst) . snd) projs
 		standalone = map (\f -> FileModule f Nothing) $ sources \\ projSources
-	return $ projMods ++ [([], s) | s <- standalone]
+	return (projs,  [(s, []) | s <- standalone])
 
 -- | Scan project file
 scanProjectFile :: [String] -> FilePath -> ErrorT String IO Project

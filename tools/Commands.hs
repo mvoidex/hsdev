@@ -15,29 +15,19 @@ module Commands (
 	liftErrors
 	) where
 
-import Control.Arrow
-import Control.Applicative (pure)
-import Control.Exception (SomeException)
-import Control.Monad (filterM)
 import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
 import Data.Aeson
 import qualified Data.HashMap.Strict as HM
-import Data.List (find, unfoldr, partition, isPrefixOf)
-import Data.Maybe (isNothing, fromMaybe, mapMaybe, listToMaybe)
+import Data.Maybe (mapMaybe)
 import Data.Monoid
-import Data.Traversable (traverse)
-import System.Directory (canonicalizePath, doesFileExist, doesDirectoryExist)
-import System.FilePath (makeRelative)
+import System.Directory (canonicalizePath)
 
 import HsDev.Database
 import HsDev.Database.Async
-import HsDev.Inspect
 import HsDev.Project
 import HsDev.Symbols
-import HsDev.Tools.GhcMod (list)
-import HsDev.Util
 import qualified HsDev.Scan as S
 
 data Settings = Settings {
@@ -78,7 +68,7 @@ runTask v act = object ["task" .= v] `setStatus` act' where
 
 -- | Run many tasks with numeration
 runTasks :: Monad m => [ErrorT String (UpdateDB m) ()] -> ErrorT String (UpdateDB m) ()
-runTasks ts = sequence_ $ zipWith taskNum [1..] (map noErr ts) where
+runTasks ts = zipWithM_ taskNum [1..] (map noErr ts) where
 	total = length ts
 	taskNum n t = progress `setStatus` t where
 		progress = object ["progress" .= object [
@@ -101,17 +91,17 @@ scanModule opts mloc = runTask task' $ updater $ liftM fromModule $ liftErrors $
 	task' = object ["scanning" .= mloc]
 
 -- | Scan modules
-scanModules :: MonadCatchIO m => [String] -> [([String], ModuleLocation)] -> ErrorT String (UpdateDB m) ()
+scanModules :: MonadCatchIO m => [String] -> [S.ModuleToScan] -> ErrorT String (UpdateDB m) ()
 scanModules opts ms = do
 	db <- asks database
 	dbval <- readDB
 	runTask (toJSON ("updating projects files" :: String)) $ updater $ do
 		projects <- mapM (liftErrors . S.scanProjectFile opts) ps
 		return $ mconcat $ map fromProject projects
-	ms' <- liftErrors $ filterM (S.changedModule dbval opts . snd) ms
-	runTasks [scanModule (opts ++ fst m) (snd m) | m <- ms']
+	ms' <- liftErrors $ filterM (S.changedModule dbval opts . fst) ms
+	runTasks [scanModule (opts ++ snd m) (fst m) | m <- ms']
 	where
-		ps = mapMaybe (toProj . snd) ms
+		ps = mapMaybe (toProj . fst) ms
 		toProj (FileModule _ p) = fmap projectCabal p
 		toProj _ = Nothing
 
@@ -131,20 +121,20 @@ scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) (
 scanCabal opts sandbox = do
 	modules <- runTask (toJSON ("getting list of modules" :: String)) $ liftErrors $
 		S.enumCabal opts sandbox
-	scanModules opts [([], m) | m <- modules]
+	scanModules opts [(m, []) | m <- modules]
 
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanProject opts cabal = do
 	proj <- liftErrors $ S.scanProjectFile opts cabal
-	sources <- liftErrors $ S.enumProject proj
+	(_, sources) <- liftErrors $ S.enumProject proj
 	scanModules opts sources
 
 -- | Scan directory for source files and projects
 scanDirectory :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanDirectory opts dir = do
-	sources <- runTask (toJSON ("getting list of sources" :: String)) $ liftErrors $ S.enumDirectory dir
-	scanModules opts sources
+	(projSrcs, standSrcs) <- runTask (toJSON ("getting list of sources" :: String)) $ liftErrors $ S.enumDirectory dir
+	scanModules opts (concatMap snd projSrcs ++ standSrcs)
 
 -- | Lift errors
 liftErrors :: MonadIO m => ErrorT String IO a -> ErrorT String m a

@@ -13,7 +13,7 @@ import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
-import Data.List (intercalate, stripPrefix)
+import Data.List (intercalate)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
