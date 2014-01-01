@@ -1,8 +1,9 @@
 module HsDev.Database.Async (
-	update,
+	update, wait,
 	module Data.Async
 	) where
 
+import Control.Concurrent.MVar
 import Control.Monad.IO.Class
 import Control.DeepSeq (force)
 
@@ -13,4 +14,11 @@ import HsDev.Database
 update :: MonadIO m => Async Database -> m Database -> m ()
 update db act = do
 	db' <- act
-	force db' `seq` (liftIO $ modifyAsync db (Append db'))
+	force db' `seq` liftIO (modifyAsync db (Append db'))
+
+-- | This function is used to ensure that all previous updates were applied
+wait :: MonadIO m => Async Database -> m ()
+wait db = liftIO $ do
+	waitVar <- newEmptyMVar
+	modifyAsync db (Action $ \d -> putMVar waitVar () >> return d)
+	takeMVar waitVar

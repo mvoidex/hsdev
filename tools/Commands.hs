@@ -6,7 +6,7 @@ module Commands (
 	UpdateDB,
 	updateDB,
 
-	setStatus, updater, runTask, runTasks,
+	setStatus, waiter, updater, loadCache, runTask, runTasks,
 	status, readDB,
 
 	scanModule, scanModules, scanFile, scanCabal, scanProject, scanDirectory,
@@ -22,8 +22,10 @@ import Data.Aeson
 import qualified Data.HashMap.Strict as HM
 import Data.Maybe (mapMaybe)
 import Data.Monoid
+import Data.Traversable (traverse)
 import System.Directory (canonicalizePath)
 
+import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async
 import HsDev.Project
@@ -32,6 +34,7 @@ import qualified HsDev.Scan as S
 
 data Settings = Settings {
 	database :: Async Database,
+	databaseCacheReader :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
 	onStatus :: Value -> IO (),
 	ghcOptions :: [String] }
 
@@ -48,11 +51,27 @@ setStatus v act = local alter act where
 	alter s = s {
 		onStatus = \st -> onStatus s (v `union` st) }
 
+-- | Wait DB to complete actions
+waiter :: (MonadIO m, MonadReader Settings m) => m () -> m ()
+waiter act = do
+	db <- asks database
+	act
+	wait db
+
 -- | Update task result to database
 updater :: (MonadIO m, MonadReader Settings m) => m Database -> m ()
 updater act = do
 	db <- asks database
 	act >>= update db . return
+
+-- | Load data from cache and wait
+loadCache :: (MonadIO m, MonadReader Settings m) => (FilePath -> ErrorT String IO Structured) -> m ()
+loadCache act = do
+	cacheReader <- asks databaseCacheReader
+	mdat <- liftIO $ cacheReader act
+	case mdat of
+		Nothing -> return ()
+		Just dat -> waiter $ updater (return dat)
 
 -- | Run one task
 runTask :: MonadIO m => Value -> ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
@@ -119,6 +138,7 @@ scanFile opts fpath = do
 -- | Scan cabal modules
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
 scanCabal opts sandbox = do
+	loadCache $ Cache.loadCabal sandbox
 	modules <- runTask (toJSON ("getting list of modules" :: String)) $ liftErrors $
 		S.enumCabal opts sandbox
 	scanModules opts [(m, []) | m <- modules]
@@ -126,6 +146,7 @@ scanCabal opts sandbox = do
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanProject opts cabal = do
+	loadCache $ Cache.loadProject cabal
 	proj <- liftErrors $ S.scanProjectFile opts cabal
 	(_, sources) <- liftErrors $ S.enumProject proj
 	scanModules opts sources
@@ -134,6 +155,8 @@ scanProject opts cabal = do
 scanDirectory :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanDirectory opts dir = do
 	(projSrcs, standSrcs) <- runTask (toJSON ("getting list of sources" :: String)) $ liftErrors $ S.enumDirectory dir
+	forM_ projSrcs $ \(p, _) -> loadCache (Cache.loadProject $ projectCabal p)
+	loadCache $ Cache.loadFiles $ mapMaybe (moduleSource . fst) standSrcs
 	scanModules opts (concatMap snd projSrcs ++ standSrcs)
 
 -- | Lift errors

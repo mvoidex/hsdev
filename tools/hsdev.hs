@@ -57,7 +57,7 @@ import HsDev.Cache
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Commands
 import HsDev.Database
-import HsDev.Database.Async
+import qualified HsDev.Database.Async as DB
 import HsDev.Project
 import HsDev.Scan
 import HsDev.Symbols
@@ -114,10 +114,10 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 
 	runi' _ = do
 		dir <- getCurrentDirectory
-		db <- newAsync
+		db <- DB.newAsync
 		forever $ do
 			s <- getLine
-			processCmd (CommandOptions db (const $ return ()) dir putStrLn getLine (error "Not supported") exitSuccess) 1000 s (L.putStrLn . encode)
+			processCmd (CommandOptions db (const $ return ()) (const $ return Nothing) dir putStrLn getLine (error "Not supported") exitSuccess) 1000 s (L.putStrLn . encode)
 	start' sopts _ = do
 #if mingw32_HOST_OS
 		let
@@ -145,24 +145,26 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		let
 			outputStr = F.putChan msgs
 			waitOutput = F.closeChan msgs >> takeMVar outputDone
-			withCache :: (FilePath -> IO ()) -> IO ()
-			withCache onCache = case getFirst (serverCache sopts) of
-				Nothing -> return ()
+			withCache :: a -> (FilePath -> IO a) -> IO a
+			withCache v onCache = case getFirst (serverCache sopts) of
+				Nothing -> return v
 				Just cdir -> onCache cdir
 			writeCache :: Database -> IO ()
-			writeCache d = withCache $ \cdir -> do
+			writeCache d = withCache () $ \cdir -> do
 				outputStr "writing cache"
 				SC.dump cdir (structurize d)
+			readCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
+			readCache act = withCache Nothing $ liftM (either (const Nothing) (Just . merge)) . runErrorT . act
 
 		logIO "server exception: " outputStr $ flip finally waitOutput $ do
-			db <- newAsync
+			db <- DB.newAsync
 
-			when (getAny $ serverLoadCache sopts) $ withCache $ \cdir -> do
+			when (getAny $ serverLoadCache sopts) $ withCache () $ \cdir -> do
 				outputStr $ "Loading cache from " ++ cdir
 				dbCache <- liftA merge <$> SC.load cdir
 				case dbCache of
 					Left err -> outputStr $ "Failed to load cache: " ++ err
-					Right dbCache' -> update db (return dbCache')
+					Right dbCache' -> DB.update db (return dbCache')
 
 			waitListen <- newEmptyMVar
 			clientChan <- F.newChan
@@ -239,7 +241,15 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 										"request" .= fromUtf8 req,
 										"what" .= reqErr]
 									Right (clientDir, reqArgs) -> processCmdArgs
-										(CommandOptions db writeCache clientDir outputStr (fromUtf8 <$> hGetLine' h) linkToSrv serverStop)
+										(CommandOptions
+											db
+											writeCache
+											readCache
+											clientDir
+											outputStr
+											(fromUtf8 <$> hGetLine' h)
+											linkToSrv
+											serverStop)
 										(fromJust $ getFirst $ serverTimeout sopts) reqArgs (sendResponse h)
 								-- Send 'end' message and wait client
 								L.hPutStrLn h L.empty
@@ -248,9 +258,9 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 								outputStr $ show s' ++ " disconnected"
 
 			takeMVar waitListen
-			withCache $ \cdir -> do
+			withCache () $ \cdir -> do
 				outputStr $ "saving cache to " ++ cdir
-				dbval <- readAsync db
+				dbval <- DB.readAsync db
 				SC.dump cdir $ structurize dbval
 			outputStr "closing links"
 			F.stopChan linkChan >>= sequence_
@@ -479,8 +489,9 @@ instance Functor WithOpts where
 	fmap f (WithOpts x as) = WithOpts (f x) as
 
 data CommandOptions = CommandOptions {
-	commandDatabase :: Async Database,
+	commandDatabase :: DB.Async Database,
 	commandWriteCache :: Database -> IO (),
+	commandReadCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
 	commandRoot :: FilePath,
 	commandLog :: String -> IO (),
 	commandWaitInput :: IO String,
@@ -606,12 +617,12 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 							M.lookup mloc (databaseModules dbval)
 						updatedMod = dbmod {
 							inspectionResult = fmap (addDeclaration $ moduleDeclaration md) (inspectionResult dbmod) }
-					update (dbVar copts) $ return $ fromModule updatedMod
+					DB.update (dbVar copts) $ return $ fromModule updatedMod
 				updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
-					update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
-				updateData (ResultModule m) = update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone (moduleLocation m) (Right m)
-				updateData (ResultInspectedModule m) = update (dbVar copts) $ return $ fromModule m
-				updateData (ResultProject p) = update (dbVar copts) $ return $ fromProject p
+					DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
+				updateData (ResultModule m) = DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone (moduleLocation m) (Right m)
+				updateData (ResultInspectedModule m) = DB.update (dbVar copts) $ return $ fromModule m
+				updateData (ResultProject p) = DB.update (dbVar copts) $ return $ fromProject p
 				updateData (ResultList l) = mapM_ updateData l
 				updateData (ResultMap m) = mapM_ updateData $ M.elems m
 				updateData (ResultString s) = throwError $ err "Can't insert string"
@@ -619,7 +630,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			updateData decodedData
 		return $ either id (const (ResultOk ResultNone)) res
 	-- scan
-	scan' as _ copts = updateProcess (dbVar copts) as $
+	scan' as _ copts = updateProcess copts as $
 		mapM_ (\(n, f) -> forM_ (askOpts n as) (canonicalizePath' copts >=> f (getGhcOpts as))) [
 			("project", C.scanProject),
 			("file", C.scanFile),
@@ -627,12 +638,12 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	-- scan cabal
 	scanCabal' as _ copts = error_ $ do
 		cabal <- getCabal copts as
-		lift $ updateProcess (dbVar copts) as $ C.scanCabal (getGhcOpts as) cabal
+		lift $ updateProcess copts as $ C.scanCabal (getGhcOpts as) cabal
 	-- scan cabal module
 	scanModule' as [] copts = return $ err "Module name not specified"
 	scanModule' as ms copts = error_ $ do
 		cabal <- getCabal copts as
-		lift $ updateProcess (dbVar copts) as $
+		lift $ updateProcess copts as $
 			forM_ ms (C.scanModule (getGhcOpts as) . CabalModule cabal Nothing)
 	-- rescan
 	rescan' as _ copts = do
@@ -663,7 +674,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 
 		if not (null errors)
 			then return $ err $ intercalate ", " errors
-			else updateProcess (dbVar copts) as $ C.runTask (toJSON $ ("rescanning modules" :: String)) $ do
+			else updateProcess copts as $ C.runTask (toJSON $ ("rescanning modules" :: String)) $ do
 				needRescan <- C.liftErrors $ filterM (changedModule dbval (getGhcOpts as) . inspectedId) rescanMods
 				C.scanModules (getGhcOpts as) (map (inspectedId &&& inspectionOpts . inspection) needRescan)
 	-- remove
@@ -682,12 +693,12 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			toClean = filter (allOf filters . moduleId) (allModules dbval)
 			action
 				| null filters && cleanAll = liftIO $ do
-					modifyAsync (dbVar copts) Clear
+					DB.modifyAsync (dbVar copts) DB.Clear
 					return ResultNone
 				| null filters && not cleanAll = throwError "Specify filter or explicitely set flag --all"
 				| cleanAll = throwError "--all flag can't be set with filters"
 				| otherwise = liftIO $ do
-					mapM_ (modifyAsync (dbVar copts) . Remove . fromModule) $ map (getInspected dbval) $ toClean
+					mapM_ (DB.modifyAsync (dbVar copts) . DB.Remove . fromModule) $ map (getInspected dbval) $ toClean
 					return $ ResultList $ map (ResultModuleId . moduleId) toClean
 		action
 	-- list modules
@@ -891,9 +902,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 
 	waitDb copts as = when (hasOpt "wait" as) $ do
 		commandLog copts "wait for db"
-		waitDbVar <- newEmptyMVar
-		modifyAsync (dbVar copts) (Action $ \d -> commandLog copts "db done!" >> putMVar waitDbVar () >> return d)
-		takeMVar waitDbVar
+		DB.wait (dbVar copts)
+		commandLog copts "db done"
 
 	forkOrWait as act
 		| hasOpt "wait" as = liftIO act
@@ -903,7 +913,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		db' <- act
 		case db' of
 			Left e -> commandLog copts e
-			Right database -> update (dbVar copts) (return database)
+			Right database -> DB.update (dbVar copts) (return database)
 
 	asCabal :: CommandOptions -> Maybe FilePath -> ErrorT String IO Cabal
 	asCabal copts = maybe
@@ -939,9 +949,9 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		(getCabal copts as)
 
 	getDb :: (MonadIO m) => CommandOptions -> m Database
-	getDb = liftIO . readAsync . commandDatabase
+	getDb = liftIO . DB.readAsync . commandDatabase
 
-	dbVar :: CommandOptions -> Async Database
+	dbVar :: CommandOptions -> DB.Async Database
 	dbVar = commandDatabase
 
 	canonicalizePath' :: MonadIO m => CommandOptions -> FilePath -> m FilePath
@@ -968,8 +978,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	errorT' :: ErrorT CommandResult IO ResultValue -> IO CommandResult
 	errorT' = liftM (either id ResultOk) . runErrorT
 
-	updateProcess :: Async Database -> Opts -> ErrorT String (C.UpdateDB IO) () -> IO CommandResult
-	updateProcess db as act = startProcess as $ \onStatus -> C.updateDB (C.Settings db onStatus (getGhcOpts as)) act
+	updateProcess :: CommandOptions -> Opts -> ErrorT String (C.UpdateDB IO) () -> IO CommandResult
+	updateProcess opts as act = startProcess as $ \onStatus -> C.updateDB (C.Settings (commandDatabase opts) (commandReadCache opts) onStatus (getGhcOpts as)) act
 
 	fork :: MonadIO m => IO () -> m ()
 	fork = voidm . liftIO . forkIO

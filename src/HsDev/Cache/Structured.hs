@@ -55,20 +55,20 @@ loadData :: FilePath -> ErrorT String IO Database
 loadData = liftExceptionM . ErrorT . Cache.load
 
 -- | Load cabal from cache
-loadCabal :: FilePath -> Cabal -> ErrorT String IO Structured
-loadCabal dir c = do
+loadCabal :: Cabal -> FilePath -> ErrorT String IO Structured
+loadCabal c dir = do
 	dat <- loadData (dir </> "cabal" </> Cache.cabalCache c)
 	ErrorT $ return $ structured [dat] [] mempty
 
 -- | Load project from cache
 loadProject :: FilePath -> FilePath -> ErrorT String IO Structured
-loadProject dir p = do
+loadProject p dir = do
 	dat <- loadData (dir </> "projects" </> Cache.projectCache (project p))
 	ErrorT $ return $ structured [] [dat] mempty
 
 -- | Load standalone files
-loadFiles :: FilePath -> [FilePath] -> ErrorT String IO Structured
-loadFiles dir fs = do
+loadFiles :: [FilePath] -> FilePath -> ErrorT String IO Structured
+loadFiles fs dir = do
 	dat <- loadData (dir </> Cache.standaloneCache)
 	ErrorT $ return $ structured [] [] $ filterDB inFiles (const False) dat
 	where
