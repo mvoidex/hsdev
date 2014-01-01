@@ -54,6 +54,7 @@ import Text.Read (readMaybe)
 
 import HsDev.Cabal
 import HsDev.Cache
+import qualified HsDev.Cache.Structured as SC
 import HsDev.Commands
 import HsDev.Database
 import HsDev.Database.Async
@@ -799,18 +800,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		liftM (fromMaybe (ResultOk $ ResultDatabase dbval)) $ runMaybeT $ msum [
 			do
 				p <- MaybeT $ traverse (canonicalizePath' copts) $ askOpt "path" as
-				fork $ do
-					createDirectoryIfMissing True (p </> "cabal")
-					createDirectoryIfMissing True (p </> "projects")
-					forM_ (nub $ mapMaybe modCabal $ allModules dbval) $ \c ->
-						dump
-							(p </> "cabal" </> cabalCache c)
-							(cabalDB c dbval)
-					forM_ (M.keys $ databaseProjects dbval) $ \pr ->
-						dump
-							(p </> "projects" </> projectCache (project pr))
-							(projectDB (project pr) dbval)
-					dump (p </> standaloneCache) (standaloneDB dbval)
+				fork $ SC.dump p $ structurize dbval
 				return ok,
 			do
 				f <- MaybeT $ traverse (canonicalizePath' copts) $ askOpt "file" as
@@ -821,15 +811,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		res <- liftM (fromMaybe (err "Specify one of: --path, --file or --data")) $ runMaybeT $ msum [
 			do
 				p <- MaybeT $ return $ askOpt "path" as
-				forkOrWait as $ do
-					cts <- liftM concat $ mapM
-						(liftM
-							(filter ((== ".json") . takeExtension)) .
-							getDirectoryContents')
-						[p, p </> "cabal", p </> "projects"]
-					forM_ cts $ \c -> do
-						e <- doesFileExist c
-						when e $ cacheLoad copts (load c)
+				forkOrWait as $ cacheLoad copts (liftA merge <$> SC.load p)
 				return ok,
 			do
 				f <- MaybeT $ return $ askOpt "file" as
@@ -877,11 +859,6 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	modCabal m = case moduleLocation m of
 		CabalModule c _ _ -> Just c
 		_ -> Nothing
-
-	getDirectoryContents' :: FilePath -> IO [FilePath]
-	getDirectoryContents' p = do
-		b <- doesDirectoryExist p
-		if b then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p) else return []
 
 	waitDb copts as = when (hasOpt "wait" as) $ do
 		commandLog copts "wait for db"

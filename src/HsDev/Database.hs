@@ -200,7 +200,7 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 	keyCabal db = unique
 		"No cabal"
 		"Different module cabals"
-		(mapM getCabal (allModules db))
+		(nub <$> mapM getCabal (allModules db))
 		where
 			getCabal m = case moduleLocation m of
 				CabalModule c _ _ -> Right c

@@ -14,6 +14,7 @@ import Data.Group
 import qualified HsDev.Cache as Cache
 import HsDev.Database
 import HsDev.Project (project)
+import HsDev.Util (directoryContents)
 
 dump :: FilePath -> Structured -> IO ()
 dump dir db = do
@@ -41,5 +42,5 @@ load dir = runErrorT $ join $ either throwError return <$> (structured <$> loadC
 	loadFiles = ErrorT $ Cache.load (dir </> Cache.standaloneCache)
 
 	loadDir p = do
-		fs <- liftIO $ liftM (filter ((== ".json") . takeExtension)) $ getDirectoryContents p
+		fs <- liftIO $ liftM (filter ((== ".json") . takeExtension)) $ directoryContents p
 		mapM (ErrorT . Cache.load) fs

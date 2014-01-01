@@ -1,4 +1,5 @@
 module HsDev.Util (
+	directoryContents,
 	traverseDirectory,
 	haskellSource,
 	cabalFile,
@@ -16,21 +17,31 @@ import Control.Monad.Error
 import qualified Control.Monad.CatchIO as C
 import Data.Aeson
 import Data.Aeson.Types (Parser)
-import Data.List
 import qualified Data.HashMap.Strict as HM (HashMap, toList)
 import Data.Text (Text)
 import System.Directory
 import System.FilePath
 
+-- | Get directory contents safely
+directoryContents :: FilePath -> IO [FilePath]
+directoryContents p = handle ignore $ do
+	b <- doesDirectoryExist p
+	if b
+		then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p)
+		else return []
+	where
+		ignore :: SomeException -> IO [FilePath]
+		ignore _ = return []
+
 -- | Collect all file names in directory recursively
 traverseDirectory :: FilePath -> IO [FilePath]
 traverseDirectory path = handle onError $ do
-	cts <- getDirectoryContents path
-	liftM concat $ forM (cts \\ [".", ".."]) $ \c -> do
-		isDir <- doesDirectoryExist (path </> c)
+	cts <- directoryContents path
+	liftM concat $ forM cts $ \c -> do
+		isDir <- doesDirectoryExist c
 		if isDir
-			then traverseDirectory (path </> c)
-			else return [path </> c]
+			then traverseDirectory c
+			else return [c]
 	where
 		onError :: IOException -> IO [FilePath]
 		onError _ = return []
