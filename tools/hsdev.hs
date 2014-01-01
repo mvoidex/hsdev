@@ -110,7 +110,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		cmd_ ["run"] [] "run interactive" runi',
 		cmd ["server", "start"] [] "start remote server" serverOpts start',
 		cmd ["server", "run"] [] "start server" serverOpts run',
-		cmd ["server", "stop"] [] "stop remote server" serverOpts stop']
+		cmd ["server", "stop"] [] "stop remote server" clientOpts stop']
 
 	runi' _ = do
 		dir <- getCurrentDirectory
@@ -238,9 +238,10 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			outputStr "waiting for clients"
 			F.stopChan clientChan >>= sequence_
 			outputStr "server shutdown"
-	stop' sopts _ = run (map wrapCmd commands) onDef onError ["exit"] where
-		onDef = logMsg sopts $ "Command 'exit' not found"
-		onError es = logMsg sopts $ "Failed to stop server: " ++ intercalate ", " es
+	stop' copts _ = run (map wrapCmd' commands) onDef onError ["exit"] where
+		onDef = putStrLn "Command 'exit' not found"
+		onError es = putStrLn $ "Failed to stop server: " ++ intercalate ", " es
+		wrapCmd' = fmap (sendCmd . fmap ((,) copts) . withOptsArgs)
 
 	logIO :: String -> (String -> IO ()) -> IO () -> IO ()
 	logIO pre out act = handle onIO act where
