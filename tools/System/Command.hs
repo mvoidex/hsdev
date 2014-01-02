@@ -25,7 +25,6 @@ import Data.Maybe (fromMaybe, mapMaybe, listToMaybe, maybeToList)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Monoid
-import Data.Function (fix)
 import Data.Traversable (traverse)
 import System.Console.GetOpt
 

@@ -11,7 +11,6 @@ import Control.DeepSeq
 import Control.Monad.Error
 import Data.Aeson
 import Data.List
-import Data.Maybe (maybeToList)
 import System.Directory
 import System.FilePath
 

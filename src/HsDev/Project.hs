@@ -6,7 +6,7 @@ module HsDev.Project (
 	readProject, loadProject,
 	project,
 	Extensions(..), withExtensions,
-	infos, inTarget, fileTarget, sourceDirs,
+	infos, inTarget, fileTarget, findSourceDir, sourceDirs,
 
 	-- * Helpers
 	showExtension, flagExtension, extensionFlag,
@@ -21,7 +21,7 @@ import Control.Monad.Error
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.List (find, intercalate, unfoldr, stripPrefix, isPrefixOf)
-import Data.Maybe (maybeToList, isJust)
+import Data.Maybe (maybeToList, isJust, listToMaybe)
 import Data.Monoid
 import Data.Foldable (Foldable(..))
 import Data.Traversable
@@ -302,6 +302,12 @@ inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ infoSourceD
 fileTarget :: Project -> FilePath -> Maybe Info
 fileTarget p f = find (makeRelative (projectPath p) f `inTarget`) $
 	maybe [] infos $ projectDescription p
+
+-- | Finds source dir file belongs to
+findSourceDir :: Project -> FilePath -> Maybe FilePath
+findSourceDir p f = do
+	info <- fileTarget p f
+	listToMaybe $ filter (`isParent` f) $ map (projectPath p </>) $ infoSourceDirs info
 
 -- | Returns source dirs for library, executables and tests
 sourceDirs :: ProjectDescription -> [Extensions FilePath]

@@ -894,10 +894,6 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 
 	getGhcOpts = askOpts "ghc"
 
-	isParent :: FilePath -> FilePath -> Bool
-	isParent dir file = norm dir `isPrefixOf` norm file where
-		norm = splitDirectories . normalise
-
 	toPair :: Module -> Maybe (FilePath, Module)
 	toPair m = case moduleLocation m of
 		FileModule f _ -> Just (f, m)

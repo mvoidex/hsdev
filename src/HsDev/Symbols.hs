@@ -22,6 +22,7 @@ module HsDev.Symbols (
 	-- * Utility
 	Canonicalize(..),
 	locateProject,
+	locateSourceDir,
 
 	-- * Modifiers
 	addDeclaration,
@@ -37,7 +38,8 @@ module HsDev.Symbols (
 import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq
-import Control.Monad (liftM2, liftM3)
+import Control.Monad.Trans.Maybe
+import Control.Monad.Error
 import Data.Aeson
 import Data.List
 import Data.Map (Map)
@@ -371,6 +373,14 @@ locateProject file = do
 			case find ((== ".cabal") . takeExtension) cts of
 				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
 				Just cabalf -> return $ Just $ project (dir </> cabalf)
+
+-- | Locate source dir of file
+locateSourceDir :: FilePath -> IO (Maybe FilePath)
+locateSourceDir f = runMaybeT $ do
+	file <- liftIO $ canonicalizePath f
+	p <- MaybeT $ locateProject file
+	proj <- MaybeT $ fmap (either (const Nothing) Just) $ runErrorT $ loadProject p
+	MaybeT $ return $ findSourceDir proj file
 
 -- | Add declaration to module
 addDeclaration :: Declaration -> Module -> Module

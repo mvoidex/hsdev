@@ -1,6 +1,7 @@
 module HsDev.Tools.ClearImports (
-	dumpMinimalImports,
-	groupImports, formatImport,
+	dumpMinimalImports, waitImports, cleanTmpImports,
+	findMinimalImports,
+	groupImports, splitImport,
 	clearImports
 	) where
 
@@ -18,7 +19,7 @@ import GHC
 import GHC.Paths (libdir)
 
 -- | Dump minimal imports
-dumpMinimalImports :: [String] -> FilePath -> ErrorT String IO [String]
+dumpMinimalImports :: [String] -> FilePath -> ErrorT String IO String
 dumpMinimalImports opts f = do
 	cur <- liftIO getCurrentDirectory
 	file <- liftIO $ canonicalizePath f
@@ -47,19 +48,34 @@ dumpMinimalImports opts f = do
 			setTargets [t]
 			load LoadAllTargets
 
-	liftIO $ retry 500000 $ do
-		is <- liftM lines $ readFile $ mname <.> "imports"
-		length is `seq` do
-			dumps <- liftM (map (cur </>) . filter ((== ".imports") . takeExtension)) $ getDirectoryContents cur
-			forM_ dumps $ handle ignoreIO . removeFile
-		return is
-
+	length mname `seq` return mname
 	where
 		onError :: SomeException -> IO (Either String ())
 		onError = return . Left . show
 
+-- | Read imports from file
+waitImports :: FilePath -> IO [String]
+waitImports f = retry 1000 $ do
+	is <- liftM lines $ readFile f
+	length is `seq` return is
+
+-- | Clean temporary files
+cleanTmpImports :: FilePath -> IO ()
+cleanTmpImports dir = do
+	dumps <- liftM (map (dir </>) . filter ((== ".imports") . takeExtension)) $ getDirectoryContents dir
+	forM_ dumps $ handle ignoreIO . removeFile
+	where
 		ignoreIO :: IOException -> IO ()
 		ignoreIO _ = return ()
+
+-- | Dump and read imports
+findMinimalImports :: [String] -> FilePath -> ErrorT String IO [String]
+findMinimalImports opts f = do
+	file <- liftIO $ canonicalizePath f
+	mname <- dumpMinimalImports opts file
+	is <- liftIO $ waitImports (mname <.> "imports")
+	liftIO $ cleanTmpImports $ takeDirectory file
+	return is
 
 -- | Groups several lines related to one import by indents
 groupImports :: [String] -> [[String]]
@@ -67,20 +83,17 @@ groupImports = unfoldr getPack where
 	getPack [] = Nothing
 	getPack (s:ss) = Just $ first (s:) $ break (null . takeWhile isSpace) ss
 
--- | Format import in one line
-formatImport :: [String] -> String
-formatImport = trimBraces . unwords . map trim where
+-- | Split import to import and import-list
+splitImport :: [String] -> (String, String)
+splitImport = splitBraces . unwords . map trim where
 	trim = twice $ reverse . dropWhile isSpace
 	cut = twice $ reverse . drop 1
 	twice f = f . f
-	trimBraces str = trim start ++ " (" ++ importList ++ ")" where
-		(start, braces) = break (== '(') str
-		importList = trim $ cut braces
+	splitBraces = (trim *** (trim . cut)) . break (== '(')
 
 -- | Returns minimal imports for file specified
-clearImports :: [String] -> FilePath -> ErrorT String IO [String]
-clearImports opts = liftM (map formatImport . groupImports) .
-	dumpMinimalImports opts
+clearImports :: [String] -> FilePath -> ErrorT String IO [(String, String)]
+clearImports opts = liftM (map splitImport . groupImports) . findMinimalImports opts
 
 -- | Retry action on fail
 retry :: (MonadPlus m, MonadIO m) => Int -> m a -> m a

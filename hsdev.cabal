@@ -129,8 +129,10 @@ executable hsclearimports
   build-depends:
     base == 4.6.*,
     hsdev,
+    directory == 1.2.*,
     ghc == 7.6.*,
     haskell-src-exts == 1.14.*,
+    containers == 0.5.*,
     mtl == 2.1.*
 
 test-suite test

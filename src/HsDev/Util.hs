@@ -1,6 +1,7 @@
 module HsDev.Util (
 	directoryContents,
 	traverseDirectory,
+	isParent,
 	haskellSource,
 	cabalFile,
 	-- * String utils
@@ -17,6 +18,7 @@ import Control.Monad.Error
 import qualified Control.Monad.CatchIO as C
 import Data.Aeson
 import Data.Aeson.Types (Parser)
+import Data.List (isPrefixOf)
 import qualified Data.HashMap.Strict as HM (HashMap, toList)
 import Data.Text (Text)
 import System.Directory
@@ -45,6 +47,11 @@ traverseDirectory path = handle onError $ do
 	where
 		onError :: IOException -> IO [FilePath]
 		onError _ = return []
+
+-- | Is one path parent of another
+isParent :: FilePath -> FilePath -> Bool
+isParent dir file = norm dir `isPrefixOf` norm file where
+	norm = splitDirectories . normalise
 
 -- | Is haskell source?
 haskellSource :: FilePath -> Bool
