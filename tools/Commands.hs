@@ -146,8 +146,8 @@ scanCabal opts sandbox = do
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanProject opts cabal = do
-	loadCache $ Cache.loadProject cabal
 	proj <- liftErrors $ S.scanProjectFile opts cabal
+	loadCache $ Cache.loadProject $ projectCabal proj
 	(_, sources) <- liftErrors $ S.enumProject proj
 	scanModules opts sources
 
