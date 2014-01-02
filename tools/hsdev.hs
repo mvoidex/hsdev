@@ -154,7 +154,15 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 				outputStr "writing cache"
 				SC.dump cdir (structurize d)
 			readCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
-			readCache act = withCache Nothing $ liftM (either (const Nothing) (Just . merge)) . runErrorT . act
+			readCache act = withCache Nothing $ join . liftM (either cacheErr cacheOk) . runErrorT . act where
+				cacheErr e = outputStr ("Unable read cache: " ++ e) >> return Nothing
+				cacheOk s = do
+					forM_ (M.keys (structuredCabals s)) $ \c -> outputStr ("cache read: cabal " ++ show c)
+					forM_ (M.keys (structuredProjects s)) $ \p -> outputStr ("cache read: project " ++ p)
+					case allModules (structuredFiles s) of
+						[] -> return ()
+						ms -> outputStr $ "cache read: " ++ show (length ms) ++ " files"
+					return $ Just $ merge s
 
 		logIO "server exception: " outputStr $ flip finally waitOutput $ do
 			db <- DB.newAsync

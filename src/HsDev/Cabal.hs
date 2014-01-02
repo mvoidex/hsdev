@@ -3,7 +3,7 @@
 module HsDev.Cabal (
 	Cabal(..),
 	findPackageDb, locateSandbox,
-	cabalOpt, packageOpt
+	cabalOpt
 	) where
 
 import Control.Applicative
@@ -59,6 +59,3 @@ locateSandbox p = liftIO (findPackageDb p) >>= maybe
 cabalOpt :: Cabal -> [String]
 cabalOpt Cabal = []
 cabalOpt (Sandbox p) = ["-package-db " ++ p]
-
-packageOpt :: Maybe String -> [String]
-packageOpt = maybeToList . fmap ("-package " ++)

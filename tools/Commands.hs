@@ -71,7 +71,7 @@ loadCache act = do
 	mdat <- liftIO $ cacheReader act
 	case mdat of
 		Nothing -> return ()
-		Just dat -> waiter $ updater (return dat)
+		Just dat -> waiter (updater (return dat))
 
 -- | Run one task
 runTask :: MonadIO m => Value -> ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
@@ -141,7 +141,7 @@ scanCabal opts sandbox = do
 	loadCache $ Cache.loadCabal sandbox
 	modules <- runTask (toJSON ("getting list of modules" :: String)) $ liftErrors $
 		S.enumCabal opts sandbox
-	scanModules opts [(m, []) | m <- modules]
+	scanModules opts [(m, opts) | m <- modules]
 
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()

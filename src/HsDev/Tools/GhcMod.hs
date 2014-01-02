@@ -30,10 +30,10 @@ list opts cabal = do
 	ms <- tryGhc $ GhcMod.listMods (GhcMod.defaultOptions { GhcMod.ghcOpts = opts }) cradle
 	return [CabalModule cabal (readMaybe p) m | (m, p) <- ms]
 
-browse :: [String] -> Cabal -> String -> Maybe String -> ErrorT String IO InspectedModule
+browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ErrorT String IO InspectedModule
 browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ do
 	cradle <- liftIO $ cradle cabal Nothing
-	ts <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = packageOpt mpackage++ opts, GhcMod.packageId = mpackage }) cradle mname
+	ts <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = packageOpt mpackage ++ opts, GhcMod.packageId = mpackagename }) cradle mname
 	return $ Module {
 		moduleName = mname,
 		moduleDocs = Nothing,
@@ -42,7 +42,8 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 		moduleImports = M.empty,
 		moduleDeclarations = decls ts }
 	where
-		mloc = CabalModule cabal (mpackage >>= readMaybe) mname
+		mpackagename = fmap packageName mpackage
+		mloc = CabalModule cabal mpackage mname
 		decls rs = M.fromList $ map (declarationName &&& id) $ mapMaybe parseDecl rs
 		parseFunction s = do
 			groups <- match "(\\w+)\\s+::\\s+(.*)" s

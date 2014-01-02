@@ -5,6 +5,8 @@ module HsDev.Symbols.Location (
 	Position(..),
 	Location(..),
 
+	packageOpt,
+
 	module HsDev.Cabal
 	) where
 
@@ -13,7 +15,7 @@ import Control.DeepSeq
 import Control.Monad (join)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, maybeToList)
 import Text.Read (readMaybe)
 
 import HsDev.Cabal
@@ -74,7 +76,7 @@ instance ToJSON ModuleLocation where
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> ((fmap project) <$> (v .:: "project"))) <|>
-		(CabalModule <$> v .:: "cabal" <*> (fmap (join . readMaybe) (v .:: "package")) <*> v .:: "name") <|>
+		(CabalModule <$> v .:: "cabal" <*> (fmap (join . fmap readMaybe) (v .:: "package")) <*> v .:: "name") <|>
 		(MemoryModule <$> v .:: "mem")
 
 data Position = Position {
@@ -119,3 +121,6 @@ instance FromJSON Location where
 	parseJSON = withObject "location" $ \v -> Location <$>
 		v .:: "module" <*>
 		v .:: "pos"
+
+packageOpt :: Maybe ModulePackage -> [String]
+packageOpt = maybeToList . fmap (("-package " ++) . packageName)
