@@ -36,6 +36,7 @@ library
     HsDev.Symbols.JSON
     HsDev.Symbols.Util
     HsDev.Tools.Base
+    HsDev.Tools.ClearImports
     HsDev.Tools.GhcMod
     HsDev.Tools.GhcMod.InferType
     HsDev.Tools.HDocs
@@ -121,6 +122,16 @@ executable hsinspect
     containers == 0.5.*,
     mtl == 2.1.*,
     transformers == 0.3.*
+
+executable hsclearimports
+  main-is: hsclearimports.hs
+  hs-source-dirs: tools
+  build-depends:
+    base == 4.6.*,
+    hsdev,
+    ghc == 7.6.*,
+    haskell-src-exts == 1.14.*,
+    mtl == 2.1.*
 
 test-suite test
   main-is: Test.hs
