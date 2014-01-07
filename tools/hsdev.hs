@@ -270,8 +270,10 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			takeMVar waitListen
 			withCache () $ \cdir -> do
 				outputStr $ "saving cache to " ++ cdir
-				dbval <- DB.readAsync db
-				SC.dump cdir $ structurize dbval
+				logIO "cache saving exception: " outputStr $ do
+					dbval <- DB.readAsync db
+					SC.dump cdir $ structurize dbval
+				outputStr "cache saved"
 			outputStr "closing links"
 			F.stopChan linkChan >>= sequence_
 			outputStr "waiting for clients"
@@ -589,7 +591,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
 		-- Exit
 		cmd_' ["exit"] [] "exit" exit']
-	linkCmd = [cmd' ["link"] [] "link to server" [parentArg] link']
+	linkCmd = [cmd' ["link"] [] "link to server" [] link']
 
 	-- Command arguments and flags
 	allFlag = option_ ['a'] "all" flag "remove all"
@@ -602,7 +604,6 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	globalArg = option_ [] "global" flag "scope of project"
 	moduleArg = option_ ['m'] "module" (req "module name") "module name"
 	packageArg = option_ [] "package" (req "package") "module package"
-	parentArg = option_ [] "parent" (req "parent") "parent name"
 	pathArg = option_ ['p'] "path" (req "path")
 	prefixArg = option_ [] "prefix" (req "prefix") "prefix match"
 	projectArg = option [] "project" ["proj"] (req "project")
@@ -889,18 +890,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		return res
 	-- link to server
 	link' as _ copts = do
-		race $ monitor [void (commandWaitInput copts) `onException` commandExit copts, commandLink copts]
+		race [void (commandWaitInput copts) `finally` commandExit copts, commandLink copts]
 		return ok
-		where
-			monitor :: [IO ()] -> [IO ()]
-			monitor = case askOpt "parent" as of
-				Nothing -> id
-				Just pname -> (monitor' pname :)
-			monitor' :: String -> IO ()
-			monitor' pname = do
-				threadDelay 1000000
-				alive <- taskAlive pname
-				when alive (monitor' pname)
 	-- exit
 	exit' _ copts = do
 		commandExit copts
@@ -1085,12 +1076,3 @@ race acts = do
 	where
 		ignoreError :: SomeException -> IO ()
 		ignoreError _ = return ()
-
-taskAlive :: String -> IO Bool
-taskAlive name = handle ignoreErr tasks where
-	tasks = liftM (not . null . drop 1 . lines) $ readProcess
-		"tasklist"
-		["/fo", "csv", "/fi", "imagename eq " ++ name ++ "*", "/fi", "status eq running"]
-		""
-	ignoreErr :: SomeException -> IO Bool
-	ignoreErr _ = return True

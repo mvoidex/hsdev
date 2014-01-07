@@ -9,6 +9,7 @@ module HsDev.Cache (
 	load,
 	) where
 
+import Control.DeepSeq (force)
 import Data.Aeson (eitherDecode)
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BS
@@ -41,8 +42,8 @@ standaloneCache = "standalone" <.> "json"
 dump :: FilePath -> Database -> IO ()
 dump file = BS.writeFile file . encodePretty
 
--- | Load database from file
+-- | Load database from file, strict
 load :: FilePath -> IO (Either String Database)
 load file = do
 	cts <- BS.readFile file
-	return $ eitherDecode cts
+	return $ force $ eitherDecode cts

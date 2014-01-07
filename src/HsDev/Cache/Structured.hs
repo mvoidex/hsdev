@@ -41,10 +41,10 @@ dump dir db = do
 
 -- | Load all cache
 load :: FilePath -> IO (Either String Structured)
-load dir = runErrorT $ join $ either throwError return <$> (structured <$> loadCabals <*> loadProjects <*> loadFa) where
+load dir = runErrorT $ join $ either throwError return <$> (structured <$> loadCabals <*> loadProjects <*> loadFiles) where
 	loadCabals = loadDir (dir </> "cabal")
 	loadProjects = loadDir (dir </> "projects")
-	loadFa = ErrorT $ Cache.load (dir </> Cache.standaloneCache)
+	loadFiles = ErrorT $ Cache.load (dir </> Cache.standaloneCache)
 
 	loadDir p = do
 		fs <- liftIO $ liftM (filter ((== ".json") . takeExtension)) $ directoryContents p
