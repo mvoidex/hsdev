@@ -4,7 +4,7 @@ module Control.Concurrent.FiniteChan (
 	) where
 
 import qualified Control.Concurrent.Chan as C
-import Data.Maybe (catMaybes, isJust)
+import Data.Maybe
 
 -- | 'Chan' is stoppable channel unline 'Control.Concurrent.Chan'
 newtype Chan a = Chan (C.Chan (Maybe a))

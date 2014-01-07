@@ -8,9 +8,8 @@ module HsDev.Symbols.Util (
 import Data.Function (on)
 import Data.Maybe
 import Data.List (groupBy, sortBy)
-import qualified Data.Map as M
 import Data.Ord (comparing)
-import System.FilePath
+import System.FilePath (normalise)
 
 import HsDev.Symbols
 import HsDev.Project
@@ -73,7 +72,7 @@ standalone m = case moduleIdLocation m of
 
 -- | Get list of imports
 imports :: Module -> [Import]
-imports = M.elems . moduleImports
+imports = moduleImports
 
 -- | Get list of imports, which can be accessed with specified qualifier or unqualified
 qualifier :: Module -> Maybe String -> [Import]

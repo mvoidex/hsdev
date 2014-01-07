@@ -7,12 +7,12 @@ module HsDev.Cabal (
 	) where
 
 import Control.Applicative
-import Control.DeepSeq
+import Control.DeepSeq (NFData(..))
 import Control.Monad.Error
 import Data.Aeson
 import Data.List
 import System.Directory
-import System.FilePath
+import System.FilePath ((</>))
 
 -- | Cabal or sandbox
 data Cabal = Cabal | Sandbox FilePath deriving (Eq, Ord)

@@ -4,9 +4,9 @@ module System.Win32.FileMapping.NamePool (
 	) where
 
 import Control.Concurrent
-import Control.Exception
-import Control.Monad
-import System.Win32.FileMapping.Memory
+import Control.Exception (bracket)
+import Control.Monad (liftM, liftM2)
+import System.Win32.FileMapping.Memory ()
 
 -- | Pool of names for memory mapped files
 data Pool = Pool {

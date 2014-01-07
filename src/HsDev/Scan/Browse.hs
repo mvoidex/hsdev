@@ -54,7 +54,7 @@ browseModule cabal m = do
 		moduleDocs = Nothing,
 		moduleLocation = mloc,
 		moduleExports = [],
-		moduleImports = M.empty,
+		moduleImports = [],
 		moduleDeclarations = M.fromList (map (declarationName &&& id) ds) }
 	where
 		mloc = CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)

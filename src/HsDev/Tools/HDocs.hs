@@ -7,18 +7,18 @@ module HsDev.Tools.HDocs (
 	) where
 
 import Control.Exception
-import Control.Monad (liftM)
+import Control.Monad ()
 import Control.Monad.Error
 
-import Data.Aeson
+import Data.Aeson (decode)
 import qualified Data.ByteString.Lazy.Char8 as L (pack)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe)
+import Data.Maybe ()
 import System.Process (readProcess)
 
 import qualified HDocs.Module as HDocs
-import qualified HDocs.Haddock as HDocs
+import qualified HDocs.Haddock as HDocs ()
 
 import HsDev.Symbols
 

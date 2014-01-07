@@ -560,6 +560,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			sandbox, sourced, standaloned] listModules',
 		cmd_' ["list", "projects"] [] "list projects" listProjects',
 		cmd' ["symbol"] ["name"] "get symbol info" [
+			prefixArg,
 			projectArg "related project",
 			projectNameArg "related project name",
 			fileArg "source file",
@@ -578,7 +579,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["lookup"] ["symbol"] "lookup for symbol" ctx lookup',
 		cmd' ["whois"] ["symbol"] "get info for symbol" ctx whois',
 		cmd' ["scope", "modules"] [] "get modules accesible from module" ctx scopeModules',
-		cmd' ["scope"] [] "get declarations accessible from module" (ctx ++ [globalArg]) scope',
+		cmd' ["scope"] [] "get declarations accessible from module" (ctx ++ [prefixArg, globalArg]) scope',
 		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
@@ -603,6 +604,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	packageArg = option_ [] "package" (req "package") "module package"
 	parentArg = option_ [] "parent" (req "parent") "parent name"
 	pathArg = option_ ['p'] "path" (req "path")
+	prefixArg = option_ [] "prefix" (req "prefix") "prefix match"
 	projectArg = option [] "project" ["proj"] (req "project")
 	projectNameArg = option [] "project-name" ["proj-name"] (req "name")
 	sandbox = option_ [] "sandbox" (noreq "path") "path to cabal sandbox"
@@ -751,7 +753,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inCabal cabal,
 				if hasOpt "src" as then Just byFile else Nothing,
 				if hasOpt "stand" as then Just standalone else Nothing]
-			toResult = ResultList . map ResultModuleDeclaration . filter filters
+			toResult = ResultList . map ResultModuleDeclaration . prefMatch as . filter filters
 		case ns of
 			[] -> return $ toResult $ allDeclarations dbval
 			[nm] -> liftM toResult (findDeclaration dbval nm) `catchError` (\e ->
@@ -810,7 +812,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	scope' as [] copts = errorT $ do
 		dbval <- liftIO $ getDb copts
 		(srcFile, cabal) <- askCtx copts as
-		liftM (ResultList . map ResultModuleDeclaration) $ scope dbval cabal srcFile (hasOpt "global" as)
+		liftM (ResultList . map ResultModuleDeclaration . prefMatch as) $ scope dbval cabal srcFile (hasOpt "global" as)
 	scope' as _ copts = return $ err "Invalid arguments"
 	-- completion
 	complete' as [] copts = complete' as [""] copts
@@ -1019,6 +1021,15 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		p <- MaybeT $ return $ askOpt n as
 		act p
 		return ResultNone
+
+	prefMatch :: Opts -> [ModuleDeclaration] -> [ModuleDeclaration]
+	prefMatch as = case fmap splitIdentifier (askOpt "prefix" as) of
+		Nothing -> id
+		Just (qname, pref) -> filter (match' qname pref)
+		where
+			match' qname pref m =
+				pref `isPrefixOf` declarationName (moduleDeclaration m) &&
+				maybe True (== moduleIdName (declarationModuleId m)) qname
 
 printMainUsage :: IO ()
 printMainUsage = do

@@ -11,11 +11,11 @@ module HsDev.Symbols.Location (
 	) where
 
 import Control.Applicative
-import Control.DeepSeq
+import Control.DeepSeq (NFData(..))
 import Control.Monad (join)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
-import Data.Maybe (fromMaybe, maybeToList)
+import Data.Maybe
 import Text.Read (readMaybe)
 
 import HsDev.Cabal

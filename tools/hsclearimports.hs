@@ -2,15 +2,15 @@ module Main (
 	main
 	) where
 
-import Control.Exception
-import Control.Monad
+import Control.Exception (finally)
+import Control.Monad (void)
 import Control.Monad.Error
-import System.Console.GetOpt
+import System.Console.GetOpt (OptDescr)
 import System.Directory
-import System.Environment
+import System.Environment (getArgs)
 import Text.Read (readMaybe)
 
-import HsDev.Tools.ClearImports
+import HsDev.Tools.ClearImports (clearImports)
 import HsDev.Symbols (locateSourceDir)
 
 import System.Command

@@ -16,16 +16,16 @@ module HsDev.Database (
 	) where
 
 import Control.Applicative
-import Control.Monad
-import Control.DeepSeq
+import Control.Monad (msum, join)
+import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Either (rights)
 import Data.Function (on)
-import Data.Group
+import Data.Group (Group(..))
 import Data.List (nub)
 import Data.Map (Map)
 import Data.Maybe
-import Data.Monoid
+import Data.Monoid (Monoid(..))
 import qualified Data.Map as M
 
 import HsDev.Symbols

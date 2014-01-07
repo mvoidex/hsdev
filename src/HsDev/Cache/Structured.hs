@@ -6,14 +6,14 @@ module HsDev.Cache.Structured (
 import Control.Applicative
 import Control.Exception
 import Control.Monad.Error
-import qualified Data.Map as M
+import qualified Data.Map as M (assocs)
 import Data.Monoid
 import System.Directory
 import System.FilePath
 
-import Data.Group
+import Data.Group (Group(zero))
 import qualified HsDev.Cache as Cache
-import HsDev.Cabal
+import HsDev.Cabal (Cabal)
 import HsDev.Database
 import HsDev.Symbols
 import HsDev.Project (project)

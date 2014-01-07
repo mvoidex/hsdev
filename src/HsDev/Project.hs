@@ -15,13 +15,13 @@ module HsDev.Project (
 
 import Control.Applicative
 import Control.Arrow
-import Control.DeepSeq
-import Control.Exception (handle, IOException)
+import Control.DeepSeq (NFData(..))
+import Control.Exception
 import Control.Monad.Error
 import Data.Aeson
 import Data.Aeson.Types (Parser)
-import Data.List (find, intercalate, unfoldr, stripPrefix, isPrefixOf)
-import Data.Maybe (maybeToList, isJust, listToMaybe)
+import Data.List
+import Data.Maybe
 import Data.Monoid
 import Data.Foldable (Foldable(..))
 import Data.Traversable
@@ -29,8 +29,8 @@ import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
 import Distribution.ModuleName (components)
-import Distribution.Text (display, simpleParse)
-import qualified Distribution.Text
+import Distribution.Text
+import qualified Distribution.Text (Text)
 import Language.Haskell.Extension
 import System.FilePath
 

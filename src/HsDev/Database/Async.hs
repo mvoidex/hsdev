@@ -4,12 +4,12 @@ module HsDev.Database.Async (
 	) where
 
 import Control.Concurrent.MVar
-import Control.Monad.IO.Class
+import Control.Monad.IO.Class (MonadIO(..))
 import Control.DeepSeq (force)
 
 import Data.Async
 
-import HsDev.Database
+import HsDev.Database (Database)
 
 update :: MonadIO m => Async Database -> m Database -> m ()
 update db act = do

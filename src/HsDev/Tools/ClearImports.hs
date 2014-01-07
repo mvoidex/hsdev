@@ -63,7 +63,7 @@ waitImports f = retry 1000 $ do
 cleanTmpImports :: FilePath -> IO ()
 cleanTmpImports dir = do
 	dumps <- liftM (map (dir </>) . filter ((== ".imports") . takeExtension)) $ getDirectoryContents dir
-	forM_ dumps $ handle ignoreIO . removeFile
+	forM_ dumps $ handle ignoreIO . retry 1000 . removeFile
 	where
 		ignoreIO :: IOException -> IO ()
 		ignoreIO _ = return ()
@@ -74,7 +74,8 @@ findMinimalImports opts f = do
 	file <- liftIO $ canonicalizePath f
 	mname <- dumpMinimalImports opts file
 	is <- liftIO $ waitImports (mname <.> "imports")
-	liftIO $ cleanTmpImports $ takeDirectory file
+	tmp <- liftIO getCurrentDirectory
+	liftIO $ cleanTmpImports tmp
 	return is
 
 -- | Groups several lines related to one import by indents

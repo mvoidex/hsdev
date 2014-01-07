@@ -14,19 +14,18 @@ module HsDev.Symbols.JSON (
 	decodeLocation
 	) where
 
-import Control.Arrow
+import Control.Arrow (Arrow((&&&)))
 import Control.Applicative
 import Control.Monad (join)
 import Data.Aeson
-import Data.Aeson.Types
+import Data.Aeson.Types (Parser)
 import Data.Map (Map)
-import qualified Data.Map as M
+import qualified Data.Map as M (fromList)
 import Data.Traversable (traverse)
 import Text.Read (readMaybe)
 
 import HsDev.Symbols
 import HsDev.Project
-import HsDev.Cache ()
 
 encodeModuleDeclaration :: ModuleDeclaration -> Value
 encodeModuleDeclaration m = object $ sym ++ decl (declaration . moduleDeclaration $ m) where
@@ -55,7 +54,7 @@ encodeModule m = object $ sym ++ moduleCts m where
 		"location" .= encodeModuleLocation (moduleLocation m)]
 	moduleCts m' = [
 		"exports" .= moduleExports m',
-		"imports" .= map encodeImport (M.elems $ moduleImports m'),
+		"imports" .= map encodeImport (moduleImports m'),
 		"decls" .= map encodeModuleDeclaration (moduleModuleDeclarations m')]
 
 encodeModuleLocation :: ModuleLocation -> Value
@@ -110,12 +109,9 @@ decodeModule = withObject "module" $ \v -> Module <$>
 	pure Nothing <*>
 	((v .: "location") >>= decodeModuleLocation) <*>
 	(v .: "exports") <*>
-	((v .: "imports") >>= fmap mapImports . mapM decodeImport) <*>
+	((v .: "imports") >>= mapM decodeImport) <*>
 	((v .: "decls") >>= fmap mapDecls . mapM decodeModuleDeclaration)
 	where
-		mapImports :: [Import] -> Map String Import
-		mapImports = M.fromList . map (importModuleName &&& id)
-
 		mapDecls :: [ModuleDeclaration] -> Map String Declaration
 		mapDecls = M.fromList . map ((declarationName &&& id) . moduleDeclaration)
 

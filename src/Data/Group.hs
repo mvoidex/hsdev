@@ -5,7 +5,7 @@ module Data.Group (
 	groupSum
 	) where
 
-import Data.List
+import Data.List ((\\))
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Set (Set)

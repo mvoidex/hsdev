@@ -5,11 +5,11 @@ module Data.Async (
 	newAsync, readAsync, modifyAsync
 	) where
 
-import Control.DeepSeq
-import Control.Monad
+import Control.DeepSeq (NFData, force)
+import Control.Monad (forM_)
 import Control.Concurrent
 
-import Data.Group
+import Data.Group (Group(..))
 
 -- | Event on async value
 data Event a = Append a | Remove a | Clear | Modify (a -> a) | Action (a -> IO a)

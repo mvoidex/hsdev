@@ -8,10 +8,10 @@ module HsDev.Tools.Base (
 
 import Control.Monad.Error
 import Control.Monad.State
-import Data.Maybe
+import Data.Maybe (fromMaybe)
 import System.Exit
 import System.Process
-import Text.RegexPR
+import Text.RegexPR (matchRegexPR)
 
 import HsDev.Symbols
 

@@ -37,25 +37,25 @@ module HsDev.Symbols (
 
 import Control.Applicative
 import Control.Arrow
-import Control.DeepSeq
+import Control.DeepSeq (NFData(..))
 import Control.Monad.Trans.Maybe
 import Control.Monad.Error
 import Data.Aeson
 import Data.List
 import Data.Map (Map)
-import Data.Maybe
+import Data.Maybe (fromMaybe)
 import qualified Data.Map as M
-import Data.Monoid
-import Data.Time.Clock.POSIX
+import Data.Monoid (Monoid(mempty))
+import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Foldable (Foldable(..))
 import Data.Traversable (Traversable(..))
 import System.Directory
 import System.FilePath
 
 import HsDev.Symbols.Class
-import HsDev.Symbols.Documented
+import HsDev.Symbols.Documented (Documented(..))
 import HsDev.Project
-import HsDev.Util
+import HsDev.Util (tab, tabs, (.::))
 
 -- | Module import
 data Import = Import {
@@ -148,7 +148,7 @@ data Module = Module {
 	moduleDocs :: Maybe String,
 	moduleLocation :: ModuleLocation,
 	moduleExports :: [String],
-	moduleImports :: Map String Import,
+	moduleImports :: [Import],
 	moduleDeclarations :: Map String Declaration }
 		deriving (Ord)
 
@@ -158,7 +158,7 @@ instance ToJSON Module where
 		"docs" .= moduleDocs m,
 		"location" .= moduleLocation m,
 		"exports" .= moduleExports m,
-		"imports" .= M.elems (moduleImports m),
+		"imports" .= moduleImports m,
 		"declarations" .= M.elems (moduleDeclarations m)]
 
 instance FromJSON Module where
@@ -167,7 +167,7 @@ instance FromJSON Module where
 		v .:: "docs" <*>
 		v .:: "location" <*>
 		v .:: "exports" <*>
-		((M.fromList . map (importModuleName &&& id)) <$> v .:: "imports") <*>
+		v .:: "imports" <*>
 		((M.fromList . map (declarationName &&& id)) <$>v .:: "declarations")
 
 instance NFData Module where
@@ -182,7 +182,7 @@ instance Show Module where
 		"\tlocation: " ++ show (moduleLocation m),
 		"\texports: " ++ intercalate ", " (moduleExports m),
 		"\timports:",
-		unlines $ map (tab 2 . show) $ M.elems (moduleImports m),
+		unlines $ map (tab 2 . show) $ moduleImports m,
 		"\tdeclarations:",
 		unlines $ map (tabs 2 . show) $ M.elems (moduleDeclarations m),
 		maybe "" ("\tdocs: " ++) (moduleDocs m)]
@@ -389,7 +389,7 @@ addDeclaration decl m = m { moduleDeclarations = decls' } where
 
 -- | Unalias import name
 unalias :: Module -> String -> [String]
-unalias m alias = [importModuleName i | i <- M.elems (moduleImports m), importAs i == Just alias]
+unalias m alias = [importModuleName i | i <- moduleImports m, importAs i == Just alias]
 
 instance Documented ModuleId where
 	brief m = moduleIdName m ++ " in " ++ show (moduleIdLocation m)

@@ -11,17 +11,17 @@ module HsDev.Commands (
 	moduleCompletions,
 
 	-- * Filters
-	checkModule, checkDeclaration, restrictCabal, visibleFrom
+	checkModule, checkDeclaration, restrictCabal, visibleFrom,
+	splitIdentifier
 	) where
 
-import Control.Arrow
-import Control.Monad
+import Control.Arrow (Arrow(second))
 import Control.Monad.Error
 import Data.List
 import Data.Maybe
-import qualified Data.Map as M
+import qualified Data.Map as M (lookup)
 import Data.Traversable (traverse)
-import System.Directory
+import System.Directory (canonicalizePath)
 
 import HsDev.Database
 import HsDev.Project
@@ -100,7 +100,7 @@ scope :: Database -> Cabal -> FilePath -> Bool -> ErrorT String IO [ModuleDeclar
 scope db cabal file global = do
 	(_, mthis, _) <- fileCtx db file
 	depModules <- liftM
-		(if global then id else filter ((`imported` imports mthis) . moduleId)) $
+		(if global then id else filter ((`imported` (moduleImports' mthis)) . moduleId)) $
 		scopeModules db cabal file
 	return $ concatMap moduleModuleDeclarations $ mthis : depModules
 
@@ -111,9 +111,8 @@ completions db cabal file prefix = do
 	decls <- scope db cabal file False
 	return [decl |
 		decl <- decls,
-		imp <- maybeToList $ M.lookup
-			(moduleIdName . declarationModuleId $ decl) $
-			moduleImports mthis,
+		imp <- filter ((== moduleIdName (declarationModuleId decl)) . importModuleName) $
+			moduleImports' mthis,
 		qname `elem` catMaybes [
 			if not (importIsQualified imp) then Just Nothing else Nothing,
 			Just $ Just $ importModuleName imp,
@@ -150,6 +149,11 @@ visibleFrom Nothing this m = (moduleId this) == m || byCabal m
 splitBy :: Char -> String -> [String]
 splitBy ch = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break (== ch))
 
+-- | Get module imports with Prelude and self import
+moduleImports' :: Module -> [Import]
+moduleImports' m = Import "Prelude" False Nothing Nothing : Import (moduleName m) False Nothing Nothing : moduleImports m
+
+-- | Split identifier into module name and identifier itself
 splitIdentifier :: String -> (Maybe String, String)
 splitIdentifier name = (qname, name') where
 	prefix = dropWhileEnd (/= '.') name

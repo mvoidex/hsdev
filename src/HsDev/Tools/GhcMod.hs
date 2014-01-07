@@ -39,7 +39,7 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 		moduleDocs = Nothing,
 		moduleLocation = mloc,
 		moduleExports = [],
-		moduleImports = M.empty,
+		moduleImports = [],
 		moduleDeclarations = decls ts }
 	where
 		mpackagename = fmap packageName mpackage
