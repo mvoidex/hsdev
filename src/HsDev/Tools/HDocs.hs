@@ -44,5 +44,7 @@ loadDocs opts m = do
 	return $ setDocs d m
 
 hdocsProcess :: String -> [String] -> IO (Maybe (Map String String))
-hdocsProcess mname opts = liftM (decode . L.pack) $ readProcess "hdocs" opts' "" where
+hdocsProcess mname opts = handle onErr $ liftM (decode . L.pack) $ readProcess "hdocs" opts' "" where
 	opts' = mname : concat [["-g", opt] | opt <- opts]
+	onErr :: SomeException -> IO (Maybe a)
+	onErr _ = return Nothing
