@@ -1,5 +1,5 @@
 module HsDev.Tools.HDocs (
-	hdocs,
+	hdocs, hdocsCabal,
 	setDocs,
 	loadDocs,
 
@@ -8,6 +8,7 @@ module HsDev.Tools.HDocs (
 
 import Control.Exception
 import Control.Monad (liftM)
+import Control.Monad.Error
 
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as L (pack)
@@ -16,18 +17,20 @@ import qualified Data.Map as M
 import Data.Maybe (fromMaybe)
 import System.Process (readProcess)
 
-import HDocs.Module (docs, runDocsM, formatDoc)
+import qualified HDocs.Module as HDocs
+import qualified HDocs.Haddock as HDocs
 
 import HsDev.Symbols
 
 -- | Get docs for module
 hdocs :: String -> [String] -> IO (Map String String)
-hdocs mname opts = catch hdocs' onError where
-	hdocs' = do
-		d <- runDocsM $ docs opts mname
-		return $ either (const M.empty) (M.map formatDoc) d
-	onError :: SomeException -> IO (Map String String)
-	onError _ = return M.empty
+hdocs mname opts = do
+	ds <- runErrorT $ HDocs.moduleDocs opts mname
+	return $ either (const M.empty) HDocs.formatDocs ds
+
+-- | Get all docs
+hdocsCabal :: Cabal -> [String] -> ErrorT String IO (Map String (Map String String))
+hdocsCabal cabal opts = liftM (M.map HDocs.formatDocs) $ HDocs.installedDocs (cabalOpt cabal ++ opts)
 
 -- | Set docs for module
 setDocs :: Map String String -> Module -> Module

@@ -20,6 +20,8 @@ import Control.Monad.Error
 import Control.Monad.Reader
 import Data.Aeson
 import qualified Data.HashMap.Strict as HM
+import Data.Map (Map)
+import qualified Data.Map as M
 import Data.Maybe (mapMaybe)
 import Data.Monoid
 import Data.Traversable (traverse)
@@ -30,7 +32,9 @@ import HsDev.Database
 import HsDev.Database.Async
 import HsDev.Project
 import HsDev.Symbols
+import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
+import HsDev.Scan.Browse
 
 data Settings = Settings {
 	database :: Async Database,
@@ -139,9 +143,12 @@ scanFile opts fpath = do
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
 scanCabal opts sandbox = do
 	loadCache $ Cache.loadCabal sandbox
-	modules <- runTask (toJSON ("getting list of modules" :: String)) $ liftErrors $
-		S.enumCabal opts sandbox
-	scanModules opts [(m, opts) | m <- modules]
+	ms <- runTask (toJSON ("loading modules" :: String)) $ liftErrors $ browse opts sandbox
+	docs <- runTask (toJSON ("reading docs" :: String)) $ liftErrors $ hdocsCabal sandbox opts
+	updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
+	where
+		setDocs' :: Map String (Map String String) -> Module -> Module
+		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (moduleName m) docs
 
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()

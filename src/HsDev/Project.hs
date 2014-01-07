@@ -233,9 +233,6 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 				insert :: (a -> PD.BuildInfo) -> (PD.BuildInfo -> a -> a) -> [P.Dependency] -> a -> a
 				insert f s deps x = s ((f x) { PD.targetBuildDepends = deps }) x
 
-				setName :: (String -> a -> a) -> (String, a) -> a
-				setName s (n, v) = s n v
-
 		flattenTree :: Monoid a => (c -> a -> a) -> PD.CondTree v c a -> a
 		flattenTree f (PD.CondNode x cs cmps) = f cs x `mappend` mconcat (concatMap flattenBranch cmps) where
 			flattenBranch (_, t, mb) = flattenTree f t : map (flattenTree f) (maybeToList mb)

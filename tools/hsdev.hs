@@ -545,7 +545,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			projectArg "module project",
 			projectNameArg "module project by name",
 			fileArg "module source file",
-			moduleArg "module name",
+			moduleArg,
+			packageArg,
 			allFlag] remove',
 		-- | Context free commands
 		cmd' ["list", "modules"] [] "list modules" [
@@ -557,10 +558,12 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			projectArg "related project",
 			projectNameArg "related project name",
 			fileArg "source file",
-			moduleArg "module name",
+			moduleArg,
+			packageArg,
 			sandbox, sourced, standaloned] symbol',
 		cmd' ["module"] [] "get module info" [
-			moduleArg "module name",
+			moduleArg,
+			packageArg,
 			projectArg "module project",
 			projectNameArg "module project name",
 			fileArg "module source file",
@@ -591,7 +594,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	fileArg = option_ ['f'] "file" (req "file")
 	ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
 	globalArg = option_ [] "global" flag "scope of project"
-	moduleArg = option_ ['m'] "module" (req "module name")
+	moduleArg = option_ ['m'] "module" (req "module name") "module name"
+	packageArg = option_ [] "package" (req "package") "module package"
 	pathArg = option_ ['p'] "path" (req "path")
 	projectArg = option [] "project" ["proj"] (req "project")
 	projectNameArg = option [] "project-name" ["proj-name"] (req "name")
@@ -697,6 +701,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inProject proj,
 				fmap inFile file,
 				fmap inModule (askOpt "module" as),
+				fmap inPackage (askOpt "package" as),
 				fmap inCabal cabal]
 			toClean = filter (allOf filters . moduleId) (allModules dbval)
 			action
@@ -736,6 +741,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inProject proj,
 				fmap inFile file,
 				fmap inModule (askOpt "module" as),
+				fmap inPackage (askOpt "package" as),
 				fmap inCabal cabal,
 				if hasOpt "src" as then Just byFile else Nothing,
 				if hasOpt "stand" as then Just standalone else Nothing]
@@ -757,6 +763,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inCabal cabal,
 				fmap inFile file',
 				fmap inModule (askOpt "module" as),
+				fmap inPackage (askOpt "package" as),
 				if hasOpt "src" as then Just byFile else Nothing]
 		rs <- mapErrorT (fmap $ strMsg +++ id) $
 			filter (filters . moduleId) <$> maybe

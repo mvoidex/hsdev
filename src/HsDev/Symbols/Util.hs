@@ -85,7 +85,7 @@ imported m = any (\i -> moduleIdName m == importModuleName i)
 
 -- | Check if module visible from this module within this project
 visible :: Project -> ModuleId -> ModuleId -> Bool
-visible p (ModuleId mname (FileModule src _)) m =
+visible p (ModuleId _ (FileModule src _)) m =
 	inProject p m || any (`inPackage` m) deps || maybe False ((`elem` deps) . projectName) (projectOf m)
 	where
 		deps = maybe [] infoDepends $ fileTarget p src

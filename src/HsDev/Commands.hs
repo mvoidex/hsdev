@@ -17,10 +17,8 @@ module HsDev.Commands (
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Error
-import Data.Either (rights)
 import Data.List
 import Data.Maybe
-import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Traversable (traverse)
 import System.Directory
@@ -62,7 +60,7 @@ fileCtx db file = do
 -- | Lookup visible symbol
 lookupSymbol :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
 lookupSymbol db cabal file ident = do
-	(file', mthis, mproj) <- fileCtx db file
+	(_, mthis, mproj) <- fileCtx db file
 	liftM
 		(filter $ checkModule $ allOf [
 			restrictCabal cabal,
@@ -75,7 +73,7 @@ lookupSymbol db cabal file ident = do
 -- | Whois symbol in scope
 whois :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
 whois db cabal file ident = do
-	(file', mthis, mproj) <- fileCtx db file
+	(_, mthis, _) <- fileCtx db file
 	liftM
 		(filter $ checkModule $ allOf [
 			restrictCabal cabal,
@@ -100,7 +98,7 @@ scopeModules db cabal file = do
 -- | Symbols in scope
 scope :: Database -> Cabal -> FilePath -> Bool -> ErrorT String IO [ModuleDeclaration]
 scope db cabal file global = do
-	(file', mthis, mproj) <- fileCtx db file
+	(_, mthis, _) <- fileCtx db file
 	depModules <- liftM
 		(if global then id else filter ((`imported` imports mthis) . moduleId)) $
 		scopeModules db cabal file
@@ -109,7 +107,7 @@ scope db cabal file global = do
 -- | Completions
 completions :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
 completions db cabal file prefix = do
-	(file', mthis, mproj) <- fileCtx db file
+	(_, mthis, _) <- fileCtx db file
 	decls <- scope db cabal file False
 	return [decl |
 		decl <- decls,
