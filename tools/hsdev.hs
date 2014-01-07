@@ -131,9 +131,9 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 				intercalate ", " args,
 				"-WindowStyle Hidden",
 				"}"]] Nothing Nothing
-		logMsg sopts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+		putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
 #else
-		logMsg sopts "Not implemented"
+		putStrLn "Not implemented"
 #endif
 	run' sopts _ = do
 		msgs <- F.newChan
@@ -163,6 +163,8 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 						[] -> return ()
 						ms -> outputStr $ "cache read: " ++ show (length ms) ++ " files"
 					return $ Just $ merge s
+
+		outputStr $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
 
 		logIO "server exception: " outputStr $ flip finally waitOutput $ do
 			db <- DB.newAsync

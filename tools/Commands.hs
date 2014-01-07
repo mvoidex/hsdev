@@ -81,6 +81,7 @@ loadCache act = do
 runTask :: MonadIO m => Value -> ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
 runTask v act = object ["task" .= v] `setStatus` act' where
 	act' = do
+		status (object ["status" .= toJSON ("working" :: String)])
 		x <- act
 		status (object ["status" .= taskOk])
 		return x
