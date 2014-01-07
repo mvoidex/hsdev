@@ -297,50 +297,53 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 
 	-- Send command to server
 	sendCmd :: IO (ClientOpts, [String]) -> IO ()
-	sendCmd get' = race [void getLine, waitResponse] where
-		waitResponse = do
-			curDir <- getCurrentDirectory
-			(p, as) <- get'
-			stdinData <- if getAny (clientData p)
-				then do
-					cdata <- liftM eitherDecode L.getContents
-					case cdata of
-						Left cdataErr -> do
-							putStrLn $ "Invalid data: " ++ cdataErr
-							exitFailure
-						Right dataValue -> return $ Just dataValue
-				else return Nothing
+	sendCmd get' = do
+		svar <- newEmptyMVar
+		race [takeMVar svar, waitResponse >> putMVar svar ()]
+		where
+			waitResponse = do
+				curDir <- getCurrentDirectory
+				(p, as) <- get'
+				stdinData <- if getAny (clientData p)
+					then do
+						cdata <- liftM eitherDecode L.getContents
+						case cdata of
+							Left cdataErr -> do
+								putStrLn $ "Invalid data: " ++ cdataErr
+								exitFailure
+							Right dataValue -> return $ Just dataValue
+					else return Nothing
 
-			s <- socket AF_INET Stream defaultProtocol
-			addr' <- inet_addr "127.0.0.1"
-			connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
-			h <- socketToHandle s ReadWriteMode
-			L.hPutStrLn h $ encode $ ["--current-directory=" ++ curDir] ++ setData stdinData as
-			responses <- liftM (takeWhile (not . L.null) . L.lines) $ L.hGetContents h
-			forM_ responses $
-				parseResponse >=>
-				(L.putStrLn . encodeValue (getAny $ clientPretty p))
+				s <- socket AF_INET Stream defaultProtocol
+				addr' <- inet_addr "127.0.0.1"
+				connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
+				h <- socketToHandle s ReadWriteMode
+				L.hPutStrLn h $ encode $ ["--current-directory=" ++ curDir] ++ setData stdinData as
+				responses <- liftM (takeWhile (not . L.null) . L.lines) $ L.hGetContents h
+				forM_ responses $
+					parseResponse >=>
+					(L.putStrLn . encodeValue (getAny $ clientPretty p))
 
-		setData :: Maybe ResultValue -> [String] -> [String]
-		setData Nothing = id
-		setData (Just d) = (++ ["--data=" ++ (fromUtf8 $ encode d)])
+			setData :: Maybe ResultValue -> [String] -> [String]
+			setData Nothing = id
+			setData (Just d) = (++ ["--data=" ++ (fromUtf8 $ encode d)])
 
-		parseResponse r = fmap (either err' id) $ runErrorT $ do
-			v <- errT (eitherDecode r) `orFail` (\e -> "Can't decode response")
-			case v of
-				Response rv -> return rv
-				ResponseStatus sv -> return sv
-				ResponseMapFile viewFile -> do
-					str <- fmap L.fromStrict (readMapFile viewFile) `orFail`
-						(\e -> "Can't read map view of file")
-					lift $ parseResponse str
-			where
-				errT act = ErrorT $ return act
-				orFail act msg = act `catchError` (throwError . msg)
-				err' msg = object ["error" .= msg]
+			parseResponse r = fmap (either err' id) $ runErrorT $ do
+				v <- errT (eitherDecode r) `orFail` (\e -> "Can't decode response")
+				case v of
+					Response rv -> return rv
+					ResponseStatus sv -> return sv
+					ResponseMapFile viewFile -> do
+						str <- fmap L.fromStrict (readMapFile viewFile) `orFail`
+							(\e -> "Can't read map view of file")
+						lift $ parseResponse str
+				where
+					errT act = ErrorT $ return act
+					orFail act msg = act `catchError` (throwError . msg)
+					err' msg = object ["error" .= msg]
 
-		encodeValue True = encodePretty
-		encodeValue False = encode
+			encodeValue True = encodePretty
+			encodeValue False = encode
 
 	-- Add parsing 'ClieptOpts'
 	addClientOpts :: Command (IO [String]) -> Command (IO (ClientOpts, [String]))
@@ -583,7 +586,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
 		-- Exit
 		cmd_' ["exit"] [] "exit" exit']
-	linkCmd = [cmd_' ["link"] [] "link to server" link']
+	linkCmd = [cmd' ["link"] [] "link to server" [parentArg] link']
 
 	-- Command arguments and flags
 	allFlag = option_ ['a'] "all" flag "remove all"
@@ -596,6 +599,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	globalArg = option_ [] "global" flag "scope of project"
 	moduleArg = option_ ['m'] "module" (req "module name") "module name"
 	packageArg = option_ [] "package" (req "package") "module package"
+	parentArg = option_ [] "parent" (req "parent") "parent name"
 	pathArg = option_ ['p'] "path" (req "path")
 	projectArg = option [] "project" ["proj"] (req "project")
 	projectNameArg = option [] "project-name" ["proj-name"] (req "name")
@@ -880,9 +884,19 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		waitDb copts as
 		return res
 	-- link to server
-	link' _ copts = do
-		race [void (commandWaitInput copts) `onException` commandExit copts, commandLink copts]
+	link' as _ copts = do
+		race $ monitor [void (commandWaitInput copts) `onException` commandExit copts, commandLink copts]
 		return ok
+		where
+			monitor :: [IO ()] -> [IO ()]
+			monitor = case askOpt "parent" as of
+				Nothing -> id
+				Just pname -> (monitor' pname :)
+			monitor' :: String -> IO ()
+			monitor' pname = do
+				threadDelay 1000000
+				alive <- taskAlive pname
+				when alive (monitor' pname)
 	-- exit
 	exit' _ copts = do
 		commandExit copts
@@ -1058,3 +1072,12 @@ race acts = do
 	where
 		ignoreError :: SomeException -> IO ()
 		ignoreError _ = return ()
+
+taskAlive :: String -> IO Bool
+taskAlive name = handle ignoreErr tasks where
+	tasks = liftM (not . null . drop 1 . lines) $ readProcess
+		"tasklist"
+		["/fo", "csv", "/fi", "imagename eq " ++ name ++ "*", "/fi", "status eq running"]
+		""
+	ignoreErr :: SomeException -> IO Bool
+	ignoreErr _ = return True
