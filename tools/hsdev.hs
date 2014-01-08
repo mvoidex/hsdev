@@ -19,6 +19,7 @@ import qualified Data.ByteString.Char8 as B
 import Data.Aeson
 import Data.Aeson.Encode.Pretty
 import Data.Aeson.Types (parseMaybe)
+import Data.Char (isSpace, isAlphaNum)
 import Data.Either (partitionEithers)
 import Data.Maybe
 import Data.Monoid
@@ -94,11 +95,17 @@ main = withSocketsDo $ do
 #if mingw32_HOST_OS
 
 translate :: String -> String
-translate str = '"' : snd (foldr escape (True,"\"") str)
-  where escape '"'  (b,     str) = (True,  '\\' : '"'  : str)
-        escape '\\' (True,  str) = (True,  '\\' : '\\' : str)
-        escape '\\' (False, str) = (False, '\\' : str)
-        escape c    (b,     str) = (False, c : str)
+translate str = '"' : snd (foldr escape (True,"\"") str) where
+	escape '"'  (b, str) = (True,  '\\' : '"'  : str)
+	escape '\\' (True, str) = (True,  '\\' : '\\' : str)
+	escape '\\' (False, str) = (False, '\\' : str)
+	escape c (b, str) = (False, c : str)
+
+powershell :: String -> String
+powershell str
+	| all isAlphaNum str = str
+	| all (`notElem` "\"'") str = "'" ++ str ++ "'"
+	| otherwise = "'" ++ translate str ++ "'"
 
 #endif
 
@@ -123,15 +130,17 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		let
 			args = ["server", "run"] ++ serverOptsToArgs sopts
 		myExe <- getExecutablePath
-		void $ runInteractiveProcess "powershell"
-			["-Command",
+		r <- readProcess "powershell" [
+			"-Command",
 			unwords [
 				"&", "{", "start-process",
-				translate myExe,
-				intercalate ", " args,
+				powershell myExe,
+				intercalate ", " (map powershell args),
 				"-WindowStyle Hidden",
-				"}"]] Nothing Nothing
-		putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+				"}"]] ""
+		if all isSpace r
+			then putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+			else putStrLn $ "Failed to start server: " ++ r
 #else
 		putStrLn "Not implemented"
 #endif
