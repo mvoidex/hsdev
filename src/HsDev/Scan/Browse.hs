@@ -34,7 +34,7 @@ browse :: [String] -> Cabal -> ErrorT String IO [InspectedModule]
 browse opts cabal = ErrorT $ withInitializedPackages (cabalOpt cabal ++ opts) (runErrorT . browse') where
 	browse' :: GHC.DynFlags -> ErrorT String GHC.Ghc [InspectedModule]
 	browse' d = do
-		ms <- lift $ modules d
+		ms <- lift $ GHC.packageDbModules False
 		liftM catMaybes $ mapM browseModule' ms
 	inspection :: Monad m => m Inspection
 	inspection = return $ InspectionAt 0 opts
@@ -86,12 +86,6 @@ withInitializedPackages ghcOpts cont = GHC.runGhc (Just GHC.libdir) $ do
 			GHC.setSessionDynFlags fs'
 			(result, _) <- GHC.liftIO $ GHC.initPackages fs'
 			cont result
-
-modules :: GHC.GhcMonad m => GHC.DynFlags -> m [GHC.Module]
-modules d = liftM (rights :: [Either GHC.SomeException GHC.Module] -> [GHC.Module]) $ sequence [
-	GHC.gtry $ GHC.findModule nm (Just $ GHC.mkFastString $ GHC.display $ GHC.pkgName $ GHC.sourcePackageId pc) |
-	pc <- fromMaybe [] (GHC.pkgDatabase d),
-	nm <- GHC.exposedModules pc]
 
 inOtherModule :: GHC.Name -> GHC.Ghc (Maybe GHC.TyThing)
 inOtherModule nm = GHC.getModuleInfo (GHC.nameModule nm) >> GHC.lookupGlobalName nm
