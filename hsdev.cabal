@@ -79,6 +79,8 @@ executable hsdev
     Control.Concurrent.FiniteChan
     Commands
     System.Command
+    Types
+    Update
 
   if os(windows)
     other-modules:
