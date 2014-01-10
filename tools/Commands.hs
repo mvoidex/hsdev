@@ -144,8 +144,11 @@ scanFile opts fpath = do
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
 scanCabal opts sandbox = do
 	loadCache $ Cache.loadCabal sandbox
-	ms <- runTask (toJSON ("loading modules" :: String)) $ liftErrors $ browse opts sandbox
-	docs <- runTask (toJSON ("reading docs" :: String)) $ liftErrors $ hdocsCabal sandbox opts
+	dbval <- readDB
+	ms <- runTask (toJSON ("loading modules" :: String)) $ liftErrors $
+		browseFilter opts sandbox (S.changedModule dbval opts)
+	docs <- runTask (toJSON ("loading docs" :: String)) $ liftErrors $
+		hdocsCabal sandbox opts
 	updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module

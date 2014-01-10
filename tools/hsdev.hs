@@ -570,14 +570,13 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			projectNameArg "project name to list modules from",
 			sandbox, sourced, standaloned] listModules',
 		cmd_' ["list", "projects"] [] "list projects" listProjects',
-		cmd' ["symbol"] ["name"] "get symbol info" [
-			prefixArg,
+		cmd' ["symbol"] ["name"] "get symbol info" (matches ++ [
 			projectArg "related project",
 			projectNameArg "related project name",
 			fileArg "source file",
 			moduleArg,
 			packageArg,
-			sandbox, sourced, standaloned] symbol',
+			sandbox, sourced, standaloned]) symbol',
 		cmd' ["module"] [] "get module info" [
 			moduleArg,
 			packageArg,
@@ -589,8 +588,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		-- Context commands
 		cmd' ["lookup"] ["symbol"] "lookup for symbol" ctx lookup',
 		cmd' ["whois"] ["symbol"] "get info for symbol" ctx whois',
-		cmd' ["scope", "modules"] [] "get modules accesible from module" ctx scopeModules',
-		cmd' ["scope"] [] "get declarations accessible from module" (ctx ++ [prefixArg, globalArg]) scope',
+		cmd' ["scope", "modules"] [] "get modules accesible from module or within a project" ctx scopeModules',
+		cmd' ["scope"] [] "get declarations accessible from module or within a project" (ctx ++ matches ++ [globalArg]) scope',
 		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
@@ -609,8 +608,10 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	ctx = [fileArg "source file", sandbox]
 	dataArg = option_ [] "data" (req "contents") "data to pass to command"
 	fileArg = option_ ['f'] "file" (req "file")
+	findArg = option_ [] "find" (req "find") "infix match"
 	ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
 	globalArg = option_ [] "global" flag "scope of project"
+	matches = [prefixArg, findArg]
 	moduleArg = option_ ['m'] "module" (req "module name") "module name"
 	packageArg = option_ [] "package" (req "package") "module package"
 	pathArg = option_ ['p'] "path" (req "path")
@@ -763,7 +764,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inCabal cabal,
 				if hasOpt "src" as then Just byFile else Nothing,
 				if hasOpt "stand" as then Just standalone else Nothing]
-			toResult = ResultList . map ResultModuleDeclaration . prefMatch as . filter filters
+			toResult = ResultList . map ResultModuleDeclaration . filterMatch as . filter filters
 		case ns of
 			[] -> return $ toResult $ allDeclarations dbval
 			[nm] -> liftM toResult (findDeclaration dbval nm) `catchError` (\e ->
@@ -822,7 +823,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	scope' as [] copts = errorT $ do
 		dbval <- liftIO $ getDb copts
 		(srcFile, cabal) <- askCtx copts as
-		liftM (ResultList . map ResultModuleDeclaration . prefMatch as) $ scope dbval cabal srcFile (hasOpt "global" as)
+		liftM (ResultList . map ResultModuleDeclaration . filterMatch as) $ scope dbval cabal srcFile (hasOpt "global" as)
 	scope' as _ copts = return $ err "Invalid arguments"
 	-- completion
 	complete' as [] copts = complete' as [""] copts
@@ -972,9 +973,15 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	askProject :: CommandOptions -> Opts -> ErrorT String IO (Maybe Project)
 	askProject copts = traverse (getProject copts) . askOpt "project"
 
+	askFile :: CommandOptions -> Opts -> ErrorT String IO (Maybe FilePath)
+	askFile copts = traverse (canonicalizePath' copts) . askOpt "file"
+
+	forceJust :: String -> ErrorT String IO (Maybe a) => ErrorT String IO a
+	forceJust msg act = act >>= maybe (throwError msg) return
+
 	askCtx :: CommandOptions -> Opts -> ErrorT String IO (FilePath, Cabal)
 	askCtx copts as = liftM2 (,)
-		(maybe (throwError "No file specified") (canonicalizePath' copts) $ askOpt "file" as)
+		(forceJust "No file specified" $ askFile copts as)
 		(getCabal copts as)
 
 	getDb :: (MonadIO m) => CommandOptions -> m Database
@@ -1021,6 +1028,16 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		p <- MaybeT $ return $ askOpt n as
 		act p
 		return ResultNone
+
+	filterMatch :: Opts -> [ModuleDeclaration] -> [ModuleDeclaration]
+	filterMatch as = findMatch as . prefMatch as
+
+	findMatch :: Opts -> [ModuleDeclaration] -> [ModuleDeclaration]
+	findMatch as = case askOpt "find" as of
+		Nothing -> id
+		Just str -> filter (match' str)
+		where
+			match' str m = str `isInfixOf` declarationName (moduleDeclaration m)
 
 	prefMatch :: Opts -> [ModuleDeclaration] -> [ModuleDeclaration]
 	prefMatch as = case fmap splitIdentifier (askOpt "prefix" as) of

@@ -1,5 +1,6 @@
 module HsDev.Scan.Browse (
-	browse
+	-- * Scan cabal modules
+	browseFilter, browse
 	) where
 
 import Control.Arrow
@@ -30,20 +31,22 @@ import qualified Type as GHC
 import qualified Var as GHC
 import Pretty
 
-browse :: [String] -> Cabal -> ErrorT String IO [InspectedModule]
-browse opts cabal = ErrorT $ withInitializedPackages (cabalOpt cabal ++ opts) (runErrorT . browse') where
-	browse' :: GHC.DynFlags -> ErrorT String GHC.Ghc [InspectedModule]
-	browse' d = do
-		ms <- lift $ GHC.packageDbModules False
-		liftM catMaybes $ mapM browseModule' ms
-	inspection :: Monad m => m Inspection
-	inspection = return $ InspectionAt 0 opts
+-- | Browse modules
+browseFilter :: [String] -> Cabal -> (ModuleLocation -> ErrorT String IO Bool) -> ErrorT String IO [InspectedModule]
+browseFilter opts cabal f = withPackages_ (cabalOpt cabal ++ opts) $ do
+	ms <- lift $ GHC.packageDbModules False
+	ms' <- filterM (mapErrorT GHC.liftIO . f . loc) ms
+	liftM catMaybes $ mapM browseModule' ms'
+	where
+		loc :: GHC.Module -> ModuleLocation
+		loc m = CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
 
-	browseModule' :: GHC.Module -> ErrorT String GHC.Ghc (Maybe InspectedModule)
-	browseModule' m = tryT $ inspect
-		(CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m))
-		(return $ InspectionAt 0 opts)
-		(browseModule cabal m)
+		browseModule' :: GHC.Module -> ErrorT String GHC.Ghc (Maybe InspectedModule)
+		browseModule' m = tryT $ inspect (loc m) (return $ InspectionAt 0 opts) (browseModule cabal m)
+
+-- | Browse all modules
+browse :: [String] -> Cabal -> ErrorT String IO [InspectedModule]
+browse opts cabal = browseFilter opts cabal (const $ return True)
 
 browseModule :: Cabal -> GHC.Module -> ErrorT String GHC.Ghc Module
 browseModule cabal m = do
@@ -86,6 +89,12 @@ withInitializedPackages ghcOpts cont = GHC.runGhc (Just GHC.libdir) $ do
 			GHC.setSessionDynFlags fs'
 			(result, _) <- GHC.liftIO $ GHC.initPackages fs'
 			cont result
+
+withPackages :: [String] -> (GHC.DynFlags -> ErrorT String GHC.Ghc a) -> ErrorT String IO a
+withPackages ghcOpts cont = ErrorT $ withInitializedPackages ghcOpts (runErrorT . cont)
+
+withPackages_ :: [String] -> ErrorT String GHC.Ghc a -> ErrorT String IO a
+withPackages_ ghcOpts act = withPackages ghcOpts (const act)
 
 inOtherModule :: GHC.Name -> GHC.Ghc (Maybe GHC.TyThing)
 inOtherModule nm = GHC.getModuleInfo (GHC.nameModule nm) >> GHC.lookupGlobalName nm

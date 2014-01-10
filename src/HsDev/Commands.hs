@@ -15,6 +15,7 @@ module HsDev.Commands (
 	splitIdentifier
 	) where
 
+import Control.Applicative
 import Control.Arrow (Arrow(second))
 import Control.Monad.Error
 import Data.List
@@ -43,8 +44,8 @@ fileModule db src = do
 	maybe (throwError $ "File '" ++ src' ++ "' not found") return $ lookupFile src' db
 
 -- | Find project of module
-getModuleProject :: Database -> Project -> ErrorT String IO Project
-getModuleProject db p = do
+getProject :: Database -> Project -> ErrorT String IO Project
+getProject db p = do
 	p' <- liftIO $ canonicalizePath $ projectCabal p
 	maybe (throwError $ "Project " ++ p' ++ " not found") return $
 		M.lookup p' $ databaseProjects db
@@ -54,8 +55,17 @@ fileCtx :: Database -> FilePath -> ErrorT String IO (FilePath, Module, Maybe Pro
 fileCtx db file = do
 	file' <- liftIO $ canonicalizePath file
 	mthis <- fileModule db file'
-	mproj <- traverse (getModuleProject db) $ projectOf $ moduleId mthis
+	mproj <- traverse (getProject db) $ projectOf $ moduleId mthis
 	return (file', mthis, mproj)
+
+-- | Try get context file
+fileCtxMaybe :: Database -> FilePath -> ErrorT String IO (FilePath, Maybe Module, Maybe Project)
+fileCtxMaybe db file = ((\(f, m, p) -> (f, Just m, p)) <$> fileCtx db file) <|> onlyProj where
+	onlyProj = do
+		file' <- liftIO $ canonicalizePath file
+		mproj <- liftIO $ locateProject file'
+		mproj' <- traverse (getProject db) mproj
+		return (file', Nothing, mproj')
 
 -- | Lookup visible symbol
 lookupSymbol :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
@@ -85,9 +95,9 @@ whois db cabal file ident = do
 -- | Accessible modules
 scopeModules :: Database -> Cabal -> FilePath -> ErrorT String IO [Module]
 scopeModules db cabal file = do
-	(file', mthis, mproj) <- fileCtx db file
+	(file', mthis, mproj) <- fileCtxMaybe db file
 	case mproj of
-		Nothing -> return $ mthis : selectModules (inCabal cabal . moduleId) db
+		Nothing -> return $ maybe id (:) mthis $ selectModules (inCabal cabal . moduleId) db
 		Just proj -> let deps' = deps file' proj in
 			return $ concatMap (\p -> selectModules (p . moduleId) db) [
 				inProject proj,
@@ -97,12 +107,12 @@ scopeModules db cabal file = do
 
 -- | Symbols in scope
 scope :: Database -> Cabal -> FilePath -> Bool -> ErrorT String IO [ModuleDeclaration]
-scope db cabal file global = do
+scope db cabal file False = do
 	(_, mthis, _) <- fileCtx db file
-	depModules <- liftM
-		(if global then id else filter ((`imported` (moduleImports' mthis)) . moduleId)) $
+	depModules <- liftM (filter ((`imported` (moduleImports' mthis)) . moduleId)) $
 		scopeModules db cabal file
 	return $ concatMap moduleModuleDeclarations $ mthis : depModules
+scope db cabal file True = concatMap moduleModuleDeclarations <$> scopeModules db cabal file
 
 -- | Completions
 completions :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
