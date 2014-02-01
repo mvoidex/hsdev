@@ -366,10 +366,10 @@ locateProject file = do
 	if isDir then locateHere file' else locateParent (takeDirectory file')
 	where
 		locateHere path = do
-			cts <- getDirectoryContents path
+			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents path
 			return $ fmap (project . (path </>)) $ find ((== ".cabal") . takeExtension) cts
 		locateParent dir = do
-			cts <- getDirectoryContents dir
+			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents dir
 			case find ((== ".cabal") . takeExtension) cts of
 				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
 				Just cabalf -> return $ Just $ project (dir </> cabalf)
