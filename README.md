@@ -6,29 +6,22 @@ Haskell development library and tool with support of autocompletion, symbol info
 Usage
 -----
 
-Use `hsdev server start` to start remove server.
+Use `hsdev server start` to start remove server. Specify `--cache`, where `hsdev` will store information.
 Use `scan` commands to scan cabal modules, projects and directories, for example:
 
 ```
+PS> hsdev server start --cache=cache
+Server started at port 4567
 PS> hsdev scan cabal
 {}
 PS> hsdev scan -f Test.hs -p Projects --proj hsdev\hsdev.cabal
 {}
 ```
 
-Use `load` and `dump` commands to load\save data.
-
-```
-PS> hsdev dump -p cache
-{}
-PS> hsdev load -p cache
-{}
-```
-
 Other commands can be used to extract info about modules, projects, declarations etc.
 
 ```
-PS> (hsdev complete foldM -f hsdev\src\HsDev\Commands.hs | convertfrom-json).declaration.name
+PS> hsdev complete foldM -f hsdev\src\HsDev\Commands.hs | json | % { $_.declaration.name }
 foldM
 foldM_
 foldM

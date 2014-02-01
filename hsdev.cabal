@@ -86,6 +86,9 @@ executable hsdev
     other-modules:
       System.Win32.FileMapping.Memory
       System.Win32.FileMapping.NamePool
+  else
+    build-depends:
+      unix == 2.6.*
 
   build-depends:
     base == 4.6.*,

@@ -53,6 +53,9 @@ import System.Command
 #if mingw32_HOST_OS
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
+#else
+import System.Posix.Process
+import System.Posix.IO
 #endif
 
 import qualified Update
@@ -109,7 +112,27 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			then putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
 			else putStrLn $ "Failed to start server: " ++ r
 #else
-		putStrLn "Not implemented"
+		let
+			forkError :: SomeException -> IO ()
+			forkError e  = putStrLn $ "Failed to start server: " ++ show e
+
+			proxy :: IO ()
+			proxy = do
+				createSession
+				forkProcess serverAction
+				exitImmediately ExitSuccess
+
+			serverAction :: IO ()
+			serverAction = do
+				mapM_ closeFd [stdInput, stdOutput, stdError]
+				nullFd <- openFd "/dev/null" ReadWrite Nothing defaultFileFlags
+				mapM_ (dupTo nullFd) [stdInput, stdOutput, stdError]
+				closeFd nullFd
+				run' sopts []
+
+		handle forkError $ do
+			forkProcess proxy
+			putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
 #endif
 	run' sopts _ = do
 		msgs <- F.newChan
@@ -313,10 +336,14 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 				case v of
 					Response rv -> return rv
 					ResponseStatus sv -> return sv
+#if mingw32_HOST_OS
 					ResponseMapFile viewFile -> do
 						str <- fmap L.fromStrict (readMapFile viewFile) `orFail`
 							(\e -> "Can't read map view of file")
 						lift $ parseResponse str
+#else
+					ResponseMapFile viewFile -> return $ err' ("Not supported" :: String)
+#endif
 				where
 					errT act = ErrorT $ return act
 					orFail act msg = act `catchError` (throwError . msg)
