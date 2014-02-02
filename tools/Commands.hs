@@ -570,7 +570,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				| null filters && not cleanAll = throwError "Specify filter or explicitely set flag --all"
 				| cleanAll = throwError "--all flag can't be set with filters"
 				| otherwise = liftIO $ do
-					mapM_ (DB.modifyAsync (dbVar copts) . DB.Remove . fromModule) $ map (getInspected dbval) $ toClean
+					DB.modifyAsync (dbVar copts) $ DB.Remove $ mconcat $ map (fromModule . getInspected dbval) toClean
 					return $ ResultList $ map (ResultModuleId . moduleId) toClean
 		action
 	-- list modules
