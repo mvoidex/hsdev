@@ -9,7 +9,7 @@ module HsDev.Util (
 	-- * Helper
 	(.::),
 	-- * Exceptions
-	liftException, liftExceptionM
+	liftException, liftExceptionM, liftIOErrors
 	) where
 
 import Control.Exception
@@ -82,3 +82,7 @@ liftException act = ErrorT $ C.catch (liftM Right act) onError where
 liftExceptionM :: (C.MonadCatchIO m, Error e, MonadError e m) => m a -> m a
 liftExceptionM act = C.catch act onError where
 	onError = throwError . strMsg . (show :: SomeException -> String)
+
+-- | Lift IO exceptions to ErrorT
+liftIOErrors :: C.MonadCatchIO m => ErrorT String m a -> ErrorT String m a
+liftIOErrors act = liftException (runErrorT act) >>= either throwError return

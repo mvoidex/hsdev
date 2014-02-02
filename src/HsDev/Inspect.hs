@@ -195,7 +195,8 @@ inspectFile opts file = do
 		--		return (mfile, i)
 		forced <- ErrorT $ E.handle onError $ do
 			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
-			E.evaluate $ force analyzed
+			force analyzed `deepseq` return analyzed
+			--E.evaluate $ force analyzed
 		return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }

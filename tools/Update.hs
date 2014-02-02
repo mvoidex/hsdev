@@ -12,7 +12,7 @@ module Update (
 	scanModule, scanModules, scanFile, scanCabal, scanProject, scanDirectory,
 
 	-- * Helpers
-	liftErrors
+	liftErrorT
 	) where
 
 import Control.Monad.CatchIO
@@ -111,8 +111,13 @@ readDB = asks database >>= liftIO . readAsync
 
 -- | Scan module
 scanModule :: MonadCatchIO m => [String] -> ModuleLocation -> ErrorT String (UpdateDB m) ()
-scanModule opts mloc = runTask task' $ updater $ liftM fromModule $ liftErrors $ S.scanModule opts mloc where
-	task' = object ["scanning" .= mloc]
+scanModule opts mloc = runTask task' $ do
+	im <- liftErrorT $ S.scanModule opts mloc
+	updater $ return $ fromModule im
+	ErrorT $ return $ inspectionResult im
+	return ()
+	where
+		task' = object ["scanning" .= mloc]
 
 -- | Scan modules
 scanModules :: MonadCatchIO m => [String] -> [S.ModuleToScan] -> ErrorT String (UpdateDB m) ()
@@ -120,9 +125,9 @@ scanModules opts ms = do
 	db <- asks database
 	dbval <- readDB
 	runTask (toJSON ("updating projects files" :: String)) $ updater $ do
-		projects <- mapM (liftErrors . S.scanProjectFile opts) ps
+		projects <- mapM (liftErrorT . S.scanProjectFile opts) ps
 		return $ mconcat $ map fromProject projects
-	ms' <- liftErrors $ filterM (S.changedModule dbval opts . fst) ms
+	ms' <- liftErrorT $ filterM (S.changedModule dbval opts . fst) ms
 	runTasks [scanModule (opts ++ snd m) (fst m) | m <- ms']
 	where
 		ps = mapMaybe (toProj . fst) ms
@@ -145,10 +150,12 @@ scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) (
 scanCabal opts sandbox = do
 	loadCache $ Cache.loadCabal sandbox
 	dbval <- readDB
-	ms <- runTask (toJSON ("loading modules" :: String)) $ liftErrors $
-		browseFilter opts sandbox (S.changedModule dbval opts)
-	docs <- runTask (toJSON ("loading docs" :: String)) $ liftErrors $
-		hdocsCabal sandbox opts
+	ms <- runTask
+		(object ["action" .= ("loading modules" :: String), "sandbox" .= sandbox]) $
+		liftErrorT $ browseFilter opts sandbox (S.changedModule dbval opts)
+	docs <- runTask
+		(object ["action" .= ("loading docs" :: String), "sandbox" .= sandbox]) $
+		liftErrorT $ hdocsCabal sandbox opts
 	updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
@@ -157,22 +164,22 @@ scanCabal opts sandbox = do
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanProject opts cabal = do
-	proj <- liftErrors $ S.scanProjectFile opts cabal
+	proj <- liftErrorT $ S.scanProjectFile opts cabal
 	loadCache $ Cache.loadProject $ projectCabal proj
-	(_, sources) <- liftErrors $ S.enumProject proj
+	(_, sources) <- liftErrorT $ S.enumProject proj
 	scanModules opts sources
 
 -- | Scan directory for source files and projects
 scanDirectory :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanDirectory opts dir = do
-	(projSrcs, standSrcs) <- runTask (toJSON ("getting list of sources" :: String)) $ liftErrors $ S.enumDirectory dir
+	(projSrcs, standSrcs) <- runTask (toJSON ("getting list of sources" :: String)) $ liftErrorT $ S.enumDirectory dir
 	forM_ projSrcs $ \(p, _) -> loadCache (Cache.loadProject $ projectCabal p)
 	loadCache $ Cache.loadFiles $ mapMaybe (moduleSource . fst) standSrcs
 	scanModules opts (concatMap snd projSrcs ++ standSrcs)
 
 -- | Lift errors
-liftErrors :: MonadIO m => ErrorT String IO a -> ErrorT String m a
-liftErrors = mapErrorT liftIO
+liftErrorT :: MonadIO m => ErrorT String IO a -> ErrorT String m a
+liftErrorT = mapErrorT liftIO
 
 -- | Merge two JSON object
 union :: Value -> Value -> Value
