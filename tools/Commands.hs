@@ -380,6 +380,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	wrapErrors = fmap (fmap handleErrors)
 
 	cmds = [
+		-- Ping command
+		cmd_' ["ping"] [] "ping server" ping',
 		-- Database commands
 		cmd' ["add"] [] "add info to database" [dataArg] add',
 		cmd' ["scan", "cabal"] [] "scan modules installed in cabal" [
@@ -464,6 +466,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	status = option_ ['s'] "status" flag "show status of operation, works only with --wait"
 	wait = option_ ['w'] "wait" flag "wait for operation to complete"
 
+	-- ping server
+	ping' _ copts = return $ ResultOk $ ResultString "pong"
 	-- add data
 	add' as _ copts = do
 		dbval <- getDb copts
