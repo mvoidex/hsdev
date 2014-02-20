@@ -263,7 +263,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 								-- Send 'end' message and wait client
 								L.hPutStrLn h L.empty
 								outputStr $ "waiting " ++ show s'
-								ignoreIO $ void $ hGetLine' h
+								ignoreIO $ void $ timeout 10000000 $ hGetLine' h
 								outputStr $ show s' ++ " disconnected"
 
 			takeMVar waitListen

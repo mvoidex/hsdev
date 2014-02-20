@@ -89,9 +89,10 @@ tryGhc act = ErrorT $ ghandle rethrow $ liftM Right $ runGhc (Just libdir) $ do
 cradle :: Cabal -> Maybe Project -> IO GhcMod.Cradle
 cradle cabal Nothing = do
 	dir <- getCurrentDirectory
-	return $ GhcMod.Cradle dir Nothing Nothing (cabalOpt cabal)
+	return $ GhcMod.Cradle dir Nothing Nothing (cabalOpt cabal) []
 cradle cabal (Just proj) = return $ GhcMod.Cradle
 	(projectPath proj)
 	(Just $ projectPath proj)
 	(Just $ projectCabal proj)
 	(cabalOpt cabal)
+	[]
