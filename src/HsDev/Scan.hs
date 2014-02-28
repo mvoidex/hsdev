@@ -50,8 +50,9 @@ enumDirectory dir = do
 		sources = filter haskellSource files
 	projs <- mapM (enumProject . project) projects
 	let
+		projPaths = map (projectPath . fst) projs
 		projSources = concatMap (mapMaybe (moduleSource . fst) . snd) projs
-		standalone = map (\f -> FileModule f Nothing) $ sources \\ projSources
+		standalone = map (\f -> FileModule f Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
 	return (projs,  [(s, []) | s <- standalone])
 
 -- | Scan project file
