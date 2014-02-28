@@ -40,6 +40,7 @@ library
     HsDev.Tools.ClearImports
     HsDev.Tools.GhcMod
     HsDev.Tools.GhcMod.InferType
+    HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Util
   other-modules:
@@ -61,6 +62,7 @@ library
     haddock == 2.13.*,
     haskell-src-exts == 1.14.*,
     hdocs == 0.3.*,
+    HTTP == 4000.2.*,
     MonadCatchIO-transformers == 0.3.*,
     mtl == 2.1.*,
     transformers == 0.3.*,

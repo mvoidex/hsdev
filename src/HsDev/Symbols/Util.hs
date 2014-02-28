@@ -1,5 +1,5 @@
 module HsDev.Symbols.Util (
-	projectOf, inProject, inCabal, inPackage, inFile, inMemory, inModule, byFile, byCabal, standalone,
+	projectOf, inProject, inCabal, inPackage, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
 	imports, qualifier, imported, visible, inScope,
 	sourceModule, visibleModule, preferredModule, uniqueModules,
 	allOf, anyOf
@@ -42,10 +42,10 @@ inFile fpath m = case moduleIdLocation m of
 	FileModule f _ -> f == normalise fpath
 	_ -> False
 
--- | Check if module in memory
-inMemory :: Maybe String -> ModuleId -> Bool
-inMemory mem m = case moduleIdLocation m of
-	MemoryModule mem' -> mem' == mem
+-- | Check if module in source
+inModuleSource :: Maybe String -> ModuleId -> Bool
+inModuleSource src m = case moduleIdLocation m of
+	OtherModuleSource src' -> src' == src
 	_ -> False
 
 -- | Check if declaration is in module

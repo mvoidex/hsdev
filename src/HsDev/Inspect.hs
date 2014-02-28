@@ -45,7 +45,7 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source o
 		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ _ imports declarations) -> Right $ Module {
 			moduleName = mname,
 			moduleDocs =  Nothing,
-			moduleLocation = MemoryModule Nothing,
+			moduleLocation = OtherModuleSource Nothing,
 			moduleExports = [],
 			moduleImports = map getImport imports,
 			moduleDeclarations = M.fromList $ map (declarationName &&& id) $ getDecls declarations }

@@ -60,7 +60,7 @@ encodeModule m = object $ sym ++ moduleCts m where
 encodeModuleLocation :: ModuleLocation -> Value
 encodeModuleLocation (FileModule f p) = object ["file" .= f, "project" .= fmap projectCabal p]
 encodeModuleLocation (CabalModule c p n) = object ["cabal" .= c, "package" .= fmap show p, "name" .= n]
-encodeModuleLocation (MemoryModule m) = object ["mem" .= m]
+encodeModuleLocation (OtherModuleSource m) = object ["source" .= m]
 
 encodePosition :: Position -> Value
 encodePosition (Position l c) = object [
@@ -119,7 +119,7 @@ decodeModuleLocation :: Value -> Parser ModuleLocation
 decodeModuleLocation = withObject "module location" $ \v ->
 	(FileModule <$> v .: "file" <*> (fmap project <$> v .: "project")) <|>
 	(CabalModule <$> v .: "cabal" <*> ((join . readMaybe) <$> v .: "package") <*> v .: "name") <|>
-	(MemoryModule <$> v .: "mem")
+	(OtherModuleSource <$> v .: "source")
 
 decodePosition :: Value -> Parser Position
 decodePosition = withObject "position" $ \v -> Position <$> v .: "line" <*> v .: "column"

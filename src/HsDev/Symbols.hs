@@ -111,7 +111,7 @@ instance Symbol Declaration where
 	symbolName = declarationName
 	symbolQualifiedName = declarationName
 	symbolDocs = declarationDocs
-	symbolLocation d = Location (MemoryModule Nothing) (declarationPosition d)
+	symbolLocation d = Location (OtherModuleSource Nothing) (declarationPosition d)
 
 instance Symbol ModuleDeclaration where
 	symbolName = declarationName . moduleDeclaration
@@ -356,7 +356,7 @@ instance Canonicalize Project where
 instance Canonicalize ModuleLocation where
 	canonicalize (FileModule f p) = liftM2 FileModule (canonicalizePath f) (traverse canonicalize p)
 	canonicalize (CabalModule c p n) = fmap (\c' -> CabalModule c' p n) $ canonicalize c
-	canonicalize (MemoryModule m) = return $ MemoryModule m
+	canonicalize (OtherModuleSource m) = return $ OtherModuleSource m
 
 -- | Find project file is related to
 locateProject :: FilePath -> IO (Maybe Project)
@@ -481,7 +481,7 @@ instance Show InspectedModule where
 		showError e = unlines $ ("\terror: " ++ e) : case mi of
 			FileModule f p -> ["file: " ++ f, "project: " ++ maybe "" projectPath p]
 			CabalModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ n]
-			MemoryModule mem -> ["mem: " ++ fromMaybe "" mem]
+			OtherModuleSource src -> ["source: " ++ fromMaybe "" src]
 
 instance ToJSON InspectedModule where
 	toJSON im = object [

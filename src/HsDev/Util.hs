@@ -9,7 +9,9 @@ module HsDev.Util (
 	-- * Helper
 	(.::),
 	-- * Exceptions
-	liftException, liftExceptionM, liftIOErrors
+	liftException, liftExceptionM, liftIOErrors,
+	-- * UTF-8
+	fromUtf8, toUtf8
 	) where
 
 import Control.Exception
@@ -20,7 +22,10 @@ import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.List (isPrefixOf)
 import qualified Data.HashMap.Strict as HM (HashMap, toList)
+import Data.ByteString.Lazy (ByteString)
 import Data.Text (Text)
+import qualified Data.Text.Lazy as T
+import qualified Data.Text.Lazy.Encoding as T
 import System.Directory
 import System.FilePath
 
@@ -86,3 +91,9 @@ liftExceptionM act = C.catch act onError where
 -- | Lift IO exceptions to ErrorT
 liftIOErrors :: C.MonadCatchIO m => ErrorT String m a -> ErrorT String m a
 liftIOErrors act = liftException (runErrorT act) >>= either throwError return
+
+fromUtf8 :: ByteString -> String
+fromUtf8 = T.unpack . T.decodeUtf8
+
+toUtf8 :: String -> ByteString
+toUtf8 = T.encodeUtf8 . T.pack

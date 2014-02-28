@@ -23,8 +23,6 @@ import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Map (Map)
 import qualified Data.Map as M
-import qualified Data.Text.Lazy as T
-import qualified Data.Text.Lazy.Encoding as T
 import Data.Traversable (traverse)
 import Network.Socket
 import System.Directory
@@ -44,6 +42,7 @@ import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Util
 import HsDev.Scan
+import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
 
@@ -433,6 +432,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["scope", "modules"] [] "get modules accesible from module or within a project" ctx scopeModules',
 		cmd' ["scope"] [] "get declarations accessible from module or within a project" (ctx ++ matches ++ [globalArg]) scope',
 		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
+		-- Tool commands
+		cmd' ["hayoo"] ["query"] "find declarations online via Hayoo" [] hayoo',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
 		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project .cabal", projectNameArg "project name", cacheDir, cacheFile] dumpProjects',
@@ -676,6 +677,13 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		(srcFile, cabal) <- askCtx copts as
 		liftM (ResultList . map ResultModuleDeclaration) $ completions dbval cabal srcFile input
 	complete' as _ copts = return $ err "Invalid arguments"
+	-- hayoo
+	hayoo' as [] copts = return $ err "Query not specified"
+	hayoo' as [query] copts = errorT $
+		liftM
+			(ResultList . map (ResultModuleDeclaration . Hayoo.hayooAsDeclaration) . Hayoo.hayooFunctions) $
+			Hayoo.hayoo query
+	hayoo' as _ copts = return $ err "Too much arguments"
 	-- dump cabal modules
 	dumpCabal' as _ copts = errorT $ do
 		dbval <- liftIO $ getDb copts
@@ -920,12 +928,6 @@ processCmdArgs copts tm cmdArgs sendResponse = run (map (fmap withOptsAct) comma
 			processFailed :: SomeException -> IO ()
 			processFailed e = sendResponses $ errArgs "process throws exception" [
 				("exception", ResultString $ show e)]
-
-fromUtf8 :: ByteString -> String
-fromUtf8 = T.unpack . T.decodeUtf8
-
-toUtf8 :: String -> ByteString
-toUtf8 = T.encodeUtf8 . T.pack
 
 hGetLine' :: Handle -> IO ByteString
 hGetLine' = fmap L.fromStrict . B.hGetLine

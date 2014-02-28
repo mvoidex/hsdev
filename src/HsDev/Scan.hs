@@ -64,7 +64,7 @@ scanProjectFile opts f = do
 scanModule :: [String] -> ModuleLocation -> ErrorT String IO InspectedModule
 scanModule opts (FileModule f p) = inspectFile opts f >>= traverse (inferTypes opts Cabal)
 scanModule opts (CabalModule c p n) = browse opts c n p where
-scanModule opts (MemoryModule _) = throwError "Can't inspect memory module"
+scanModule opts (OtherModuleSource _) = throwError "Can inspect only modules in file or cabal"
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> ErrorT String IO Bool

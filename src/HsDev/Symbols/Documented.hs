@@ -1,5 +1,6 @@
 module HsDev.Symbols.Documented (
-	Documented(..)
+	Documented(..),
+	defaultDetailed
 	) where
 
 import HsDev.Symbols.Class
@@ -8,7 +9,14 @@ import HsDev.Symbols.Class
 class Symbol a => Documented a where
 	brief :: a -> String
 	detailed :: a -> String
-	detailed s = unlines $ header ++ docs ++ loc where
-		header = [brief s, ""]
-		docs = maybe [] return $ symbolDocs s
-		loc = ["Defined at " ++ show (symbolLocation s)]
+	detailed = unlines . defaultDetailed
+
+-- | Default detailed docs
+defaultDetailed :: Documented a => a -> [String]
+defaultDetailed s = header ++ docs ++ loc where
+	header = [brief s, ""]
+	docs = maybe [] return $ symbolDocs s
+	loc
+		| null mloc = []
+		| otherwise = ["Defined at " ++ mloc]
+	mloc = show (symbolLocation s)
