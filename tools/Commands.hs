@@ -72,7 +72,6 @@ translate str = '"' : snd (foldr escape (True,"\"") str) where
 powershell :: String -> String
 powershell str
 	| all isAlphaNum str = str
-	| all (`notElem` "\"'") str = "'" ++ str ++ "'"
 	| otherwise = "'" ++ translate str ++ "'"
 
 #endif
