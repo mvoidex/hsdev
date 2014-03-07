@@ -37,6 +37,7 @@ library
     HsDev.Symbols.JSON
     HsDev.Symbols.Util
     HsDev.Tools.Base
+    HsDev.Tools.Cabal
     HsDev.Tools.ClearImports
     HsDev.Tools.GhcMod
     HsDev.Tools.GhcMod.InferType

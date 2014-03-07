@@ -1,6 +1,7 @@
 module HsDev.Tools.Base (
-	Result,
-	runWait,
+	Result, ToolM,
+	runWait, runWait_,
+	runTool, runTool_,
 	match,
 	at,
 	inspect
@@ -14,14 +15,28 @@ import System.Process
 import Text.RegexPR (matchRegexPR)
 
 import HsDev.Symbols
+import HsDev.Util (liftIOErrors)
 
 type Result = Either String String
+type ToolM a = ErrorT String IO a
 
 -- | Run command and wait for result
 runWait :: FilePath -> [String] -> String -> IO Result
 runWait name args input = do
 	(code, out, err) <- readProcessWithExitCode name args input
 	return $ if code == ExitSuccess && not (null out) then Right out else Left err
+
+-- | Run command with no input
+runWait_ :: FilePath -> [String] -> IO Result
+runWait_ name args = runWait name args ""
+
+-- | Run tool
+runTool :: FilePath -> [String] -> String -> ToolM String
+runTool name args input = liftIOErrors $ ErrorT $ runWait name args input
+
+-- | Run tool with no input
+runTool_ :: FilePath -> [String] -> ToolM String
+runTool_ name args = runTool name args ""
 
 match :: String -> String -> Maybe (Int -> Maybe String)
 match pat str = do

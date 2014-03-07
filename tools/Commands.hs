@@ -43,6 +43,7 @@ import HsDev.Symbols.Util
 import HsDev.Util
 import HsDev.Scan
 import qualified HsDev.Tools.Hayoo as Hayoo
+import qualified HsDev.Tools.Cabal as Cabal
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
 
@@ -433,6 +434,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
 		-- Tool commands
 		cmd' ["hayoo"] ["query"] "find declarations online via Hayoo" [] hayoo',
+		cmd' ["cabal", "list"] ["query"] "list cabal packages" [] cabalList',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
 		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project .cabal", projectNameArg "project name", cacheDir, cacheFile] dumpProjects',
@@ -683,6 +685,12 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			(ResultList . map (ResultModuleDeclaration . Hayoo.hayooAsDeclaration) . Hayoo.hayooFunctions) $
 			Hayoo.hayoo query
 	hayoo' as _ copts = return $ err "Too much arguments"
+	-- cabal list
+	cabalList' as qs copts
+		| length qs > 1 = return $ err "To much arguments"
+		| otherwise = errorT $ do
+			ps <- Cabal.cabalList (listToMaybe qs)
+			return $ ResultList $ map (ResultJSON . toJSON) ps
 	-- dump cabal modules
 	dumpCabal' as _ copts = errorT $ do
 		dbval <- liftIO $ getDb copts
@@ -900,7 +908,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				maybe True (== moduleIdName (declarationModuleId m)) qname
 
 processCmd :: CommandOptions -> Int -> String -> (Response -> IO ()) -> IO ()
-processCmd copts tm cmdLine sendResponse = processCmdArgs copts tm (split cmdLine) sendResponse
+processCmd copts tm cmdLine sendResponse = processCmdArgs copts tm (splitArgs cmdLine) sendResponse
 
 -- | Process command, returns 'False' if exit requested
 processCmdArgs :: CommandOptions -> Int -> [String] -> (Response -> IO ()) -> IO ()

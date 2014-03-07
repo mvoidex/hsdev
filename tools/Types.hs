@@ -7,7 +7,7 @@ module Types (
 	ClientOpts(..), clientOpts,
 	-- * Messages and results
 	ResultValue(..), Response(..),
-	CommandResult(..), ok, err, errArgs,
+	CommandResult(..), ok, err, errArgs, details,
 	WithOpts(..),
 	CommandOptions(..), CommandAction
 	) where
@@ -108,6 +108,7 @@ data ResultValue =
 	ResultProject Project |
 	ResultList [ResultValue] |
 	ResultMap (Map String ResultValue) |
+	ResultJSON Value |
 	ResultString String |
 	ResultNone
 
@@ -121,6 +122,7 @@ instance ToJSON ResultValue where
 	toJSON (ResultProject p) = toJSON p
 	toJSON (ResultList l) = toJSON l
 	toJSON (ResultMap m) = toJSON m
+	toJSON (ResultJSON v) = toJSON v
 	toJSON (ResultString s) = toJSON s
 	toJSON ResultNone = toJSON $ object []
 
@@ -138,6 +140,7 @@ instance FromJSON ResultValue where
 		ResultProject <$> parseJSON v,
 		ResultList <$> parseJSON v,
 		ResultMap <$> parseJSON v,
+		pure $ ResultJSON v,
 		ResultString <$> parseJSON v]
 
 data Response =
@@ -173,6 +176,11 @@ err s = ResultError s M.empty
 
 errArgs :: String -> [(String, ResultValue)] -> CommandResult
 errArgs s as = ResultError s (M.fromList as)
+
+-- | Add detailed information to error message
+details :: [(String, ResultValue)] -> CommandResult -> CommandResult
+details as (ResultError s cs) = ResultError s (M.union as cs)
+details _ r = r
 
 data WithOpts a = WithOpts {
 	withOptsAct :: a,

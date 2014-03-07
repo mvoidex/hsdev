@@ -13,7 +13,7 @@ module System.Command (
 	option, option_, req, noreq, flag,
 	opt, optMaybe, hasOpt, askOpt, askOptDef, askOpts,
 	optsToArgs,
-	split, unsplit
+	splitArgs, unsplitArgs
 	) where
 
 import Control.Arrow
@@ -188,12 +188,12 @@ optsToArgs = concatMap optToArgs . M.toList . getOpts where
 	optToArgs (n, vs) = ["--"++ n ++ "=" ++ v | v <- vs]
 
 -- | Split string to words
-split :: String -> [String]
-split "" = []
-split (c:cs)
-	| isSpace c = split cs
-	| c == '"' = let (w, cs') = readQuote cs in w : split cs'
-	| otherwise = let (ws, tl) = break isSpace cs in (c:ws) : split tl
+splitArgs :: String -> [String]
+splitArgs "" = []
+splitArgs (c:cs)
+	| isSpace c = splitArgs cs
+	| c == '"' = let (w, cs') = readQuote cs in w : splitArgs cs'
+	| otherwise = let (ws, tl) = break isSpace cs in (c:ws) : splitArgs tl
 	where
 		readQuote :: String -> (String, String)
 		readQuote "" = ("", "")
@@ -203,8 +203,8 @@ split (c:cs)
 		readQuote ('"':ss) = ("", ss)
 		readQuote (s:ss) = first (s:) $ readQuote ss
 
-unsplit :: [String] -> String
-unsplit = unwords . map escape where
+unsplitArgs :: [String] -> String
+unsplitArgs = unwords . map escape where
 	escape :: String -> String
 	escape str
 		| any isSpace str || '"' `elem` str = "\"" ++ concat (unfoldr escape' str) ++ "\""

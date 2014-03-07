@@ -5,7 +5,7 @@ module HsDev.Util (
 	haskellSource,
 	cabalFile,
 	-- * String utils
-	tab, tabs,
+	tab, tabs, trim, split,
 	-- * Helper
 	(.::),
 	-- * Exceptions
@@ -14,13 +14,15 @@ module HsDev.Util (
 	fromUtf8, toUtf8
 	) where
 
+import Control.Arrow (second)
 import Control.Exception
 import Control.Monad
 import Control.Monad.Error
 import qualified Control.Monad.CatchIO as C
 import Data.Aeson
 import Data.Aeson.Types (Parser)
-import Data.List (isPrefixOf)
+import Data.Char (isSpace)
+import Data.List (isPrefixOf, unfoldr)
 import qualified Data.HashMap.Strict as HM (HashMap, toList)
 import Data.ByteString.Lazy (ByteString)
 import Data.Text (Text)
@@ -73,6 +75,15 @@ tab n s = replicate n '\t' ++ s
 -- | Add N tabs to multiline
 tabs :: Int -> String -> String
 tabs n = unlines . map (tab n) . lines
+
+-- | Trim string
+trim :: String -> String
+trim = p . p where
+	p = reverse . dropWhile isSpace
+
+-- | Split list
+split :: (a -> Bool) -> [a] -> [[a]]
+split p = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break p)
 
 -- | Workaround, sometimes we get HM.lookup "foo" v == Nothing, but lookup "foo" (HM.toList v) == Just smth
 (.::) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser a
