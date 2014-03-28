@@ -1,13 +1,17 @@
 module HsDev.Symbols.Util (
-	projectOf, inProject, inCabal, inPackage, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
+	packageOf, projectOf,
+	inProject, inCabal, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
 	imports, qualifier, imported, visible, inScope,
+	newestPackage,
 	sourceModule, visibleModule, preferredModule, uniqueModules,
 	allOf, anyOf
 	) where
 
+import Control.Arrow ((***), (&&&))
+import Control.Monad (join)
 import Data.Function (on)
 import Data.Maybe
-import Data.List (groupBy, sortBy)
+import Data.List (maximumBy, groupBy, sortBy, partition)
 import Data.Ord (comparing)
 import System.FilePath (normalise)
 
@@ -18,6 +22,12 @@ import HsDev.Project
 projectOf :: ModuleId -> Maybe Project
 projectOf m = case moduleIdLocation m of
 	FileModule _ proj -> proj
+	_ -> Nothing
+
+-- | Get module package
+packageOf :: ModuleId -> Maybe ModulePackage
+packageOf m = case moduleIdLocation m of
+	CabalModule _ package _ -> package
 	_ -> Nothing
 
 -- | Check if module in project
@@ -34,6 +44,11 @@ inCabal c m = case moduleIdLocation m of
 inPackage :: String -> ModuleId -> Bool
 inPackage p m = case moduleIdLocation m of
 	CabalModule _ package _ -> Just p == fmap packageName package
+	_ -> False
+
+inVersion :: String -> ModuleId -> Bool
+inVersion v m = case moduleIdLocation m of
+	CabalModule _ package _ -> Just v == fmap packageVersion package
 	_ -> False
 
 -- | Check if module in file
@@ -93,6 +108,22 @@ visible _ _ _ = False
 -- | Check if module is in scope with qualifier
 inScope :: Module -> Maybe String -> ModuleId -> Bool
 inScope this q m = m `imported` qualifier this q
+
+-- | Select modules with last package version
+newestPackage :: Symbol a => [a] -> [a]
+newestPackage =
+	uncurry (++) .
+	(selectNewest *** map fst) .
+	partition (isJust . snd) .
+	map (id &&& (moduleCabalPackage . symbolModuleLocation))
+	where
+		pname = fmap packageName . snd
+		pver = fmap packageVersion . snd
+		selectNewest :: Symbol a => [(a, Maybe ModulePackage)] -> [a]
+		selectNewest =
+			map (fst . maximumBy (comparing pver)) .
+			groupBy ((==) `on` pname) .
+			sortBy (comparing pname)
 
 -- | Select module, defined by sources
 sourceModule :: Maybe Project -> [Module] -> Maybe Module

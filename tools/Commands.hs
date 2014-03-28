@@ -403,7 +403,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			projectNameArg "module project by name",
 			fileArg "module source file",
 			moduleArg,
-			packageArg,
+			packageArg, noLastArg, packageVersionArg,
 			allFlag] remove',
 		-- | Context free commands
 		cmd' ["list", "modules"] [] "list modules" [
@@ -416,11 +416,11 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			projectNameArg "related project name",
 			fileArg "source file",
 			moduleArg,
-			packageArg,
+			packageArg, noLastArg, packageVersionArg,
 			sandbox, sourced, standaloned]) symbol',
 		cmd' ["module"] [] "get module info" [
 			moduleArg,
-			packageArg,
+			packageArg, noLastArg, packageVersionArg,
 			projectArg "module project",
 			projectNameArg "module project name",
 			fileArg "module source file",
@@ -455,6 +455,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	findArg = option_ [] "find" (req "find") "infix match"
 	ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
 	globalArg = option_ [] "global" flag "scope of project"
+	noLastArg = option_ [] "no-last" flag "don't select last package version"
 	matches = [prefixArg, findArg]
 	moduleArg = option_ ['m'] "module" (req "module name") "module name"
 	packageArg = option_ [] "package" (req "package") "module package"
@@ -462,6 +463,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	prefixArg = option_ [] "prefix" (req "prefix") "prefix match"
 	projectArg = option [] "project" ["proj"] (req "project")
 	projectNameArg = option [] "project-name" ["proj-name"] (req "name")
+	packageVersionArg = option_ ['v'] "version" (req "version") "package version"
 	sandbox = option_ [] "sandbox" (noreq "path") "path to cabal sandbox"
 	sourced = option_ [] "src" flag "source files"
 	standaloned = option_ [] "stand" flag "standalone files"
@@ -567,8 +569,9 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inFile file,
 				fmap inModule (askOpt "module" as),
 				fmap inPackage (askOpt "package" as),
+				fmap inVersion (askOpt "version" as),
 				fmap inCabal cabal]
-			toClean = filter (allOf filters . moduleId) (allModules dbval)
+			toClean = newest as $ filter (allOf filters . moduleId) (allModules dbval)
 			action
 				| null filters && cleanAll = liftIO $ do
 					DB.modifyAsync (dbVar copts) DB.Clear
@@ -607,10 +610,11 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inFile file,
 				fmap inModule (askOpt "module" as),
 				fmap inPackage (askOpt "package" as),
+				fmap inVersion (askOpt "version" as),
 				fmap inCabal cabal,
 				if hasOpt "src" as then Just byFile else Nothing,
 				if hasOpt "stand" as then Just standalone else Nothing]
-			toResult = ResultList . map ResultModuleDeclaration . filterMatch as . filter filters
+			toResult = ResultList . map ResultModuleDeclaration . newest as . filterMatch as . filter filters
 		case ns of
 			[] -> return $ toResult $ allDeclarations dbval
 			[nm] -> liftM toResult (findDeclaration dbval nm) `catchError` (\e ->
@@ -629,9 +633,10 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inFile file',
 				fmap inModule (askOpt "module" as),
 				fmap inPackage (askOpt "package" as),
+				fmap inVersion (askOpt "version" as),
 				if hasOpt "src" as then Just byFile else Nothing]
 		rs <- mapErrorT (fmap $ strMsg +++ id) $
-			filter (filters . moduleId) <$> maybe
+			(newest as . filter (filters . moduleId)) <$> maybe
 				(return $ allModules dbval)
 				(findModule dbval)
 				(askOpt "module" as)
@@ -828,6 +833,11 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			addCabal p
 				| takeExtension p == ".cabal" = p
 				| otherwise = p </> (takeBaseName p <.> "cabal")
+
+	newest :: Symbol a => Opts -> [a] -> [a]
+	newest as
+		| hasOpt "no-last" as = id
+		| otherwise = newestPackage
 
 	askProject :: CommandOptions -> Opts -> ErrorT String IO (Maybe Project)
 	askProject copts = traverse (getProject copts) . askOpt "project"

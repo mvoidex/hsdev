@@ -179,7 +179,7 @@ errArgs s as = ResultError s (M.fromList as)
 
 -- | Add detailed information to error message
 details :: [(String, ResultValue)] -> CommandResult -> CommandResult
-details as (ResultError s cs) = ResultError s (M.union as cs)
+details as (ResultError s cs) = ResultError s (M.union (M.fromList as) cs)
 details _ r = r
 
 data WithOpts a = WithOpts {
