@@ -46,6 +46,14 @@ instance Read ModulePackage where
 
 			versionChar ch = isDigit ch || ch == '.'
 
+instance ToJSON ModulePackage where
+	toJSON (ModulePackage n v) = object [
+		"name" .= n,
+		"version" .= v]
+
+instance FromJSON ModulePackage where
+	parseJSON = withObject "module package" $ \v ->
+		ModulePackage <$> (v .:: "name") <*> (v .:: "version")
 
 -- | Location of module
 data ModuleLocation =

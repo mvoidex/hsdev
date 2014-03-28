@@ -105,6 +105,7 @@ data ResultValue =
 	ResultModuleId ModuleId |
 	ResultModule Module |
 	ResultInspectedModule InspectedModule |
+	ResultPackage ModulePackage |
 	ResultProject Project |
 	ResultList [ResultValue] |
 	ResultMap (Map String ResultValue) |
@@ -119,6 +120,7 @@ instance ToJSON ResultValue where
 	toJSON (ResultModuleId mid) = toJSON mid
 	toJSON (ResultModule m) = toJSON m
 	toJSON (ResultInspectedModule m) = toJSON m
+	toJSON (ResultPackage p) = toJSON p
 	toJSON (ResultProject p) = toJSON p
 	toJSON (ResultList l) = toJSON l
 	toJSON (ResultMap m) = toJSON m
@@ -137,6 +139,7 @@ instance FromJSON ResultValue where
 		ResultModuleId <$> parseJSON v,
 		ResultModule <$> parseJSON v,
 		ResultInspectedModule <$> parseJSON v,
+		ResultPackage <$> parseJSON v,
 		ResultProject <$> parseJSON v,
 		ResultList <$> parseJSON v,
 		ResultMap <$> parseJSON v,
