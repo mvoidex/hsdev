@@ -33,6 +33,7 @@ import System.Process
 import System.Console.GetOpt
 import System.Timeout
 import System.FilePath
+import Text.Read (readMaybe)
 
 import qualified HsDev.Database.Async as DB
 import HsDev.Commands
@@ -42,8 +43,9 @@ import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Util
 import HsDev.Scan
-import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Tools.Cabal as Cabal
+import qualified HsDev.Tools.GhcMod as GhcMod (typeOf)
+import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
 
@@ -409,6 +411,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["list", "modules"] [] "list modules" [
 			projectArg "project to list modules from",
 			projectNameArg "project name to list modules from",
+			noLastArg,
 			sandbox, sourced, standaloned] listModules',
 		cmd_' ["list", "packages"] [] "list packages" listPackages',
 		cmd_' ["list", "projects"] [] "list projects" listProjects',
@@ -436,6 +439,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		-- Tool commands
 		cmd' ["hayoo"] ["query"] "find declarations online via Hayoo" [] hayoo',
 		cmd' ["cabal", "list"] ["query"] "list cabal packages" [] cabalList',
+		cmd' ["ghc-mod", "type"] ["line", "column"] "infer type with 'ghc-mod type'" ctx ghcmodType',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
 		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project .cabal", projectNameArg "project name", cacheDir, cacheFile] dumpProjects',
@@ -594,7 +598,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inCabal cabal,
 				if hasOpt "src" as then Just byFile else Nothing,
 				if hasOpt "stand" as then Just standalone else Nothing]
-		return $ ResultList $ map (ResultModuleId . moduleId) $ selectModules (filters . moduleId) dbval
+		return $ ResultList $ map (ResultModuleId . moduleId) $ newest as $ selectModules (filters . moduleId) dbval
 	-- list packages
 	listPackages' _ copts = do
 		dbval <- getDb copts
@@ -704,6 +708,18 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		| otherwise = errorT $ do
 			ps <- Cabal.cabalList (listToMaybe qs)
 			return $ ResultList $ map (ResultJSON . toJSON) ps
+	-- ghc-mod type
+	ghcmodType' as [line] copts = ghcmodType' as [line, "1"] copts
+	ghcmodType' as [line, column] copts = errorT $ do
+		line' <- maybe (throwError "line must be a number") return $ readMaybe line
+		column' <- maybe (throwError "column must be a number") return $ readMaybe column
+		dbval <- liftIO $ getDb copts
+		(srcFile, cabal) <- askCtx copts as
+		(srcFile', m, mproj) <- fileCtx dbval srcFile
+		tr <- GhcMod.typeOf (getGhcOpts as) cabal srcFile' mproj (moduleName m) line' column'
+		return $ ResultList $ map ResultTyped tr
+	ghcmodType' as [] copts = return $ err "Specify line"
+	ghcmodType' as _ copts = return $ err "Too much arguments"
 	-- dump cabal modules
 	dumpCabal' as _ copts = errorT $ do
 		dbval <- liftIO $ getDb copts

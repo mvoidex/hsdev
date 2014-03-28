@@ -25,6 +25,7 @@ import Text.Read
 import HsDev.Database
 import HsDev.Project
 import HsDev.Symbols
+import HsDev.Tools.GhcMod (TypedRegion)
 import qualified HsDev.Database.Async as DB
 
 import System.Command
@@ -107,6 +108,7 @@ data ResultValue =
 	ResultInspectedModule InspectedModule |
 	ResultPackage ModulePackage |
 	ResultProject Project |
+	ResultTyped TypedRegion |
 	ResultList [ResultValue] |
 	ResultMap (Map String ResultValue) |
 	ResultJSON Value |
@@ -122,6 +124,7 @@ instance ToJSON ResultValue where
 	toJSON (ResultInspectedModule m) = toJSON m
 	toJSON (ResultPackage p) = toJSON p
 	toJSON (ResultProject p) = toJSON p
+	toJSON (ResultTyped t) = toJSON t
 	toJSON (ResultList l) = toJSON l
 	toJSON (ResultMap m) = toJSON m
 	toJSON (ResultJSON v) = toJSON v
@@ -141,6 +144,7 @@ instance FromJSON ResultValue where
 		ResultInspectedModule <$> parseJSON v,
 		ResultPackage <$> parseJSON v,
 		ResultProject <$> parseJSON v,
+		ResultTyped <$> parseJSON v,
 		ResultList <$> parseJSON v,
 		ResultMap <$> parseJSON v,
 		pure $ ResultJSON v,

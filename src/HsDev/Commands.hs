@@ -12,7 +12,10 @@ module HsDev.Commands (
 
 	-- * Filters
 	checkModule, checkDeclaration, restrictCabal, visibleFrom,
-	splitIdentifier
+	splitIdentifier,
+
+	-- * Helpers
+	fileCtx, fileCtxMaybe
 	) where
 
 import Control.Applicative
@@ -49,23 +52,6 @@ getProject db p = do
 	p' <- liftIO $ canonicalizePath $ projectCabal p
 	maybe (throwError $ "Project " ++ p' ++ " not found") return $
 		M.lookup p' $ databaseProjects db
-
--- | Get context file and project
-fileCtx :: Database -> FilePath -> ErrorT String IO (FilePath, Module, Maybe Project)
-fileCtx db file = do
-	file' <- liftIO $ canonicalizePath file
-	mthis <- fileModule db file'
-	mproj <- traverse (getProject db) $ projectOf $ moduleId mthis
-	return (file', mthis, mproj)
-
--- | Try get context file
-fileCtxMaybe :: Database -> FilePath -> ErrorT String IO (FilePath, Maybe Module, Maybe Project)
-fileCtxMaybe db file = ((\(f, m, p) -> (f, Just m, p)) <$> fileCtx db file) <|> onlyProj where
-	onlyProj = do
-		file' <- liftIO $ canonicalizePath file
-		mproj <- liftIO $ locateProject file'
-		mproj' <- traverse (getProject db) mproj
-		return (file', Nothing, mproj')
 
 -- | Lookup visible symbol
 lookupSymbol :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
@@ -170,3 +156,20 @@ splitIdentifier name = (qname, name') where
 	prefix' = dropWhileEnd (== '.') prefix
 	qname = if null prefix' then Nothing else Just prefix'
 	name' = fromMaybe (error "Impossible happened") $ stripPrefix prefix name
+
+-- | Get context file and project
+fileCtx :: Database -> FilePath -> ErrorT String IO (FilePath, Module, Maybe Project)
+fileCtx db file = do
+	file' <- liftIO $ canonicalizePath file
+	mthis <- fileModule db file'
+	mproj <- traverse (getProject db) $ projectOf $ moduleId mthis
+	return (file', mthis, mproj)
+
+-- | Try get context file
+fileCtxMaybe :: Database -> FilePath -> ErrorT String IO (FilePath, Maybe Module, Maybe Project)
+fileCtxMaybe db file = ((\(f, m, p) -> (f, Just m, p)) <$> fileCtx db file) <|> onlyProj where
+	onlyProj = do
+		file' <- liftIO $ canonicalizePath file
+		mproj <- liftIO $ locateProject file'
+		mproj' <- traverse (getProject db) mproj
+		return (file', Nothing, mproj')

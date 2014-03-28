@@ -1,12 +1,19 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module HsDev.Tools.GhcMod (
 	list,
 	browse, browseInspection,
-	info
+	info,
+	TypedRegion(..),
+	typeOf
 	) where
 
+import Control.Applicative
 import Control.Arrow
+import Control.DeepSeq
 import Control.Exception
 import Control.Monad.Error
+import Data.Aeson
 import Data.Char
 import Data.Maybe
 import qualified Data.Map as M
@@ -23,6 +30,7 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Symbols.Location
 import HsDev.Tools.Base
+import HsDev.Util ((.::))
 
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
 list opts cabal = do
@@ -77,6 +85,43 @@ info opts cabal file mproj mname sname = do
 			return $ Declaration sname Nothing Nothing (declarationTypeCtor (groups `at` 1) $ TypeInfo ctx args def)
 		trim = p . p where
 			p = reverse . dropWhile isSpace
+
+data TypedRegion = TypedRegion {
+	typedRegion :: Region,
+	typedExpr :: String,
+	typedType :: String }
+		deriving (Eq, Ord, Read, Show)
+
+instance NFData TypedRegion where
+	rnf (TypedRegion r e t) = rnf r `seq` rnf e `seq` rnf t
+
+instance ToJSON TypedRegion where
+	toJSON (TypedRegion r e t) = object [
+		"region" .= r,
+		"expr" .= e,
+		"type" .= t]
+
+instance FromJSON TypedRegion where
+	parseJSON = withObject "typed region" $ \v -> TypedRegion <$>
+		v .:: "region" <*>
+		v .:: "expr" <*>
+		v .:: "type"
+
+typeOf :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Int -> Int -> ErrorT String IO [TypedRegion]
+typeOf opts cabal file mproj mname line col = do
+	fileCts <- liftIO $ readFile file
+	cradle <- liftIO $ cradle cabal mproj
+	ts <- fmap lines $ tryGhc $ GhcMod.typeOf (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) cradle file mname line col
+	return $ mapMaybe (toRegionType fileCts) ts
+	where
+		toRegionType :: String -> String -> Maybe TypedRegion
+		toRegionType fstr s = do
+			(r, tp) <- parseRead s $ (,) <$> parseRegion <*> readParse
+			return $ TypedRegion r (regionStr r fstr) tp
+		parseRegion :: ReadM Region
+		parseRegion = Region <$> parsePosition <*> parsePosition
+		parsePosition :: ReadM Position
+		parsePosition = Position <$> readParse <*> readParse
 
 tryGhc :: Ghc a -> ErrorT String IO a
 tryGhc act = ErrorT $ ghandle rethrow $ liftM Right $ runGhc (Just libdir) $ do

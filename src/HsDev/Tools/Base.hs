@@ -4,12 +4,15 @@ module HsDev.Tools.Base (
 	runTool, runTool_,
 	match,
 	at,
-	inspect
+	inspect,
+	-- * Read parse utils
+	ReadM,
+	readParse, parseReads, parseRead
 	) where
 
 import Control.Monad.Error
 import Control.Monad.State
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import System.Exit
 import System.Process
 import Text.RegexPR (matchRegexPR)
@@ -55,3 +58,17 @@ inspect mloc insp act = lift $ execStateT inspect' (Inspected InspectionNone mlo
 		modify (\im -> im { inspectionResult = Right v })
 		`catchError`
 		\e -> modify (\im -> im { inspectionResult = Left e })
+
+type ReadM a = StateT String [] a
+
+-- | Parse readable value
+readParse :: Read a => ReadM a
+readParse = StateT reads
+
+-- | Run parser
+parseReads :: String -> ReadM a -> [a]
+parseReads = flip evalStateT
+
+-- | Run parser and select first result
+parseRead :: String -> ReadM a -> Maybe a
+parseRead s = listToMaybe . parseReads s

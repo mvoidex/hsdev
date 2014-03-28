@@ -2,7 +2,7 @@
 
 module HsDev.Symbols.Location (
 	ModulePackage(..), ModuleLocation(..), moduleSource, moduleCabalPackage,
-	Position(..),
+	Position(..), Region(..), region, regionLines, regionStr,
 	Location(..),
 
 	packageOpt,
@@ -15,6 +15,7 @@ import Control.DeepSeq (NFData(..))
 import Control.Monad (join)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
+import Data.List (intercalate)
 import Data.Maybe
 import Text.Read (readMaybe)
 
@@ -94,7 +95,7 @@ instance FromJSON ModuleLocation where
 data Position = Position {
 	positionLine :: Int,
 	positionColumn :: Int }
-		deriving (Eq, Ord)
+		deriving (Eq, Ord, Read)
 
 instance NFData Position where
 	rnf (Position l c) = rnf l `seq` rnf c
@@ -111,6 +112,39 @@ instance FromJSON Position where
 	parseJSON = withObject "position" $ \v -> Position <$>
 		v .:: "line" <*>
 		v .:: "column"
+
+data Region = Region {
+	regionFrom :: Position,
+	regionTo :: Position }
+		deriving (Eq, Ord, Read)
+
+region :: Position -> Position -> Region
+region f t = Region (min f t) (max f t)
+
+regionLines :: Region -> Int
+regionLines (Region f t) = succ $ positionLine t - positionLine f
+
+-- | Get string at region
+regionStr :: Region -> String -> String
+regionStr r@(Region f t) s = intercalate "\n" $ drop (pred $ positionColumn f) fline : tl where
+	s' = take (regionLines r) $ drop (pred (positionLine f)) $ lines s
+	(fline:tl) = init s' ++ [take (pred $ positionColumn t) (last s')]
+
+instance NFData Region where
+	rnf (Region f t) = rnf f `seq` rnf t
+
+instance Show Region where
+	show (Region f t) = show f ++ "-" ++ show t
+
+instance ToJSON Region where
+	toJSON (Region f t) = object [
+		"from" .= f,
+		"to" .= t]
+
+instance FromJSON Region where
+	parseJSON = withObject "region" $ \v -> Region <$>
+		v .:: "from" <*>
+		v .:: "to"
 
 -- | Location of symbol
 data Location = Location {
