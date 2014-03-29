@@ -7,7 +7,7 @@ module HsDev.Symbols.Util (
 	allOf, anyOf
 	) where
 
-import Control.Arrow ((***), (&&&))
+import Control.Arrow ((***), (&&&), second)
 import Control.Monad (join)
 import Data.Function (on)
 import Data.Maybe
@@ -115,11 +115,13 @@ newestPackage =
 	uncurry (++) .
 	(selectNewest *** map fst) .
 	partition (isJust . snd) .
-	map (id &&& (moduleCabalPackage . symbolModuleLocation))
+	map (id &&& (moduleNamePackage . symbolModuleLocation))
 	where
-		pname = fmap packageName . snd
-		pver = fmap packageVersion . snd
-		selectNewest :: Symbol a => [(a, Maybe ModulePackage)] -> [a]
+		moduleNamePackage (CabalModule _ (Just p) mname) = Just (mname, p)
+		moduleNamePackage _ = Nothing
+		pname = fmap (second packageName) . snd
+		pver = fmap (packageVersion . snd) . snd
+		selectNewest :: Symbol a => [(a, Maybe (String, ModulePackage))] -> [a]
 		selectNewest =
 			map (fst . maximumBy (comparing pver)) .
 			groupBy ((==) `on` pname) .

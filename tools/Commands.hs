@@ -412,6 +412,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			projectArg "project to list modules from",
 			projectNameArg "project name to list modules from",
 			noLastArg,
+			packageArg,
 			sandbox, sourced, standaloned] listModules',
 		cmd_' ["list", "packages"] [] "list packages" listPackages',
 		cmd_' ["list", "projects"] [] "list projects" listProjects',
@@ -595,6 +596,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		let
 			filters = allOf $ catMaybes [
 				fmap inProject proj,
+				fmap inPackage (askOpt "package" as),
 				fmap inCabal cabal,
 				if hasOpt "src" as then Just byFile else Nothing,
 				if hasOpt "stand" as then Just standalone else Nothing]
