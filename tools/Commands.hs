@@ -395,14 +395,12 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			ghcOpts, wait, status] scan',
 		cmd' ["rescan"] [] "rescan sources" [
 			projectArg "project path or .cabal",
-			projectNameArg "project name",
 			fileArg "source file",
 			pathArg "path to rescan",
 			ghcOpts, wait, status] rescan',
 		cmd' ["remove"] [] "remove modules info" [
 			sandbox,
 			projectArg "module project",
-			projectNameArg "module project by name",
 			fileArg "module source file",
 			moduleArg,
 			packageArg, noLastArg, packageVersionArg,
@@ -410,7 +408,6 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		-- | Context free commands
 		cmd' ["list", "modules"] [] "list modules" [
 			projectArg "project to list modules from",
-			projectNameArg "project name to list modules from",
 			noLastArg,
 			packageArg,
 			sandbox, sourced, standaloned] listModules',
@@ -418,7 +415,6 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd_' ["list", "projects"] [] "list projects" listProjects',
 		cmd' ["symbol"] ["name"] "get symbol info" (matches ++ [
 			projectArg "related project",
-			projectNameArg "related project name",
 			fileArg "source file",
 			moduleArg,
 			packageArg, noLastArg, packageVersionArg,
@@ -427,10 +423,10 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			moduleArg,
 			packageArg, noLastArg, packageVersionArg,
 			projectArg "module project",
-			projectNameArg "module project name",
 			fileArg "module source file",
 			sandbox, sourced] modul',
-		cmd_' ["project"] ["project name"] "show project info" project',
+		cmd' ["project"] [] "get project info" [
+			projectArg "project path or name"] project',
 		-- Context commands
 		cmd' ["lookup"] ["symbol"] "lookup for symbol" ctx lookup',
 		cmd' ["whois"] ["symbol"] "get info for symbol" ctx whois',
@@ -443,7 +439,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["ghc-mod", "type"] ["line", "column"] "infer type with 'ghc-mod type'" ctx ghcmodType',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
-		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project .cabal", projectNameArg "project name", cacheDir, cacheFile] dumpProjects',
+		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project", cacheDir, cacheFile] dumpProjects',
 		cmd' ["dump", "files"] [] "dump standalone files" [cacheDir, cacheFile] dumpFiles',
 		cmd' ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
 		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
@@ -468,7 +464,6 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	pathArg = option_ ['p'] "path" (req "path")
 	prefixArg = option_ [] "prefix" (req "prefix") "prefix match"
 	projectArg = option [] "project" ["proj"] (req "project")
-	projectNameArg = option [] "project-name" ["proj-name"] (req "name")
 	packageVersionArg = option_ ['v'] "version" (req "version") "package version"
 	sandbox = option_ [] "sandbox" (noreq "path") "path to cabal sandbox"
 	sourced = option_ [] "src" flag "source files"
@@ -659,13 +654,10 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			[m] -> return $ ResultModule m
 			ms' -> throwError $ errArgs "Ambiguous modules" [("modules", ResultList $ map (ResultModuleId . moduleId) ms')]
 	-- get project info
-	project' [] copts = return $ err "Project name not specified"
-	project' pnames copts = do
-		dbval <- getDb copts
-		case filter ((`elem` pnames) . projectName) $ M.elems $ databaseProjects dbval of
-			[] -> return $ errArgs "Projects not found" [
-				("projects", ResultList $ map ResultString pnames)]
-			ps -> return $ ResultOk $ ResultList $ map ResultProject ps
+	project' as _ copts = errorT $ do
+		proj <- askProject copts as
+		proj' <- maybe (throwError "Specify project name of .cabal file") return proj
+		return $ ResultProject proj'
 	-- lookup info about symbol
 	lookup' as [nm] copts = errorT $ do
 		dbval <- liftIO $ getDb copts
