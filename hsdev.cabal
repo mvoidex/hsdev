@@ -4,13 +4,13 @@
 name:                hsdev
 version:             0.1.0.0
 synopsis:            Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references etc.
--- description:         
+-- description:
 homepage:            https://github.com/mvoidex/hsdev
 license:             BSD3
 license-file:        LICENSE
 author:              Alexandr `Voidex` Ruchkin
 maintainer:          voidex@live.com
--- copyright:           
+-- copyright:
 category:            Development
 build-type:          Simple
 cabal-version:       >=1.8
@@ -48,31 +48,31 @@ library
     Data.Group
     Data.Async
   build-depends:
-    base == 4.6.*,
-    aeson == 0.6.*,
-    aeson-pretty == 0.7.*,
-    bytestring == 0.10.*,
-    Cabal == 1.16.*,
-    containers == 0.5.*,
-    deepseq == 1.3.*,
-    directory == 1.2.*,
-    filepath == 1.3.*,
-    ghc == 7.6.*,
+    base >= 4.6 && < 5,
+    aeson >= 0.6.0,
+    aeson-pretty >= 0.7.0,
+    bytestring >= 0.10.0,
+    Cabal >= 1.16.0,
+    containers >= 0.5.0,
+    deepseq >= 1.3.0,
+    directory >= 1.2.0,
+    filepath >= 1.3.0,
+    ghc >= 7.6.0,
     ghc-mod >= 3.1.6 && < 3.2,
-    ghc-paths == 0.1.*,
-    haddock == 2.13.*,
-    haskell-src-exts == 1.14.*,
-    hdocs == 0.3.*,
-    HTTP == 4000.2.*,
-    MonadCatchIO-transformers == 0.3.*,
-    mtl == 2.1.*,
-    transformers == 0.3.*,
-    process == 1.1.*,
-    regexpr == 0.5.*,
-    time == 1.4.*,
-    attoparsec == 0.10.*,
-    unordered-containers == 0.2.*,
-    text == 0.11.*
+    ghc-paths >= 0.1.0,
+    haddock >= 2.13.0,
+    haskell-src-exts >= 1.14.0,
+    hdocs >= 0.3.0,
+    HTTP >= 4000.2.0,
+    MonadCatchIO-transformers >= 0.3.0,
+    mtl >= 2.1.0,
+    transformers >= 0.3.0,
+    process >= 1.1.0,
+    regexpr >= 0.5.0,
+    time >= 1.4.0,
+    attoparsec >= 0.10.0,
+    unordered-containers >= 0.2.0,
+    text >= 0.11.0
 
 executable hsdev
   main-is: hsdev.hs
@@ -91,31 +91,31 @@ executable hsdev
       System.Win32.FileMapping.NamePool
   else
     build-depends:
-      unix == 2.6.*
+      unix >= 2.6.0
 
   build-depends:
-    base == 4.6.*,
+    base >= 4.6 && < 5,
     hsdev,
-    aeson == 0.6.*,
-    aeson-pretty == 0.7.*,
-    bytestring == 0.10.*,
-    containers == 0.5.*,
-    deepseq == 1.3.*,
-    directory == 1.2.*,
-    filepath == 1.3.*,
-    monad-loops == 0.3.*,
-    MonadCatchIO-transformers == 0.3.*,
-    mtl == 2.1.*,
-    network == 2.4.*,
-    process == 1.1.*,
-    text == 0.11.*,
-    transformers == 0.3.*,
-    unordered-containers == 0.2.*,
-    vector == 0.10.*
+    aeson >= 0.6.0,
+    aeson-pretty >= 0.7.0,
+    bytestring >= 0.10.0,
+    containers >= 0.5.0,
+    deepseq >= 1.3.0,
+    directory >= 1.2.0,
+    filepath >= 1.3.0,
+    monad-loops >= 0.3.0,
+    MonadCatchIO-transformers >= 0.3.0,
+    mtl >= 2.1.0,
+    network >= 2.4.0,
+    process >= 1.1.0,
+    text >= 0.11.0,
+    transformers >= 0.3.0,
+    unordered-containers >= 0.2.0,
+    vector >= 0.10.0
 
   if os(windows)
     build-depends:
-      Win32 == 2.3.*
+      Win32 >= 2.3.0
 
 executable hsinspect
   main-is: hsinspect.hs
@@ -123,33 +123,33 @@ executable hsinspect
   other-modules:
     System.Command
   build-depends:
-    base == 4.6.*,
+    base >= 4.6 && < 5,
     hsdev,
-    aeson == 0.6.*,
-    aeson-pretty == 0.7.*,
-    bytestring == 0.10.*,
-    containers == 0.5.*,
-    mtl == 2.1.*,
-    transformers == 0.3.*
+    aeson >= 0.6.0,
+    aeson-pretty >= 0.7.0,
+    bytestring >= 0.10.0,
+    containers >= 0.5.0,
+    mtl >= 2.1.0,
+    transformers >= 0.3.0
 
 executable hsclearimports
   main-is: hsclearimports.hs
   hs-source-dirs: tools
   build-depends:
-    base == 4.6.*,
+    base >= 4.6 && < 5,
     hsdev,
-    directory == 1.2.*,
-    ghc == 7.6.*,
-    haskell-src-exts == 1.14.*,
-    containers == 0.5.*,
-    mtl == 2.1.*
+    directory >= 1.2.0,
+    ghc >= 7.6.0,
+    haskell-src-exts >= 1.14.0,
+    containers >= 0.5.0,
+    mtl >= 2.1.0
 
 test-suite test
   main-is: Test.hs
   hs-source-dirs: tests
   type: exitcode-stdio-1.0
   build-depends:
-    base == 4.6.*
+    base >= 4.6 && < 5
 
 source-repository head
   type: git
