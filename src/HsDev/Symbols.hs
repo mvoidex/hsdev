@@ -255,7 +255,7 @@ instance Locals Declaration where
 
 declarationLocals :: Declaration -> [Declaration]
 declarationLocals d = map prefix' $ locals $ declaration d where
-	prefix' decl = decl { declarationName = declarationName d ++ "." ++ declarationName decl }
+	prefix' decl = decl { declarationName = declarationName decl }
 
 -- | Common info for type/newtype/data/class
 data TypeInfo = TypeInfo {

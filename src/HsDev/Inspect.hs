@@ -13,7 +13,7 @@ import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
-import Data.List (intercalate)
+import Data.List (intercalate, find)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
@@ -61,12 +61,15 @@ getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mnam
 	mname (H.ModuleName n) = n
 
 getDecls :: [H.Decl] -> [Declaration]
-getDecls decls = infos ++ defs where
+getDecls decls = map addLocals infos ++ filter noInfo defs where
 	infos = concatMap getDecl decls
-	names = map declarationName infos
-	defs = filter noInfo $ concatMap getDef decls
+	addLocals :: Declaration -> Declaration
+	addLocals decl = decl `where_` maybe [] locals def where
+		def = find (\d -> declarationName d == declarationName decl) defs
+	defs = concatMap getDef decls
 	noInfo :: Declaration -> Bool
 	noInfo d = declarationName d `notElem` names
+	names = map declarationName infos
 
 getBinds :: H.Binds -> [Declaration]
 getBinds (H.BDecls decls) = getDecls decls
