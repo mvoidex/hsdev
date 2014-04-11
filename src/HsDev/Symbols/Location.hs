@@ -126,9 +126,13 @@ regionLines (Region f t) = succ $ positionLine t - positionLine f
 
 -- | Get string at region
 regionStr :: Region -> String -> String
-regionStr r@(Region f t) s = intercalate "\n" $ drop (pred $ positionColumn f) fline : tl where
+regionStr r@(Region f t) s = intercalate "\n" $ drop (pred $ positionColumn f) fline' : tl where
 	s' = take (regionLines r) $ drop (pred (positionLine f)) $ lines s
 	(fline:tl) = init s' ++ [take (pred $ positionColumn t) (last s')]
+	fline' = concatMap untab fline where
+		untab :: Char -> String
+		untab '\t' = replicate 8 ' '
+		untab ch = [ch]
 
 instance NFData Region where
 	rnf (Region f t) = rnf f `seq` rnf t
