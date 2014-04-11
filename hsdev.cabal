@@ -4,13 +4,13 @@
 name:                hsdev
 version:             0.1.0.0
 synopsis:            Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references etc.
--- description:         
+-- description:
 homepage:            https://github.com/mvoidex/hsdev
 license:             BSD3
 license-file:        LICENSE
 author:              Alexandr `Voidex` Ruchkin
 maintainer:          voidex@live.com
--- copyright:           
+-- copyright:
 category:            Development
 build-type:          Simple
 cabal-version:       >=1.8
@@ -114,7 +114,7 @@ executable hsdev
 
   if os(windows)
     build-depends:
-      Win32 == 2.3.*
+      Win32 >= 2.3.0
 
 executable hsinspect
   main-is: hsinspect.hs
