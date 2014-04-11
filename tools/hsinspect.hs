@@ -18,7 +18,6 @@ import System.Command
 import HsDev.Project (readProject)
 import HsDev.Scan (scanModule)
 import HsDev.Symbols.Location (ModuleLocation(..), Cabal(..))
-import HsDev.Symbols.JSON ()
 
 commands :: [Command (IO ())]
 commands = addHelp "hsinspect" id [

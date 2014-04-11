@@ -34,7 +34,6 @@ library
     HsDev.Symbols.Class
     HsDev.Symbols.Location
     HsDev.Symbols.Documented
-    HsDev.Symbols.JSON
     HsDev.Symbols.Util
     HsDev.Tools.Base
     HsDev.Tools.Cabal
