@@ -14,6 +14,7 @@ import HsDev.Cabal
 import HsDev.Symbols
 import HsDev.Tools.Base (inspect)
 
+import qualified ConLike as GHC
 import qualified DataCon as GHC
 import qualified DynFlags as GHC
 import qualified Exception as GHC
@@ -26,6 +27,7 @@ import qualified Name as GHC
 import qualified Name as GHC
 import qualified Outputable as GHC
 import qualified Packages as GHC
+import qualified PatSyn as GHC
 import qualified TyCon as GHC
 import qualified Type as GHC
 import qualified Var as GHC
@@ -72,7 +74,9 @@ browseModule cabal m = do
 				(fromMaybe (Function Nothing) (tyResult >>= showResult dflag))
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe DeclarationInfo
 		showResult dflags (GHC.AnId i) = Just $ Function $ Just $ formatType dflags GHC.varType i
-		showResult dflags (GHC.ADataCon d) = Just $ Function $ Just $ formatType dflags GHC.dataConRepType d
+		showResult dflags (GHC.AConLike c) = case c of
+			GHC.RealDataCon d -> Just $ Function $ Just $ formatType dflags GHC.dataConRepType d
+			GHC.PatSynCon p -> Just $ Function $ Just $ formatType dflags GHC.patSynType p
 		showResult _ (GHC.ATyCon t) = Just $ tcon $ TypeInfo Nothing (map GHC.getOccString $ GHC.tyConTyVars t) Nothing where
 			tcon
 				| GHC.isAlgTyCon t && not (GHC.isNewTyCon t) && not (GHC.isClassTyCon t) = Data
@@ -117,7 +121,7 @@ showOutputable :: GHC.Outputable a => GHC.DynFlags -> a -> String
 showOutputable dflag = unwords . lines . showUnqualifiedPage dflag . GHC.ppr
 
 showUnqualifiedPage :: GHC.DynFlags -> GHC.SDoc -> String
-showUnqualifiedPage dflag = Pretty.showDocWith Pretty.PageMode . GHC.withPprStyleDoc dflag styleUnqualified
+showUnqualifiedPage dflag = Pretty.showDoc Pretty.LeftMode 0 . GHC.withPprStyleDoc dflag styleUnqualified
 
 styleUnqualified :: GHC.PprStyle
 styleUnqualified = GHC.mkUserStyle GHC.neverQualify GHC.AllTheWay

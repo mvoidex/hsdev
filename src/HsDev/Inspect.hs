@@ -68,6 +68,10 @@ getDecls decls = infos ++ defs where
 	noInfo :: Declaration -> Bool
 	noInfo d = declarationName d `notElem` names
 
+getBinds :: H.Binds -> [Declaration]
+getBinds (H.BDecls decls) = getDecls decls
+getBinds _ = []
+
 getDecl :: H.Decl -> [Declaration]
 getDecl decl = case decl of
 	H.TypeSig loc names typeSignature -> map
@@ -88,8 +92,10 @@ getDecl decl = case decl of
 
 getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []
-getDef (H.FunBind (H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Function Nothing)]
-getDef (H.PatBind loc pat _ _ _) = map (\name -> setPosition loc (Declaration (identOfName name) Nothing Nothing (Function Nothing))) $ names pat where
+getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Function Nothing)]
+--getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = (setPosition loc $ Declaration (identOfName n) Nothing Nothing (Function Nothing)) : concatMap (getBinds . matchBinds) matches where
+--	matchBinds (H.Match _ _ _ _ _ binds) = binds
+getDef (H.PatBind loc pat _ _ binds) = map (\name -> setPosition loc (Declaration (identOfName name) Nothing Nothing (Function Nothing))) (names pat) where -- ++ getBinds binds where
 	names :: H.Pat -> [H.Name]
 	names (H.PVar n) = [n]
 	names (H.PNeg n) = names n
@@ -129,7 +135,7 @@ setPosition loc d = d { declarationPosition = Just (toPosition loc) }
 documentationMap :: Doc.Interface -> Map String String
 documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems iface where
 	toDoc :: Doc.ExportItem Name.Name -> [(String, String)]
-	toDoc (Doc.ExportDecl decl docs _ _) = maybe [] (zip (extractNames decl) . repeat) $ extractDocs docs
+	toDoc (Doc.ExportDecl decl docs _ _ _ _) = maybe [] (zip (extractNames decl) . repeat) $ extractDocs docs
 	toDoc _ = []
 
 	extractNames :: HsDecls.LHsDecl Name.Name -> [String]
@@ -158,7 +164,7 @@ documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems ifa
 		printDoc (Doc.DocOrderedList lst) = concatMap printDoc lst -- And this
 		printDoc (Doc.DocDefList defs) = concatMap (\(l, r) -> printDoc l ++ " = " ++ printDoc r) defs -- ?
 		printDoc (Doc.DocCodeBlock code) = printDoc code
-		printDoc (Doc.DocPic pic) = pic
+		printDoc (Doc.DocPic pic) = show pic
 		printDoc (Doc.DocAName a) = a
 		printDoc (Doc.DocExamples exs) = unlines $ map showExample exs where
 			showExample (Doc.Example expr results) = expr ++ " => " ++ intercalate ", " results

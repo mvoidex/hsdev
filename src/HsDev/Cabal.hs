@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Cabal (
-	Cabal(..),
+	Cabal(..), sandbox,
 	findPackageDb, locateSandbox,
 	cabalOpt
 	) where
@@ -16,6 +16,11 @@ import System.FilePath ((</>))
 
 -- | Cabal or sandbox
 data Cabal = Cabal | Sandbox FilePath deriving (Eq, Ord)
+
+-- | Get sandbox
+sandbox :: Cabal -> Maybe FilePath
+sandbox Cabal = Nothing
+sandbox (Sandbox f) = Just f
 
 instance NFData Cabal where
 	rnf Cabal = ()

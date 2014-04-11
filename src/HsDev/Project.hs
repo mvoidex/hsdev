@@ -2,7 +2,7 @@
 
 module HsDev.Project (
 	Project(..),
-	ProjectDescription(..), Library(..), Executable(..), Test(..), Info(..),
+	ProjectDescription(..), Target(..), Library(..), Executable(..), Test(..), Info(..),
 	readProject, loadProject,
 	project,
 	Extensions(..), withExtensions,
@@ -97,11 +97,17 @@ instance FromJSON ProjectDescription where
 		v .:: "executables" <*>
 		v .:: "tests"
 
+class Target a where
+	buildInfo :: a -> Info
+
 -- | Library in project
 data Library = Library {
 	libraryModules :: [[String]],
 	libraryBuildInfo :: Info }
 		deriving (Eq, Read)
+
+instance Target Library where
+	buildInfo = libraryBuildInfo
 
 instance Show Library where
 	show l = unlines $
@@ -126,6 +132,9 @@ data Executable = Executable {
 	executableBuildInfo :: Info }
 		deriving (Eq, Read)
 
+instance Target Executable where
+	buildInfo = executableBuildInfo
+
 instance Show Executable where
 	show e = unlines $
 		["executable " ++ executableName e, "\tpath: " ++ executablePath e] ++
@@ -149,6 +158,9 @@ data Test = Test {
 	testEnabled :: Bool,
 	testBuildInfo :: Info }
 		deriving (Eq, Read)
+
+instance Target Test where
+	buildInfo = testBuildInfo
 
 instance Show Test where
 	show t = unlines $

@@ -40,4 +40,4 @@ inferTypes opts cabal m = case moduleLocation m of
 	FileModule src p -> do
 		inferredDecls <- traverse (inferType opts cabal src p (moduleName m)) $ moduleDeclarations m
 		return m { moduleDeclarations = inferredDecls }
-	_ -> throwError "Type infer  works only for source files"
+	_ -> throwError "Type infer works only for source files"

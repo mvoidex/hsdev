@@ -863,7 +863,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	askFile :: CommandOptions -> Opts -> ErrorT String IO (Maybe FilePath)
 	askFile copts = traverse (canonicalizePath' copts) . askOpt "file"
 
-	forceJust :: String -> ErrorT String IO (Maybe a) => ErrorT String IO a
+	forceJust :: String -> ErrorT String IO (Maybe a) -> ErrorT String IO a
 	forceJust msg act = act >>= maybe (throwError msg) return
 
 	askCtx :: CommandOptions -> Opts -> ErrorT String IO (FilePath, Cabal)

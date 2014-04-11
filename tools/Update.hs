@@ -15,6 +15,7 @@ module Update (
 	liftErrorT
 	) where
 
+import Control.Applicative (Applicative(..))
 import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
@@ -43,7 +44,7 @@ data Settings = Settings {
 	ghcOptions :: [String] }
 
 newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings m a }
-	deriving (Monad, MonadIO, MonadCatchIO, Functor, MonadReader Settings)
+	deriving (Applicative, Monad, MonadIO, MonadCatchIO, Functor, MonadReader Settings)
 
 -- | Run `UpdateDB` monad
 updateDB :: Monad m => Settings -> ErrorT String (UpdateDB m) () -> m ()
@@ -79,11 +80,12 @@ loadCache act = do
 
 -- | Run one task
 runTask :: MonadIO m => Value -> ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
-runTask v act = object ["task" .= v] `setStatus` act' where
-	act' = do
-		status (object ["status" .= toJSON ("working" :: String)])
-		x <- act
-		status (object ["status" .= taskOk])
+runTask v act = object ["task" .= v] `setStatus` wrapAct act where
+	wrapAct :: MonadIO m => ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
+	wrapAct a = do
+		status $ object ["status" .= toJSON ("working" :: String)]
+		x <- a
+		status $ object ["status" .= taskOk]
 		return x
 		`catchError`
 		(\e -> status (object ["status" .= taskErr e]) >> throwError e)

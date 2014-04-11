@@ -1,74 +1,50 @@
-hsdev
+# hsdev
 =====
 
-Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references etc.
+Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
 
-Usage
------
+## Usage
 
 Use `hsdev server start` to start remove server. Specify `--cache`, where `hsdev` will store information.
-Use `scan` commands to scan cabal modules, projects and directories, for example:
 
-```
-PS> hsdev server start --cache=cache
+### Commands
+
+* `server` — server commands: `start`, `run` and `stop`
+* `scan` — scan installed modules, cabal projects and files
+* `list` — list modules, packages and projects
+* `symbol`, `module` and `project` — get info about symbol, module or project
+* `lookup`, `whois` — find visible symbol, or symbol in scope of file
+* `scope` — get modules or declarations, accessible from file
+* `complete` — get completions for file and input
+* `hayoo` — search in hayoo
+* `cabal list` — search packages info
+* `ghc-mod type` — get type of expression at line and column of file
+* `dump` — dump modules or projects info
+
+### Examples
+
+<pre>
+PS> hsdev server start --cache cache
 Server started at port 4567
 PS> hsdev scan cabal
 {}
-PS> hsdev scan -f Test.hs -p Projects --proj hsdev\hsdev.cabal
+PS> hsdev scan --proj hsdev
 {}
-```
-
-Other commands can be used to extract info about modules, projects, declarations etc.
-
-```
-PS> hsdev complete foldM -f hsdev\src\HsDev\Commands.hs | json | % { $_.declaration.name }
-foldM
-foldM_
-foldM
-foldM_
-foldMapDefault
-PS> hsdev --pretty symbol partitionEithers
-[
-    {
-        "module-id": {
-            "name": "Data.Either",
-            "location": {
-                "package": null,
-                "name": "Data.Either",
-                "cabal": "\u003ccabal\u003e"
-            }
-        },
-        "declaration": {
-            "pos": null,
-            "decl": {
-                "what": "function",
-                "type": "[Either a b] -\u003e ([a], [b])"
-            },
-            "name": "partitionEithers",
-            "docs": "Partitions a list of Either into two lists\n All the Left elements are extracted, in order, to the first\n component of the output. Similarly the Right elements are extracted\n to the second component of the output."
-        }
-    }
-]
-PS> hsdev --pretty whois selectModules -f hsdev\src\HsDev\Commands.hs
-{
-    "module-id": {
-        "name": "HsDev.Database",
-        "location": {
-            "project": "E:\\users\\voidex\\Documents\\Projects\\hsdev\\hsdev.cabal",
-            "file": "E:\\users\\voidex\\Documents\\Projects\\hsdev\\src\\HsDev\\Database.hs"
-        }
-    },
-    "declaration": {
-        "pos": {
-            "line": 121,
-            "column": 1
-        },
-        "decl": {
-            "what": "function",
-            "type": "(Module -\u003e Bool) -\u003e Database -\u003e [Module]"
-        },
-        "name": "selectModules",
-        "docs": null
-    }
-}
-```
+PS> hsdev list modules --proj hsdev | json | % { $_.name } | select -first 3
+Data.Async
+Data.Group
+HsDev
+PS> hsdev symbol enumProject | json | % { $_.declaration } | % { $_.name + ' :: ' + $_.decl.type }
+enumProject :: Project -> ErrorT String IO ProjectToScan
+PS> hsdev complete C -f .\hsdev\tools\hsdev.hs | json | % { $_.declaration.name }
+ClientOpts
+CommandAction
+CommandOptions
+CommandResult
+PS> hsdev symbol foldr | json | % { $_.declaration.name + ' :: ' + $_.declaration.decl.type + ' -- ' + $_.'module-id'.name } | select -first 3
+foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString
+foldr :: (Char -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Char8
+foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Lazy
+PS> hsdev server stop
+{}
+</pre>
