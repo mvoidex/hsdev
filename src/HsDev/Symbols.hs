@@ -322,7 +322,7 @@ instance Locals DeclarationInfo where
 	locals (Function _ ds) = ds
 	locals _ = []
 	where_ (Function n s) ds = Function n (s ++ ds)
-	where_ _ _ = error "Local declarations can present only in function"
+	where_ d _ = d
 
 -- | Get function type of type info
 declarationInfo :: DeclarationInfo -> Either (Maybe String, [Declaration]) TypeInfo
