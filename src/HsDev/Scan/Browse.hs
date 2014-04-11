@@ -71,12 +71,12 @@ browseModule cabal m = do
 				(GHC.getOccString n)
 				Nothing
 				Nothing
-				(fromMaybe (Function Nothing) (tyResult >>= showResult dflag))
+				(fromMaybe (Function Nothing []) (tyResult >>= showResult dflag))
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe DeclarationInfo
-		showResult dflags (GHC.AnId i) = Just $ Function $ Just $ formatType dflags GHC.varType i
+		showResult dflags (GHC.AnId i) = Just $ Function (Just $ formatType dflags GHC.varType i) []
 		showResult dflags (GHC.AConLike c) = case c of
-			GHC.RealDataCon d -> Just $ Function $ Just $ formatType dflags GHC.dataConRepType d
-			GHC.PatSynCon p -> Just $ Function $ Just $ formatType dflags GHC.patSynType p
+			GHC.RealDataCon d -> Just $ Function (Just $ formatType dflags GHC.dataConRepType d) []
+			GHC.PatSynCon p -> Just $ Function (Just $ formatType dflags GHC.patSynType p) []
 		showResult _ (GHC.ATyCon t) = Just $ tcon $ TypeInfo Nothing (map GHC.getOccString $ GHC.tyConTyVars t) Nothing where
 			tcon
 				| GHC.isAlgTyCon t && not (GHC.isNewTyCon t) && not (GHC.isClassTyCon t) = Data

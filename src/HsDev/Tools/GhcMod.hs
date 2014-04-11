@@ -56,7 +56,7 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 		decls rs = M.fromList $ map (declarationName &&& id) $ mapMaybe parseDecl rs
 		parseFunction s = do
 			groups <- match "(\\w+)\\s+::\\s+(.*)" s
-			return $ Declaration (groups `at` 1) Nothing Nothing (Function $ Just $ groups `at` 2)
+			return $ Declaration (groups `at` 1) Nothing Nothing (Function (Just $ groups `at` 2) [])
 		parseType s = do
 			groups <- match "(class|type|data|newtype)\\s+(\\w+)(\\s+(\\w+(\\s+\\w+)*))?" s
 			let
@@ -76,7 +76,7 @@ info opts cabal file mproj mname sname = do
 		toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
 		parseFunction s = do
 			groups <- match (sname ++ "\\s+::\\s+(.*?)(\\s+--(.*))?$") s
-			return $ Declaration sname Nothing Nothing (Function $ Just $ groups `at` 1)
+			return $ Declaration sname Nothing Nothing (Function (Just $ groups `at` 1) [])
 		parseData s = do
 			groups <- match "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined)?" s
 			let

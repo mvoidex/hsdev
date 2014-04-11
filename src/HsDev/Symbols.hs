@@ -5,8 +5,9 @@ module HsDev.Symbols (
 	-- * Information
 	Import(..),
 	Symbol(..),
-	ModuleId(..), Module(..), moduleModuleDeclarations, moduleId,
-	Declaration(..),
+	ModuleId(..), Module(..), moduleLocals, moduleLocalDeclarations, moduleModuleDeclarations, moduleId,
+	Locals(..),
+	Declaration(..), declarationLocals,
 	TypeInfo(..),
 	DeclarationInfo(..),
 	ModuleDeclaration(..),
@@ -187,6 +188,22 @@ instance Show Module where
 		unlines $ map (tabs 2 . show) $ M.elems (moduleDeclarations m),
 		maybe "" ("\tdocs: " ++) (moduleDocs m)]
 
+-- | Bring locals to top
+moduleLocals :: Module -> Module
+moduleLocals m = m { moduleDeclarations = moduleLocalDeclarations m }
+
+-- | Get declarations with locals
+moduleLocalDeclarations :: Module -> Map String Declaration
+moduleLocalDeclarations =
+	M.fromList .
+	map (declarationName &&& id) . 
+	concatMap declarationLocals' .
+	M.elems .
+	moduleDeclarations
+	where
+		declarationLocals' :: Declaration -> [Declaration]
+		declarationLocals' d = d : declarationLocals d
+
 -- | Get list of declarations as ModuleDeclaration
 moduleModuleDeclarations :: Module -> [ModuleDeclaration]
 moduleModuleDeclarations m = [ModuleDeclaration (moduleId m) d | d <- M.elems (moduleDeclarations m)]
@@ -196,6 +213,10 @@ moduleId :: Module -> ModuleId
 moduleId m = ModuleId {
 	moduleIdName = moduleName m,
 	moduleIdLocation = moduleLocation m }
+
+class Locals a where
+	locals :: a -> [Declaration]
+	where_ :: a -> [Declaration] -> a
 
 -- | Declaration
 data Declaration = Declaration {
@@ -228,6 +249,14 @@ instance FromJSON Declaration where
 		v .:: "pos" <*>
 		v .:: "decl"
 
+instance Locals Declaration where
+	locals = locals . declaration
+	where_ d ds = d { declaration = where_ (declaration d) ds }
+
+declarationLocals :: Declaration -> [Declaration]
+declarationLocals d = map prefix' $ locals $ declaration d where
+	prefix' decl = decl { declarationName = declarationName d ++ "." ++ declarationName decl }
+
 -- | Common info for type/newtype/data/class
 data TypeInfo = TypeInfo {
 	typeInfoContext :: Maybe String,
@@ -255,7 +284,7 @@ showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ " 
 
 -- | Declaration info
 data DeclarationInfo =
-	Function { functionType :: Maybe String } |
+	Function { functionType :: Maybe String, localDeclarations :: [Declaration] } |
 	Type { typeInfo :: TypeInfo } |
 	NewType { newTypeInfo :: TypeInfo } |
 	Data { dataInfo :: TypeInfo } |
@@ -263,14 +292,14 @@ data DeclarationInfo =
 		deriving (Ord)
 
 instance NFData DeclarationInfo where
-	rnf (Function f) = rnf f
+	rnf (Function f ds) = rnf f `seq` rnf ds
 	rnf (Type i) = rnf i
 	rnf (NewType i) = rnf i
 	rnf (Data i) = rnf i
 	rnf (Class i) = rnf i
 
 instance Eq DeclarationInfo where
-	(Function l) == (Function r) = l == r
+	(Function l lds) == (Function r rds) = l == r && lds == rds
 	(Type _) == (Type _) = True
 	(NewType _) == (NewType _) = True
 	(Data _) == (Data _) = True
@@ -279,19 +308,25 @@ instance Eq DeclarationInfo where
 
 instance ToJSON DeclarationInfo where
 	toJSON i = case declarationInfo i of
-		Left t -> object ["what" .= ("function" :: String), "type" .= t]
+		Left (t, ds) -> object ["what" .= ("function" :: String), "type" .= t, "locals" .= ds]
 		Right ti -> object ["what" .= declarationTypeName i, "info" .= ti]
 
 instance FromJSON DeclarationInfo where
 	parseJSON = withObject "declaration info" $ \v -> do
 		w <- fmap (id :: String -> String) $ v .:: "what"
 		if w == "function"
-			then Function <$> v .:: "type"
+			then Function <$> v .:: "type" <*> v .:: "locals"
 			else declarationTypeCtor w <$> v .:: "info"
 
+instance Locals DeclarationInfo where
+	locals (Function _ ds) = ds
+	locals _ = []
+	where_ (Function n s) ds = Function n (s ++ ds)
+	where_ _ _ = error "Local declarations can present only in function"
+
 -- | Get function type of type info
-declarationInfo :: DeclarationInfo -> Either (Maybe String) TypeInfo
-declarationInfo (Function t) = Left t
+declarationInfo :: DeclarationInfo -> Either (Maybe String, [Declaration]) TypeInfo
+declarationInfo (Function t ds) = Left (t, ds)
 declarationInfo (Type ti) = Right ti
 declarationInfo (NewType ti) = Right ti
 declarationInfo (Data ti) = Right ti
@@ -403,7 +438,7 @@ instance Documented Module where
 
 instance Documented Declaration where
 	brief d = case declarationInfo $ declaration d of
-		Left f -> name ++ maybe "" (" :: " ++) f
+		Left (f, _) -> name ++ maybe "" (" :: " ++) f
 		Right ti -> showTypeInfo ti (fromMaybe err $ declarationTypeName $ declaration d) name
 		where
 			name = declarationName d

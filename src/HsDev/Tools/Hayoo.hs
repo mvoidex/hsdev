@@ -123,7 +123,7 @@ hayooAsDeclaration f = ModuleDeclaration {
 		declInfo
 			| hayooSignature f `elem` ["type", "newtype", "data", "class"]
 				= declarationTypeCtor (hayooSignature f) $ TypeInfo Nothing [] Nothing
-			| otherwise = Function $ Just $ hayooSignature f
+			| otherwise = Function (Just $ hayooSignature f) []
 
 -- | Search hayoo
 hayoo :: String -> ErrorT String IO HayooResult

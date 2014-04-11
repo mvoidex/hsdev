@@ -2,7 +2,7 @@
 
 module HsDev.Database (
 	Database(..),
-	databaseIntersection, nullDatabase, allModules, allDeclarations,
+	databaseIntersection, nullDatabase, databaseLocals, allModules, allDeclarations,
 	fromModule, fromProject,
 	filterDB,
 	projectDB, cabalDB, standaloneDB,
@@ -80,6 +80,11 @@ databaseIntersection l r = mempty {
 -- | Check if database is empty
 nullDatabase :: Database -> Bool
 nullDatabase db = M.null (databaseModules db) && M.null (databaseProjects db)
+
+-- | Bring all locals to scope
+databaseLocals :: Database -> Database
+databaseLocals db = db {
+	databaseModules = M.map (fmap moduleLocals) (databaseModules db) }
 
 -- | All modules
 allModules :: Database -> [Module]

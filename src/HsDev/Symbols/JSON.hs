@@ -34,7 +34,7 @@ encodeModuleDeclaration m = object $ sym ++ decl (declaration . moduleDeclaratio
 		"module" .= encodeModuleHead (declarationModuleId m),
 		"docs" .= symbolDocs m,
 		"location" .= fmap encodePosition (declarationPosition $ moduleDeclaration m)]
-	decl (Function t) = ["what" .= str "function", "type" .= t]
+	decl (Function t ds) = ["what" .= str "function", "type" .= t]
 	decl (Type ti) = ("what" .= str "type") : info ti
 	decl (NewType ti) = ("what" .= str "newtype") : info ti
 	decl (Data ti) = ("what" .= str "data") : info ti
@@ -92,7 +92,7 @@ decodeModuleDeclaration = withObject "declaration" $ \v -> ModuleDeclaration <$>
 		decodeDecl v = do
 			what <- v .: "what"
 			case (what :: String) of
-				"function" -> Function <$> v .: "type"
+				"function" -> Function <$> v .: "type" <*> pure []
 				_ -> declarationTypeCtor what <$> info
 			where
 				info :: Parser TypeInfo

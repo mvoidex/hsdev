@@ -416,11 +416,11 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["symbol"] ["name"] "get symbol info" (matches ++ [
 			projectArg "related project",
 			fileArg "source file",
-			moduleArg,
+			moduleArg, localsArg,
 			packageArg, noLastArg, packageVersionArg,
 			sandbox, sourced, standaloned]) symbol',
 		cmd' ["module"] [] "get module info" [
-			moduleArg,
+			moduleArg, localsArg,
 			packageArg, noLastArg, packageVersionArg,
 			projectArg "module project",
 			fileArg "module source file",
@@ -430,7 +430,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		-- Context commands
 		cmd' ["lookup"] ["symbol"] "lookup for symbol" ctx lookup',
 		cmd' ["whois"] ["symbol"] "get info for symbol" ctx whois',
-		cmd' ["scope", "modules"] [] "get modules accesible from module or within a project" ctx scopeModules',
+		cmd' ["scope", "modules"] [] "get modules accessible from module or within a project" ctx scopeModules',
 		cmd' ["scope"] [] "get declarations accessible from module or within a project" (ctx ++ matches ++ [globalArg]) scope',
 		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
 		-- Tool commands
@@ -457,6 +457,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	findArg = option_ [] "find" (req "find") "infix match"
 	ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
 	globalArg = option_ [] "global" flag "scope of project"
+	localsArg = option_ ['l'] "locals" flag "look in local declarations"
 	noLastArg = option_ [] "no-last" flag "don't select last package version"
 	matches = [prefixArg, findArg]
 	moduleArg = option_ ['m'] "module" (req "module name") "module name"
@@ -609,7 +610,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		return $ ResultOk $ ResultList $ map ResultProject $ M.elems $ databaseProjects dbval
 	-- get symbol info
 	symbol' as ns copts = errorT $ do
-		dbval <- liftIO $ getDb copts
+		dbval <- liftM (localsDatabase as) $ liftIO $ getDb copts
 		proj <- askProject copts as
 		file <- traverse (canonicalizePath' copts) $ askOpt "file" as
 		cabal <- askCabal copts as
@@ -631,7 +632,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			_ -> throwError "Too much arguments"
 	-- get module info
 	modul' as _ copts = errorT' $ do
-		dbval <- liftIO $ getDb copts
+		dbval <- liftM (localsDatabase as) $ liftIO $ getDb copts
 		proj <- mapErrorT (fmap $ strMsg +++ id) $ askProject copts as
 		cabal <- mapErrorT (fmap $ strMsg +++ id) $ askCabal copts as
 		file' <- traverse (canonicalizePath' copts) $ askOpt "file" as
@@ -851,6 +852,11 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			addCabal p
 				| takeExtension p == ".cabal" = p
 				| otherwise = p </> (takeBaseName p <.> "cabal")
+
+	localsDatabase :: Opts -> Database -> Database
+	localsDatabase as
+		| hasOpt "locals" as = databaseLocals
+		| otherwise = id
 
 	newest :: Symbol a => Opts -> [a] -> [a]
 	newest as

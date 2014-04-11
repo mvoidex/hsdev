@@ -75,7 +75,7 @@ getBinds _ = []
 getDecl :: H.Decl -> [Declaration]
 getDecl decl = case decl of
 	H.TypeSig loc names typeSignature -> map
-		(\n -> setPosition loc (Declaration (identOfName n) Nothing Nothing (Function (Just $ H.prettyPrint typeSignature))))
+		(\n -> setPosition loc (Declaration (identOfName n) Nothing Nothing (Function (Just $ H.prettyPrint typeSignature) [])))
 		names
 	H.TypeDecl loc n args _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Type $ TypeInfo Nothing (map H.prettyPrint args) Nothing)]
 	H.DataDecl loc dataOrNew ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
@@ -92,10 +92,10 @@ getDecl decl = case decl of
 
 getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []
-getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Function Nothing)]
---getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = (setPosition loc $ Declaration (identOfName n) Nothing Nothing (Function Nothing)) : concatMap (getBinds . matchBinds) matches where
---	matchBinds (H.Match _ _ _ _ _ binds) = binds
-getDef (H.PatBind loc pat _ _ binds) = map (\name -> setPosition loc (Declaration (identOfName name) Nothing Nothing (Function Nothing))) (names pat) where -- ++ getBinds binds where
+getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (identOfName n) Nothing Nothing fun] where
+	fun = Function Nothing $ concatMap (getBinds . matchBinds) matches
+	matchBinds (H.Match _ _ _ _ _ binds) = binds
+getDef (H.PatBind loc pat _ _ binds) = map (\name -> setPosition loc (Declaration (identOfName name) Nothing Nothing (Function Nothing $ getBinds binds))) (names pat) where
 	names :: H.Pat -> [H.Name]
 	names (H.PVar n) = [n]
 	names (H.PNeg n) = names n

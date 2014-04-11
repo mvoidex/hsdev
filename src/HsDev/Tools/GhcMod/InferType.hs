@@ -12,7 +12,7 @@ import HsDev.Tools.GhcMod
 
 -- | Is declaration untyped
 untyped :: DeclarationInfo -> Bool
-untyped (Function Nothing) = True
+untyped (Function Nothing _) = True
 untyped _ = False
 
 -- | Infer type of declaration
@@ -27,11 +27,11 @@ inferType opts cabal src mproj mname decl
 				declaration = setType (declaration decl) (getType inferred) }
 
 		setType :: DeclarationInfo -> Maybe String -> DeclarationInfo
-		setType (Function _) newType = Function newType
+		setType (Function _ ds) newType = Function newType ds
 		setType info _ = info
 
 		getType :: DeclarationInfo -> Maybe String
-		getType (Function fType) = fType
+		getType (Function fType _) = fType
 		getType _ = Nothing
 
 -- | Infer types for module
