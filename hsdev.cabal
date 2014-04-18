@@ -165,6 +165,21 @@ executable hscabal
     containers >= 0.5.0,
     mtl >= 2.1.0
 
+executable hshayoo
+  main-is: hshayoo.hs
+  hs-source-dirs: tools
+  other-modules:
+    System.Command
+    Tool
+  build-depends:
+    base >= 4.7 && < 5,
+    hsdev,
+    aeson >= 0.7.0,
+    aeson-pretty >= 0.7.0,
+    bytestring >= 0.10.0,
+    containers >= 0.5.0,
+    mtl >= 2.1.0
+
 test-suite test
   main-is: Test.hs
   hs-source-dirs: tests
