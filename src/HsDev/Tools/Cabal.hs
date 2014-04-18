@@ -46,14 +46,14 @@ instance FromJSON CabalPackage where
 		(v .:: "homepage") <*>
 		((join . fmap simpleParse) <$> (v .:: "license"))
 
-cabalList :: Maybe String -> ToolM [CabalPackage]
-cabalList query = do
+cabalList :: [String] -> ToolM [CabalPackage]
+cabalList queries = do
 #if mingw32_HOST_OS
-	rs <- liftM (split (all isSpace) . lines) $ runTool_ "powershell" [
+	rs <- liftM (split (all isSpace) . lines) $ tool_ "powershell" [
 		"-Command",
-		unwords (["&", "{", "chcp 65001 | out-null;", "cabal list"] ++ maybe [] return query ++ ["}"])]
+		unwords (["&", "{", "chcp 65001 | out-null;", "cabal list"] ++ queries ++ ["}"])]
 #else
-	rs <- liftM (split (all isSpace) . lines) $ runTool_ "cabal" (["list"] ++ maybe [] return query)
+	rs <- liftM (split (all isSpace) . lines) $ tool_ "cabal" ("list" : queries)
 #endif
 	return $ map toPackage $ mapMaybe parseFields rs
 	where

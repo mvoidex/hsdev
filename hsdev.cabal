@@ -43,9 +43,15 @@ library
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Util
+
+  if os(windows)
+    exposed-modules:
+      System.Win32.PowerShell
+
   other-modules:
     Data.Group
     Data.Async
+
   build-depends:
     base >= 4.7 && < 5,
     aeson >= 0.7.0,
@@ -121,6 +127,7 @@ executable hsinspect
   hs-source-dirs: tools
   other-modules:
     System.Command
+    Tool
   build-depends:
     base >= 4.7 && < 5,
     hsdev,
@@ -140,6 +147,21 @@ executable hsclearimports
     directory >= 1.2.0,
     ghc >= 7.8.1,
     haskell-src-exts >= 1.14.0,
+    containers >= 0.5.0,
+    mtl >= 2.1.0
+
+executable hscabal
+  main-is: hscabal.hs
+  hs-source-dirs: tools
+  other-modules:
+    System.Command
+    Tool
+  build-depends:
+    base >= 4.7 && < 5,
+    hsdev,
+    aeson >= 0.7.0,
+    aeson-pretty >= 0.7.0,
+    bytestring >= 0.10.0,
     containers >= 0.5.0,
     mtl >= 2.1.0
 

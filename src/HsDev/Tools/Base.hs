@@ -1,7 +1,7 @@
 module HsDev.Tools.Base (
 	Result, ToolM,
 	runWait, runWait_,
-	runTool, runTool_,
+	tool, tool_,
 	match,
 	at,
 	inspect,
@@ -33,13 +33,13 @@ runWait name args input = do
 runWait_ :: FilePath -> [String] -> IO Result
 runWait_ name args = runWait name args ""
 
--- | Run tool
-runTool :: FilePath -> [String] -> String -> ToolM String
-runTool name args input = liftIOErrors $ ErrorT $ runWait name args input
+-- | Tool
+tool :: FilePath -> [String] -> String -> ToolM String
+tool name args input = liftIOErrors $ ErrorT $ runWait name args input
 
--- | Run tool with no input
-runTool_ :: FilePath -> [String] -> ToolM String
-runTool_ name args = runTool name args ""
+-- | Tool with no input
+tool_ :: FilePath -> [String] -> ToolM String
+tool_ name args = tool name args ""
 
 match :: String -> String -> Maybe (Int -> Maybe String)
 match pat str = do

@@ -435,7 +435,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
 		-- Tool commands
 		cmd' ["hayoo"] ["query"] "find declarations online via Hayoo" [] hayoo',
-		cmd' ["cabal", "list"] ["query"] "list cabal packages" [] cabalList',
+		cmd' ["cabal", "list"] ["packages..."] "list cabal packages" [] cabalList',
 		cmd' ["ghc-mod", "type"] ["line", "column"] "infer type with 'ghc-mod type'" ctx ghcmodType',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" [sandbox, cacheDir, cacheFile] dumpCabal',
@@ -698,11 +698,9 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 			Hayoo.hayoo query
 	hayoo' as _ copts = return $ err "Too much arguments"
 	-- cabal list
-	cabalList' as qs copts
-		| length qs > 1 = return $ err "To much arguments"
-		| otherwise = errorT $ do
-			ps <- Cabal.cabalList (listToMaybe qs)
-			return $ ResultList $ map (ResultJSON . toJSON) ps
+	cabalList' as qs copts = errorT $ do
+		ps <- Cabal.cabalList qs
+		return $ ResultList $ map (ResultJSON . toJSON) ps
 	-- ghc-mod type
 	ghcmodType' as [line] copts = ghcmodType' as [line, "1"] copts
 	ghcmodType' as [line, column] copts = errorT $ do
