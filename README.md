@@ -48,3 +48,86 @@ foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Lazy
 PS> hsdev server stop
 {}
 </pre>
+
+## Tools
+
+### HsInspect
+
+Tool to inspect source files, .cabal files and installed modules
+
+<pre>
+PS> hsinspect cabal .\hsdev.cabal | json | % { $_.description.library.modules[3] }
+HsDev.Cache
+PS> hsinspect file .\tools\hsdev.hs | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
+main :: IO ()
+printMainUsage :: IO ()
+printUsage :: IO ()
+PS> hsinspect module Data.Either | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
+Either :: data Either a b
+Left :: a -> Either a b
+Right :: b -> Either a b
+either :: (a -> c) -> (b -> c) -> Either a b -> c
+isLeft :: Either a b -> Bool
+isRight :: Either a b -> Bool
+lefts :: [Either a b] -> [a]
+partitionEithers :: [Either a b] -> ([a], [b])
+rights :: [Either a b] -> [b]
+</pre>
+
+### HsCabal
+
+Cabal helper with JSON output. For now only `list` command supported
+
+<pre>
+PS> hscabal list aeson | json | ? { $_.'installed-versions' } | % { $_.name + ' - ' + $_.'installed-versions' }
+aeson - 0.7.0.3
+aeson-pretty - 0.7.1
+</pre>
+
+### HsHayoo
+
+Search in hayoo
+
+<pre>
+PS> hshayoo "(a -> b) -> c" | json | % { $_.declaration } | % { $_.name + ' :: ' + $_.decl.type } | select -first 5
+unC :: (tau -> a) -> b
+map3 :: (a -> b) -> f (g (h a)) -> f (g (h b))
+map2 :: (a -> b) -> f (g a) -> f (g b)
+map' :: (a -> b) -> map a -> map b
+map :: (a -> b) -> map a -> map b
+</pre>
+
+### Hayoo in GHCi
+
+You can use this `ghci.conf` to allow search from `ghci`:
+
+<pre>
+:set prompt "λ> "
+
+import Control.Monad.Error
+import HsDev.Tools.Hayoo
+
+:{
+let
+	showHayooFunction f =
+		(hayooName f ++ " :: " ++ hayooSignature f) :
+		(map ('\t':) $
+			lines (untagDescription (hayooDescription f)) ++
+			["-- Defined in '" ++ hayooModule f ++ "', " ++ hayooPackage f])
+	showHayoo = concatMap showHayooFunction . hayooFunctions
+:}
+
+:def hayoo \s -> return $ "runErrorT (hayoo \"" ++ s ++ "\") >>= (mapM_ putStrLn) . either (return . (\"Error: \" ++)) showHayoo"
+</pre>
+
+Usage:
+
+<pre>
+λ> :hayoo (a -> c) -> (b -> c)
+either :: (a -> c) -> (b -> c) -> Either a b -> c
+	Case analysis for the Either type.
+	 If the value is Left a, apply the first function to a;
+	 if it is Right b, apply the second function to b.
+	-- Defined in 'Prelude', base
+...
+</pre>

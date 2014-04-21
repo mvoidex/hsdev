@@ -5,7 +5,9 @@ module HsDev.Tools.Hayoo (
 	HayooResult(..), HayooFunction(..), HayooCompletion(..), HayooName(..),
 	hayooAsDeclaration,
 	-- * Search help online
-	hayoo
+	hayoo,
+	-- * Utils
+	untagDescription
 	) where
 
 import Control.Arrow
@@ -108,7 +110,7 @@ hayooAsDeclaration f = ModuleDeclaration {
 		moduleIdLocation = OtherModuleSource (Just $ hayooHackage f) },
 	moduleDeclaration = Declaration {
 		declarationName = hayooName f,
-		declarationDocs = Just (addOnline $ gsubRegexPR "</?\\w+[^>]*>" "" $ hayooDescription f),
+		declarationDocs = Just (addOnline $ untagDescription $ hayooDescription f),
 		declarationPosition = Nothing,
 		declaration = declInfo } }
 	where
@@ -130,3 +132,7 @@ hayoo :: String -> ErrorT String IO HayooResult
 hayoo q = do
 	resp <- ErrorT $ fmap (show +++ rspBody) $ simpleHTTP (getRequest $ "http://holumbus.fh-wedel.de/hayoo/hayoo.json?query=" ++ urlEncode q)
 	ErrorT $ return $ eitherDecode $ L.pack resp
+
+-- | Remove tags in description
+untagDescription :: String -> String
+untagDescription = gsubRegexPR "</?\\w+[^>]*>" ""
