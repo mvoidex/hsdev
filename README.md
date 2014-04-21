@@ -131,3 +131,56 @@ either :: (a -> c) -> (b -> c) -> Either a b -> c
 	-- Defined in 'Prelude', base
 ...
 </pre>
+
+### JSON
+
+#### PowerShell
+
+I'm using PowerShell and this function (in `$env:USERPROFILE\Documents`) to parse JSON output:
+
+<pre>
+Add-Type -AssemblyName System.Web.Extensions
+
+function json
+{
+    <#
+    .synopsis
+    Decode JSON
+    .example
+    PS> echo "{'x':123,'y':22}" | json | % { echo $_.y }
+    22
+    #>
+
+    param(
+        [Parameter(ValueFromPipeline = $true)]$i)
+
+    $jsser = new-object System.Web.Script.Serialization.JavaScriptSerializer
+    $jsser.MaxJsonLength = $i.length + 100 # Make limit big enough
+    $jsser.RecursionLimit = 100
+    $jsser.DeserializeObject($i)
+}
+</pre>
+
+which returns `PSObject`, that can be inspected in common way:
+
+<pre>
+PS> hsinspect module GHC -g "-package ghc" | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type } | select -first 5
+ABE :: id -> id -> HsWrapper -> TcSpecPrags -> ABExport id
+ABExport :: data ABExport id
+ACoAxiom :: CoAxiom Branched -> TyThing
+AConLike :: ConLike -> TyThing
+ATyCon :: TyCon -> TyThing
+</pre>
+
+#### [jq](http://stedolan.github.io/jq/)
+
+Another way is to use [jq](http://stedolan.github.io/jq/) tool, which is pretty simple:
+
+<pre>
+PS> hsinspect module GHC -g "-package ghc" | jq -r '.module.declarations[range(0;5)] | .name + \" :: \" + .decl.type'
+ABE :: id -> id -> HsWrapper -> TcSpecPrags -> ABExport id
+ABExport :: data ABExport id
+ACoAxiom :: CoAxiom Branched -> TyThing
+AConLike :: ConLike -> TyThing
+ATyCon :: TyCon -> TyThing
+</pre>
