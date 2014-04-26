@@ -19,6 +19,8 @@ library
   hs-source-dirs: src
   ghc-options: -threaded
   exposed-modules:
+    Data.Group
+    Data.Async
     HsDev
     HsDev.Cabal
     HsDev.Cache
@@ -47,10 +49,6 @@ library
   if os(windows)
     exposed-modules:
       System.Win32.PowerShell
-
-  other-modules:
-    Data.Group
-    Data.Async
 
   build-depends:
     base >= 4.7 && < 5,
@@ -113,6 +111,7 @@ executable hsdev
     mtl >= 2.1.0,
     network >= 2.4.0,
     process >= 1.2.0,
+    unordered-containers >= 0.2.0,
     text >= 1.1.0,
     transformers >= 0.3.0,
     unordered-containers >= 0.2.0,
@@ -136,19 +135,29 @@ executable hsinspect
     bytestring >= 0.10.0,
     containers >= 0.5.0,
     mtl >= 2.1.0,
-    transformers >= 0.3.0
+    text >= 1.1.0,
+    transformers >= 0.3.0,
+    unordered-containers >= 0.2.0,
+    vector >= 0.10.0
 
 executable hsclearimports
   main-is: hsclearimports.hs
   hs-source-dirs: tools
+  other-modules:
+    System.Command
   build-depends:
     base >= 4.7 && < 5,
     hsdev,
+    aeson >= 0.7.0,
+    aeson-pretty >= 0.7.0,
     directory >= 1.2.0,
     ghc >= 7.8.1,
     haskell-src-exts >= 1.14.0,
     containers >= 0.5.0,
-    mtl >= 2.1.0
+    mtl >= 2.1.0,
+    text >= 1.1.0,
+    unordered-containers >= 0.2.0,
+    vector >= 0.10.0
 
 executable hscabal
   main-is: hscabal.hs
@@ -163,7 +172,10 @@ executable hscabal
     aeson-pretty >= 0.7.0,
     bytestring >= 0.10.0,
     containers >= 0.5.0,
-    mtl >= 2.1.0
+    mtl >= 2.1.0,
+    text >= 1.1.0,
+    unordered-containers >= 0.2.0,
+    vector >= 0.10.0
 
 executable hshayoo
   main-is: hshayoo.hs
@@ -178,7 +190,10 @@ executable hshayoo
     aeson-pretty >= 0.7.0,
     bytestring >= 0.10.0,
     containers >= 0.5.0,
-    mtl >= 2.1.0
+    mtl >= 2.1.0,
+    text >= 1.1.0,
+    unordered-containers >= 0.2.0,
+    vector >= 0.10.0
 
 test-suite test
   main-is: Test.hs

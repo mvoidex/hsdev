@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, DefaultSignatures, FlexibleInstances #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, DefaultSignatures, FlexibleInstances, TupleSections #-}
 
 module System.Command (
 	Command(..),
@@ -7,25 +7,37 @@ module System.Command (
 	Help(..), addHelpCommand, addHelp,
 	brief, help,
 	run, runCmd,
+	OptionValue(..),
 	Opts(..),
-	mapOpts, traverseOpts,
-	option, option_, req, noreq, flag,
-	opt, optMaybe, hasOpt, askOpt, askOptDef, askOpts,
-	optsToArgs,
+	(%--), hoist,
+	option, option_,
+	has,
+	req, noreq, no,
+	arg, opt, def, list, flag,
+	toArgs,
 	splitArgs, unsplitArgs
 	) where
 
 import Control.Arrow
 import Control.Applicative
-import Control.Monad (join)
+import Control.Monad (join, (>=>))
+import Data.Aeson
 import Data.Char
+import qualified Data.HashMap.Strict as HM (HashMap, toList)
+import Data.String
 import Data.List (stripPrefix, unfoldr, isPrefixOf)
-import Data.Maybe (fromMaybe, mapMaybe, listToMaybe, maybeToList)
+import Data.Maybe (fromMaybe, mapMaybe, listToMaybe, maybeToList, isJust)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Monoid
-import Data.Traversable (traverse)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Foldable (Foldable(foldMap))
+import Data.Traversable (Traversable(traverse))
+import qualified Data.Vector as V
 import System.Console.GetOpt
+
+import Data.Group
 
 -- | Command
 data Command a = Command {
@@ -116,67 +128,114 @@ runCmd cmd = join . fmap toMaybe . commandRun cmd where
 	toMaybe :: Either b c -> Maybe c
 	toMaybe = either (const Nothing) Just
 
+-- | Convertible to option value
+class OptionValue a where
+	toOption :: a -> String
+	default toOption :: Show a => a -> String
+	toOption = show
+
+instance OptionValue String where
+	toOption = id
+
+instance OptionValue Int
+instance OptionValue Integer
+instance OptionValue Float
+instance OptionValue Double
+instance OptionValue Bool
+
 -- | Options holder
-newtype Opts = Opts { getOpts :: Map String [String] }
+newtype Opts a = Opts { getOpts :: Map String [a] }
 
-instance Monoid Opts where
+instance Eq a => Eq (Opts a) where
+	Opts l == Opts r = l == r
+
+instance Functor Opts where
+	fmap f (Opts opts) = Opts $ fmap (fmap f) opts
+
+instance Foldable Opts where
+	foldMap f (Opts opts) = foldMap (foldMap f) opts
+
+instance Traversable Opts where
+	traverse f (Opts opts) = Opts <$> traverse (traverse f) opts
+
+instance Monoid (Opts a) where
 	mempty = Opts mempty
-	(Opts l) `mappend` (Opts r) = Opts $ M.unionWith (++) l r
+	(Opts l) `mappend` (Opts r) = Opts $ M.unionWith mappend l r
 
-instance DefaultConfig Opts
+instance Eq a => Group (Opts a) where
+	add = mappend
+	(Opts l) `sub` (Opts r) = Opts $ l `sub` r
+	zero = mempty
 
--- | Map 'Opts'
-mapOpts :: (String -> String) -> Opts -> Opts
-mapOpts f = Opts . M.mapKeys f . getOpts
+instance DefaultConfig (Opts a)
 
--- | Traverse 'Opts'
-traverseOpts :: Applicative f => (String -> String -> f String) -> Opts -> f Opts
-traverseOpts f = fmap Opts . M.traverseWithKey (traverse . f) . getOpts
+instance ToJSON a => ToJSON (Opts a) where
+	toJSON (Opts opts) = object $ map toPair $ M.toList opts where
+		toPair (n, []) = fromString n .= Null
+		toPair (n, [v]) = fromString n .= v
+		toPair (n, vs) = fromString n .= vs
 
-option :: [Char] -> String -> [String] -> (String -> ArgDescr Opts) -> String -> OptDescr Opts
-option fs name names onOption d = Option fs (name:names) (onOption name) d
+instance FromJSON a => FromJSON (Opts a) where
+	parseJSON = withObject "options" $ fmap (Opts . M.fromList) . mapM fromPair . HM.toList where
+		fromPair (n, v) = (T.unpack n,) <$> case v of
+			Null -> return []
+			_ -> (return <$> parseJSON v) <|> parseJSON v
 
-option_ :: [Char] -> String -> (String -> ArgDescr Opts) -> String -> OptDescr Opts
+-- | Make 'Opts' with one argument
+(%--) :: OptionValue a => String -> a -> Opts String
+n %-- v = Opts $ M.singleton n [toOption v]
+
+-- | Make 'Opts' with flag enabled
+hoist :: String -> Opts a
+hoist n = Opts $ M.singleton n []
+
+option :: [Char] -> String -> [String] -> (String -> ArgDescr (Opts a)) -> String -> OptDescr (Opts a)
+option fs name names onOpt d = Option fs (name:names) (onOpt name) d
+
+option_ :: [Char] -> String -> (String -> ArgDescr (Opts a)) -> String -> OptDescr (Opts a)
 option_ fs name = option fs name []
 
+has :: String -> Opts a -> Bool
+has n = M.member n . getOpts
+
 -- | Required option
-req :: String -> String -> ArgDescr Opts
-req nm n = ReqArg (opt n) nm
+req :: String -> String -> ArgDescr (Opts String)
+req n nm = ReqArg (n %--) nm
 
--- | Optional option
-noreq :: String -> String -> ArgDescr Opts
-noreq nm n = OptArg (optMaybe n) nm
+-- | Not required option
+noreq :: String -> String -> ArgDescr (Opts String)
+noreq n nm = OptArg (maybe (hoist n) (n %--)) nm
 
--- | Flag option
-flag :: String -> ArgDescr Opts
-flag n = NoArg flag' where
-	flag' :: Opts
-	flag' = Opts $ M.singleton n []
+-- | No option
+no :: String -> ArgDescr (Opts String)
+no = NoArg . hoist
 
-opt :: String -> String -> Opts
-opt n v = Opts $ M.singleton n [v]
+-- | Get argument
+arg :: String -> Opts a -> Maybe a
+arg n = M.lookup n . getOpts >=> listToMaybe
 
-optMaybe :: String -> Maybe String -> Opts
-optMaybe n = Opts . M.singleton n . maybeToList
+-- | Get optional argument
+opt :: String -> Opts a -> Maybe (Maybe a)
+opt n = fmap listToMaybe . M.lookup n . getOpts
 
-hasOpt :: String -> Opts -> Bool
-hasOpt n = M.member n . getOpts
+-- | Get argument with default
+def :: a -> String -> Opts a -> Maybe a
+def d n = fmap (fromMaybe d . listToMaybe) . M.lookup n . getOpts
 
-askOpt :: String -> Opts -> Maybe String
-askOpt n = listToMaybe . askOpts n
+-- | Get list arguments
+list :: String -> Opts a -> [a]
+list n = fromMaybe [] . M.lookup n . getOpts
 
-askOptDef :: String -> Opts -> Maybe (Maybe String)
-askOptDef n = fmap listToMaybe . M.lookup n . getOpts
-
-askOpts :: String -> Opts -> [String]
-askOpts n = fromMaybe [] . M.lookup n . getOpts
+-- | Get flag
+flag :: String -> Opts a -> Bool
+flag n = isJust . M.lookup n . getOpts
 
 -- | Print 'Opts' as args
-optsToArgs :: Opts -> [String]
-optsToArgs = concatMap optToArgs . M.toList . getOpts where
-	optToArgs :: (String, [String]) -> [String]
-	optToArgs (n, []) = ["--" ++ n]
-	optToArgs (n, vs) = ["--"++ n ++ "=" ++ v | v <- vs]
+toArgs :: Opts String -> [String]
+toArgs = concatMap toArgs' . M.toList . getOpts where
+	toArgs' :: (String, [String]) -> [String]
+	toArgs' (n, []) = ["--" ++ n]
+	toArgs' (n, vs) = [concat ["--", n, "=", v] | v <- vs]
 
 -- | Split string to words
 splitArgs :: String -> [String]

@@ -15,17 +15,17 @@ import HsDev.Symbols (locateSourceDir)
 
 import System.Command
 
-opts :: [OptDescr Opts]
+opts :: [OptDescr (Opts String)]
 opts = [
 	option_ ['g'] "ghc" (req "ghc options") "options for GHC",
-	option_ [] "hide-import-list" flag "hide import list",
+	option_ [] "hide-import-list" no "hide import list",
 	option_ [] "max-import-list" (req "max import list length") "hide long import lists"]
 
 cmds :: [Command (IO ())]
 cmds = addHelp "hsclearimports" id [
 	cmd [] ["file"] "clear imports in haskell source" opts clear]
 	where
-		clear :: Opts -> [String] -> IO ()
+		clear :: Opts String -> [String] -> IO ()
 		clear as [f] = do
 			file <- canonicalizePath f
 			mroot <- locateSourceDir file
@@ -33,14 +33,14 @@ cmds = addHelp "hsclearimports" id [
 			flip finally (setCurrentDirectory cur) $ do
 				maybe (return ()) setCurrentDirectory mroot
 				void $ runErrorT $ catchError
-					(clearImports (askOpts "ghc" as) file >>= mapM_ (liftIO . putStrLn . format as))
+					(clearImports (list "ghc" as) file >>= mapM_ (liftIO . putStrLn . format as))
 					(\e -> liftIO (putStrLn $ "Error: " ++ e))
 		clear _ _ = putStrLn "Invalid arguments"
 		
-		format :: Opts -> (String, String) -> String
+		format :: Opts String -> (String, String) -> String
 		format as (imp, lst)
-			| hasOpt "hide-import-list" as = imp
-			| maybe False (length lst >) (askOpt "max-import-list" as >>= readMaybe) = imp
+			| flag "hide-import-list" as = imp
+			| maybe False (length lst >) (arg "max-import-list" as >>= readMaybe) = imp
 			| otherwise = imp ++ " (" ++ lst ++ ")"
 
 main :: IO ()

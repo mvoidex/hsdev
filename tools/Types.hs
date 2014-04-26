@@ -8,7 +8,7 @@ module Types (
 	-- * Messages and results
 	ResultValue(..), Response(..),
 	CommandResult(..), ok, err, errArgs, details,
-	WithOpts(..),
+	CommandCall(..), callArgs, addCallOpts, removeCallOpts, WithOpts(..),
 	CommandOptions(..), CommandAction
 	) where
 
@@ -27,8 +27,10 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.GhcMod (TypedRegion)
 import qualified HsDev.Database.Async as DB
+import HsDev.Util ((.::))
 
 import System.Command
+import Update
 
 -- | Server options
 data ServerOpts = ServerOpts {
@@ -151,25 +153,25 @@ instance FromJSON ResultValue where
 		ResultString <$> parseJSON v]
 
 data Response =
-	Response Value |
-	ResponseStatus Value |
-	ResponseMapFile String
+	ResponseStatus Status |
+	ResponseMapFile String |
+	Response Value
 
 instance ToJSON Response where
-	toJSON (Response v) = object ["result" .= v]
-	toJSON (ResponseStatus v) = object ["status" .= v]
+	toJSON (ResponseStatus s) = toJSON s
 	toJSON (ResponseMapFile s) = object ["file" .= s]
+	toJSON (Response v) = v
 
 instance FromJSON Response where
-	parseJSON = withObject "response" (\v ->
-		(Response <$> (v .: "result")) <|>
-		(ResponseStatus <$> (v .: "status")) <|>
-		(ResponseMapFile <$> (v .: "file")))
+	parseJSON v = foldr1 (<|>) [
+		ResponseStatus <$> parseJSON v,
+		withObject "response" (\f -> (ResponseMapFile <$> (f .:: "file"))) v,
+		pure $ Response v]
 
 data CommandResult =
 	ResultOk ResultValue |
 	ResultError String (Map String ResultValue) |
-	ResultProcess ((Value -> IO ()) -> IO ())
+	ResultProcess ((Status -> IO ()) -> IO ())
 
 instance Error CommandResult where
 	noMsg = ResultError noMsg mempty
@@ -189,9 +191,43 @@ details :: [(String, ResultValue)] -> CommandResult -> CommandResult
 details as (ResultError s cs) = ResultError s (M.union (M.fromList as) cs)
 details _ r = r
 
+data CommandCall = CommandCall {
+	commandCallName :: [String],
+	commandCallPosArgs :: [String],
+	commandCallOpts :: Opts String }
+
+instance ToJSON CommandCall where
+	toJSON (CommandCall n ps opts) = object [
+		"command" .= n,
+		"args" .= ps,
+		"opts" .= opts]
+
+instance FromJSON CommandCall where
+	parseJSON = withObject "command call" $ \v -> CommandCall <$>
+		(v .:: "command") <*>
+		((v .:: "args") <|> pure []) <*>
+		((v .:: "opts") <|> pure mempty)
+
+callArgs :: CommandCall -> [String]
+callArgs (CommandCall n ps opts) = n ++ ps ++ toArgs opts
+
+-- | Add options
+--
+-- >cmdCall `addCallOpts` ["foo" %-- 15]
+addCallOpts :: CommandCall -> [Opts String] -> CommandCall
+addCallOpts cmdCall os = cmdCall {
+	commandCallOpts = mconcat (commandCallOpts cmdCall : os) }
+
+-- | Remove specified call options
+--
+-- >cmdCall `removeCallOpts` ["foo"]
+removeCallOpts :: CommandCall -> [String] -> CommandCall
+removeCallOpts cmdCall os = cmdCall {
+	commandCallOpts = Opts $ foldr (.) id (map M.delete os) $ getOpts (commandCallOpts cmdCall) }
+
 data WithOpts a = WithOpts {
 	withOptsAct :: a,
-	withOptsArgs :: IO [String] }
+	withOptsCommand :: CommandCall }
 
 instance Functor WithOpts where
 	fmap f (WithOpts x as) = WithOpts (f x) as
@@ -202,7 +238,7 @@ data CommandOptions = CommandOptions {
 	commandReadCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
 	commandRoot :: FilePath,
 	commandLog :: String -> IO (),
-	commandWaitInput :: IO String,
+	commandWaitInput :: IO (),
 	commandLink :: IO (),
 	commandExit :: IO () }
 

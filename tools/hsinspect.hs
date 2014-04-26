@@ -17,7 +17,7 @@ main = toolMain "hsinspect" [
 	jsonCmd_ ["cabal"] ["project file"] "inspect .cabal file" inspectCabal']
 	where
 		ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
-		ghcs = askOpts "ghc"
+		ghcs = list "ghc"
 
 		inspectModule' opts [mname] = scanModule (ghcs opts) (CabalModule Cabal Nothing mname)
 		inspectModule' _ _ = toolError "Specify module name"

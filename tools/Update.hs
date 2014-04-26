@@ -1,13 +1,14 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, MultiParamTypeClasses #-}
 
 module Update (
+	Status(..), isStatus,
 	Settings(..),
 
 	UpdateDB,
 	updateDB,
 
-	setStatus, waiter, updater, loadCache, runTask, runTasks,
-	status, readDB,
+	setStatus, postStatus, waiter, updater, loadCache, runTask, runTasks,
+	readDB,
 
 	scanModule, scanModules, scanFile, scanCabal, scanProject, scanDirectory,
 
@@ -15,15 +16,16 @@ module Update (
 	liftErrorT
 	) where
 
-import Control.Applicative (Applicative(..))
+import Control.Applicative
 import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
 import Data.Aeson
+import Data.Aeson.Types
 import qualified Data.HashMap.Strict as HM
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, isJust)
 import Data.Monoid
 import Data.Traversable (traverse)
 import System.Directory (canonicalizePath)
@@ -36,11 +38,25 @@ import HsDev.Symbols
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
+import HsDev.Util ((.::))
+
+data Status = Status {
+	status :: Value,
+	statusDetails :: [Pair] }
+
+instance ToJSON Status where
+	toJSON (Status s ds) = object $ ("status" .= s) : ds
+
+instance FromJSON Status where
+	parseJSON = withObject "status" $ \v -> Status <$> (v .:: "status") <*> pure (HM.toList $ HM.delete "status" v)
+
+isStatus :: Value -> Bool
+isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Status)
 
 data Settings = Settings {
 	database :: Async Database,
 	databaseCacheReader :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
-	onStatus :: Value -> IO (),
+	onStatus :: Status -> IO (),
 	ghcOptions :: [String] }
 
 newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings m a }
@@ -50,11 +66,17 @@ newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings m a }
 updateDB :: Monad m => Settings -> ErrorT String (UpdateDB m) () -> m ()
 updateDB sets act = runUpdateDB (runErrorT act >> return ()) `runReaderT` sets
 
--- | Set partial status
-setStatus :: MonadReader Settings m => Value -> m a -> m a
-setStatus v act = local alter act where
-	alter s = s {
-		onStatus = \st -> onStatus s (v `union` st) }
+-- | Set status details
+setStatus :: MonadReader Settings m => [Pair] -> m a -> m a
+setStatus ps act = local alter act where
+	alter st = st {
+		onStatus = \(Status s ds) -> onStatus st (Status s (ds ++ ps)) }
+
+-- | Post status
+postStatus :: (MonadIO m, MonadReader Settings m) => Value -> m ()
+postStatus s = do
+	on' <- asks onStatus
+	liftIO $ on' $ Status s []
 
 -- | Wait DB to complete actions
 waiter :: (MonadIO m, MonadReader Settings m) => m () -> m ()
@@ -80,15 +102,15 @@ loadCache act = do
 
 -- | Run one task
 runTask :: MonadIO m => Value -> ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
-runTask v act = object ["task" .= v] `setStatus` wrapAct act where
+runTask v act = ["task" .= v] `setStatus` wrapAct act where
 	wrapAct :: MonadIO m => ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
 	wrapAct a = do
-		status $ object ["status" .= toJSON ("working" :: String)]
+		postStatus $ toJSON ("working" :: String)
 		x <- a
-		status $ object ["status" .= taskOk]
+		postStatus taskOk
 		return x
 		`catchError`
-		(\e -> status (object ["status" .= taskErr e]) >> throwError e)
+		(\e -> postStatus (taskErr e) >> throwError e)
 	taskOk = toJSON ("ok" :: String)
 	taskErr e = object ["error" .= e]
 
@@ -97,15 +119,9 @@ runTasks :: Monad m => [ErrorT String (UpdateDB m) ()] -> ErrorT String (UpdateD
 runTasks ts = zipWithM_ taskNum [1..] (map noErr ts) where
 	total = length ts
 	taskNum n t = progress `setStatus` t where
-		progress = object ["progress" .= object [
+		progress = ["progress" .= object [
 			"current" .= (n :: Integer), "total" .= total]]
 	noErr v = v `mplus` return ()
-
--- | Post status
-status :: (MonadIO m, MonadReader Settings m) => Value -> m ()
-status msg = do
-	on' <- asks onStatus
-	liftIO $ on' msg
 
 -- | Get database value
 readDB :: (MonadIO m, MonadReader Settings m) => m Database
