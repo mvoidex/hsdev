@@ -97,7 +97,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		db <- DB.newAsync
 		forever $ do
 			s <- getLine
-			processCmd (CommandOptions db (const $ return ()) (const $ return Nothing) dir putStrLn (void getLine) (error "Not supported") exitSuccess) 1000 s (L.putStrLn . encode)
+			processCmd (CommandOptions db (const $ return ()) (const $ return Nothing) dir putStrLn (error "Not supported") exitSuccess) 1000 s (L.putStrLn . encode)
 	start' sopts _ = do
 #if mingw32_HOST_OS
 		let
@@ -181,31 +181,23 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			waitListen <- newEmptyMVar
 			clientChan <- F.newChan
 
-			linkChan <- F.newChan
-			let
-				linkToSrv :: IO ()
-				linkToSrv = do
-					v <- newEmptyMVar
-					F.putChan linkChan (putMVar v ())
-					takeMVar v
-
 #if mingw32_HOST_OS
 			mmapPool <- createPool "hsdev"
 			let
 				-- | Send response as is or via memory mapped file
-				sendResponse :: Handle -> Response -> IO ()
-				sendResponse h r@(ResponseMapFile _) = L.hPutStrLn h $ encode r
-				sendResponse h r
-					| L.length msg <= 1024 = L.hPutStrLn h msg
+				sendResponse :: Bool -> Handle -> Response -> IO ()
+				sendResponse noFile h r@(ResponseMapFile _) = L.hPutStrLn h $ encode r
+				sendResponse noFile h r
+					| L.length msg <= 1024 || noFile = L.hPutStrLn h msg
 					| otherwise = do
 						sync <- newEmptyMVar
 						forkIO $ void $ withName mmapPool $ \mmapName -> do
 							runErrorT $ flip catchError
 								(\e -> liftIO $ do
-									sendResponse h $ Response $ object ["error" .= e]
+									sendResponse noFile h $ Response $ object ["error" .= e]
 									putMVar sync ())
 								(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
-									sendResponse h $ ResponseMapFile mmapName
+									sendResponse noFile h $ ResponseMapFile mmapName
 									putMVar sync ()
 									-- Dirty: give 10 seconds for client to read it
 									threadDelay 10000000)
@@ -217,13 +209,23 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 				sendResponse h = L.hPutStrLn h . encode
 #endif
 
+			linkChan <- F.newChan
+
 			forkIO $ do
 				accepter <- myThreadId
 
 				let
+					serverStop :: IO ()
 					serverStop = void $ forkIO $ do
 						void $ tryPutMVar waitListen ()
 						killThread accepter
+
+					linkToSrv :: MVar (IO ()) -> IO ()
+					linkToSrv var = do
+						swapMVar var serverStop
+						v <- newEmptyMVar
+						F.putChan linkChan (putMVar v ())
+						takeMVar v
 
 				s <- socket AF_INET Stream defaultProtocol
 				bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
@@ -235,35 +237,38 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 						bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
 							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
 								me <- myThreadId
+								linkVar <- newMVar $ return ()
 								let
 									timeoutWait = do
 										notDone <- isEmptyMVar done
 										when notDone $ do
 											void $ forkIO $ do
-												threadDelay 10000000
+												threadDelay 1000000
 												tryPutMVar done ()
 												killThread me
 											void $ takeMVar done
+									disconnected = do
+										outputStr $ show s' ++ " disconnected"
+										join $ takeMVar linkVar
 								F.putChan clientChan timeoutWait
-								forever $ flip finally (outputStr $ show s' ++ " disconnected") $ do
+								flip finally disconnected $ forever $ do
 									req <- hGetLine' h
 									outputStr $ show s' ++ ": " ++ fromUtf8 req
-									case fmap extractCurrentDir $ eitherDecode req of
-										Left reqErr -> sendResponse h $ Response $ object [
+									case fmap extractMeta $ eitherDecode req of
+										Left reqErr -> sendResponse True h $ Response $ object [
 											"error" .= ("Invalid request" :: String),
 											"request" .= fromUtf8 req,
 											"what" .= reqErr]
-										Right (clientDir, reqArgs) -> processCmdArgs
+										Right (clientDir, noFile, reqArgs) -> processCmdArgs
 											(CommandOptions
 												db
 												writeCache
 												readCache
 												clientDir
 												outputStr
-												(void $ hWaitForInput h 0)
-												linkToSrv
+												(linkToSrv linkVar)
 												serverStop)
-											(fromJust $ getFirst $ serverTimeout sopts) (callArgs reqArgs) (sendResponse h)
+											(fromJust $ getFirst $ serverTimeout sopts) (callArgs reqArgs) (sendResponse noFile h)
 
 			takeMVar waitListen
 			withCache () $ \cdir -> do
@@ -286,8 +291,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		s <- socket AF_INET Stream defaultProtocol
 		addr' <- inet_addr "127.0.0.1"
 		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort copts) addr')
-		h <- socketToHandle s ReadWriteMode
-		forever $ ignoreIO $ do
+		bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forever $ ignoreIO $ do
 			cmd <- hGetLine' stdin
 			case eitherDecode cmd of
 				Left e -> L.putStrLn $ encodeValue $ object ["error" .= ("invalid command" :: String)]
@@ -408,9 +412,10 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			(ps, args', _) = getOpt RequireOrder clientOpts args
 			p = mconcat ps `mappend` defaultConfig
 
-	extractCurrentDir :: CommandCall -> (FilePath, CommandCall)
-	extractCurrentDir cmdCall = (fpath, cmdCall `removeCallOpts` ["current-directory"]) where
-		fpath = fromMaybe "." $ arg "current-directory" $ commandCallOpts cmdCall
+	extractMeta :: CommandCall -> (FilePath, Bool, CommandCall)
+	extractMeta c = (fpath, noFile, c `removeCallOpts` ["current-directory", "no-file"]) where
+		fpath = fromMaybe "." $ arg "current-directory" $ commandCallOpts c
+		noFile = flag "no-file" $ commandCallOpts c
 
 commands :: [Command CommandAction]
 commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap noTimeout)) linkCmd where
@@ -640,11 +645,15 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		projs <- traverse (findProject copts) $ list "project" as
 		cabals <- getSandboxes copts as
 		let
+			packages = list "package" as
+			hasFilters = not $ null projs && null packages && null cabals
 			filters = allOf $ catMaybes [
-				Just $ anyOf [
-					\m -> any (`inProject` m) projs,
-					\m -> any (`inPackage` m) (list "package" as),
-					\m -> any (`inCabal` m) cabals],
+				if hasFilters
+					then Just $ anyOf [
+						\m -> any (`inProject` m) projs,
+						\m -> any (`inPackage` m) packages,
+						\m -> any (`inCabal` m) cabals]
+					else Nothing,
 				if flag "src" as then Just byFile else Nothing,
 				if flag "stand" as then Just standalone else Nothing]
 		return $ ResultList $ map (ResultModuleId . moduleId) $ newest as $ selectModules (filters . moduleId) dbval
@@ -832,7 +841,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		return res
 	-- link to server
 	link' as _ copts = do
-		race [commandWaitInput copts `finally` commandExit copts, commandLink copts]
+		commandLink copts
 		return ok
 	-- exit
 	exit' _ copts = do

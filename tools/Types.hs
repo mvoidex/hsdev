@@ -16,6 +16,7 @@ import Control.Applicative
 import Control.Monad.Error
 import Data.Aeson
 import Data.Map (Map)
+import Data.Maybe (fromMaybe)
 import Data.Monoid
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map as M
@@ -27,7 +28,7 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.GhcMod (TypedRegion)
 import qualified HsDev.Database.Async as DB
-import HsDev.Util ((.::))
+import HsDev.Util ((.::), (.::?))
 
 import System.Command
 import Update
@@ -205,8 +206,8 @@ instance ToJSON CommandCall where
 instance FromJSON CommandCall where
 	parseJSON = withObject "command call" $ \v -> CommandCall <$>
 		(v .:: "command") <*>
-		((v .:: "args") <|> pure []) <*>
-		((v .:: "opts") <|> pure mempty)
+		(fromMaybe [] <$> (v .::? "args")) <*>
+		(fromMaybe mempty <$> (v .::? "opts"))
 
 callArgs :: CommandCall -> [String]
 callArgs (CommandCall n ps opts) = n ++ ps ++ toArgs opts
@@ -238,7 +239,6 @@ data CommandOptions = CommandOptions {
 	commandReadCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
 	commandRoot :: FilePath,
 	commandLog :: String -> IO (),
-	commandWaitInput :: IO (),
 	commandLink :: IO (),
 	commandExit :: IO () }
 

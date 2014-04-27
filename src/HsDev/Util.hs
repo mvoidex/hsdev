@@ -7,7 +7,7 @@ module HsDev.Util (
 	-- * String utils
 	tab, tabs, trim, split,
 	-- * Helper
-	(.::),
+	(.::), (.::?),
 	-- * Exceptions
 	liftException, liftExceptionM, liftIOErrors,
 	eitherT,
@@ -29,6 +29,7 @@ import Data.ByteString.Lazy (ByteString)
 import Data.Text (Text)
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
+import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
 
@@ -89,6 +90,9 @@ split p = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break p)
 -- | Workaround, sometimes we get HM.lookup "foo" v == Nothing, but lookup "foo" (HM.toList v) == Just smth
 (.::) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser a
 v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lookup name $ HM.toList v
+
+(.::?) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser (Maybe a)
+v .::? name = traverse parseJSON $ lookup name $ HM.toList v
 
 -- | Lift IO exception to ErrorT
 liftException :: C.MonadCatchIO m => m a -> ErrorT String m a
