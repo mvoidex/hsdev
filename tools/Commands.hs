@@ -319,8 +319,6 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 			Right dbCache' -> DB.update db (return dbCache')
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"
-#else
-	mmapPool <- return Nothing
 #endif
 	act $ CommandOptions
 		db
@@ -329,7 +327,9 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 		"."
 		outputStr
 		waitOutput
+#if mingw32_HOST_OS
 		mmapPool
+#endif
 		(return ())
 		(return ())
 		(return ())
@@ -357,8 +357,8 @@ readCache sopts logMsg act = withCache sopts Nothing $ join . liftM (either cach
 			ms -> logMsg $ "cache read: " ++ show (length ms) ++ " files"
 		return $ Just $ merge s
 
-sendResponseMmap :: Pool -> (ByteString -> IO ()) -> Response -> IO ()
 #if mingw32_HOST_OS
+sendResponseMmap :: Pool -> (ByteString -> IO ()) -> Response -> IO ()
 sendResponseMmap mmapPool send r@(ResponseMapFile _) = send $ encode r
 sendResponseMmap mmapPool send r
 	| L.length msg <= 1024 = send msg
@@ -377,8 +377,6 @@ sendResponseMmap mmapPool send r
 		takeMVar sync
 	where
 		msg = encode r
-#else
-sendResponseMmap _ = sendResponse
 #endif
 
 sendResponse :: (ByteString -> IO ()) -> Response -> IO ()
@@ -405,9 +403,13 @@ processClient name receive send sopts copts = do
 		answer :: Bool -> Response -> IO ()
 		answer noFile' r = do
 			commandLog copts $ name ++ " << " ++ fromUtf8 (encode r)
+#if mingw32_HOST_OS
 			case noFile' of
 				True -> sendResponse send r
 				False -> maybe (sendResponse send) (`sendResponseMmap` send) (commandMmapPool copts) r
+#else
+			sendResponse send r
+#endif
 
 		extractMeta :: CommandCall -> (FilePath, Bool, CommandCall)
 		extractMeta c = (fpath, noFile, c `removeCallOpts` ["current-directory", "no-file"]) where
