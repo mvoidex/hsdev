@@ -248,6 +248,7 @@ data CommandOptions = CommandOptions {
 	commandMmapPool :: Maybe Pool,
 #endif
 	commandLink :: IO (),
+	commandHold :: IO (),
 	commandExit :: IO () }
 
 type CommandAction = WithOpts (Int -> CommandOptions -> IO CommandResult)

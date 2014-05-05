@@ -146,9 +146,6 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 					void $ tryPutMVar waitListen ()
 					killThread accepter
 
-				linkToSrv :: MVar (IO ()) -> IO ()
-				linkToSrv var = void $ swapMVar var serverStop
-
 			s <- socket AF_INET Stream defaultProtocol
 			bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
 			listen s maxListenQueue
@@ -158,7 +155,6 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 					bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
 						bracket newEmptyMVar (`putMVar` ()) $ \done -> do
 							me <- myThreadId
-							linkVar <- newMVar $ return ()
 							let
 								timeoutWait = do
 									notDone <- isEmptyMVar done
@@ -167,9 +163,11 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 											threadDelay 1000000
 											tryPutMVar done ()
 											killThread me
+										takeMVar done
+								waitForever = forever $ hGetLine' h
 							F.putChan clientChan timeoutWait
 							processClient (show s') (hGetLine' h) (L.hPutStrLn h) sopts (copts {
-								commandLink = linkToSrv linkVar,
+								commandHold = waitForever,
 								commandExit = serverStop })
 
 		takeMVar waitListen
@@ -334,6 +332,7 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 		mmapPool
 		(return ())
 		(return ())
+		(return ())
 
 withCache :: ServerOpts -> a -> (FilePath -> IO a) -> IO a
 withCache sopts v onCache = case getFirst (serverCache sopts) of
@@ -388,7 +387,8 @@ sendResponse = (. encode)
 processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> ServerOpts -> CommandOptions -> IO ()
 processClient name receive send sopts copts = do
 	commandLog copts $ name ++ " connected"
-	flip finally disconnected $ forever $ do
+	linkVar <- newMVar $ return ()
+	flip finally (disconnected linkVar) $ forever $ do
 		req <- receive
 		commandLog copts $ name ++ " >> " ++ fromUtf8 req
 		case extractMeta <$> eitherDecode req of
@@ -397,7 +397,7 @@ processClient name receive send sopts copts = do
 				"request" .= fromUtf8 req,
 				"what" .= err]
 			Right (cdir, noFile, reqArgs) -> processCmdArgs
-				(copts { commandRoot = cdir })
+				(copts { commandLink = void (swapMVar linkVar $ commandExit copts), commandRoot = cdir })
 				(fromJust $ getFirst $ serverTimeout sopts)
 				(callArgs reqArgs)
 				(answer noFile)
@@ -414,8 +414,10 @@ processClient name receive send sopts copts = do
 			fpath = fromMaybe (commandRoot copts) $ arg "current-directory" $ commandCallOpts c
 			noFile = flag "no-file" $ commandCallOpts c
 
-		disconnected :: IO ()
-		disconnected = commandLog copts $ name ++ " disconnected"
+		disconnected :: MVar (IO ()) -> IO ()
+		disconnected var = do
+			commandLog copts $ name ++ " disconnected"
+			join $ takeMVar var
 
 commands :: [Command CommandAction]
 commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap noTimeout)) linkCmd where
@@ -496,7 +498,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
 		-- Exit
 		cmd_' ["exit"] [] "exit" exit']
-	linkCmd = [cmd' ["link"] [] "link to server" [] link']
+	linkCmd = [cmd' ["link"] [] "link to server" [holdArg] link']
 
 	-- Command arguments and flags
 	allFlag = option_ ['a'] "all" no "remove all"
@@ -508,6 +510,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	findArg = option_ [] "find" (req "find") "infix match"
 	ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
 	globalArg = option_ [] "global" no "scope of project"
+	holdArg = option_ ['h'] "hold" no "don't return any response"
 	localsArg = option_ ['l'] "locals" no "look in local declarations"
 	noLastArg = option_ [] "no-last" no "don't select last package version"
 	matches = [prefixArg, findArg]
@@ -842,6 +845,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	-- link to server
 	link' as _ copts = do
 		commandLink copts
+		when (flag "hold" as) $ commandHold copts
 		return ok
 	-- exit
 	exit' _ copts = do
