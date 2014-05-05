@@ -86,18 +86,12 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 	wrapCmd :: Command CommandAction -> Command (IO ())
 	wrapCmd = fmap sendCmd . addClientOpts . fmap withOptsCommand
 	srvCmds = [
-		cmd_ ["run"] [] "run interactive" runi',
 		cmd ["server", "start"] [] "start remote server" serverOpts start',
 		cmd ["server", "run"] [] "start server" serverOpts run',
 		cmd ["server", "stop"] [] "stop remote server" clientOpts stop',
+		cmd ["server", "connect"] [] "start server which then connects to port specified" serverOpts serverConnect',
 		cmd ["connect"] [] "connect to send commands directly" clientOpts connect']
 
-	runi' _ = do
-		dir <- getCurrentDirectory
-		db <- DB.newAsync
-		forever $ do
-			s <- getLine
-			processCmd (CommandOptions db (const $ return ()) (const $ return Nothing) dir putStrLn (error "Not supported") exitSuccess) 1000 s (L.putStrLn . encode)
 	start' sopts _ = do
 #if mingw32_HOST_OS
 		let
@@ -137,155 +131,63 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			forkProcess proxy
 			putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
 #endif
-	run' sopts _ = do
-		msgs <- F.newChan
-		outputDone <- newEmptyMVar
-		forkIO $ finally
-			(F.readChan msgs >>= mapM_ (logMsg sopts))
-			(putMVar outputDone ())
+	run' sopts _ = runServer sopts $ \copts -> do
+		commandLog copts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
 
-		let
-			outputStr = F.putChan msgs
-			waitOutput = F.closeChan msgs >> takeMVar outputDone
-			withCache :: a -> (FilePath -> IO a) -> IO a
-			withCache v onCache = case getFirst (serverCache sopts) of
-				Nothing -> return v
-				Just cdir -> onCache cdir
-			writeCache :: Database -> IO ()
-			writeCache d = withCache () $ \cdir -> do
-				outputStr "writing cache"
-				SC.dump cdir (structurize d)
-			readCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
-			readCache act = withCache Nothing $ join . liftM (either cacheErr cacheOk) . runErrorT . act where
-				cacheErr e = outputStr ("Unable read cache: " ++ e) >> return Nothing
-				cacheOk s = do
-					forM_ (M.keys (structuredCabals s)) $ \c -> outputStr ("cache read: cabal " ++ show c)
-					forM_ (M.keys (structuredProjects s)) $ \p -> outputStr ("cache read: project " ++ p)
-					case allModules (structuredFiles s) of
-						[] -> return ()
-						ms -> outputStr $ "cache read: " ++ show (length ms) ++ " files"
-					return $ Just $ merge s
+		waitListen <- newEmptyMVar
+		clientChan <- F.newChan
 
-		outputStr $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+		forkIO $ do
+			accepter <- myThreadId
 
-		logIO "server exception: " outputStr $ flip finally waitOutput $ do
-			db <- DB.newAsync
-
-			when (getAny $ serverLoadCache sopts) $ withCache () $ \cdir -> do
-				outputStr $ "Loading cache from " ++ cdir
-				dbCache <- liftA merge <$> SC.load cdir
-				case dbCache of
-					Left err -> outputStr $ "Failed to load cache: " ++ err
-					Right dbCache' -> DB.update db (return dbCache')
-
-			waitListen <- newEmptyMVar
-			clientChan <- F.newChan
-
-#if mingw32_HOST_OS
-			mmapPool <- createPool "hsdev"
 			let
-				-- | Send response as is or via memory mapped file
-				sendResponse :: Bool -> Handle -> Response -> IO ()
-				sendResponse noFile h r@(ResponseMapFile _) = L.hPutStrLn h $ encode r
-				sendResponse noFile h r
-					| L.length msg <= 1024 || noFile = L.hPutStrLn h msg
-					| otherwise = do
-						sync <- newEmptyMVar
-						forkIO $ void $ withName mmapPool $ \mmapName -> do
-							runErrorT $ flip catchError
-								(\e -> liftIO $ do
-									sendResponse noFile h $ Response $ object ["error" .= e]
-									putMVar sync ())
-								(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
-									sendResponse noFile h $ ResponseMapFile mmapName
-									putMVar sync ()
-									-- Dirty: give 10 seconds for client to read it
-									threadDelay 10000000)
-						takeMVar sync
-					where
-						msg = encode r
-#else
-			let
-				sendResponse h = L.hPutStrLn h . encode
-#endif
+				serverStop :: IO ()
+				serverStop = void $ forkIO $ do
+					void $ tryPutMVar waitListen ()
+					killThread accepter
 
-			linkChan <- F.newChan
+				linkToSrv :: MVar (IO ()) -> IO ()
+				linkToSrv var = void $ swapMVar var serverStop
 
-			forkIO $ do
-				accepter <- myThreadId
+			s <- socket AF_INET Stream defaultProtocol
+			bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
+			listen s maxListenQueue
+			forever $ logIO "accept client exception: " (commandLog copts) $ do
+				s' <- fst <$> accept s
+				void $ forkIO $ logIO (show s' ++ " exception: ") (commandLog copts) $
+					bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
+						bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+							me <- myThreadId
+							linkVar <- newMVar $ return ()
+							let
+								timeoutWait = do
+									notDone <- isEmptyMVar done
+									when notDone $ do
+										void $ forkIO $ do
+											threadDelay 1000000
+											tryPutMVar done ()
+											killThread me
+							F.putChan clientChan timeoutWait
+							processClient (show s') (hGetLine' h) (L.hPutStrLn h) sopts (copts {
+								commandLink = linkToSrv linkVar,
+								commandExit = serverStop })
 
-				let
-					serverStop :: IO ()
-					serverStop = void $ forkIO $ do
-						void $ tryPutMVar waitListen ()
-						killThread accepter
-
-					linkToSrv :: MVar (IO ()) -> IO ()
-					linkToSrv var = do
-						swapMVar var serverStop
-						v <- newEmptyMVar
-						F.putChan linkChan (putMVar v ())
-						takeMVar v
-
-				s <- socket AF_INET Stream defaultProtocol
-				bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
-				listen s maxListenQueue
-				forever $ logIO "accept client exception: " outputStr $ do
-					s' <- fmap fst $ accept s
-					outputStr $ show s' ++ " connected"
-					void $ forkIO $ logIO (show s' ++ " exception: ") outputStr $
-						bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-								me <- myThreadId
-								linkVar <- newMVar $ return ()
-								let
-									timeoutWait = do
-										notDone <- isEmptyMVar done
-										when notDone $ do
-											void $ forkIO $ do
-												threadDelay 1000000
-												tryPutMVar done ()
-												killThread me
-											void $ takeMVar done
-									disconnected = do
-										outputStr $ show s' ++ " disconnected"
-										join $ takeMVar linkVar
-								F.putChan clientChan timeoutWait
-								flip finally disconnected $ forever $ do
-									req <- hGetLine' h
-									outputStr $ show s' ++ ": " ++ fromUtf8 req
-									case fmap extractMeta $ eitherDecode req of
-										Left reqErr -> sendResponse True h $ Response $ object [
-											"error" .= ("Invalid request" :: String),
-											"request" .= fromUtf8 req,
-											"what" .= reqErr]
-										Right (clientDir, noFile, reqArgs) -> processCmdArgs
-											(CommandOptions
-												db
-												writeCache
-												readCache
-												clientDir
-												outputStr
-												(linkToSrv linkVar)
-												serverStop)
-											(fromJust $ getFirst $ serverTimeout sopts) (callArgs reqArgs) (sendResponse noFile h)
-
-			takeMVar waitListen
-			withCache () $ \cdir -> do
-				outputStr $ "saving cache to " ++ cdir
-				logIO "cache saving exception: " outputStr $ do
-					dbval <- DB.readAsync db
-					SC.dump cdir $ structurize dbval
-				outputStr "cache saved"
-			outputStr "closing links"
-			F.stopChan linkChan >>= sequence_
-			outputStr "waiting for clients"
-			F.stopChan clientChan >>= sequence_
-			outputStr "server shutdown"
+		takeMVar waitListen
+		DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
+		F.stopChan clientChan >>= sequence_
+		commandLog copts "server stopped"
 	stop' copts _ = run (map wrapCmd' commands) onDef onError ["exit"] where
 		onDef = putStrLn "Command 'exit' not found"
 		onError es = putStrLn $ "Failed to stop server: " ++ intercalate ", " es
 		wrapCmd' = fmap (sendCmd . (copts,) . withOptsCommand)
+	serverConnect' sopts _ = runServer sopts $ \copts -> do
+		me <- myThreadId
+		s <- socket AF_INET Stream defaultProtocol
+		addr' <- inet_addr "127.0.0.1"
+		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) addr')
+		bracket (socketToHandle s ReadWriteMode) hClose $ \h ->
+			processClient (show s) (hGetLine' h) (L.hPutStrLn h) sopts (copts {
+				commandExit = killThread me })
 	connect' copts _ = do
 		curDir <- getCurrentDirectory
 		s <- socket AF_INET Stream defaultProtocol
@@ -329,21 +231,6 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 					orFail :: (Monad m, Functor m) => ErrorT String m a -> (String, [Pair]) -> ErrorT String m a
 					orFail act (msg, fs) = act <|> (throwError $ fromUtf8 $ encodeValue $ object (
 						("error" .= msg) : fs))
-
-	logIO :: String -> (String -> IO ()) -> IO () -> IO ()
-	logIO pre out act = handle onIO act where
-		onIO :: IOException -> IO ()
-		onIO e = out $ pre ++ show e
-
-	ignoreIO :: IO () -> IO ()
-	ignoreIO = handle (const (return ()) :: IOException -> IO ())
-
-	logMsg :: ServerOpts -> String -> IO ()
-	logMsg sopts s = ignoreIO $ do
-		putStrLn s
-		case getFirst (serverLog sopts) of
-			Nothing -> return ()
-			Just f -> withFile f AppendMode (`hPutStrLn` s)
 
 	-- Send command to server
 	sendCmd :: (ClientOpts, CommandCall) -> IO ()
@@ -412,10 +299,120 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			(ps, args', _) = getOpt RequireOrder clientOpts args
 			p = mconcat ps `mappend` defaultConfig
 
-	extractMeta :: CommandCall -> (FilePath, Bool, CommandCall)
-	extractMeta c = (fpath, noFile, c `removeCallOpts` ["current-directory", "no-file"]) where
-		fpath = fromMaybe "." $ arg "current-directory" $ commandCallOpts c
-		noFile = flag "no-file" $ commandCallOpts c
+-- | Inits log chan and returns functions (print message, wait channel)
+initLog :: ServerOpts -> IO (String -> IO (), IO ())
+initLog sopts = do
+	msgs <- F.newChan
+	outputDone <- newEmptyMVar
+	forkIO $ finally
+		(F.readChan msgs >>= mapM_ (logMsg sopts))
+		(putMVar outputDone ())
+	return (F.putChan msgs, F.closeChan msgs >> takeMVar outputDone)
+
+-- | Run server
+runServer :: ServerOpts -> (CommandOptions -> IO ()) -> IO ()
+runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> do
+	db <- DB.newAsync
+	when (getAny $ serverLoadCache sopts) $ withCache sopts () $ \cdir -> do
+		outputStr $ "Loading cache from " ++ cdir
+		dbCache <- liftA merge <$> SC.load cdir
+		case dbCache of
+			Left err -> outputStr $ "Failed to load cache: " ++ err
+			Right dbCache' -> DB.update db (return dbCache')
+#if mingw32_HOST_OS
+	mmapPool <- Just <$> createPool "hsdev"
+#else
+	mmapPool <- return Nothing
+#endif
+	act $ CommandOptions
+		db
+		(writeCache sopts outputStr)
+		(readCache sopts outputStr)
+		"."
+		outputStr
+		waitOutput
+		mmapPool
+		(return ())
+		(return ())
+
+withCache :: ServerOpts -> a -> (FilePath -> IO a) -> IO a
+withCache sopts v onCache = case getFirst (serverCache sopts) of
+	Nothing -> return v
+	Just cdir -> onCache cdir
+
+writeCache :: ServerOpts -> (String -> IO ()) -> Database -> IO ()
+writeCache sopts logMsg d = withCache sopts () $ \cdir -> do
+	logMsg $ "writing cache to " ++ cdir
+	logIO "cache writing exception: " logMsg $ do
+		SC.dump cdir $ structurize d
+	logMsg $ "cache saved to " ++ cdir
+
+readCache :: ServerOpts -> (String -> IO ()) -> (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
+readCache sopts logMsg act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runErrorT . act where
+	cacheErr e = logMsg ("Error reading cache: " ++ e) >> return Nothing
+	cacheOk s = do
+		forM_ (M.keys (structuredCabals s)) $ \c -> logMsg ("cache read: cabal " ++ show c)
+		forM_ (M.keys (structuredProjects s)) $ \p -> logMsg ("cache read: project " ++ p)
+		case allModules (structuredFiles s) of
+			[] -> return ()
+			ms -> logMsg $ "cache read: " ++ show (length ms) ++ " files"
+		return $ Just $ merge s
+
+sendResponseMmap :: Pool -> (ByteString -> IO ()) -> Response -> IO ()
+#if mingw32_HOST_OS
+sendResponseMmap mmapPool send r@(ResponseMapFile _) = send $ encode r
+sendResponseMmap mmapPool send r
+	| L.length msg <= 1024 = send msg
+	| otherwise = do
+		sync <- newEmptyMVar
+		forkIO $ void $ withName mmapPool $ \mmapName -> do
+			runErrorT $ flip catchError
+				(\e -> liftIO $ do
+					sendResponseMmap mmapPool send $ Response $ object ["error" .= e]
+					putMVar sync ())
+				(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
+					sendResponseMmap mmapPool send $ ResponseMapFile mmapName
+					putMVar sync ()
+					-- give 10 seconds for client to read data
+					threadDelay 10000000)
+		takeMVar sync
+	where
+		msg = encode r
+#else
+sendResponseMmap _ = sendResponse
+#endif
+
+sendResponse :: (ByteString -> IO ()) -> Response -> IO ()
+sendResponse = (. encode)
+
+processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> ServerOpts -> CommandOptions -> IO ()
+processClient name receive send sopts copts = do
+	commandLog copts $ name ++ " connected"
+	flip finally disconnected $ forever $ do
+		req <- receive
+		case extractMeta <$> eitherDecode req of
+			Left err -> answer True $ Response $ object [
+				"error" .= ("Invalid request" :: String),
+				"request" .= fromUtf8 req,
+				"what" .= err]
+			Right (cdir, noFile, reqArgs) -> processCmdArgs
+				(copts { commandRoot = cdir })
+				(fromJust $ getFirst $ serverTimeout sopts)
+				(callArgs reqArgs)
+				(answer noFile)
+	where
+		answer :: Bool -> Response -> IO ()
+		answer noFile'
+			| noFile' = sendResponse send
+			| otherwise = maybe (sendResponse send) (`sendResponseMmap` send) $ commandMmapPool copts
+
+		extractMeta :: CommandCall -> (FilePath, Bool, CommandCall)
+		extractMeta c = (fpath, noFile, c `removeCallOpts` ["current-directory", "no-file"]) where
+			fpath = fromMaybe (commandRoot copts) $ arg "current-directory" $ commandCallOpts c
+			noFile = flag "no-file" $ commandCallOpts c
+
+		disconnected :: IO ()
+		disconnected = commandLog copts $ name ++ " disconnected"
 
 commands :: [Command CommandAction]
 commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap noTimeout)) linkCmd where
@@ -1048,3 +1045,18 @@ race acts = do
 	where
 		ignoreError :: SomeException -> IO ()
 		ignoreError _ = return ()
+
+logIO :: String -> (String -> IO ()) -> IO () -> IO ()
+logIO pre out act = handle onIO act where
+	onIO :: IOException -> IO ()
+	onIO e = out $ pre ++ show e
+
+ignoreIO :: IO () -> IO ()
+ignoreIO = handle (const (return ()) :: IOException -> IO ())
+
+logMsg :: ServerOpts -> String -> IO ()
+logMsg sopts s = ignoreIO $ do
+	putStrLn s
+	case getFirst (serverLog sopts) of
+		Nothing -> return ()
+		Just f -> withFile f AppendMode (`hPutStrLn` s)

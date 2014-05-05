@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, CPP #-}
 
 module Types (
 	-- * Server options
@@ -32,6 +32,10 @@ import HsDev.Util ((.::), (.::?))
 
 import System.Command
 import Update
+
+#if mingw32_HOST_OS
+import System.Win32.FileMapping.NamePool (Pool)
+#endif
 
 -- | Server options
 data ServerOpts = ServerOpts {
@@ -239,6 +243,10 @@ data CommandOptions = CommandOptions {
 	commandReadCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
 	commandRoot :: FilePath,
 	commandLog :: String -> IO (),
+	commandLogWait :: IO (),
+#if mingw32_HOST_OS
+	commandMmapPool :: Maybe Pool,
+#endif
 	commandLink :: IO (),
 	commandExit :: IO () }
 
