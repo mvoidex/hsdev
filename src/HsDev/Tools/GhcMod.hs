@@ -25,6 +25,7 @@ import Text.Read (readMaybe)
 import System.Directory (getCurrentDirectory)
 
 import qualified Language.Haskell.GhcMod as GhcMod
+import qualified Language.Haskell.GhcMod.Ghc as GhcMod
 
 import HsDev.Cabal
 import HsDev.Project
@@ -36,13 +37,16 @@ import HsDev.Util ((.::))
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
 list opts cabal = do
 	cradle <- liftIO $ cradle cabal Nothing
-	ms <- tryGhc $ GhcMod.listMods (GhcMod.defaultOptions { GhcMod.ghcOpts = opts }) cradle
+	ms <- tryGhc $ (map splitPackage . lines) <$> GhcMod.modules (GhcMod.defaultOptions { GhcMod.ghcOpts = opts })
 	return [CabalModule cabal (readMaybe p) m | (m, p) <- ms]
+	where
+		splitPackage :: String -> (String, String)
+		splitPackage = second (drop 1) . break isSpace
 
 browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ErrorT String IO InspectedModule
 browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ do
 	cradle <- liftIO $ cradle cabal Nothing
-	ts <- tryGhc $ GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = packageOpt mpackage ++ opts, GhcMod.packageId = mpackagename }) cradle mname
+	ts <- tryGhc $ lines <$> GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = packageOpt mpackage ++ opts }) mpkgname
 	return $ Module {
 		moduleName = mname,
 		moduleDocs = Nothing,
@@ -51,7 +55,7 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 		moduleImports = [],
 		moduleDeclarations = decls ts }
 	where
-		mpackagename = fmap packageName mpackage
+		mpkgname = maybe mname (\p -> packageName p ++ ":" ++ mname) mpackage
 		mloc = CabalModule cabal mpackage mname
 		decls rs = M.fromList $ map (declarationName &&& id) $ mapMaybe parseDecl rs
 		parseFunction s = do
@@ -70,7 +74,7 @@ browseInspection = InspectionAt 0
 info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> ErrorT String IO Declaration
 info opts cabal file mproj mname sname = do
 	cradle <- liftIO $ cradle cabal mproj
-	rs <- tryGhc $ GhcMod.info (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) cradle file mname sname
+	rs <- tryGhc $ GhcMod.info (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) file sname
 	toDecl rs
 	where
 		toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
@@ -112,7 +116,7 @@ typeOf :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Int -> Int
 typeOf opts cabal file mproj mname line col = do
 	fileCts <- liftIO $ readFile file
 	cradle <- liftIO $ cradle cabal mproj
-	ts <- fmap lines $ tryGhc $ GhcMod.typeOf (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) cradle file mname line col
+	ts <- fmap lines $ tryGhc $ GhcMod.types (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) file line col
 	return $ mapMaybe (toRegionType fileCts) ts
 	where
 		toRegionType :: String -> String -> Maybe TypedRegion
@@ -135,15 +139,14 @@ tryGhc act = ErrorT $ ghandle rethrow $ liftM Right $ runGhc (Just libdir) $ do
 cradle :: Cabal -> Maybe Project -> IO GhcMod.Cradle
 cradle cabal Nothing = do
 	dir <- getCurrentDirectory
-	return $ GhcMod.Cradle dir dir Nothing (sandbox cabal) []
+	return $ GhcMod.Cradle dir dir Nothing []
 cradle cabal (Just proj) = do
 	dir <- getCurrentDirectory
 	return $ GhcMod.Cradle
 		dir
 		(projectPath proj)
 		(Just $ projectCabal proj)
-		(sandbox cabal)
-		(zip deps (repeat Nothing))
+		[]
 	where
 		deps = fromMaybe [] $ do
 			desc <- projectDescription proj
