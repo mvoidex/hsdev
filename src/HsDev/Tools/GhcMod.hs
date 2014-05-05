@@ -25,28 +25,34 @@ import Text.Read (readMaybe)
 import System.Directory (getCurrentDirectory)
 
 import qualified Language.Haskell.GhcMod as GhcMod
-import qualified Language.Haskell.GhcMod.Ghc as GhcMod
 
 import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Symbols.Location
 import HsDev.Tools.Base
-import HsDev.Util ((.::))
+import HsDev.Util ((.::), liftException)
 
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
-list opts cabal = do
-	cradle <- liftIO $ cradle cabal Nothing
-	ms <- tryGhc $ (map splitPackage . lines) <$> GhcMod.modules (GhcMod.defaultOptions { GhcMod.ghcOpts = opts })
+list opts cabal = liftException $ do
+	cradle <- cradle cabal Nothing
+	ms <- (map splitPackage . lines) <$> GhcMod.listModules
+		(GhcMod.defaultOptions { GhcMod.ghcOpts = opts })
+		cradle
 	return [CabalModule cabal (readMaybe p) m | (m, p) <- ms]
 	where
 		splitPackage :: String -> (String, String)
 		splitPackage = second (drop 1) . break isSpace
 
 browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ErrorT String IO InspectedModule
-browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ do
-	cradle <- liftIO $ cradle cabal Nothing
-	ts <- tryGhc $ lines <$> GhcMod.browse (GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcOpts = packageOpt mpackage ++ opts }) mpkgname
+browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ liftException $ do
+	cradle <- cradle cabal Nothing
+	ts <- lines <$> GhcMod.browseModule
+		(GhcMod.defaultOptions {
+			GhcMod.detailed = True,
+			GhcMod.ghcOpts = packageOpt mpackage ++ opts })
+		cradle
+		mpkgname
 	return $ Module {
 		moduleName = mname,
 		moduleDocs = Nothing,
@@ -73,8 +79,9 @@ browseInspection = InspectionAt 0
 
 info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> ErrorT String IO Declaration
 info opts cabal file mproj mname sname = do
-	cradle <- liftIO $ cradle cabal mproj
-	rs <- tryGhc $ GhcMod.info (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) file sname
+	rs <- liftException $ do
+		cradle <- cradle cabal mproj
+		GhcMod.infoExpr (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) cradle file sname
 	toDecl rs
 	where
 		toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
@@ -113,10 +120,15 @@ instance FromJSON TypedRegion where
 		v .:: "type"
 
 typeOf :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Int -> Int -> ErrorT String IO [TypedRegion]
-typeOf opts cabal file mproj mname line col = do
-	fileCts <- liftIO $ readFile file
-	cradle <- liftIO $ cradle cabal mproj
-	ts <- fmap lines $ tryGhc $ GhcMod.types (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) file line col
+typeOf opts cabal file mproj mname line col = liftException $ do
+	fileCts <- readFile file
+	cradle <- cradle cabal mproj
+	ts <- lines <$> GhcMod.typeExpr
+		(GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts })
+		cradle
+		file
+		line
+		col
 	return $ mapMaybe (toRegionType fileCts) ts
 	where
 		toRegionType :: String -> String -> Maybe TypedRegion
@@ -127,14 +139,6 @@ typeOf opts cabal file mproj mname line col = do
 		parseRegion = Region <$> parsePosition <*> parsePosition
 		parsePosition :: ReadM Position
 		parsePosition = Position <$> readParse <*> readParse
-
-tryGhc :: Ghc a -> ErrorT String IO a
-tryGhc act = ErrorT $ ghandle rethrow $ liftM Right $ runGhc (Just libdir) $ do
-	dflags <- getSessionDynFlags
-	defaultCleanupHandler dflags act
-	where
-		rethrow :: SomeException -> IO (Either String a)
-		rethrow = return . Left . show
 
 cradle :: Cabal -> Maybe Project -> IO GhcMod.Cradle
 cradle cabal Nothing = do
@@ -147,10 +151,3 @@ cradle cabal (Just proj) = do
 		(projectPath proj)
 		(Just $ projectCabal proj)
 		[]
-	where
-		deps = fromMaybe [] $ do
-			desc <- projectDescription proj
-			return $ nub $ sort $ concatMap infoDepends $ concat [
-					map buildInfo (maybeToList (projectLibrary desc)),
-					map buildInfo (projectExecutables desc),
-					map buildInfo (projectTests desc)]
