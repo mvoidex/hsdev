@@ -200,11 +200,11 @@ has n = M.member n . getOpts
 
 -- | Required option
 req :: String -> String -> ArgDescr (Opts String)
-req n nm = ReqArg (n %--) nm
+req nm n = ReqArg (n %--) nm
 
 -- | Not required option
 noreq :: String -> String -> ArgDescr (Opts String)
-noreq n nm = OptArg (maybe (hoist n) (n %--)) nm
+noreq nm n = OptArg (maybe (hoist n) (n %--)) nm
 
 -- | No option
 no :: String -> ArgDescr (Opts String)

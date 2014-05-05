@@ -390,6 +390,7 @@ processClient name receive send sopts copts = do
 	commandLog copts $ name ++ " connected"
 	flip finally disconnected $ forever $ do
 		req <- receive
+		commandLog copts $ name ++ " >> " ++ fromUtf8 req
 		case extractMeta <$> eitherDecode req of
 			Left err -> answer True $ Response $ object [
 				"error" .= ("Invalid request" :: String),
@@ -402,9 +403,11 @@ processClient name receive send sopts copts = do
 				(answer noFile)
 	where
 		answer :: Bool -> Response -> IO ()
-		answer noFile'
-			| noFile' = sendResponse send
-			| otherwise = maybe (sendResponse send) (`sendResponseMmap` send) $ commandMmapPool copts
+		answer noFile' r = do
+			commandLog copts $ name ++ " << " ++ fromUtf8 (encode r)
+			case noFile' of
+				True -> sendResponse send r
+				False -> maybe (sendResponse send) (`sendResponseMmap` send) (commandMmapPool copts) r
 
 		extractMeta :: CommandCall -> (FilePath, Bool, CommandCall)
 		extractMeta c = (fpath, noFile, c `removeCallOpts` ["current-directory", "no-file"]) where
