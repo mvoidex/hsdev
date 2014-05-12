@@ -1,4 +1,5 @@
 env:
+  - GHCVER=7.6.3
   - GHCVER=7.8.2
 
 before_install:
