@@ -43,7 +43,8 @@ data ServerOpts = ServerOpts {
 	serverTimeout :: First Int,
 	serverLog :: First String,
 	serverCache :: First FilePath,
-	serverLoadCache :: Any }
+	serverLoadCache :: Any,
+	serverAsClient :: Any }
 
 instance DefaultConfig ServerOpts where
 	defaultConfig = ServerOpts
@@ -52,15 +53,17 @@ instance DefaultConfig ServerOpts where
 		(First Nothing)
 		(First Nothing)
 		mempty
+		mempty
 
 instance Monoid ServerOpts where
-	mempty = ServerOpts mempty mempty mempty mempty mempty
+	mempty = ServerOpts mempty mempty mempty mempty mempty mempty
 	l `mappend` r = ServerOpts
 		(serverPort l `mappend` serverPort r)
 		(serverTimeout l `mappend` serverTimeout r)
 		(serverLog l `mappend` serverLog r)
 		(serverCache l `mappend` serverCache r)
 		(serverLoadCache l `mappend` serverLoadCache r)
+		(serverAsClient l `mappend` serverAsClient r)
 
 -- | Server options command opts
 serverOpts :: [OptDescr ServerOpts]
@@ -69,7 +72,8 @@ serverOpts = [
 	Option [] ["timeout"] (ReqArg (\t -> mempty { serverTimeout = First (readMaybe t) }) "msec") "query timeout",
 	Option ['l'] ["log"] (ReqArg (\l -> mempty { serverLog = First (Just l) }) "file") "log file",
 	Option [] ["cache"] (ReqArg (\p -> mempty { serverCache = First (Just p) }) "path") "cache directory",
-	Option [] ["load"] (NoArg (mempty { serverLoadCache = Any True })) "force load all data from cache on startup"]
+	Option [] ["load"] (NoArg (mempty { serverLoadCache = Any True })) "force load all data from cache on startup",
+	Option ['c'] ["as-client"] (NoArg (mempty { serverAsClient = Any True })) "make server be client and connect to port specified"]
 
 -- | Convert 'ServerOpts' to args
 serverOptsToArgs :: ServerOpts -> [String]
@@ -78,7 +82,8 @@ serverOptsToArgs sopts = concat [
 	arg' "timeout" show $ serverTimeout sopts,
 	arg' "log" id $ serverLog sopts,
 	arg' "cache" id $ serverCache sopts,
-	if getAny (serverLoadCache sopts) then ["--load"] else []]
+	if getAny (serverLoadCache sopts) then ["--load"] else [],
+	if getAny (serverAsClient sopts) then ["--as-client"] else []]
 	where
 		arg' :: String -> (a -> String) -> First a -> [String]
 		arg' name str = maybe [] (\v -> ["--" ++ name, str v]) . getFirst

@@ -89,7 +89,6 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 		cmd ["server", "start"] [] "start remote server" serverOpts start',
 		cmd ["server", "run"] [] "start server" serverOpts run',
 		cmd ["server", "stop"] [] "stop remote server" clientOpts stop',
-		cmd ["server", "connect"] [] "start server which then connects to port specified" serverOpts serverConnect',
 		cmd ["connect"] [] "connect to send commands directly" clientOpts connect']
 
 	start' sopts _ = do
@@ -131,61 +130,65 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			forkProcess proxy
 			putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
 #endif
-	run' sopts _ = runServer sopts $ \copts -> do
-		commandLog copts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
-
-		waitListen <- newEmptyMVar
-		clientChan <- F.newChan
-
-		forkIO $ do
-			accepter <- myThreadId
-
-			let
-				serverStop :: IO ()
-				serverStop = void $ forkIO $ do
-					void $ tryPutMVar waitListen ()
-					killThread accepter
-
+	run' sopts _
+		| getAny (serverAsClient sopts) = runServer sopts $ \copts -> do
+			commandLog copts $ "Server started as client connecting at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+			me <- myThreadId
 			s <- socket AF_INET Stream defaultProtocol
-			bind s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY)
-			listen s maxListenQueue
-			forever $ logIO "accept client exception: " (commandLog copts) $ do
-				s' <- fst <$> accept s
-				void $ forkIO $ logIO (show s' ++ " exception: ") (commandLog copts) $
-					bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-						bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-							me <- myThreadId
-							let
-								timeoutWait = do
-									notDone <- isEmptyMVar done
-									when notDone $ do
-										void $ forkIO $ do
-											threadDelay 1000000
-											tryPutMVar done ()
-											killThread me
-										takeMVar done
-								waitForever = forever $ hGetLine' h
-							F.putChan clientChan timeoutWait
-							processClient (show s') (hGetLine' h) (L.hPutStrLn h) sopts (copts {
-								commandHold = waitForever,
-								commandExit = serverStop })
+			addr' <- inet_addr "127.0.0.1"
+			connect s $ SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) addr'
+			bracket (socketToHandle s ReadWriteMode) hClose $ \h ->
+				processClient (show s) (hGetLine' h) (L.hPutStrLn h) sopts (copts {
+					commandExit = killThread me })
+		| otherwise = runServer sopts $ \copts -> do
+			commandLog copts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
 
-		takeMVar waitListen
-		DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
-		F.stopChan clientChan >>= sequence_
-		commandLog copts "server stopped"
+			waitListen <- newEmptyMVar
+			clientChan <- F.newChan
+
+			forkIO $ do
+				accepter <- myThreadId
+
+				let
+					serverStop :: IO ()
+					serverStop = void $ forkIO $ do
+						void $ tryPutMVar waitListen ()
+						killThread accepter
+
+				s <- socket AF_INET Stream defaultProtocol
+				bind s $ SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY
+				listen s maxListenQueue
+				forever $ logIO "accept client exception: " (commandLog copts) $ do
+					s' <- fst <$> accept s
+					void $ forkIO $ logIO (show s' ++ " exception: ") (commandLog copts) $
+						bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
+							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+								me <- myThreadId
+								let
+									timeoutWait = do
+										notDone <- isEmptyMVar done
+										when notDone $ do
+											void $ forkIO $ do
+												threadDelay 1000000
+												tryPutMVar done ()
+												killThread me
+											takeMVar done
+									waitForever = forever $ hGetLine' h
+								F.putChan clientChan timeoutWait
+								processClient (show s') (hGetLine' h) (L.hPutStrLn h) sopts (copts {
+									commandHold = waitForever,
+									commandExit = serverStop })
+
+			takeMVar waitListen
+			DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
+			F.stopChan clientChan >>= sequence_
+			commandLog copts "server stopped"
+
 	stop' copts _ = run (map wrapCmd' commands) onDef onError ["exit"] where
 		onDef = putStrLn "Command 'exit' not found"
 		onError es = putStrLn $ "Failed to stop server: " ++ intercalate ", " es
 		wrapCmd' = fmap (sendCmd . (copts,) . withOptsCommand)
-	serverConnect' sopts _ = runServer sopts $ \copts -> do
-		me <- myThreadId
-		s <- socket AF_INET Stream defaultProtocol
-		addr' <- inet_addr "127.0.0.1"
-		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) addr')
-		bracket (socketToHandle s ReadWriteMode) hClose $ \h ->
-			processClient (show s) (hGetLine' h) (L.hPutStrLn h) sopts (copts {
-				commandExit = killThread me })
+
 	connect' copts _ = do
 		curDir <- getCurrentDirectory
 		s <- socket AF_INET Stream defaultProtocol
