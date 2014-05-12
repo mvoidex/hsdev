@@ -224,7 +224,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 							("Can't read map view of file", ["file" .= viewFile])
 						lift $ parseResp h str
 #else
-					ResponseMapFile viewFile -> throwError $ encodeValue $
+					ResponseMapFile viewFile -> throwError $ fromUtf8 $ encodeValue $
 						object ["error" .= ("Not supported" :: String)]
 #endif
 					Response r -> liftIO $ L.putStrLn $ encodeValue r
@@ -284,7 +284,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 							("Can't read map view of file", ["file" .= viewFile])
 						lift $ parseResponse h str
 #else
-					ResponseMapFile viewFile -> throwError $ encodeValue $
+					ResponseMapFile viewFile -> throwError $ fromUtf8 $ encodeValue $
 						object ["error" .= ("Not supported" :: String)]
 #endif
 					Response r -> liftIO $ L.putStrLn $ encodeValue r
