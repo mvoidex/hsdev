@@ -9,7 +9,9 @@ before_install:
 
 install:
   - cabal update
+  - cabal install happy
   - export PATH=$HOME/.cabal/bin:$PATH
+  - happy --version
   - cabal install --only-dependencies
 
 script:
