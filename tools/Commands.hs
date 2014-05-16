@@ -659,7 +659,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				if hasFilters
 					then Just $ anyOf [
 						\m -> any (`inProject` m) projs,
-						\m -> any (`inPackage` m) packages && any (`inCabal` m) cabals]
+						\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals)]
 					else Nothing,
 				if flag "src" as then Just byFile else Nothing,
 				if flag "stand" as then Just standalone else Nothing]
