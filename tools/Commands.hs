@@ -618,7 +618,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 
 		if not (null errors)
 			then return $ err $ intercalate ", " errors
-			else updateProcess copts as $ Update.runTask (toJSON $ ("rescanning modules" :: String)) $ do
+			else updateProcess copts as $ Update.runTask "rescanning modules" [] $ do
 				needRescan <- Update.liftErrorT $ filterM (changedModule dbval (list "ghc" as) . inspectedId) rescanMods
 				Update.scanModules (list "ghc" as) (map (inspectedId &&& inspectionOpts . inspection) needRescan)
 	-- remove
