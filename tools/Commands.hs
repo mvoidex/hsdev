@@ -1064,8 +1064,10 @@ hGetLine' = fmap L.fromStrict . B.hGetLine
 race :: [IO a] -> IO a
 race acts = do
 	v <- newEmptyMVar
-	forM_ acts $ \a -> forkIO ((a >>= putMVar v) `catch` ignoreError)
-	takeMVar v
+	ids <- forM acts $ \a -> forkIO ((a >>= putMVar v) `catch` ignoreError)
+	r <- takeMVar v
+	forM_ ids killThread
+	return r
 	where
 		ignoreError :: SomeException -> IO ()
 		ignoreError _ = return ()
