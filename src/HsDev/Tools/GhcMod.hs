@@ -144,30 +144,34 @@ typeOf opts cabal file mproj mname line col = liftException $ do
 
 data ErrorMessage = ErrorMessage {
 	errorLocation :: Location,
+	errorWarning :: Bool,
 	errorMessage :: String }
 		deriving (Eq, Show)
 
 instance NFData ErrorMessage where
-	rnf (ErrorMessage l m) = rnf l `seq` rnf m
+	rnf (ErrorMessage l w m) = rnf l `seq` rnf w `seq` rnf m
 
 instance ToJSON ErrorMessage where
-	toJSON (ErrorMessage l m) = object [
+	toJSON (ErrorMessage l w m) = object [
 		"location" .= l,
+		"warning" .= w,
 		"message" .= m]
 
 instance FromJSON ErrorMessage where
 	parseJSON = withObject "error message" $ \v -> ErrorMessage <$>
 		v .:: "location" <*>
+		v .:: "warning" <*>
 		v .:: "message"
 
 parseErrorMessage :: String -> Maybe ErrorMessage
 parseErrorMessage s = do
-	groups <- match "^(.+):(\\d+):(\\d+):(.*)$" s
+	groups <- match "^(.+):(\\d+):(\\d+):(\\s*Warning:)?\\s*(.*)$" s
 	return $ ErrorMessage {
 		errorLocation = Location {
 			locationModule = FileModule (groups `at` 1) Nothing,
 			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
-		errorMessage = groups `at` 4 }
+		errorWarning = isJust (groups 4),
+		errorMessage = groups `at` 5 }
 
 check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> ErrorT String IO [ErrorMessage]
 check opts cabal files mproj = liftException $ do
