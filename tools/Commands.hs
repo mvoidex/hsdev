@@ -32,7 +32,6 @@ import System.Exit
 import System.IO
 import System.Process
 import System.Console.GetOpt
-import System.Timeout
 import System.FilePath
 import Text.Read (readMaybe)
 
@@ -236,8 +235,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 	-- Send command to server
 	sendCmd :: (ClientOpts, CommandCall) -> IO ()
 	sendCmd (p, cmdCall) = do
-		svar <- newEmptyMVar
-		race [takeMVar svar, waitResponse >> putMVar svar ()]
+		ignoreIO waitResponse
 		where
 			pretty = getAny $ clientPretty p
 			encodeValue :: ToJSON a => a -> L.ByteString
@@ -423,6 +421,12 @@ processClient name receive send sopts copts = do
 		disconnected var = do
 			commandLog copts $ name ++ " disconnected"
 			join $ takeMVar var
+
+timeout :: Int -> IO a -> IO (Maybe a)
+timeout 0 act = fmap Just act
+timeout tm act = race [
+	fmap Just act,
+	threadDelay tm >> return Nothing]
 
 commands :: [Command CommandAction]
 commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap noTimeout)) linkCmd where
@@ -1057,10 +1061,10 @@ processCmdArgs copts tm cmdArgs sendResponse = run (map (fmap withOptsAct) comma
 hGetLine' :: Handle -> IO ByteString
 hGetLine' = fmap L.fromStrict . B.hGetLine
 
-race :: [IO ()] -> IO ()
+race :: [IO a] -> IO a
 race acts = do
 	v <- newEmptyMVar
-	forM_ acts $ \a -> forkIO ((a `finally` putMVar v ()) `catch` ignoreError)
+	forM_ acts $ \a -> forkIO ((a >>= putMVar v) `catch` ignoreError)
 	takeMVar v
 	where
 		ignoreError :: SomeException -> IO ()
