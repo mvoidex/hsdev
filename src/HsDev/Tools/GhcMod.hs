@@ -6,8 +6,9 @@ module HsDev.Tools.GhcMod (
 	info,
 	TypedRegion(..),
 	typeOf,
-	ErrorMessage(..),
-	check
+	OutputMessage(..),
+	check,
+	lint
 	) where
 
 import Control.Applicative
@@ -142,45 +143,52 @@ typeOf opts cabal file mproj mname line col = liftException $ do
 		parsePosition :: ReadM Position
 		parsePosition = Position <$> readParse <*> readParse
 
-data ErrorMessage = ErrorMessage {
+data OutputMessage = OutputMessage {
 	errorLocation :: Location,
 	errorWarning :: Bool,
 	errorMessage :: String }
 		deriving (Eq, Show)
 
-instance NFData ErrorMessage where
-	rnf (ErrorMessage l w m) = rnf l `seq` rnf w `seq` rnf m
+instance NFData OutputMessage where
+	rnf (OutputMessage l w m) = rnf l `seq` rnf w `seq` rnf m
 
-instance ToJSON ErrorMessage where
-	toJSON (ErrorMessage l w m) = object [
+instance ToJSON OutputMessage where
+	toJSON (OutputMessage l w m) = object [
 		"location" .= l,
 		"warning" .= w,
 		"message" .= m]
 
-instance FromJSON ErrorMessage where
-	parseJSON = withObject "error message" $ \v -> ErrorMessage <$>
+instance FromJSON OutputMessage where
+	parseJSON = withObject "error message" $ \v -> OutputMessage <$>
 		v .:: "location" <*>
 		v .:: "warning" <*>
 		v .:: "message"
 
-parseErrorMessage :: String -> Maybe ErrorMessage
-parseErrorMessage s = do
+parseOutputMessage :: String -> Maybe OutputMessage
+parseOutputMessage s = do
 	groups <- match "^(.+):(\\d+):(\\d+):(\\s*Warning:)?\\s*(.*)$" s
-	return $ ErrorMessage {
+	return $ OutputMessage {
 		errorLocation = Location {
 			locationModule = FileModule (groups `at` 1) Nothing,
 			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
 		errorWarning = isJust (groups 4),
 		errorMessage = groups `at` 5 }
 
-check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> ErrorT String IO [ErrorMessage]
+check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> ErrorT String IO [OutputMessage]
 check opts cabal files mproj = liftException $ do
 	cradle <- cradle cabal mproj
 	msgs <- lines <$> GhcMod.checkSyntax
 		(GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts })
 		cradle
 		files
-	return $ mapMaybe parseErrorMessage msgs
+	return $ mapMaybe parseOutputMessage msgs
+
+lint :: [String] -> FilePath -> ErrorT String IO [OutputMessage]
+lint opts file = liftException $ do
+	msgs <- lines <$> GhcMod.lintSyntax
+		(GhcMod.defaultOptions { GhcMod.hlintOpts = opts })
+		file
+	return $ mapMaybe parseOutputMessage msgs
 
 cradle :: Cabal -> Maybe Project -> IO GhcMod.Cradle
 cradle cabal Nothing = do

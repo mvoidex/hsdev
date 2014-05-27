@@ -44,7 +44,7 @@ import HsDev.Symbols.Util
 import HsDev.Util
 import HsDev.Scan
 import qualified HsDev.Tools.Cabal as Cabal
-import qualified HsDev.Tools.GhcMod as GhcMod (typeOf, check)
+import qualified HsDev.Tools.GhcMod as GhcMod (typeOf, check, lint)
 import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
@@ -504,6 +504,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		cmd' ["cabal", "list"] ["packages..."] "list cabal packages" [] cabalList',
 		cmd' ["ghc-mod", "type"] ["line", "column"] "infer type with 'ghc-mod type'" (ctx ++ [ghcOpts]) ghcmodType',
 		cmd' ["ghc-mod", "check"] ["files"] "check source files" [fileArg "source files", sandbox, ghcOpts] ghcmodCheck',
+		cmd' ["ghc-mod", "lint"] ["file"] "lint source file" [fileArg "source file", hlintOpts] ghcmodLint',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" (sandboxes ++ [cacheDir, cacheFile]) dumpCabal',
 		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project", cacheDir, cacheFile] dumpProjects',
@@ -524,6 +525,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	findArg = option_ [] "find" (req "find") "infix match"
 	ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
 	globalArg = option_ [] "global" no "scope of project"
+	hlintOpts = option_ ['h'] "hlint" (req "hlint options") "options to pass to hlint"
 	holdArg = option_ ['h'] "hold" no "don't return any response"
 	localsArg = option_ ['l'] "locals" no "look in local declarations"
 	noLastArg = option_ [] "no-last" no "don't select last package version"
@@ -795,7 +797,14 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM (locateProject) files')
 		cabal <- getCabal copts as
 		rs <- GhcMod.check (list "ghc" as) cabal files' mproj
-		return $ ResultList $ map ResultErrorMessage rs
+		return $ ResultList $ map ResultOutputMessage rs
+	-- ghc-mod lint
+	ghcmodLint' as [] copts = return $ err "Specify file to hlint"
+	ghcmodLint' as [file] copts = errorT $ do
+		file' <- findPath copts file
+		hs <- GhcMod.lint (list "hlint" as) file'
+		return $ ResultList $ map ResultOutputMessage hs
+	ghcmodLint' as fs copts = return $ err "Too much files specified"
 	-- dump cabal modules
 	dumpCabal' as _ copts = errorT $ do
 		dbval <- getDb copts

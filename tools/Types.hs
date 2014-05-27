@@ -26,7 +26,7 @@ import Text.Read
 import HsDev.Database
 import HsDev.Project
 import HsDev.Symbols
-import HsDev.Tools.GhcMod (TypedRegion, ErrorMessage)
+import HsDev.Tools.GhcMod (TypedRegion, OutputMessage)
 import qualified HsDev.Database.Async as DB
 import HsDev.Util ((.::), (.::?))
 
@@ -124,7 +124,7 @@ data ResultValue =
 	ResultPackage ModulePackage |
 	ResultProject Project |
 	ResultTyped TypedRegion |
-	ResultErrorMessage ErrorMessage |
+	ResultOutputMessage OutputMessage |
 	ResultList [ResultValue] |
 	ResultMap (Map String ResultValue) |
 	ResultJSON Value |
@@ -141,7 +141,7 @@ instance ToJSON ResultValue where
 	toJSON (ResultPackage p) = toJSON p
 	toJSON (ResultProject p) = toJSON p
 	toJSON (ResultTyped t) = toJSON t
-	toJSON (ResultErrorMessage e) = toJSON e
+	toJSON (ResultOutputMessage e) = toJSON e
 	toJSON (ResultList l) = toJSON l
 	toJSON (ResultMap m) = toJSON m
 	toJSON (ResultJSON v) = toJSON v
@@ -162,7 +162,7 @@ instance FromJSON ResultValue where
 		ResultPackage <$> parseJSON v,
 		ResultProject <$> parseJSON v,
 		ResultTyped <$> parseJSON v,
-		ResultErrorMessage <$> parseJSON v,
+		ResultOutputMessage <$> parseJSON v,
 		ResultList <$> parseJSON v,
 		ResultMap <$> parseJSON v,
 		pure $ ResultJSON v,
