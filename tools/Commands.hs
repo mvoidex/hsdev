@@ -263,7 +263,10 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 					"current-directory" %-- curDir,
 					case stdinData of
 						Nothing -> mempty
-						Just d -> "data" %-- (fromUtf8 $ encode d)]
+						Just d -> "data" %-- (fromUtf8 $ encode d),
+					case getFirst (clientTimeout p) of
+						Nothing -> mempty
+						Just tm -> "timeout" %-- tm]
 				peekResponse h
 
 			peekResponse h = do
@@ -395,9 +398,9 @@ processClient name receive send sopts copts = do
 				"error" .= ("Invalid request" :: String),
 				"request" .= fromUtf8 req,
 				"what" .= err]
-			Right (cdir, noFile, reqArgs) -> processCmdArgs
+			Right (cdir, noFile, tm, reqArgs) -> processCmdArgs
 				(copts { commandLink = void (swapMVar linkVar $ commandExit copts), commandRoot = cdir })
-				(fromJust $ getFirst $ serverTimeout sopts)
+				(fromMaybe (fromJust $ getFirst $ serverTimeout sopts) tm)
 				(callArgs reqArgs)
 				(answer noFile)
 	where
@@ -412,10 +415,11 @@ processClient name receive send sopts copts = do
 			sendResponse send r
 #endif
 
-		extractMeta :: CommandCall -> (FilePath, Bool, CommandCall)
-		extractMeta c = (fpath, noFile, c `removeCallOpts` ["current-directory", "no-file"]) where
+		extractMeta :: CommandCall -> (FilePath, Bool, Maybe Int, CommandCall)
+		extractMeta c = (fpath, noFile, tm, c `removeCallOpts` ["current-directory", "no-file", "timeout"]) where
 			fpath = fromMaybe (commandRoot copts) $ arg "current-directory" $ commandCallOpts c
 			noFile = flag "no-file" $ commandCallOpts c
+			tm = join $ fmap readMaybe $ arg "timeout" $ commandCallOpts c
 
 		disconnected :: MVar (IO ()) -> IO ()
 		disconnected var = do

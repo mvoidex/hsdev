@@ -92,24 +92,27 @@ serverOptsToArgs sopts = concat [
 data ClientOpts = ClientOpts {
 	clientPort :: First Int,
 	clientPretty :: Any,
-	clientData :: Any }
+	clientData :: Any,
+	clientTimeout :: First Int }
 
 instance DefaultConfig ClientOpts where
-	defaultConfig = ClientOpts (First $ Just 4567) mempty mempty
+	defaultConfig = ClientOpts (First $ Just 4567) mempty mempty mempty
 
 instance Monoid ClientOpts where
-	mempty = ClientOpts mempty mempty mempty
+	mempty = ClientOpts mempty mempty mempty mempty
 	l `mappend` r = ClientOpts
 		(clientPort l `mappend` clientPort r)
 		(clientPretty l `mappend` clientPretty r)
 		(clientData l `mappend` clientData r)
+		(clientTimeout l `mappend` clientTimeout r)
 
 -- | Client options command opts
 clientOpts :: [OptDescr ClientOpts]
 clientOpts = [
 	Option [] ["port"] (ReqArg (\p -> mempty { clientPort = First (readMaybe p) }) "number") "connection port",
 	Option [] ["pretty"] (NoArg (mempty { clientPretty = Any True })) "pretty json output",
-	Option [] ["stdin"] (NoArg (mempty { clientData = Any True })) "pass data to stdin"]
+	Option [] ["stdin"] (NoArg (mempty { clientData = Any True })) "pass data to stdin",
+	Option [] ["timeout"] (ReqArg (\p -> mempty { clientTimeout = First (readMaybe p) }) "milliseconds") "overwrite default timeout length"]
 
 data ResultValue =
 	ResultDatabase Database |
