@@ -1,13 +1,13 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, MultiParamTypeClasses #-}
 
 module Update (
-	Status(..), isStatus,
+	Status(..), Progress(..), Task(..), isStatus,
 	Settings(..),
 
 	UpdateDB,
 	updateDB,
 
-	setStatus, postStatus, waiter, updater, loadCache, runTask, runTasks,
+	postStatus, waiter, updater, loadCache, runTask, runTasks,
 	readDB,
 
 	scanModule, scanModules, scanFile, scanCabal, scanProjectFile, scanProject, scanDirectory,
@@ -23,6 +23,7 @@ import Control.Monad.Reader
 import Data.Aeson
 import Data.Aeson.Types
 import qualified Data.HashMap.Strict as HM
+import Data.List (nub)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust)
@@ -33,6 +34,7 @@ import System.Directory (canonicalizePath)
 import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async
+import HsDev.Display
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.HDocs
@@ -40,23 +42,62 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util ((.::))
 
-data Status = Status {
-	status :: Value,
-	statusDetails :: [Pair] }
+data Status = StatusWorking | StatusOk | StatusError String
 
 instance ToJSON Status where
-	toJSON (Status s ds) = object $ ("status" .= s) : ds
+	toJSON StatusWorking = toJSON ("working" :: String)
+	toJSON StatusOk = toJSON ("ok" :: String)
+	toJSON (StatusError e) = toJSON $ object ["error" .= e]
 
 instance FromJSON Status where
-	parseJSON = withObject "status" $ \v -> Status <$> (v .:: "status") <*> pure (HM.toList $ HM.delete "status" v)
+	parseJSON v = msum $ map ($ v) [
+		withText "status" $ \t -> guard (t == "working") *> return StatusWorking,
+		withText "status" $ \t -> guard (t == "ok") *> return StatusOk,
+		withObject "status" $ \obj -> StatusError <$> (obj .:: "error"),
+		fail "invalid status"]
+
+data Progress = Progress {
+	progressCurrent :: Int,
+	progressTotal :: Int }
+
+instance ToJSON Progress where
+	toJSON (Progress c t) = object [
+		"current" .= c,
+		"total" .= t]
+
+instance FromJSON Progress where
+	parseJSON = withObject "progress" $ \v -> Progress <$> (v .:: "current") <*> (v .:: "total")
+
+data Task = Task {
+	taskName :: String,
+	taskStatus :: Status,
+	taskParams :: Object,
+	taskProgress :: Maybe Progress,
+	taskChild :: Maybe Task }
+
+instance ToJSON Task where
+	toJSON t = object [
+		"status" .= taskStatus t,
+		"task" .= taskName t,
+		"params" .= taskParams t,
+		"progress" .= taskProgress t,
+		"child" .= taskChild t]
+
+instance FromJSON Task where
+	parseJSON = withObject "task" $ \v -> Task <$>
+		(v .:: "task") <*>
+		(v .:: "status") <*>
+		(v .:: "params") <*>
+		(v .:: "progress") <*>
+		(v .:: "child")
 
 isStatus :: Value -> Bool
-isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Status)
+isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
 
 data Settings = Settings {
 	database :: Async Database,
 	databaseCacheReader :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
-	onStatus :: Status -> IO (),
+	onStatus :: Task -> IO (),
 	ghcOptions :: [String] }
 
 newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings m a }
@@ -66,17 +107,11 @@ newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings m a }
 updateDB :: Monad m => Settings -> ErrorT String (UpdateDB m) () -> m ()
 updateDB sets act = runUpdateDB (runErrorT act >> return ()) `runReaderT` sets
 
--- | Set status details
-setStatus :: MonadReader Settings m => [Pair] -> m a -> m a
-setStatus ps act = local alter act where
-	alter st = st {
-		onStatus = \(Status s ds) -> onStatus st (Status s (ps ++ ds)) }
-
 -- | Post status
-postStatus :: (MonadIO m, MonadReader Settings m) => Value -> m ()
+postStatus :: (MonadIO m, MonadReader Settings m) => Task -> m ()
 postStatus s = do
 	on' <- asks onStatus
-	liftIO $ on' $ Status s []
+	liftIO $ on' s
 
 -- | Wait DB to complete actions
 waiter :: (MonadIO m, MonadReader Settings m) => m () -> m ()
@@ -102,25 +137,30 @@ loadCache act = do
 
 -- | Run one task
 runTask :: MonadIO m => String -> [Pair] -> ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
-runTask action params act = ["task" .= object (("action" .= action) : params)] `setStatus` wrapAct act where
-	wrapAct :: MonadIO m => ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
-	wrapAct a = do
-		postStatus $ toJSON ("working" :: String)
-		x <- a
-		postStatus taskOk
-		return x
-		`catchError`
-		(\e -> postStatus (taskErr e) >> throwError e)
-	taskOk = toJSON ("ok" :: String)
-	taskErr e = object ["error" .= e]
+runTask action params act = do
+	postStatus $ task { taskStatus = StatusWorking }
+	x <- local childTask act
+	postStatus $ task { taskStatus = StatusOk }
+	return x
+	`catchError`
+	(\e -> postStatus (task { taskStatus = StatusError e }) >> throwError e)
+	where
+		task = Task {
+			taskName = action,
+			taskStatus = StatusWorking,
+			taskParams = HM.fromList params,
+			taskProgress = Nothing,
+			taskChild = Nothing }
+		childTask st = st {
+			onStatus = \t -> onStatus st (task { taskChild = Just t }) }
 
 -- | Run many tasks with numeration
 runTasks :: Monad m => [ErrorT String (UpdateDB m) ()] -> ErrorT String (UpdateDB m) ()
 runTasks ts = zipWithM_ taskNum [1..] (map noErr ts) where
 	total = length ts
-	taskNum n t = progress `setStatus` t where
-		progress = ["progress" .= object [
-			"current" .= (n :: Integer), "total" .= total]]
+	taskNum n = local setProgress where
+		setProgress st = st {
+			onStatus = \t -> onStatus st (t { taskProgress = Just (Progress n total) }) }
 	noErr v = v `mplus` return ()
 
 -- | Get database value
@@ -129,7 +169,7 @@ readDB = asks database >>= liftIO . readAsync
 
 -- | Scan module
 scanModule :: MonadCatchIO m => [String] -> ModuleLocation -> ErrorT String (UpdateDB m) ()
-scanModule opts mloc = runTask "scanning" ["object" .= mloc] $ do
+scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
 	im <- liftErrorT $ S.scanModule opts mloc
 	updater $ return $ fromModule im
 	ErrorT $ return $ inspectionResult im
@@ -140,11 +180,12 @@ scanModules :: MonadCatchIO m => [String] -> [S.ModuleToScan] -> ErrorT String (
 scanModules opts ms = do
 	db <- asks database
 	dbval <- readDB
-	runTasks [scanProjectFile opts p >> return () | p <- ps]
 	ms' <- liftErrorT $ filterM (S.changedModule dbval opts . fst) ms
-	runTasks [scanModule (opts ++ snd m) (fst m) | m <- ms']
+	runTasks $
+		[scanProjectFile opts p >> return () | p <- ps] ++
+		[scanModule (opts ++ snd m) (fst m) | m <- ms']
 	where
-		ps = mapMaybe (toProj . fst) ms
+		ps = nub $ mapMaybe (toProj . fst) ms
 		toProj (FileModule _ p) = fmap projectCabal p
 		toProj _ = Nothing
 
@@ -161,12 +202,12 @@ scanFile opts fpath = do
 
 -- | Scan cabal modules
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
-scanCabal opts sandbox = runTask "scanning" ["sandbox" .= sandbox] $ do
+scanCabal opts sandbox = runTask "scanning" (subject sandbox ["sandbox" .= sandbox]) $ do
 	loadCache $ Cache.loadCabal sandbox
 	dbval <- readDB
-	ms <- runTask "loading modules" ["sandbox" .= sandbox] $
+	ms <- runTask "loading modules" [] $
 		liftErrorT $ browseFilter opts sandbox (S.changedModule dbval opts)
-	docs <- runTask "loading docs" ["sandbox" .= sandbox] $
+	docs <- runTask "loading docs" [] $
 		liftErrorT $ hdocsCabal sandbox opts
 	updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
@@ -175,14 +216,14 @@ scanCabal opts sandbox = runTask "scanning" ["sandbox" .= sandbox] $ do
 
 -- | Scan project file
 scanProjectFile :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) Project
-scanProjectFile opts cabal = runTask "scanning" ["file" .= cabal] $ do
+scanProjectFile opts cabal = runTask "scanning" (subject cabal ["file" .= cabal]) $ do
 	proj <- liftErrorT $ S.scanProjectFile opts cabal
 	updater $ return $ fromProject proj
 	return proj
 
 -- | Scan project
 scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
-scanProject opts cabal = runTask "scanning" ["project" .= cabal] $ do
+scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" .= cabal]) $ do
 	proj <- scanProjectFile opts cabal
 	loadCache $ Cache.loadProject $ projectCabal proj
 	(_, sources) <- liftErrorT $ S.enumProject proj
@@ -190,12 +231,12 @@ scanProject opts cabal = runTask "scanning" ["project" .= cabal] $ do
 
 -- | Scan directory for source files and projects
 scanDirectory :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
-scanDirectory opts dir = runTask "scanning" ["path" .= dir] $ do
-	(projSrcs, standSrcs) <- runTask "getting list of sources" ["path" .= dir] $
+scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
+	(projSrcs, standSrcs) <- runTask "getting list of sources" [] $
 		liftErrorT $ S.enumDirectory dir
-	forM_ projSrcs $ \(p, _) -> loadCache (Cache.loadProject $ projectCabal p)
+	runTasks [scanProject opts (projectCabal p) | (p, _) <- projSrcs]
 	loadCache $ Cache.loadFiles $ mapMaybe (moduleSource . fst) standSrcs
-	scanModules opts (concatMap snd projSrcs ++ standSrcs)
+	scanModules opts standSrcs
 
 -- | Lift errors
 liftErrorT :: MonadIO m => ErrorT String IO a -> ErrorT String m a
@@ -205,3 +246,6 @@ liftErrorT = mapErrorT liftIO
 union :: Value -> Value -> Value
 union (Object l) (Object r) = Object $ HM.union l r
 union _ _ = error "Commands.union: impossible happened"
+
+subject :: Display a => a -> [Pair] -> [Pair]
+subject x ps = ["name" .= display x, "type" .= displayType x] ++ ps

@@ -45,7 +45,7 @@ import HsDev.Symbols.Util
 import HsDev.Util
 import HsDev.Scan
 import qualified HsDev.Tools.Cabal as Cabal
-import qualified HsDev.Tools.GhcMod as GhcMod (typeOf)
+import qualified HsDev.Tools.GhcMod as GhcMod (typeOf, check)
 import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
@@ -494,7 +494,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		-- Tool commands
 		cmd' ["hayoo"] ["query"] "find declarations online via Hayoo" [] hayoo',
 		cmd' ["cabal", "list"] ["packages..."] "list cabal packages" [] cabalList',
-		cmd' ["ghc-mod", "type"] ["line", "column"] "infer type with 'ghc-mod type'" ctx ghcmodType',
+		cmd' ["ghc-mod", "type"] ["line", "column"] "infer type with 'ghc-mod type'" (ctx ++ [ghcOpts]) ghcmodType',
+		cmd' ["ghc-mod", "check"] ["files"] "check source files" [fileArg "source files", sandbox, ghcOpts] ghcmodCheck',
 		-- Dump/load commands
 		cmd' ["dump", "cabal"] [] "dump cabal modules" (sandboxes ++ [cacheDir, cacheFile]) dumpCabal',
 		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project", cacheDir, cacheFile] dumpProjects',
@@ -779,6 +780,14 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		return $ ResultList $ map ResultTyped tr
 	ghcmodType' as [] copts = return $ err "Specify line"
 	ghcmodType' as _ copts = return $ err "Too much arguments"
+	-- ghc-mod check
+	ghcmodCheck' as [] copts = return $ err "Specify at least one file"
+	ghcmodCheck' as files copts = errorT $ do
+		files' <- mapM (findPath copts) files
+		mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM (locateProject) files')
+		cabal <- getCabal copts as
+		rs <- GhcMod.check (list "ghc" as) cabal files' mproj
+		return $ ResultList $ map ResultErrorMessage rs
 	-- dump cabal modules
 	dumpCabal' as _ copts = errorT $ do
 		dbval <- getDb copts
@@ -958,7 +967,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	dbVar :: CommandOptions -> DB.Async Database
 	dbVar = commandDatabase
 
-	startProcess :: Opts String -> ((Update.Status -> IO ()) -> IO ()) -> IO CommandResult
+	startProcess :: Opts String -> ((Update.Task -> IO ()) -> IO ()) -> IO CommandResult
 	startProcess as f
 		| flag "wait" as = return $ ResultProcess (f . onMsg)
 		| otherwise = forkIO (f $ const $ return ()) >> return ok

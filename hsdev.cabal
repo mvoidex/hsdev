@@ -28,6 +28,7 @@ library
     HsDev.Commands
     HsDev.Database
     HsDev.Database.Async
+    HsDev.Display
     HsDev.Inspect
     HsDev.Project
     HsDev.Scan

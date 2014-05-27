@@ -5,7 +5,9 @@ module HsDev.Tools.GhcMod (
 	browse, browseInspection,
 	info,
 	TypedRegion(..),
-	typeOf
+	typeOf,
+	ErrorMessage(..),
+	check
 	) where
 
 import Control.Applicative
@@ -139,6 +141,42 @@ typeOf opts cabal file mproj mname line col = liftException $ do
 		parseRegion = Region <$> parsePosition <*> parsePosition
 		parsePosition :: ReadM Position
 		parsePosition = Position <$> readParse <*> readParse
+
+data ErrorMessage = ErrorMessage {
+	errorLocation :: Location,
+	errorMessage :: String }
+		deriving (Eq, Show)
+
+instance NFData ErrorMessage where
+	rnf (ErrorMessage l m) = rnf l `seq` rnf m
+
+instance ToJSON ErrorMessage where
+	toJSON (ErrorMessage l m) = object [
+		"location" .= l,
+		"message" .= m]
+
+instance FromJSON ErrorMessage where
+	parseJSON = withObject "error message" $ \v -> ErrorMessage <$>
+		v .:: "location" <*>
+		v .:: "message"
+
+parseErrorMessage :: String -> Maybe ErrorMessage
+parseErrorMessage s = do
+	groups <- match "^(.+):(\\d+):(\\d+):(.*)$" s
+	return $ ErrorMessage {
+		errorLocation = Location {
+			locationModule = FileModule (groups `at` 1) Nothing,
+			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
+		errorMessage = groups `at` 4 }
+
+check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> ErrorT String IO [ErrorMessage]
+check opts cabal files mproj = liftException $ do
+	cradle <- cradle cabal mproj
+	msgs <- lines <$> GhcMod.checkSyntax
+		(GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts })
+		cradle
+		files
+	return $ mapMaybe parseErrorMessage msgs
 
 cradle :: Cabal -> Maybe Project -> IO GhcMod.Cradle
 cradle cabal Nothing = do

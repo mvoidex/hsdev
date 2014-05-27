@@ -266,11 +266,17 @@ loadProject p
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
-project file = Project {
-	projectName = takeBaseName (takeDirectory file),
-	projectPath = takeDirectory file,
-	projectCabal = file,
-	projectDescription = Nothing }
+project file
+	| takeExtension file == ".cabal" = Project {
+		projectName = takeBaseName (takeDirectory file),
+		projectPath = takeDirectory file,
+		projectCabal = file,
+		projectDescription = Nothing }
+	| otherwise = Project {
+		projectName = takeBaseName file,
+		projectPath = file,
+		projectCabal = file </> (takeBaseName file <.> "cabal"),
+		projectDescription = Nothing }
 
 -- | Entity with project extensions
 data Extensions a = Extensions {
