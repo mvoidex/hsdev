@@ -30,7 +30,7 @@ import HsDev.Tools.GhcMod (TypedRegion, OutputMessage)
 import qualified HsDev.Database.Async as DB
 import HsDev.Util ((.::), (.::?))
 
-import System.Command
+import System.Console.Command
 import Update
 
 #if mingw32_HOST_OS

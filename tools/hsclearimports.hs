@@ -13,7 +13,7 @@ import Text.Read (readMaybe)
 import HsDev.Tools.ClearImports (clearImports)
 import HsDev.Symbols (locateSourceDir)
 
-import System.Command
+import System.Console.Command
 
 opts :: [OptDescr (Opts String)]
 opts = [

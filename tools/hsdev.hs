@@ -8,8 +8,8 @@ import System.Environment
 import System.Exit
 import System.IO
 
-import System.Command hiding (brief)
-import qualified System.Command as C (brief)
+import System.Console.Command hiding (brief)
+import qualified System.Console.Command as C (brief)
 
 import Types
 import Commands

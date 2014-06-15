@@ -25,14 +25,17 @@ library
     HsDev.Cabal
     HsDev.Cache
     HsDev.Cache.Structured
+    HsDev.Client.Request
     HsDev.Commands
     HsDev.Database
     HsDev.Database.Async
     HsDev.Display
     HsDev.Inspect
+    HsDev.Message
     HsDev.Project
     HsDev.Scan
     HsDev.Scan.Browse
+    HsDev.Server.Response
     HsDev.Symbols
     HsDev.Symbols.Class
     HsDev.Symbols.Location
@@ -46,6 +49,7 @@ library
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Util
+    System.Console.Command
 
   if os(windows)
     exposed-modules:
@@ -76,6 +80,7 @@ library
     time >= 1.4.0,
     attoparsec >= 0.11.0,
     unordered-containers >= 0.2.0,
+    vector >= 0.10.0,
     text >= 1.1.0
 
 executable hsdev
@@ -85,7 +90,6 @@ executable hsdev
   other-modules:
     Control.Concurrent.FiniteChan
     Commands
-    System.Command
     Types
     Update
 
@@ -115,8 +119,7 @@ executable hsdev
     unordered-containers >= 0.2.0,
     text >= 1.1.0,
     transformers >= 0.3.0,
-    unordered-containers >= 0.2.0,
-    vector >= 0.10.0
+    unordered-containers >= 0.2.0
 
   if os(windows)
     build-depends:
@@ -126,7 +129,6 @@ executable hsinspect
   main-is: hsinspect.hs
   hs-source-dirs: tools
   other-modules:
-    System.Command
     Tool
   build-depends:
     base >= 4.7 && < 5,
@@ -145,7 +147,6 @@ executable hsclearimports
   main-is: hsclearimports.hs
   hs-source-dirs: tools
   other-modules:
-    System.Command
   build-depends:
     base >= 4.7 && < 5,
     hsdev,
@@ -157,14 +158,12 @@ executable hsclearimports
     containers >= 0.5.0,
     mtl >= 2.1.0,
     text >= 1.1.0,
-    unordered-containers >= 0.2.0,
-    vector >= 0.10.0
+    unordered-containers >= 0.2.0
 
 executable hscabal
   main-is: hscabal.hs
   hs-source-dirs: tools
   other-modules:
-    System.Command
     Tool
   build-depends:
     base >= 4.7 && < 5,
@@ -175,14 +174,12 @@ executable hscabal
     containers >= 0.5.0,
     mtl >= 2.1.0,
     text >= 1.1.0,
-    unordered-containers >= 0.2.0,
-    vector >= 0.10.0
+    unordered-containers >= 0.2.0
 
 executable hshayoo
   main-is: hshayoo.hs
   hs-source-dirs: tools
   other-modules:
-    System.Command
     Tool
   build-depends:
     base >= 4.7 && < 5,
@@ -193,8 +190,7 @@ executable hshayoo
     containers >= 0.5.0,
     mtl >= 2.1.0,
     text >= 1.1.0,
-    unordered-containers >= 0.2.0,
-    vector >= 0.10.0
+    unordered-containers >= 0.2.0
 
 test-suite test
   main-is: Test.hs

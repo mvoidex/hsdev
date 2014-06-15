@@ -50,7 +50,7 @@ import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
 
 import qualified Control.Concurrent.FiniteChan as F
-import System.Command
+import System.Console.Command
 
 #if mingw32_HOST_OS
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)

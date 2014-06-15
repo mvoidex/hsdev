@@ -10,7 +10,7 @@ module Tool (
 	-- * Options
 	prettyOpt, isPretty,
 
-	module System.Command
+	module System.Console.Command
 	) where
 
 import Control.Monad.Error (ErrorT, runErrorT, throwError)
@@ -23,7 +23,7 @@ import System.IO
 
 import HsDev.Tools.Base (ToolM)
 
-import System.Command
+import System.Console.Command
 
 -- | Run tool with commands
 toolMain :: String -> [Command (IO ())] -> IO ()
