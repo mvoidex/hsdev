@@ -31,7 +31,7 @@ instance ToJSON a => ToJSON (Message a) where
 	toJSON (Message m i) = toJSON m `objectUnion` object ["id" .= i]
 
 instance FromJSON a => FromJSON (Message a) where
-	parseJSON = withObject "message" $ \v -> Message <$> parseJSON (Object v) <*> v .:: "id"
+	parseJSON = withObject "message" $ \v -> Message <$> parseJSON (Object v) <*> v .::? "id"
 
 -- | Get messages by id
 messagesById :: Maybe String -> [Message a] -> [a]
