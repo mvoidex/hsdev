@@ -19,13 +19,13 @@ library
   hs-source-dirs: src
   ghc-options: -threaded
   exposed-modules:
-    Data.Group
     Data.Async
+    Data.Group
+    Data.Help
     HsDev
     HsDev.Cabal
     HsDev.Cache
     HsDev.Cache.Structured
-    HsDev.Client.Request
     HsDev.Commands
     HsDev.Database
     HsDev.Database.Async
@@ -35,7 +35,7 @@ library
     HsDev.Project
     HsDev.Scan
     HsDev.Scan.Browse
-    HsDev.Server.Response
+    HsDev.Server.Message
     HsDev.Symbols
     HsDev.Symbols.Class
     HsDev.Symbols.Location
@@ -49,11 +49,9 @@ library
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Util
+    System.Console.Cmd
     System.Console.Command
-
-  if os(windows)
-    exposed-modules:
-      System.Win32.PowerShell
+    Text.Format
 
   build-depends:
     base >= 4.7 && < 5,
@@ -73,10 +71,12 @@ library
     hdocs >= 0.4.0,
     HTTP >= 4000.2.0,
     MonadCatchIO-transformers >= 0.3.0,
+    monad-loops >= 0.4,
     mtl >= 2.1.0,
     transformers >= 0.3.0,
     process >= 1.2.0,
     regexpr >= 0.5.0,
+    regex-posix >= 0.95,
     time >= 1.4.0,
     attoparsec >= 0.11.0,
     unordered-containers >= 0.2.0,

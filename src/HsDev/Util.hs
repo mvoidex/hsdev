@@ -7,7 +7,7 @@ module HsDev.Util (
 	-- * String utils
 	tab, tabs, trim, split,
 	-- * Helper
-	(.::), (.::?),
+	(.::), (.::?), objectUnion,
 	-- * Exceptions
 	liftException, liftExceptionM, liftIOErrors,
 	eitherT,
@@ -24,7 +24,7 @@ import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr)
-import qualified Data.HashMap.Strict as HM (HashMap, toList)
+import qualified Data.HashMap.Strict as HM (HashMap, toList, union)
 import Data.ByteString.Lazy (ByteString)
 import Data.Text (Text)
 import qualified Data.Text.Lazy as T
@@ -93,6 +93,13 @@ v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lo
 
 (.::?) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser (Maybe a)
 v .::? name = traverse parseJSON $ lookup name $ HM.toList v
+
+-- | Union two JSON objects
+objectUnion :: Value -> Value -> Value
+objectUnion (Object l) (Object r) = Object $ HM.union l r
+objectUnion (Object l) _ = Object l
+objectUnion _ (Object r) = Object r
+objectUnion _ _ = Null
 
 -- | Lift IO exception to ErrorT
 liftException :: C.MonadCatchIO m => m a -> ErrorT String m a
