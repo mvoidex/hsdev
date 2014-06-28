@@ -49,6 +49,7 @@ library
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Util
+    System.Console.Args
     System.Console.Cmd
     System.Console.Command
     Text.Format

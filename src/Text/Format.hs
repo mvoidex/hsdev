@@ -5,7 +5,7 @@
 -- >"My name is $, I am ${age} years old, I am from $" %~ ("Vasya" % ("age" %= 20) % "Moscow")
 -- >"My name is Vasya, I am 20 years old"
 module Text.Format (
-	Format(..), Args, Hole(..),
+	Format(..), FormatArgs, Hole(..),
 	(%~), (~~), (%), (%=)
 	) where
 
@@ -23,12 +23,12 @@ instance Format Int where
 instance Format Integer where
 	format = show
 
-type Args = [(Maybe String, String)]
+type FormatArgs = [(Maybe String, String)]
 
 class Hole a where
-	hole :: a -> Args
+	hole :: a -> FormatArgs
 
-instance Hole Args where
+instance Hole FormatArgs where
 	hole = id
 
 instance Format a => Hole a where
@@ -60,7 +60,7 @@ fmt %~ hargs = case fmt =~ "\\$({([a-zA-Z]+)})?" of
 	where
 		args = hole hargs
 
-		split' :: String -> Either String (String, Args)
+		split' :: String -> Either String (String, FormatArgs)
 		split' n = maybe
 			(Left $ maybe "Not enough arguments" ("Format argument '$' not found" ~~) n')
 			(\v -> Right (v, delete (n', v) args))
@@ -77,7 +77,7 @@ fmt ~~ hargs = either error id $ fmt %~ hargs
 
 infixr 5 %
 
-(%) :: (Hole a, Hole b) => a -> b -> Args
+(%) :: (Hole a, Hole b) => a -> b -> FormatArgs
 x % y = hole x ++ hole y
 
 infixr 1 %=
