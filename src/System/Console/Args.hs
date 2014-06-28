@@ -176,7 +176,7 @@ instance Help Opt where
 		maybe "" (" -- " ++) desc]]
 
 instance Help [Opt] where
-	brief = unwords . map brief
+	brief = unwords . map ((\s -> "[" ++ s ++ "]") . brief)
 	help = concatMap help
 
 info :: [Opt] -> String

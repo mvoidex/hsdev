@@ -1,6 +1,6 @@
 module System.Console.Cmd (
 	CmdAction, notMatch, failMatch,
-	Cmd(..), cmdAct, cutName, cmd,
+	Cmd(..), cmdAct, cutName, cmd, defCmd,
 	CmdHelp(..), withHelp, printWith,
 	run, runArgs, runOn,
 
@@ -56,12 +56,22 @@ verifyOpts :: [Opt] -> Args -> CmdAction Args
 verifyOpts os = ErrorT . Just . verify os
 
 cmd :: String -> [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
+cmd "" as os desc act = defCmd as os desc act
 cmd name as os desc act = Cmd {
 	cmdName = name,
 	cmdArgs = as,
 	cmdOpts = os,
 	cmdDesc = if null desc then Nothing else Just desc,
 	cmdRun = cutName name >=> verifyOpts os >=> cmdAct act }
+
+-- | Unnamed command
+defCmd :: [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
+defCmd as os desc act = Cmd {
+	cmdName = "",
+	cmdArgs = as,
+	cmdOpts = os,
+	cmdDesc = if null desc then Nothing else Just desc,
+	cmdRun = verifyOpts os >=> cmdAct act }
 
 data CmdHelp =
 	HelpUsage [String] |
