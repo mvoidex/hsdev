@@ -143,7 +143,7 @@ mainCommands = withHelp "hsdev" (printWith putStrLn) $ srvCmds ++ map wrapCmd co
 				nullFd <- openFd "/dev/null" ReadWrite Nothing defaultFileFlags
 				mapM_ (dupTo nullFd) [stdInput, stdOutput, stdError]
 				closeFd nullFd
-				run' sopts []
+				run' (Args [] sopts)
 
 		handle forkError $ do
 			forkProcess proxy
