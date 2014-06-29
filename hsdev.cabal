@@ -19,6 +19,7 @@ library
   hs-source-dirs: src
   ghc-options: -threaded
   exposed-modules:
+    Control.Apply.Util
     Data.Async
     Data.Group
     Data.Help

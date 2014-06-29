@@ -1,10 +1,8 @@
 {-# LANGUAGE OverloadedStrings, CPP #-}
 
 module Types (
-	-- * Server options
-	ServerOpts(..), serverOpts, serverOptsToArgs,
-	-- * Client options
-	ClientOpts(..), clientOpts,
+	-- * Server/client options
+	serverOpts, clientOpts, serverDefCfg, clientDefCfg,
 	-- * Messages and results
 	ResultValue(..), Response(..),
 	CommandResult(..), ok, err, errArgs, details,
@@ -30,7 +28,7 @@ import HsDev.Tools.GhcMod (TypedRegion, OutputMessage)
 import qualified HsDev.Database.Async as DB
 import HsDev.Util ((.::), (.::?))
 
-import System.Console.Command
+import System.Console.Cmd
 import Update
 
 #if mingw32_HOST_OS
@@ -38,81 +36,29 @@ import System.Win32.FileMapping.NamePool (Pool)
 #endif
 
 -- | Server options
-data ServerOpts = ServerOpts {
-	serverPort :: First Int,
-	serverTimeout :: First Int,
-	serverLog :: First String,
-	serverCache :: First FilePath,
-	serverLoadCache :: Any,
-	serverAsClient :: Any }
-
-instance DefaultConfig ServerOpts where
-	defaultConfig = ServerOpts
-		(First $ Just 4567)
-		(First $ Just 1000)
-		(First Nothing)
-		(First Nothing)
-		mempty
-		mempty
-
-instance Monoid ServerOpts where
-	mempty = ServerOpts mempty mempty mempty mempty mempty mempty
-	l `mappend` r = ServerOpts
-		(serverPort l `mappend` serverPort r)
-		(serverTimeout l `mappend` serverTimeout r)
-		(serverLog l `mappend` serverLog r)
-		(serverCache l `mappend` serverCache r)
-		(serverLoadCache l `mappend` serverLoadCache r)
-		(serverAsClient l `mappend` serverAsClient r)
-
--- | Server options command opts
-serverOpts :: [OptDescr ServerOpts]
+serverOpts :: [Opt]
 serverOpts = [
-	Option [] ["port"] (ReqArg (\p -> mempty { serverPort = First (readMaybe p) }) "number") "listen port",
-	Option [] ["timeout"] (ReqArg (\t -> mempty { serverTimeout = First (readMaybe t) }) "msec") "query timeout",
-	Option ['l'] ["log"] (ReqArg (\l -> mempty { serverLog = First (Just l) }) "file") "log file",
-	Option [] ["cache"] (ReqArg (\p -> mempty { serverCache = First (Just p) }) "path") "cache directory",
-	Option [] ["load"] (NoArg (mempty { serverLoadCache = Any True })) "force load all data from cache on startup",
-	Option ['c'] ["as-client"] (NoArg (mempty { serverAsClient = Any True })) "make server be client and connect to port specified"]
-
--- | Convert 'ServerOpts' to args
-serverOptsToArgs :: ServerOpts -> [String]
-serverOptsToArgs sopts = concat [
-	arg' "port" show $ serverPort sopts,
-	arg' "timeout" show $ serverTimeout sopts,
-	arg' "log" id $ serverLog sopts,
-	arg' "cache" id $ serverCache sopts,
-	if getAny (serverLoadCache sopts) then ["--load"] else [],
-	if getAny (serverAsClient sopts) then ["--as-client"] else []]
-	where
-		arg' :: String -> (a -> String) -> First a -> [String]
-		arg' name str = maybe [] (\v -> ["--" ++ name, str v]) . getFirst
+	req "port" "number" `desc` "listen port",
+	req "timeout" "msec" `desc` "query timeout",
+	req "log" "file" `short` ['l'] `desc` "log file",
+	req "cache" "path" `desc` "cache directory",
+	flag "load" `desc` "force load all data from cache on startup"]
 
 -- | Client options
-data ClientOpts = ClientOpts {
-	clientPort :: First Int,
-	clientPretty :: Any,
-	clientData :: Any,
-	clientTimeout :: First Int }
-
-instance DefaultConfig ClientOpts where
-	defaultConfig = ClientOpts (First $ Just 4567) mempty mempty mempty
-
-instance Monoid ClientOpts where
-	mempty = ClientOpts mempty mempty mempty mempty
-	l `mappend` r = ClientOpts
-		(clientPort l `mappend` clientPort r)
-		(clientPretty l `mappend` clientPretty r)
-		(clientData l `mappend` clientData r)
-		(clientTimeout l `mappend` clientTimeout r)
-
--- | Client options command opts
-clientOpts :: [OptDescr ClientOpts]
+clientOpts :: [Opt]
 clientOpts = [
-	Option [] ["port"] (ReqArg (\p -> mempty { clientPort = First (readMaybe p) }) "number") "connection port",
-	Option [] ["pretty"] (NoArg (mempty { clientPretty = Any True })) "pretty json output",
-	Option [] ["stdin"] (NoArg (mempty { clientData = Any True })) "pass data to stdin",
-	Option [] ["timeout"] (ReqArg (\p -> mempty { clientTimeout = First (readMaybe p) }) "milliseconds") "overwrite default timeout length"]
+	req "port" "number" `desc` "connection port",
+	flag "pretty" `desc` "pretty json output",
+	req "stdin" "data" `desc` "pass data to stdin",
+	req "timeout" "msec" `desc` "overwrite timeout duration"]
+
+serverDefCfg :: Opts String
+serverDefCfg = mconcat [
+	"port" %-- (4567 :: Int),
+	"timeout" %-- (1000 :: Int)]
+
+clientDefCfg :: Opts String
+clientDefCfg = mconcat ["port" %-- (4567 :: Int)]
 
 data ResultValue =
 	ResultDatabase Database |
@@ -208,7 +154,7 @@ details as (ResultError s cs) = ResultError s (M.union (M.fromList as) cs)
 details _ r = r
 
 data CommandCall = CommandCall {
-	commandCallName :: [String],
+	commandCallName :: String,
 	commandCallPosArgs :: [String],
 	commandCallOpts :: Opts String }
 
@@ -225,7 +171,7 @@ instance FromJSON CommandCall where
 		(fromMaybe mempty <$> (v .::? "opts"))
 
 callArgs :: CommandCall -> [String]
-callArgs (CommandCall n ps opts) = n ++ ps ++ toArgs opts
+callArgs (CommandCall n ps opts) = words n ++ toArgs (Args ps opts)
 
 -- | Add options
 --

@@ -1,14 +1,15 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances, TupleSections #-}
 
 module System.Console.Args (
 	Args(..), Opts(..), Arg(..), Opt(..),
+	withOpts, defOpts, defArgs, selectOpts, splitOpts,
 	(%--), hoist, has, arg, listArg, flagSet,
 	flag, req, list,
 	desc, alias, short,
-	parse, parse_, tryParse, info,
+	parse, parse_, tryParse, toArgs, info,
 
 	-- * Helpers
-	split, unsplit, verify,
+	splitArgs, unsplitArgs, verify,
 
 	module Data.Help
 	) where
@@ -17,13 +18,18 @@ import Control.Arrow
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Loops
+import Data.Aeson
 import Data.Char
+import qualified Data.HashMap.Strict as HM (HashMap, toList)
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid
 import Data.Foldable (Foldable(foldMap))
+import Data.String (fromString)
+import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Traversable (Traversable(traverse))
 
 import Data.Help
@@ -56,6 +62,18 @@ instance Monoid (Opts a) where
 	mempty = Opts mempty
 	(Opts l) `mappend` (Opts r) = Opts $ M.unionWith mappend l r
 
+instance ToJSON a => ToJSON (Opts a) where
+	toJSON (Opts opts) = object $ map toPair $ M.toList opts where
+		toPair (n, []) = fromString n .= Null
+		toPair (n, [v]) = fromString n .= v
+		toPair (n, vs) = fromString n .= vs
+
+instance FromJSON a => FromJSON (Opts a) where
+	parseJSON = withObject "options" $ fmap (Opts . M.fromList) . mapM fromPair . HM.toList where
+		fromPair (n, v) = (T.unpack n,) <$> case v of
+			Null -> return []
+			_ -> (return <$> parseJSON v) <|> parseJSON v
+
 data Arg = Flag | Required String | List String deriving (Eq, Ord, Show)
 
 argName :: Arg -> Maybe String
@@ -71,7 +89,24 @@ data Opt = Opt {
 	optArg :: Arg }
 		deriving (Eq, Show)
 
---	(%--), hoist, has, arg, listArg, flagSet,
+withOpts :: (Opts String -> Opts String) -> Args -> Args
+withOpts f (Args a o) = Args a (f o)
+
+-- | Set default values, if option doesn't present
+defOpts :: Opts String -> Opts String -> Opts String
+defOpts (Opts def) (Opts new) = Opts $ new `M.union` def
+
+defArgs :: Opts String -> Args -> Args
+defArgs = withOpts . defOpts
+
+selectOpts :: [Opt] -> Opts a -> Opts a
+selectOpts opts = Opts . M.filterWithKey (\n _ -> n `elem` optNames) . getOpts where
+	optNames = map optName opts
+
+splitOpts :: [Opt] -> Opts a -> (Opts a, Opts a)
+splitOpts opts = (Opts *** Opts) . M.partitionWithKey (\n _ -> n `elem` optNames) . getOpts where
+	optNames = map optName opts
+
 (%--) :: Format a => String -> a -> Opts String
 n %-- v = Opts $ M.singleton n [format v]
 
@@ -118,6 +153,7 @@ desc o d = o { optDescription = Just d }
 alias :: Opt -> [String] -> Opt
 alias o ls = o { optLong = optLong o ++ ls }
 
+-- | Shortcuts
 short :: Opt -> [Char] -> Opt
 short o ss = o { optShort = optShort o ++ ss }
 
@@ -166,6 +202,12 @@ parse_ = mconcat . unfoldr parseCmd where
 tryParse :: [Opt] -> [String] -> Args
 tryParse os s = either (const $ parse_ s) id $ parse os s
 
+toArgs :: Args -> [String]
+toArgs (Args p o) = p ++ (concatMap toArgs' . M.toList . getOpts $ o) where
+	toArgs' :: (String, [String]) -> [String]
+	toArgs' (n, []) = ["--" ++ n]
+	toArgs' (n, vs) = concat [["--" ++ n, v] | v <- vs]
+
 instance Help Opt where
 	brief (Opt n _ _ _ arg) = concat [
 		longOpt n,
@@ -182,12 +224,12 @@ instance Help [Opt] where
 info :: [Opt] -> String
 info = unlines . indented
 
-split :: String -> [String]
-split "" = []
-split (c:cs)
-	| isSpace c = split cs
-	| c == '"' = let (w, cs') = readQuote cs in w : split cs'
-	| otherwise = let (ws, tl) = break isSpace cs in (c:ws) : split tl
+splitArgs :: String -> [String]
+splitArgs "" = []
+splitArgs (c:cs)
+	| isSpace c = splitArgs cs
+	| c == '"' = let (w, cs') = readQuote cs in w : splitArgs cs'
+	| otherwise = let (ws, tl) = break isSpace cs in (c:ws) : splitArgs tl
 	where
 		readQuote :: String -> (String, String)
 		readQuote "" = ("", "")
@@ -197,8 +239,8 @@ split (c:cs)
 		readQuote ('"':ss) = ("", ss)
 		readQuote (s:ss) = first (s:) $ readQuote ss
 
-unsplit :: [String] -> String
-unsplit = unwords . map escape where
+unsplitArgs :: [String] -> String
+unsplitArgs = unwords . map escape where
 	escape :: String -> String
 	escape str
 		| any isSpace str || '"' `elem` str = "\"" ++ concat (unfoldr escape' str) ++ "\""

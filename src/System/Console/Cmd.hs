@@ -1,6 +1,6 @@
 module System.Console.Cmd (
-	CmdAction, notMatch, failMatch,
-	Cmd(..), cmdAct, cutName, cmd, defCmd,
+	CmdAction, notMatch, failMatch, runCmd, defaultOpts, validateArgs, alterArgs,
+	Cmd(..), cmdAct, cutName, cmda, cmda_, cmd, cmd_, defCmd,
 	CmdHelp(..), withHelp, printWith,
 	run, runArgs, runOn,
 
@@ -33,45 +33,74 @@ data Cmd a = Cmd {
 	cmdArgs :: [String],
 	cmdOpts :: [Opt],
 	cmdDesc :: Maybe String,
-	cmdRun :: Args -> CmdAction a }
+	cmdGetArgs :: Args -> CmdAction Args,
+	-- ^ Get command arguments from source arguments, by default it cuts command name
+	cmdAction :: Args -> CmdAction a }
 
 instance Functor Cmd where
 	fmap f cmd' = cmd' {
-		cmdRun = fmap f . cmdRun cmd' }
+		cmdAction = fmap f . cmdAction cmd' }
+
+-- | Run cmd
+runCmd :: Cmd a -> Args -> CmdAction a
+runCmd c = cmdGetArgs c >=> cmdAction c
+
+-- | Set default opts
+defaultOpts :: (Opts String) -> Cmd a -> Cmd a
+defaultOpts opts = alterArgs (cmdAct $ withOpts $ defOpts opts)
+
+-- | Validate Args in command
+validateArgs :: (Args -> CmdAction ()) -> Cmd a -> Cmd a
+validateArgs p c = c {
+	cmdAction = \a -> p a >> cmdAction c a }
+
+-- | Alter Args in command
+alterArgs :: (Args -> CmdAction Args) -> Cmd a -> Cmd a
+alterArgs f c = c {
+	cmdGetArgs = f >=> cmdGetArgs c }
 
 -- | Make CmdAction function
-cmdAct :: (Args -> a) -> Args -> CmdAction a
+cmdAct :: (b -> a) -> b -> CmdAction a
 cmdAct f = return . f
 
 -- | Cut name of command from arguments and checks if it matches
 --
 -- > cutName >=> cmdAct act
 cutName :: String -> Args -> CmdAction Args
-cutName name args@(Args (cmd:as) os)
-	| cmd == name = return args
-	| otherwise = notMatch
-cutName _ (Args [] _) = notMatch
+cutName name args@(Args as os) = case stripPrefix (words name) as of
+	Just as' -> return (Args as' os)
+	Nothing -> notMatch
 
 verifyOpts :: [Opt] -> Args -> CmdAction Args
 verifyOpts os = ErrorT . Just . verify os
 
-cmd :: String -> [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
-cmd "" as os desc act = defCmd as os desc act
-cmd name as os desc act = Cmd {
+cmda :: String -> [String] -> [Opt] -> String -> (Args -> CmdAction a) -> Cmd a
+cmda name as os desc act = Cmd {
 	cmdName = name,
 	cmdArgs = as,
 	cmdOpts = os,
 	cmdDesc = if null desc then Nothing else Just desc,
-	cmdRun = cutName name >=> verifyOpts os >=> cmdAct act }
+	cmdGetArgs = cut',
+	cmdAction = verifyOpts os >=> act }
+	where
+		cut'
+			| null name = return
+			| otherwise = cutName name
+
+cmda_ :: String -> [Opt] -> String -> (Opts String -> CmdAction a) -> Cmd a
+cmda_ name os desc act = validateArgs noPos $ cmda name [] os desc (act . namedArgs) where
+	noPos (Args [] _) = return ()
+	noPos (Args _ _) = failMatch "No positional argument expected"
+
+cmd :: String -> [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
+cmd name as os desc act = cmda name as os desc (cmdAct act)
+
+cmd_ :: String -> [Opt] -> String -> (Opts String -> a) -> Cmd a
+cmd_ name os desc act = cmda_ name os desc (cmdAct act)
 
 -- | Unnamed command
 defCmd :: [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
-defCmd as os desc act = Cmd {
-	cmdName = "",
-	cmdArgs = as,
-	cmdOpts = os,
-	cmdDesc = if null desc then Nothing else Just desc,
-	cmdRun = verifyOpts os >=> cmdAct act }
+defCmd as os desc act = cmda "" as os desc (cmdAct act)
 
 data CmdHelp =
 	HelpUsage [String] |
@@ -81,24 +110,22 @@ data CmdHelp =
 withHelp :: String -> (Either String CmdHelp -> a) -> [Cmd a] -> [Cmd a]
 withHelp tool toCmd cmds = cmds' where
 	cmds' = helpcmd : cmds
-	helpcmd = fmap toCmd $ Cmd
+	helpcmd = fmap toCmd $ alterArgs (cmdAct checkHelp) $ cmd
 		"help"
 		["command"]
 		[flag "help" `short` ['?'] `desc` "show help (when using form 'command -?')"]
-		(Just ("help command, can be called in form '$ [command] -?'" ~~ tool))
-		(cutHelp >=> cmdAct onHelp)
-	cutHelp :: Args -> CmdAction Args
-	cutHelp a
-		| flagSet "help" (namedArgs a) = return $ a {
+		("help command, can be called in form '$ [command] -?'" ~~ tool)
+		onHelp
+	checkHelp :: Args -> Args
+	checkHelp a
+		| flagSet "help" (namedArgs a) = a {
+			posArgs = "help" : posArgs a,
 			namedArgs = Opts $ M.delete "help" $ getOpts $ namedArgs a }
-		| listToMaybe (posArgs a) == Just "help" = return $ a {
-			posArgs = tail (posArgs a) }
-		| otherwise = notMatch
+		| otherwise = a
 	onHelp (Args [] _) = Right $ HelpUsage [tool ++ " " ++ brief c | c <- cmds']
-	onHelp (Args cmdnames _) = liftM (HelpCommands . concat) $ mapM getHelp cmdnames
-	getHelp cmdname = case filter ((cmdname ==) . cmdName) cmds' of
-		[] -> Left $ "Unknown command: " ++ cmdname
-		helps -> Right $ map (cmdName &&& (addHeader . indented)) helps
+	onHelp (Args cmdname _) = case filter ((cmdname ==) . words . cmdName) cmds' of
+		[] -> Left $ "Unknown command: " ++ unwords cmdname
+		helps -> Right $ HelpCommands $ map (cmdName &&& (addHeader . indented)) helps
 	addHeader [] = []
 	addHeader (h:hs) = (tool ++ " " ++ h) : hs
 
@@ -126,4 +153,4 @@ runArgs cmds onDef onError = runOn cmds onDef onError (const id)
 runOn :: [Cmd a] -> a -> (String -> a) -> (Cmd a -> c -> Args) -> c -> a
 runOn cmds onDef onError f as = maybe onDef (either onError id) found where
 	found = listToMaybe $ mapMaybe (runErrorT . (`act` as)) cmds
-	act c = cmdRun c . f c
+	act c = runCmd c . f c

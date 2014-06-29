@@ -35,6 +35,7 @@ import System.Console.GetOpt
 import System.FilePath
 import Text.Read (readMaybe)
 
+import Control.Apply.Util
 import qualified HsDev.Database.Async as DB
 import HsDev.Commands
 import HsDev.Database
@@ -50,7 +51,7 @@ import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
 
 import qualified Control.Concurrent.FiniteChan as F
-import System.Console.Command
+import System.Console.Cmd
 
 #if mingw32_HOST_OS
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
@@ -79,21 +80,40 @@ powershell str
 
 #endif
 
--- | Main commands
-mainCommands :: [Command (IO ())]
-mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
-	wrapCmd :: Command CommandAction -> Command (IO ())
-	wrapCmd = fmap sendCmd . addClientOpts . fmap withOptsCommand
-	srvCmds = [
-		cmd ["server", "start"] [] "start remote server" serverOpts start',
-		cmd ["server", "run"] [] "start server" serverOpts run',
-		cmd ["server", "stop"] [] "stop remote server" clientOpts stop',
-		cmd ["connect"] [] "connect to send commands directly" clientOpts connect']
+validateNums :: [String] -> Cmd a -> Cmd a
+validateNums ns = validateArgs (check . namedArgs) where
+	check os = forM_ ns $ \n -> case fmap (readMaybe :: String -> Maybe Int) $ arg n os of
+		Just Nothing -> failMatch "Must be a number"
+		_ -> return ()
 
-	start' sopts _ = do
+validateOpts :: Cmd a -> Cmd a
+validateOpts = validateNums ["port", "timeout"]
+
+noArgs :: Cmd a -> Cmd a
+noArgs = validateArgs (noPos . posArgs) where
+	noPos ps =
+		guard (null ps)
+		`mplus`
+		failMatch "positional arguments are not expected"
+
+narg :: String -> Opts String -> Maybe Int
+narg n = join . fmap readMaybe . arg n
+
+-- | Main commands
+mainCommands :: [Cmd (IO ())]
+mainCommands = withHelp "hsdev" (printWith putStrLn) $ srvCmds ++ map wrapCmd commands where
+	wrapCmd :: Cmd CommandAction -> Cmd (IO ())
+	wrapCmd = fmap sendCmd . addClientOpts . fmap withOptsCommand
+	srvCmds = map (chain [validateOpts, noArgs]) [
+		cmd "start" [] serverOpts "start remote server" start' `with` [defaultOpts serverDefCfg],
+		cmd "run" [] serverOpts "start server" run' `with` [defaultOpts serverDefCfg],
+		cmd "stop" [] clientOpts "stop remote server" stop' `with` [defaultOpts clientDefCfg],
+		cmd "connect" [] clientOpts "connect to send commands directly" connect' `with` [defaultOpts clientDefCfg]]
+
+	start' (Args _ sopts) = do
 #if mingw32_HOST_OS
 		let
-			args = ["server", "run"] ++ serverOptsToArgs sopts
+			args = ["run"] ++ toArgs (Args [] sopts)
 		myExe <- getExecutablePath
 		r <- readProcess "powershell" [
 			"-Command",
@@ -104,7 +124,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 				"-WindowStyle Hidden",
 				"}"]] ""
 		if all isSpace r
-			then putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+			then putStrLn $ "Server started at port " ++ (fromJust $ arg "port" sopts)
 			else putStrLn $ "Failed to start server: " ++ r
 #else
 		let
@@ -127,20 +147,20 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 
 		handle forkError $ do
 			forkProcess proxy
-			putStrLn $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+			putStrLn $ "Server started at port " ++ (fromJust $ arg "port" sopts)
 #endif
-	run' sopts _
-		| getAny (serverAsClient sopts) = runServer sopts $ \copts -> do
-			commandLog copts $ "Server started as client connecting at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+	run' (Args _ sopts)
+		| flagSet "as-client" sopts = runServer sopts $ \copts -> do
+			commandLog copts $ "Server started as client connecting at port " ++ (fromJust $ arg "port" sopts)
 			me <- myThreadId
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
-			connect s $ SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) addr'
+			connect s $ SockAddrInet (fromIntegral $ fromJust $ narg "port" sopts) addr'
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h ->
 				processClient (show s) (hGetLine' h) (L.hPutStrLn h) sopts (copts {
 					commandExit = killThread me })
 		| otherwise = runServer sopts $ \copts -> do
-			commandLog copts $ "Server started at port " ++ show (fromJust $ getFirst $ serverPort sopts)
+			commandLog copts $ "Server started at port " ++ (fromJust $ arg "port" sopts)
 
 			waitListen <- newEmptyMVar
 			clientChan <- F.newChan
@@ -155,7 +175,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 						killThread accepter
 
 				s <- socket AF_INET Stream defaultProtocol
-				bind s $ SockAddrInet (fromIntegral $ fromJust $ getFirst $ serverPort sopts) iNADDR_ANY
+				bind s $ SockAddrInet (fromIntegral $ fromJust $ narg "port" sopts) iNADDR_ANY
 				listen s maxListenQueue
 				forever $ logIO "accept client exception: " (commandLog copts) $ do
 					s' <- fst <$> accept s
@@ -183,16 +203,16 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 			F.stopChan clientChan >>= sequence_
 			commandLog copts "server stopped"
 
-	stop' copts _ = run (map wrapCmd' commands) onDef onError ["exit"] where
+	stop' (Args _ copts) = run (map wrapCmd' commands) onDef onError ["exit"] where
 		onDef = putStrLn "Command 'exit' not found"
-		onError es = putStrLn $ "Failed to stop server: " ++ intercalate ", " es
+		onError es = putStrLn $ "Failed to stop server: " ++ es
 		wrapCmd' = fmap (sendCmd . (copts,) . withOptsCommand)
 
-	connect' copts _ = do
+	connect' (Args _ copts) = do
 		curDir <- getCurrentDirectory
 		s <- socket AF_INET Stream defaultProtocol
 		addr' <- inet_addr "127.0.0.1"
-		connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort copts) addr')
+		connect s (SockAddrInet (fromIntegral $ fromJust $ narg "port" copts) addr')
 		bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forever $ ignoreIO $ do
 			cmd <- hGetLine' stdin
 			case eitherDecode cmd of
@@ -201,7 +221,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 					L.hPutStrLn h $ encode $ cmd' `addCallOpts` ["current-directory" %-- curDir]
 					waitResp h
 		where
-			pretty = getAny $ clientPretty copts
+			pretty = flagSet "pretty" copts
 			encodeValue :: ToJSON a => a -> L.ByteString
 			encodeValue
 				| pretty = encodePretty
@@ -233,11 +253,11 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 						("error" .= msg) : fs))
 
 	-- Send command to server
-	sendCmd :: (ClientOpts, CommandCall) -> IO ()
+	sendCmd :: (Opts String, CommandCall) -> IO ()
 	sendCmd (p, cmdCall) = do
 		ignoreIO waitResponse
 		where
-			pretty = getAny $ clientPretty p
+			pretty = flagSet "pretty" p
 			encodeValue :: ToJSON a => a -> L.ByteString
 			encodeValue
 				| pretty = encodePretty
@@ -245,7 +265,7 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 
 			waitResponse = do
 				curDir <- getCurrentDirectory
-				stdinData <- if getAny (clientData p)
+				stdinData <- if flagSet "data" p
 					then do
 						cdata <- liftM (eitherDecode :: L.ByteString -> Either String Value) L.getContents
 						case cdata of
@@ -257,14 +277,14 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 
 				s <- socket AF_INET Stream defaultProtocol
 				addr' <- inet_addr "127.0.0.1"
-				connect s (SockAddrInet (fromIntegral $ fromJust $ getFirst $ clientPort p) addr')
+				connect s (SockAddrInet (fromIntegral $ fromJust $ narg "port" p) addr')
 				h <- socketToHandle s ReadWriteMode
 				L.hPutStrLn h $ encode $ cmdCall `addCallOpts` [
 					"current-directory" %-- curDir,
 					case stdinData of
 						Nothing -> mempty
 						Just d -> "data" %-- (fromUtf8 $ encode d),
-					case getFirst (clientTimeout p) of
+					case narg "timeout" p of
 						Nothing -> mempty
 						Just tm -> "timeout" %-- tm]
 				peekResponse h
@@ -294,15 +314,14 @@ mainCommands = addHelp "hsdev" id $ srvCmds ++ map wrapCmd commands where
 					orFail act (msg, fs) = act <|> (throwError $ fromUtf8 $ encodeValue $ object (
 						("error" .= msg) : fs))
 
-	-- Add parsing 'ClieptOpts'
-	addClientOpts :: Command CommandCall -> Command (ClientOpts, CommandCall)
-	addClientOpts c = c { commandRun = run' } where
-		run' args = fmap (fmap (p,)) $ commandRun c args' where
-			(ps, args', _) = getOpt RequireOrder clientOpts args
-			p = mconcat ps `mappend` defaultConfig
+	-- Add parsing 'ClientOpts'
+	addClientOpts :: Cmd CommandCall -> Cmd (Opts String, CommandCall)
+	addClientOpts c = c { cmdAction = run' } where
+		run' (Args args opts) = fmap (defOpts clientDefCfg copts',) $ cmdAction c (Args args opts') where
+			(copts', opts') = splitOpts clientOpts opts
 
 -- | Inits log chan and returns functions (print message, wait channel)
-initLog :: ServerOpts -> IO (String -> IO (), IO ())
+initLog :: Opts String -> IO (String -> IO (), IO ())
 initLog sopts = do
 	msgs <- F.newChan
 	outputDone <- newEmptyMVar
@@ -312,10 +331,10 @@ initLog sopts = do
 	return (F.putChan msgs, F.closeChan msgs >> takeMVar outputDone)
 
 -- | Run server
-runServer :: ServerOpts -> (CommandOptions -> IO ()) -> IO ()
+runServer :: Opts String -> (CommandOptions -> IO ()) -> IO ()
 runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> do
 	db <- DB.newAsync
-	when (getAny $ serverLoadCache sopts) $ withCache sopts () $ \cdir -> do
+	when (flagSet "load" sopts) $ withCache sopts () $ \cdir -> do
 		outputStr $ "Loading cache from " ++ cdir
 		dbCache <- liftA merge <$> SC.load cdir
 		case dbCache of
@@ -338,19 +357,19 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 		(return ())
 		(return ())
 
-withCache :: ServerOpts -> a -> (FilePath -> IO a) -> IO a
-withCache sopts v onCache = case getFirst (serverCache sopts) of
+withCache :: Opts String -> a -> (FilePath -> IO a) -> IO a
+withCache sopts v onCache = case arg "cache" sopts of
 	Nothing -> return v
 	Just cdir -> onCache cdir
 
-writeCache :: ServerOpts -> (String -> IO ()) -> Database -> IO ()
+writeCache :: Opts String -> (String -> IO ()) -> Database -> IO ()
 writeCache sopts logMsg d = withCache sopts () $ \cdir -> do
 	logMsg $ "writing cache to " ++ cdir
 	logIO "cache writing exception: " logMsg $ do
 		SC.dump cdir $ structurize d
 	logMsg $ "cache saved to " ++ cdir
 
-readCache :: ServerOpts -> (String -> IO ()) -> (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
+readCache :: Opts String -> (String -> IO ()) -> (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
 readCache sopts logMsg act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runErrorT . act where
 	cacheErr e = logMsg ("Error reading cache: " ++ e) >> return Nothing
 	cacheOk s = do
@@ -386,7 +405,7 @@ sendResponseMmap mmapPool send r
 sendResponse :: (ByteString -> IO ()) -> Response -> IO ()
 sendResponse = (. encode)
 
-processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> ServerOpts -> CommandOptions -> IO ()
+processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> Opts String -> CommandOptions -> IO ()
 processClient name receive send sopts copts = do
 	commandLog copts $ name ++ " connected"
 	linkVar <- newMVar $ return ()
@@ -400,7 +419,7 @@ processClient name receive send sopts copts = do
 				"what" .= err]
 			Right (cdir, noFile, tm, reqArgs) -> processCmdArgs
 				(copts { commandLink = void (swapMVar linkVar $ commandExit copts), commandRoot = cdir })
-				(fromMaybe (fromJust $ getFirst $ serverTimeout sopts) tm)
+				(fromMaybe (fromJust $ narg "timeout" sopts) tm)
 				(callArgs reqArgs)
 				(answer noFile)
 	where
@@ -418,7 +437,7 @@ processClient name receive send sopts copts = do
 		extractMeta :: CommandCall -> (FilePath, Bool, Maybe Int, CommandCall)
 		extractMeta c = (fpath, noFile, tm, c `removeCallOpts` ["current-directory", "no-file", "timeout"]) where
 			fpath = fromMaybe (commandRoot copts) $ arg "current-directory" $ commandCallOpts c
-			noFile = flag "no-file" $ commandCallOpts c
+			noFile = flagSet "no-file" $ commandCallOpts c
 			tm = join $ fmap readMaybe $ arg "timeout" $ commandCallOpts c
 
 		disconnected :: MVar (IO ()) -> IO ()
@@ -432,7 +451,7 @@ timeout tm act = race [
 	fmap Just act,
 	threadDelay tm >> return Nothing]
 
-commands :: [Command CommandAction]
+commands :: [Cmd CommandAction]
 commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap noTimeout)) linkCmd where
 	timeout' :: (CommandOptions -> IO CommandResult) -> (Int -> CommandOptions -> IO CommandResult)
 	timeout' f tm copts = fmap (fromMaybe $ err "timeout") $ timeout (tm * 1000) $ f copts
@@ -444,106 +463,126 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		onCmdErr :: SomeException -> IO CommandResult
 		onCmdErr = return . err . show
 
-	wrapErrors :: Command CommandAction -> Command CommandAction
+	wrapErrors :: Cmd CommandAction -> Cmd CommandAction
 	wrapErrors = fmap (fmap handleErrors)
 
 	cmds = [
 		-- Ping command
-		cmd_' ["ping"] [] "ping server" ping',
+		cmd_' "ping" [] "ping server" ping',
 		-- Database commands
-		cmd' ["add"] [] "add info to database" [dataArg] add',
-		cmd' ["scan", "cabal"] [] "scan modules installed in cabal" (sandboxes ++ [
-			ghcOpts, wait, status]) scanCabal',
-		cmd' ["scan", "module"] ["module name"] "scan module in cabal" (sandboxes ++ [ghcOpts]) scanModule',
-		cmd' ["scan"] [] "scan sources" [
-			projectArg "project path or .cabal",
-			fileArg "source file",
-			pathArg "directory to scan for files and projects",
-			ghcOpts, wait, status] scan',
-		cmd' ["rescan"] [] "rescan sources" [
-			projectArg "project path or .cabal",
-			fileArg "source file",
-			pathArg "path to rescan",
-			ghcOpts, wait, status] rescan',
-		cmd' ["remove"] [] "remove modules info" (sandboxes ++ [
-			projectArg "module project",
-			fileArg "module source file",
+		cmd' "add" [] [dataArg] "add info to database" add',
+		--cmd' "scan" [] (sandboxes ++ [ghcOpts] ++ [
+		--	projectArg "project path or .cabal",
+		--	fileArg "source file",
+		--	pathArg "directory to scan for files and projects"])
+		--	"scan sources and installed modules"
+		--	scan',
+		cmd' "scan cabal" [] (sandboxes ++ [ghcOpts]) "scan modules installed in cabal" scanCabal',
+		cmd' "scan module" ["name"] (sandboxes ++ [ghcOpts]) "scan module in cabal" scanModule',
+		cmd' "scan" [] [
+			projectArg `desc` "project path or .cabal",
+			fileArg `desc` "source file",
+			pathArg `desc` "directory to scan for files and projects",
+			ghcOpts]
+			"scan sources"
+			scan',
+		cmd' "rescan" [] [
+			projectArg `desc` "project path or .cabal",
+			fileArg `desc` "source file",
+			pathArg `desc` "path to rescan",
+			ghcOpts]
+			"rescan sources"
+			rescan',
+		cmd' "remove" [] (sandboxes ++ [
+			projectArg `desc` "module project",
+			fileArg `desc` "module source file",
 			moduleArg,
 			packageArg, noLastArg, packageVersionArg,
-			allFlag]) remove',
+			allFlag])
+			"remove modules info"
+			remove',
 		-- | Context free commands
-		cmd' ["list", "modules"] [] "list modules" (sandboxes ++ [
-			projectArg "projects to list modules from",
+		cmd' "list modules" [] (sandboxes ++ [
+			projectArg `desc` "projects to list modules from",
 			noLastArg,
 			packageArg,
-			sourced, standaloned]) listModules',
-		cmd_' ["list", "packages"] [] "list packages" listPackages',
-		cmd_' ["list", "projects"] [] "list projects" listProjects',
-		cmd' ["symbol"] ["name"] "get symbol info" (matches ++ sandboxes ++ [
-			projectArg "related project",
-			fileArg "source file",
+			sourced, standaloned])
+			"list modules"
+			listModules',
+		cmd_' "list packages" [] "list packages" listPackages',
+		cmd_' "list projects" [] "list projects" listProjects',
+		cmd' "symbol" ["name"] (matches ++ sandboxes ++ [
+			projectArg `desc` "related project",
+			fileArg `desc` "source file",
 			moduleArg, localsArg,
 			packageArg, noLastArg, packageVersionArg,
-			sourced, standaloned]) symbol',
-		cmd' ["module"] [] "get module info" (sandboxes ++ [
+			sourced, standaloned])
+			"get symbol info"
+			symbol',
+		cmd' "module" [] (sandboxes ++ [
 			moduleArg, localsArg,
 			packageArg, noLastArg, packageVersionArg,
-			projectArg "module project",
-			fileArg "module source file",
-			sourced]) modul',
-		cmd' ["project"] [] "get project info" [
-			projectArg "project path or name"] project',
+			projectArg `desc` "module project",
+			fileArg `desc` "module source file",
+			sourced])
+			"get module info"
+			modul',
+		cmd' "project" [] [
+			projectArg `desc` "project path or name"]
+			"get project info"
+			project',
 		-- Context commands
-		cmd' ["lookup"] ["symbol"] "lookup for symbol" ctx lookup',
-		cmd' ["whois"] ["symbol"] "get info for symbol" ctx whois',
-		cmd' ["scope", "modules"] [] "get modules accessible from module or within a project" ctx scopeModules',
-		cmd' ["scope"] [] "get declarations accessible from module or within a project" (ctx ++ matches ++ [globalArg]) scope',
-		cmd' ["complete"] ["input"] "show completions for input" ctx complete',
+		cmd' "lookup" ["symbol"] ctx "lookup for symbol" lookup',
+		cmd' "whois" ["symbol"] ctx "get info for symbol" whois',
+		--cmd' "scope" [] (flag "modules" `desc` "return modules, not declarations" : ctx)
+		--	"get accessible symbols from module or within a project" scope',
+		cmd' "scope modules" [] ctx "get modules accessible from module or within a project" scopeModules',
+		cmd' "scope" [] (ctx ++ matches ++ [globalArg]) "get declarations accessible from module or within a project" scope',
+		cmd' "complete" ["input"] ctx "show completions for input" complete',
 		-- Tool commands
-		cmd' ["hayoo"] ["query"] "find declarations online via Hayoo" [] hayoo',
-		cmd' ["cabal", "list"] ["packages..."] "list cabal packages" [] cabalList',
-		cmd' ["ghc-mod", "type"] ["line", "column"] "infer type with 'ghc-mod type'" (ctx ++ [ghcOpts]) ghcmodType',
-		cmd' ["ghc-mod", "check"] ["files"] "check source files" [fileArg "source files", sandbox, ghcOpts] ghcmodCheck',
-		cmd' ["ghc-mod", "lint"] ["file"] "lint source file" [fileArg "source file", hlintOpts] ghcmodLint',
+		cmd' "hayoo" ["query"] [] "find declarations online via Hayoo" hayoo',
+		cmd' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
+		cmd' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
+		cmd' "ghc-mod check" ["files"] [fileArg `desc` "source files", sandbox, ghcOpts] "check source files" ghcmodCheck',
+		cmd' "ghc-mod lint" ["file"] [fileArg `desc` "source file", hlintOpts] "lint source file" ghcmodLint',
 		-- Dump/load commands
-		cmd' ["dump", "cabal"] [] "dump cabal modules" (sandboxes ++ [cacheDir, cacheFile]) dumpCabal',
-		cmd' ["dump", "projects"] [] "dump projects" [projectArg "project", cacheDir, cacheFile] dumpProjects',
-		cmd' ["dump", "files"] [] "dump standalone files" [cacheDir, cacheFile] dumpFiles',
-		cmd' ["dump"] [] "dump whole database" [cacheDir, cacheFile] dump',
-		cmd' ["load"] [] "load data" [cacheDir, cacheFile, dataArg, wait] load',
+		--cmd' "dump" [] (sandboxes ++ [projectArg "project", standalone, allFlag, cacheDir, cacheFile]) dump',
+		cmd' "dump cabal" [] (sandboxes ++ [cacheDir, cacheFile]) "dump cabal modules" dumpCabal',
+		cmd' "dump project" [] [projectArg `desc` "project", cacheDir, cacheFile] "dump projects" dumpProjects',
+		cmd' "dump files" [] [cacheDir, cacheFile] "dump standalone files" dumpFiles',
+		cmd' "dump" [] [cacheDir, cacheFile] "dump while database" dump',
+		cmd' "load" [] [cacheDir, cacheFile, dataArg] "load data" load',
 		-- Exit
-		cmd_' ["exit"] [] "exit" exit']
-	linkCmd = [cmd' ["link"] [] "link to server" [holdArg] link']
+		cmd_' "exit" [] "exit" exit']
+	linkCmd = [cmd' "link" [] [holdArg] "link to server" link']
 
 	-- Command arguments and flags
-	allFlag = option_ ['a'] "all" no "remove all"
-	cacheDir = pathArg "cache path"
-	cacheFile = fileArg "cache file"
-	ctx = [fileArg "source file", sandbox]
-	dataArg = option_ [] "data" (req "contents") "data to pass to command"
-	fileArg = option_ ['f'] "file" (req "file")
-	findArg = option_ [] "find" (req "find") "infix match"
-	ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
-	globalArg = option_ [] "global" no "scope of project"
-	hlintOpts = option_ ['h'] "hlint" (req "hlint options") "options to pass to hlint"
-	holdArg = option_ ['h'] "hold" no "don't return any response"
-	localsArg = option_ ['l'] "locals" no "look in local declarations"
-	noLastArg = option_ [] "no-last" no "don't select last package version"
+	allFlag = flag "all" `short` ['a'] `desc` "remove all"
+	cacheDir = pathArg `desc` "cache path"
+	cacheFile = fileArg `desc` "cache file"
+	ctx = [fileArg `desc` "source file", sandbox]
+	dataArg = req "data" "contents" `desc` "data to pass to command"
+	fileArg = req "file" "path" `short` ['f']
+	findArg = req "find" "query" `desc` "infix match"
+	ghcOpts = list "ghc" "option" `short` ['g'] `desc` "options to pass to GHC"
+	globalArg = flag "global" `desc` "scope of project"
+	hlintOpts = list "hlint" "option" `short` ['h'] `desc` "options to pass to hlint"
+	holdArg = flag "hold" `short` ['h'] `desc` "don't return any response"
+	localsArg = flag "locals" `short` ['l'] `desc` "look in local declarations"
+	noLastArg = flag "no-last" `desc` "don't select last package version"
 	matches = [prefixArg, findArg]
-	moduleArg = option_ ['m'] "module" (req "module name") "module name"
-	packageArg = option_ [] "package" (req "package") "module package"
-	pathArg = option_ ['p'] "path" (req "path")
-	prefixArg = option_ [] "prefix" (req "prefix") "prefix match"
-	projectArg = option [] "project" ["proj"] (req "project")
-	packageVersionArg = option_ ['v'] "version" (req "version") "package version"
-	sandbox = option_ [] "sandbox" (req "path") "path to cabal sandbox"
+	moduleArg = req "module" "name" `short` ['m'] `desc` "module name"
+	packageArg = req "package" "name" `desc` "module package"
+	pathArg = req "path" "path" `short` ['p']
+	prefixArg = req "prefix" "prefix" `desc` "prefix match"
+	projectArg = req "project" "project"
+	packageVersionArg = req "version" "id" `short` ['v'] `desc` "package version"
+	sandbox = req "sandbox" "path" `desc` "path to cabal sandbox"
 	sandboxes = [
-		option_ [] "cabal" no "cabal",
+		flag "cabal" `desc` "cabal",
 		sandbox]
-	sourced = option_ [] "src" no "source files"
-	standaloned = option_ [] "stand" no "standalone files"
-	status = option_ ['s'] "status" no "show status of operation, works only with --wait"
-	wait = option_ ['w'] "wait" no "wait for operation to complete"
+	sourced = flag "src" `desc` "source files"
+	standaloned = flag "stand" `desc` "standalone files"
 
 	-- ping server
 	ping' _ copts = return $ ResultOk $ ResultMap $ M.singleton "message" (ResultString "pong")
@@ -585,20 +624,20 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		return $ either id (const (ResultOk ResultNone)) res
 	-- scan
 	scan' as _ copts = updateProcess copts as $
-		mapM_ (\(n, f) -> forM_ (list n as) (findPath copts >=> f (list "ghc" as))) [
+		mapM_ (\(n, f) -> forM_ (listArg n as) (findPath copts >=> f (listArg "ghc" as))) [
 			("project", Update.scanProject),
 			("file", Update.scanFile),
 			("path", Update.scanDirectory)]
 	-- scan cabal
 	scanCabal' as _ copts = error_ $ do
 		cabals <- getSandboxes copts as
-		lift $ updateProcess copts as $ mapM_ (Update.scanCabal $ list "ghc" as) cabals
+		lift $ updateProcess copts as $ mapM_ (Update.scanCabal $ listArg "ghc" as) cabals
 	-- scan cabal module
 	scanModule' as [] copts = return $ err "Module name not specified"
 	scanModule' as ms copts = error_ $ do
 		cabal <- getCabal copts as
 		lift $ updateProcess copts as $
-			forM_ ms (Update.scanModule (list "ghc" as) . CabalModule cabal Nothing)
+			forM_ ms (Update.scanModule (listArg "ghc" as) . CabalModule cabal Nothing)
 	-- rescan
 	rescan' as _ copts = do
 		dbval <- getDb copts
@@ -611,18 +650,18 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				p' <- findProject copts p
 				return $ M.fromList $ mapMaybe toPair $
 					selectModules (inProject p' . moduleId) dbval |
-				p <- list "project" as],
+				p <- listArg "project" as],
 			[do
 				f' <- findPath copts f
 				maybe
 					(throwError $ "Unknown file: " ++ f')
 					(return . M.singleton f')
 					(lookupFile f' dbval) |
-				f <- list "file" as],
+				f <- listArg "file" as],
 			[do
 				d' <- findPath copts d
 				return $ M.filterWithKey (\f _ -> isParent d' f) fileMap |
-				d <- list "path" as]]
+				d <- listArg "path" as]]
 		let
 			rescanMods = map (getInspected dbval) $
 				M.elems $ if null filteredMods then fileMap else M.unions filteredMods
@@ -630,8 +669,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		if not (null errors)
 			then return $ err $ intercalate ", " errors
 			else updateProcess copts as $ Update.runTask "rescanning modules" [] $ do
-				needRescan <- Update.liftErrorT $ filterM (changedModule dbval (list "ghc" as) . inspectedId) rescanMods
-				Update.scanModules (list "ghc" as) (map (inspectedId &&& inspectionOpts . inspection) needRescan)
+				needRescan <- Update.liftErrorT $ filterM (changedModule dbval (listArg "ghc" as) . inspectedId) rescanMods
+				Update.scanModules (listArg "ghc" as) (map (inspectedId &&& inspectionOpts . inspection) needRescan)
 	-- remove
 	remove' as _ copts = errorT $ do
 		dbval <- getDb copts
@@ -639,7 +678,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		proj <- traverse (findProject copts) $ arg "project" as
 		file <- traverse (findPath copts) $ arg "file" as
 		let
-			cleanAll = flag "all" as
+			cleanAll = flagSet "all" as
 			filters = catMaybes [
 				fmap inProject proj,
 				fmap inFile file,
@@ -661,10 +700,10 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	-- list modules
 	listModules' as _ copts = errorT $ do
 		dbval <- getDb copts
-		projs <- traverse (findProject copts) $ list "project" as
+		projs <- traverse (findProject copts) $ listArg "project" as
 		cabals <- getSandboxes copts as
 		let
-			packages = list "package" as
+			packages = listArg "package" as
 			hasFilters = not $ null projs && null packages && null cabals
 			filters = allOf $ catMaybes [
 				if hasFilters
@@ -672,8 +711,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 						\m -> any (`inProject` m) projs,
 						\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals)]
 					else Nothing,
-				if flag "src" as then Just byFile else Nothing,
-				if flag "stand" as then Just standalone else Nothing]
+				if flagSet "src" as then Just byFile else Nothing,
+				if flagSet "stand" as then Just standalone else Nothing]
 		return $ ResultList $ map (ResultModuleId . moduleId) $ newest as $ selectModules (filters . moduleId) dbval
 	-- list packages
 	listPackages' _ copts = do
@@ -700,8 +739,8 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inPackage (arg "package" as),
 				fmap inVersion (arg "version" as),
 				fmap inCabal cabal,
-				if flag "src" as then Just byFile else Nothing,
-				if flag "stand" as then Just standalone else Nothing]
+				if flagSet "src" as then Just byFile else Nothing,
+				if flagSet "stand" as then Just standalone else Nothing]
 			toResult = ResultList . map ResultModuleDeclaration . newest as . filterMatch as . filter filters
 		case ns of
 			[] -> return $ toResult $ allDeclarations dbval
@@ -722,7 +761,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				fmap inModule (arg "module" as),
 				fmap inPackage (arg "package" as),
 				fmap inVersion (arg "version" as),
-				if flag "src" as then Just byFile else Nothing]
+				if flagSet "src" as then Just byFile else Nothing]
 		rs <- mapErrorT (fmap $ strMsg +++ id) $
 			(newest as . filter (filters . moduleId)) <$> maybe
 				(return $ allModules dbval)
@@ -758,7 +797,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	scope' as [] copts = errorT $ do
 		dbval <- getDb copts
 		(srcFile, cabal) <- getCtx copts as
-		liftM (ResultList . map ResultModuleDeclaration . filterMatch as) $ scope dbval cabal srcFile (flag "global" as)
+		liftM (ResultList . map ResultModuleDeclaration . filterMatch as) $ scope dbval cabal srcFile (flagSet "global" as)
 	scope' as _ copts = return $ err "Invalid arguments"
 	-- completion
 	complete' as [] copts = complete' as [""] copts
@@ -786,7 +825,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		dbval <- getDb copts
 		(srcFile, cabal) <- getCtx copts as
 		(srcFile', m, mproj) <- fileCtx dbval srcFile
-		tr <- GhcMod.typeOf (list "ghc" as) cabal srcFile' mproj (moduleName m) line' column'
+		tr <- GhcMod.typeOf (listArg "ghc" as) cabal srcFile' mproj (moduleName m) line' column'
 		return $ ResultList $ map ResultTyped tr
 	ghcmodType' as [] copts = return $ err "Specify line"
 	ghcmodType' as _ copts = return $ err "Too much arguments"
@@ -796,13 +835,13 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		files' <- mapM (findPath copts) files
 		mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM (locateProject) files')
 		cabal <- getCabal copts as
-		rs <- GhcMod.check (list "ghc" as) cabal files' mproj
+		rs <- GhcMod.check (listArg "ghc" as) cabal files' mproj
 		return $ ResultList $ map ResultOutputMessage rs
 	-- ghc-mod lint
 	ghcmodLint' as [] copts = return $ err "Specify file to hlint"
 	ghcmodLint' as [file] copts = errorT $ do
 		file' <- findPath copts file
-		hs <- GhcMod.lint (list "hlint" as) file'
+		hs <- GhcMod.lint (listArg "hlint" as) file'
 		return $ ResultList $ map ResultOutputMessage hs
 	ghcmodLint' as fs copts = return $ err "Too much files specified"
 	-- dump cabal modules
@@ -820,7 +859,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	-- dump projects
 	dumpProjects' as [] copts = errorT $ do
 		dbval <- getDb copts
-		ps' <- traverse (findProject copts) $ list "project" as
+		ps' <- traverse (findProject copts) $ listArg "project" as
 		let
 			ps = if null ps' then M.elems (databaseProjects dbval) else ps'
 			dats = map (id &&& flip projectDB dbval) ps
@@ -875,7 +914,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	-- link to server
 	link' as _ copts = do
 		commandLink copts
-		when (flag "hold" as) $ commandHold copts
+		when (flagSet "hold" as) $ commandHold copts
 		return ok
 	-- exit
 	exit' _ copts = do
@@ -883,13 +922,20 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		return ok
 
 	-- Helper functions
-	cmd' :: [String] -> [String] -> String -> [OptDescr (Opts String)] -> (Opts String -> [String] -> a) -> Command (WithOpts a)
-	cmd' name posArgs descr as act = cmd name posArgs descr as act' where
-		act' os args = WithOpts (act os args) $ CommandCall name args os
+	cmd' :: String -> [String] -> [Opt] -> String -> (Opts String -> [String] -> a) -> Cmd (WithOpts a)
+	cmd' name pos named descr act = checkPosArgs $ cmd name pos named descr act' where
+		act' (Args args os) = WithOpts (act os args) $ CommandCall name args os
 
-	cmd_' :: [String] -> [String] -> String -> ([String] -> a) -> Command (WithOpts a)
-	cmd_' name posArgs descr act = cmd_ name posArgs descr act' where
-		act' args = WithOpts (act args) $ CommandCall name args defaultConfig
+	cmd_' :: String -> [String] -> String -> ([String] -> a) -> Cmd (WithOpts a)
+	cmd_' name pos descr act = checkPosArgs $ cmd name pos [] descr act' where
+		act' (Args args os) = WithOpts (act args) $ CommandCall name args os
+
+	checkPosArgs :: Cmd a -> Cmd a
+	checkPosArgs c = validateArgs pos' c where
+		pos' (Args args os) =
+			guard (length args <= length (cmdArgs c))
+			`mplus`
+			failMatch ("unexpected positional arguments: " ++ unwords (drop (length $ cmdArgs c) args))
 
 	findSandbox :: MonadIO m => CommandOptions -> Maybe FilePath -> ErrorT String m Cabal
 	findSandbox copts = maybe
@@ -909,12 +955,12 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 
 	getCabal :: MonadIO m => CommandOptions -> Opts String -> ErrorT String m Cabal
 	getCabal copts as
-		| flag "cabal" as = findSandbox copts Nothing
+		| flagSet "cabal" as = findSandbox copts Nothing
 		| otherwise  = findSandbox copts $ arg "sandbox" as
 
 	getCabal_ :: (MonadIO m, Functor m) => CommandOptions -> Opts String -> ErrorT String m (Maybe Cabal)
 	getCabal_ copts as
-		| flag "cabal" as = Just <$> findSandbox copts Nothing
+		| flagSet "cabal" as = Just <$> findSandbox copts Nothing
 		| otherwise = case arg "sandbox" as of
 			Just f -> Just <$> findSandbox copts (Just f)
 			Nothing -> return Nothing
@@ -922,9 +968,9 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 	getSandboxes :: (MonadIO m, Functor m) => CommandOptions -> Opts String -> ErrorT String m [Cabal]
 	getSandboxes copts as = traverse (findSandbox copts) paths where
 		paths
-			| flag "cabal" as = Nothing : sboxes
+			| flagSet "cabal" as = Nothing : sboxes
 			| otherwise = sboxes
-		sboxes = map Just $ list "sandbox" as
+		sboxes = map Just $ listArg "sandbox" as
 
 	findProject :: MonadIO m => CommandOptions -> String -> ErrorT String m Project
 	findProject copts proj = do
@@ -950,13 +996,13 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 		CabalModule c _ _ -> Just c
 		_ -> Nothing
 
-	waitDb copts as = when (flag "wait" as) $ do
+	waitDb copts as = when (flagSet "wait" as) $ do
 		commandLog copts "wait for db"
 		DB.wait (dbVar copts)
 		commandLog copts "db done"
 
 	forkOrWait as act
-		| flag "wait" as = liftIO act
+		| flagSet "wait" as = liftIO act
 		| otherwise = liftIO $ void $ forkIO act
 
 	cacheLoad copts act = do
@@ -967,12 +1013,12 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 
 	localsDatabase :: Opts String -> Database -> Database
 	localsDatabase as
-		| flag "locals" as = databaseLocals
+		| flagSet "locals" as = databaseLocals
 		| otherwise = id
 
 	newest :: Symbol a => Opts String -> [a] -> [a]
 	newest as
-		| flag "no-last" as = id
+		| flagSet "no-last" as = id
 		| otherwise = newestPackage
 
 	forceJust :: MonadIO m => String -> ErrorT String m (Maybe a) -> ErrorT String m a
@@ -986,11 +1032,11 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 
 	startProcess :: Opts String -> ((Update.Task -> IO ()) -> IO ()) -> IO CommandResult
 	startProcess as f
-		| flag "wait" as = return $ ResultProcess (f . onMsg)
+		| flagSet "wait" as = return $ ResultProcess (f . onMsg)
 		| otherwise = forkIO (f $ const $ return ()) >> return ok
 		where
 			onMsg showMsg
-				| flag "status" as = showMsg
+				| flagSet "status" as = showMsg
 				| otherwise = const $ return ()
 	error_ :: ErrorT String IO CommandResult -> IO CommandResult
 	error_ = liftM (either err id) . runErrorT
@@ -1008,7 +1054,7 @@ commands = map wrapErrors $ map (fmap (fmap timeout')) cmds ++ map (fmap (fmap n
 				(commandDatabase opts)
 				(commandReadCache opts)
 				onStatus
-				(list "ghc" as))
+				(listArg "ghc" as))
 			act
 
 	fork :: MonadIO m => IO () -> m ()
@@ -1053,8 +1099,8 @@ processCmdArgs copts tm cmdArgs sendResponse = run (map (fmap withOptsAct) comma
 
 	unknownCommand :: CommandResult
 	unknownCommand = err "Unknown command"
-	commandError :: [String] -> CommandResult
-	commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString errs)]
+	commandError :: String -> CommandResult
+	commandError errs = errArgs "Command syntax error" [("what", ResultList $ map ResultString (lines errs))]
 
 	sendResponses :: CommandResult -> IO ()
 	sendResponses (ResultOk v) = sendResponse $ Response $ toJSON v
@@ -1093,9 +1139,9 @@ logIO pre out act = handle onIO act where
 ignoreIO :: IO () -> IO ()
 ignoreIO = handle (const (return ()) :: IOException -> IO ())
 
-logMsg :: ServerOpts -> String -> IO ()
+logMsg :: Opts String -> String -> IO ()
 logMsg sopts s = ignoreIO $ do
 	putStrLn s
-	case getFirst (serverLog sopts) of
+	case arg "log" sopts of
 		Nothing -> return ()
 		Just f -> withFile f AppendMode (`hPutStrLn` s)
