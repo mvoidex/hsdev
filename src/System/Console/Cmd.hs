@@ -1,144 +1,158 @@
-{-# LANGUAGE FlexibleInstances #-}
-
 module System.Console.Cmd (
-	Cmd(..), Arg(..), Opt(..),
-	flag, req, list,
-	desc, alias, short,
-	parse, info,
+	CmdAction, notMatch, failMatch, runCmd, defaultOpts, validateArgs, alterArgs,
+	Cmd(..), cmdAct, cutName, cmda, cmda_, cmd, cmd_, defCmd,
+	CmdHelp(..), withHelp, printWith,
+	run, runArgs, runOn,
 
-	module Data.Help
+	module System.Console.Args
 	) where
 
-import Control.Applicative
-import Control.Monad
-import Control.Monad.Loops
-import Data.List
+import Control.Arrow
+import Control.Monad (join, (>=>))
+import Data.List (stripPrefix, unfoldr, isPrefixOf)
+import Control.Monad.Error
 import Data.Map (Map)
+import Data.Maybe (fromMaybe, mapMaybe, listToMaybe, maybeToList, isJust)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe)
-import Data.Monoid
 
-import Data.Help
+import System.Console.Args
 import Text.Format
 
-data Cmd = Cmd {
-	args :: [String],
-	opts :: Map String [String] }
-		deriving (Eq, Show)
+type CmdAction a = ErrorT String Maybe a
 
-instance Monoid Cmd where
-	mempty = Cmd [] M.empty
-	(Cmd largs lopts) `mappend` (Cmd rargs ropts) = Cmd (largs ++ rargs) (M.unionWith (++) lopts ropts)
+-- | Arguments doesn't match command
+notMatch :: CmdAction a
+notMatch = lift Nothing
 
-data Arg = Flag | Required String | List String deriving (Eq, Ord, Show)
+-- | Invalid command arguments
+failMatch :: String -> CmdAction a
+failMatch = throwError
 
-argName :: Arg -> Maybe String
-argName Flag = Nothing
-argName (Required n) = Just n
-argName (List n) = Just $ n ++ "..."
+data Cmd a = Cmd {
+	cmdName :: String,
+	cmdArgs :: [String],
+	cmdOpts :: [Opt],
+	cmdDesc :: String,
+	cmdGetArgs :: Args -> CmdAction Args,
+	-- ^ Get command arguments from source arguments, by default it cuts command name
+	cmdAction :: Args -> CmdAction a }
 
-data Opt = Opt {
-	optName :: String,
-	optShort :: [Char],
-	optLong :: [String],
-	optDescription :: Maybe String,
-	optArg :: Arg }
-		deriving (Eq, Show)
+instance Functor Cmd where
+	fmap f cmd' = cmd' {
+		cmdAction = fmap f . cmdAction cmd' }
 
--- | Flag option
-flag :: String -> Opt
-flag n = Opt n [] [] Nothing Flag
+-- | Run cmd
+runCmd :: Cmd a -> Args -> CmdAction a
+runCmd c = cmdGetArgs c >=> cmdAction c
 
--- | Required option
-req :: String -> String -> Opt
-req n v = Opt n [] [] Nothing (Required v)
+-- | Set default opts
+defaultOpts :: Opts String -> Cmd a -> Cmd a
+defaultOpts opts = alterArgs (cmdAct $ withOpts $ defOpts opts)
 
--- | List option
-list :: String -> String -> Opt
-list n v = Opt n [] [] Nothing (List v)
+-- | Validate Args in command
+validateArgs :: (Args -> CmdAction ()) -> Cmd a -> Cmd a
+validateArgs p c = c {
+	cmdAction = \a -> p a >> cmdAction c a }
 
--- | Set description
+-- | Alter Args in command
+alterArgs :: (Args -> CmdAction Args) -> Cmd a -> Cmd a
+alterArgs f c = c {
+	cmdGetArgs = f >=> cmdGetArgs c }
+
+-- | Make CmdAction function
+cmdAct :: (b -> a) -> b -> CmdAction a
+cmdAct f = return . f
+
+-- | Cut name of command from arguments and checks if it matches
 --
--- >flag "quiet" `desc` "quiet mode"
-desc :: Opt -> String -> Opt
-desc o d = o { optDescription = Just d }
+-- > cutName >=> cmdAct act
+cutName :: String -> Args -> CmdAction Args
+cutName name args@(Args as os) = case stripPrefix (words name) as of
+	Just as' -> return (Args as' os)
+	Nothing -> notMatch
 
--- | Set aliases
---
--- >fliag "quiet" `alias` 
-alias :: Opt -> [String] -> Opt
-alias o ls = o { optLong = optLong o ++ ls }
+verifyOpts :: [Opt] -> Args -> CmdAction Args
+verifyOpts os = ErrorT . Just . verify os
 
-short :: Opt -> [Char] -> Opt
-short o ss = o { optShort = optShort o ++ ss }
+cmda :: String -> [String] -> [Opt] -> String -> (Args -> CmdAction a) -> Cmd a
+cmda name as os desc act = Cmd {
+	cmdName = name,
+	cmdArgs = as,
+	cmdOpts = os,
+	cmdDesc = desc,
+	cmdGetArgs = cut',
+	cmdAction = verifyOpts os >=> act }
+	where
+		cut'
+			| null name = return
+			| otherwise = cutName name
 
-findOpt :: String -> [Opt] -> Maybe Opt
-findOpt n = find opt' where
-	opt' :: Opt -> Bool
-	opt' (Opt n' s l _ _) = n `elem` (n' : (map return s ++ l))
+cmda_ :: String -> [Opt] -> String -> (Opts String -> CmdAction a) -> Cmd a
+cmda_ name os desc act = validateArgs noPos $ cmda name [] os desc (act . namedArgs) where
+	noPos (Args [] _) = return ()
+	noPos (Args _ _) = failMatch "No positional argument expected"
 
-parse :: [Opt] -> [String] -> Either String Cmd
-parse os = join . liftM (verify . mconcat) . unfoldrM parseCmd where
-	parseCmd :: [String] -> Either String (Maybe (Cmd, [String]))
-	parseCmd [] = Right Nothing
-	parseCmd (cmd:cmds)
-		| isFlag cmd = do
-			opt' <- lookOpt cmd os
-			case optArg opt' of
-				Flag -> Right $ Just (Cmd [] $ M.singleton (optName opt') [], cmds)
-				Required _ -> case cmds of
-					(value:cmds')
-						| not (isFlag value) -> Right $ Just (Cmd [] $ M.singleton (optName opt') [value], cmds')
-						| otherwise -> Left $ "No value specified for option '$'" ~~ optName opt'
-					[] -> Left $ "No value specified for option '" ++ optName opt' ++ "'"
-				List _ -> case cmds of
-					(value:cmds')
-						| not (isFlag value) -> Right $ Just (Cmd [] $ M.singleton (optName opt') [value], cmds')
-						| otherwise -> Left $ "No value specified for option '$'" ~~ optName opt'
-					[] -> Left $ "No value specified for option '$'" ~~ optName opt'
-		| otherwise = Right $ Just (Cmd [cmd] M.empty, cmds)
-	verify :: Cmd -> Either String Cmd
-	verify = withOpts $ fmap M.fromList . mapM (uncurry verify') . M.toList where
-		withOpts :: Functor f => (Map String [String] -> f (Map String [String])) -> Cmd -> f Cmd
-		withOpts f c = (\v -> c { opts = v }) <$> f (opts c)
-		verify' :: String -> [String] -> Either String (String, [String])
-		verify' n v = case findOpt n os of
-			Nothing -> Left $ format "Invalid option '$'" ~~ n
-			Just opt -> maybe (Right (n, v)) Left $ case (optArg opt, v) of
-				(Flag, []) -> Nothing
-				(Flag, _) -> Just $ "Flag '$' has a value" ~~ n
-				(Required _, []) -> Just $ "No value for '$'" ~~ n
-				(Required _, [_]) -> Nothing
-				(Required _, _:_) -> Just $ "Too much values for '$'" ~~ n
-				(List _, []) -> Just $ "No values for '$'" ~~ n
-				(List _, _) -> Nothing
+cmd :: String -> [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
+cmd name as os desc act = cmda name as os desc (cmdAct act)
 
-	lookOpt :: String -> [Opt] -> Either String Opt
-	lookOpt n = maybe (Left $ "Invalid option '$'" ~~ n) Right . findOpt (dropWhile (== '-') n)
+cmd_ :: String -> [Opt] -> String -> (Opts String -> a) -> Cmd a
+cmd_ name os desc act = cmda_ name os desc (cmdAct act)
 
-instance Help Opt where
-	brief (Opt n _ _ _ arg) = concat [
-		longOpt n,
-		maybe "" (" " ++) $ argName arg]
-	help (Opt n ss ls desc arg) = [concat [
-		unwords (map shortOpt ss ++ map longOpt (n : ls)),
-		maybe "" (" " ++) $ argName arg,
-		maybe "" (" -- " ++) desc]]
+-- | Unnamed command
+defCmd :: [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
+defCmd as os desc act = cmda "" as os desc (cmdAct act)
 
-instance Help [Opt] where
-	brief = unwords . map brief
-	help = concatMap help
+data CmdHelp =
+	HelpUsage [String] |
+	HelpCommands [(String, [String])]
+		deriving (Eq, Ord, Read, Show)
 
-info :: [Opt] -> String
-info = unlines . indented
+withHelp :: String -> (Either String CmdHelp -> a) -> [Cmd a] -> [Cmd a]
+withHelp tool toCmd cmds = cmds' where
+	cmds' = helpcmd : cmds
+	helpcmd = fmap toCmd $ alterArgs (cmdAct checkHelp) $ cmd
+		"help"
+		["command"]
+		[flag "help" `short` ['?'] `desc` "show help (when using form 'command -?')"]
+		("help command, can be called in form '$ [command] -?'" ~~ tool)
+		onHelp
+	checkHelp :: Args -> Args
+	checkHelp a
+		| flagSet "help" (namedArgs a) = a {
+			posArgs = "help" : posArgs a,
+			namedArgs = Opts $ M.delete "help" $ getOpts $ namedArgs a }
+		| otherwise = a
+	onHelp (Args [] _) = Right $ HelpUsage [tool ++ " " ++ brief c | c <- cmds']
+	onHelp (Args cmdname _) = case filter ((cmdname ==) . words . cmdName) cmds' of
+		[] -> Left $ "Unknown command: " ++ unwords cmdname
+		helps -> Right $ HelpCommands $ map (cmdName &&& (addHeader . indented)) helps
+	addHeader [] = []
+	addHeader (h:hs) = (tool ++ " " ++ h) : hs
 
-isFlag :: String -> Bool
-isFlag ('-':'-':s) = not $ null s
-isFlag ('-':_:[]) = True
-isFlag _ = False
+printWith :: (String -> a) -> (Either String CmdHelp -> a)
+printWith fn = fn . either id (unlines . print') where
+	print' :: CmdHelp -> [String]
+	print' (HelpUsage u) = map ('\t':) u
+	print' (HelpCommands cs) = map ('\t':) $ concatMap snd cs
 
-longOpt :: String -> String
-longOpt = ("--" ++)
+instance Help (Cmd a) where
+	brief c = unwords $ filter (not . null) $ [cmdName c, unwords (map angled (cmdArgs c)), brief (cmdOpts c)] ++ [desc'] where
+		angled s = "<" ++ s ++ ">"
+		desc'
+			| null (cmdDesc c) = ""
+			| otherwise = " -- " ++ cmdDesc c
+	help = help . cmdOpts
 
-shortOpt :: Char -> String
-shortOpt = ('-':) . return
+-- | Run commands
+run :: [Cmd a] -> a -> (String -> a) -> [String] -> a
+run cmds onDef onError = runOn cmds onDef onError (tryParse . cmdOpts)
+
+-- | Run commands with parsed args
+runArgs :: [Cmd a] -> a -> (String -> a) -> Args -> a
+runArgs cmds onDef onError = runOn cmds onDef onError (const id)
+
+-- | Run commands with 
+runOn :: [Cmd a] -> a -> (String -> a) -> (Cmd a -> c -> Args) -> c -> a
+runOn cmds onDef onError f as = maybe onDef (either onError id) found where
+	found = listToMaybe $ mapMaybe (runErrorT . (`act` as)) cmds
+	act c = runCmd c . f c

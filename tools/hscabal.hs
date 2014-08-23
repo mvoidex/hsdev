@@ -8,4 +8,4 @@ import Tool
 
 main :: IO ()
 main = toolMain "hscabal" [
-	jsonCmd_ ["list"] ["packages..."] "list hackage packages" cabalList]
+	jsonCmd_ "list" ["packages..."] "list hackage packages" cabalList]

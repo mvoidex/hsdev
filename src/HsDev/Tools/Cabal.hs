@@ -8,7 +8,6 @@ module HsDev.Tools.Cabal (
 import Control.Arrow
 import Control.Applicative
 import Control.Monad
-import Control.Monad.Error
 import Data.Aeson
 import Data.Char (isSpace)
 import Data.Maybe

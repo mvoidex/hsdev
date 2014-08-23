@@ -3,16 +3,18 @@ module Main (
 	) where
 
 import Control.Monad
-import Network.Socket
-import System.Environment
+import Network.Socket (withSocketsDo)
+import System.Environment (getArgs)
 import System.Exit
 import System.IO
+import Text.Read (readMaybe)
 
-import System.Console.Command hiding (brief)
-import qualified System.Console.Command as C (brief)
+import Control.Apply.Util (chain)
+import System.Console.Cmd
+import qualified System.Console.Cmd as C (brief)
 
-import Types
-import Commands
+import qualified HsDev.Client.Commands as Client (commands)
+import qualified HsDev.Server.Commands as Server
 
 main :: IO ()
 main = withSocketsDo $ do
@@ -20,15 +22,15 @@ main = withSocketsDo $ do
 	hSetEncoding stdout utf8
 	as <- getArgs
 	when (null as) $ do
-		printMainUsage
+		printUsage
 		exitSuccess
 	let
 		asr = if last as == "-?" then "help" : init as else as 
 	run mainCommands onDef onError asr
 	where
-		onError :: [String] -> IO ()
+		onError :: String -> IO ()
 		onError errs = do
-			mapM_ putStrLn errs
+			putStrLn errs
 			exitFailure
 
 		onDef :: IO ()
@@ -36,10 +38,29 @@ main = withSocketsDo $ do
 			putStrLn "Unknown command"
 			exitFailure
 
-printMainUsage :: IO ()
-printMainUsage = do
-	mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) mainCommands
-	putStrLn "\thsdev [--port=number] [--pretty] [--stdin] interactive command... -- send command to server, use flag stdin to pass data argument through stdin"
+mainCommands :: [Cmd (IO ())]
+mainCommands = withHelp "hsdev" (printWith putStrLn) $ concat [
+	map (chain [validateOpts, noArgs]) Server.commands,
+	map Server.clientCmd Client.commands]
 
 printUsage :: IO ()
-printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) commands
+printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) mainCommands
+
+-- | Check that specified options are numbers
+validateNums :: [String] -> Cmd a -> Cmd a
+validateNums ns = validateArgs (check . namedArgs) where
+	check os = forM_ ns $ \n -> case fmap (readMaybe :: String -> Maybe Int) $ arg n os of
+		Just Nothing -> failMatch "Must be a number"
+		_ -> return ()
+
+-- | Check, that 'port' and 'timeout' are numbers
+validateOpts :: Cmd a -> Cmd a
+validateOpts = validateNums ["port", "timeout"]
+
+-- | Ensure no positional arguments provided
+noArgs :: Cmd a -> Cmd a
+noArgs = validateArgs (noPos . posArgs) where
+	noPos ps =
+		guard (null ps)
+		`mplus`
+		failMatch "positional arguments are not expected"

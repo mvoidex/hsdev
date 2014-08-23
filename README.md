@@ -25,29 +25,88 @@ Use `hsdev server start` to start remove server. Specify `--cache`, where `hsdev
 ### Examples
 
 <pre>
-PS> hsdev server start --cache cache
+PS> hsdev start --cache cache
 Server started at port 4567
-PS> hsdev scan cabal
+PS> hsdev scan --cabal
 {}
-PS> hsdev scan --proj hsdev
+PS> hsdev scan --project hsdev
 {}
-PS> hsdev list modules --proj hsdev | json | % { $_.name } | select -first 3
+PS> hsdev modules --project hsdev | json | % { $_.result.name } | select -first 3
 Data.Async
 Data.Group
 HsDev
-PS> hsdev symbol enumProject | json | % { $_.declaration } | % { $_.name + ' :: ' + $_.decl.type }
+PS> hsdev symbol enumProject | json | % { $_.result.declaration } | % { $_.name + ' :: ' + $_.decl.type }
 enumProject :: Project -> ErrorT String IO ProjectToScan
-PS> hsdev complete C -f .\hsdev\tools\hsdev.hs | json | % { $_.declaration.name }
+PS> hsdev complete C -f .\hsdev\tools\hsdev.hs | json | % { $_.result.declaration.name }
 ClientOpts
 CommandAction
 CommandOptions
 CommandResult
-PS> hsdev symbol foldr | json | % { $_.declaration.name + ' :: ' + $_.declaration.decl.type + ' -- ' + $_.'module-id'.name } | select -first 3
+PS> hsdev symbol foldr | json | % result | % { $_.declaration.name + ' :: ' + $_.declaration.decl.type + ' -- ' + $_.'module-id'.name } | select -first 3
 foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString
 foldr :: (Char -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Char8
 foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Lazy
-PS> hsdev server stop
+PS> hsdev stop
 {}
+</pre>
+
+## Requests/responses
+
+Client sends request, server sends zero or more notifications and then response. All notification and response has same id as request.
+
+Requests to `hsdev` have following structure (but must not be in pretty format):
+<pre>
+{
+    "id": &lt;message id&gt;
+    "command": &lt;commandname&gt;,
+    "args": &lt;positional arguments&gt;,
+    "opts": &lt;named arguments&gt;,
+}
+</pre>
+
+* `id` : string, optional — message id
+* `command` : string, required — name of command, for example "scan", "symbol" or "ghc-mod type"
+* `args` : list of strings, optional — positional arguments for command
+* `opts` : dictionary, optional — named arguments for command, simple rules:
+  `--port 1234` ⇒ `"port": "1234"`
+  `--quiet` ⇒ `"quiet": null`
+  `--file f1 --file f2 --file f3` ⇒ `"file": ["f1", "f2", "f3"]`
+
+Notification:
+<pre>
+{
+    "id": &lt;notification id&gt;,
+    "notify": &lt;notification&gt;
+}
+</pre>
+
+Response:
+<pre>
+{
+    "id": &lt;notification id&gt;,
+    "result": &lt;response data&gt;
+}
+</pre>
+or
+<pre>
+{
+    "id": &lt;notification id&gt;,
+    "error": &lt;error message&gt;,
+    "details": &lt;error details&gt;
+}
+</pre>
+
+If request has flag `--silent`, no notifications will be sent from server.
+
+### Examples
+
+<pre>
+⋙ {"id":"1",command":"scan","opts":{"cabal":null}}
+⋘ {"id":"1","notify":{...}}
+⋘ {"id":"1","notify":{...}}
+⋘ {"id":"1","result":[]}
+⋙ {"id":"2","command":"symbol","args":["either"]}
+⋘ {"id":"2","result":[{...},{...},{...},{...}]}
 </pre>
 
 ## Tools

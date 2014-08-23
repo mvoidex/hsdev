@@ -12,18 +12,18 @@ import Tool
 
 main :: IO ()
 main = toolMain "hsinspect" [
-	jsonCmd ["module"] ["module name"] "inspect installed module" [ghcOpts] inspectModule',
-	jsonCmd ["file"] ["source file"] "inspect file" [ghcOpts] inspectFile',
-	jsonCmd_ ["cabal"] ["project file"] "inspect .cabal file" inspectCabal']
+	jsonCmd "module" ["module name"] [ghcOpts] "inspect installed module" inspectModule',
+	jsonCmd "file" ["source file"] [ghcOpts] "inspect file" inspectFile',
+	jsonCmd_ "cabal" ["project file"] "inspect .cabal file" inspectCabal']
 	where
-		ghcOpts = option_ ['g'] "ghc" (req "ghc options") "options to pass to GHC"
-		ghcs = list "ghc"
+		ghcOpts = list "ghc" "option" `short` ['g'] `desc` "options to pass to GHC"
+		ghcs = listArg "ghc"
 
-		inspectModule' opts [mname] = scanModule (ghcs opts) (CabalModule Cabal Nothing mname)
-		inspectModule' _ _ = toolError "Specify module name"
+		inspectModule' (Args [mname] opts) = scanModule (ghcs opts) (CabalModule Cabal Nothing mname)
+		inspectModule' _ = toolError "Specify module name"
 
-		inspectFile' opts [fname] = scanModule (ghcs opts) (FileModule fname Nothing)
-		inspectFile' _ _ = toolError "Specify source file name"
+		inspectFile' (Args [fname] opts) = scanModule (ghcs opts) (FileModule fname Nothing)
+		inspectFile' _ = toolError "Specify source file name"
 
 		inspectCabal' [fcabal] = readProject fcabal
 		inspectCabal' _ = toolError "Specify project .cabal file"
