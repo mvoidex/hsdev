@@ -29,7 +29,7 @@ import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
 import Distribution.ModuleName (components)
-import Distribution.Text
+import Distribution.Text (display, simpleParse)
 import qualified Distribution.Text (Text)
 import Language.Haskell.Extension
 import System.FilePath

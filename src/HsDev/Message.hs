@@ -6,10 +6,7 @@ module HsDev.Message (
 	) where
 
 import Control.Applicative
-import Control.Arrow
-import Control.Monad
 import Data.Aeson
-import qualified Data.HashMap.Strict as HM (null)
 import Data.List (unfoldr)
 import Data.Maybe (fromJust, isNothing)
 

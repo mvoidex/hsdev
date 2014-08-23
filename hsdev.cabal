@@ -17,9 +17,11 @@ cabal-version:       >=1.8
 
 library
   hs-source-dirs: src
-  ghc-options: -threaded
+  ghc-options: -threaded -Wall
   exposed-modules:
     Control.Apply.Util
+    Control.Concurrent.FiniteChan
+    Control.Concurrent.Util
     Data.Async
     Data.Group
     Data.Help
@@ -27,16 +29,20 @@ library
     HsDev.Cabal
     HsDev.Cache
     HsDev.Cache.Structured
+    HsDev.Client.Commands
     HsDev.Commands
     HsDev.Database
     HsDev.Database.Async
+    HsDev.Database.Update
     HsDev.Display
     HsDev.Inspect
     HsDev.Message
     HsDev.Project
     HsDev.Scan
     HsDev.Scan.Browse
+    HsDev.Server.Commands
     HsDev.Server.Message
+    HsDev.Server.Types
     HsDev.Symbols
     HsDev.Symbols.Class
     HsDev.Symbols.Location
@@ -52,8 +58,15 @@ library
     HsDev.Util
     System.Console.Args
     System.Console.Cmd
-    System.Console.Command
     Text.Format
+
+  if os(windows)
+    build-depends:
+      Win32 >= 2.3.0
+    exposed-modules:
+      System.Win32.PowerShell
+      System.Win32.FileMapping.NamePool
+      System.Win32.FileMapping.Memory
 
   build-depends:
     base >= 4.7 && < 5,
@@ -75,6 +88,7 @@ library
     MonadCatchIO-transformers >= 0.3.0,
     monad-loops >= 0.4,
     mtl >= 2.1.0,
+    network >= 2.4.0,
     transformers >= 0.3.0,
     process >= 1.2.0,
     regexpr >= 0.5.0,
@@ -88,18 +102,9 @@ library
 executable hsdev
   main-is: hsdev.hs
   hs-source-dirs: tools
-  ghc-options: -threaded
-  other-modules:
-    Control.Concurrent.FiniteChan
-    Commands
-    Types
-    Update
+  ghc-options: -threaded -Wall
 
-  if os(windows)
-    other-modules:
-      System.Win32.FileMapping.Memory
-      System.Win32.FileMapping.NamePool
-  else
+  if !os(windows)
     build-depends:
       unix >= 2.7.0
 
@@ -123,13 +128,10 @@ executable hsdev
     transformers >= 0.3.0,
     unordered-containers >= 0.2.0
 
-  if os(windows)
-    build-depends:
-      Win32 >= 2.3.0
-
 executable hsinspect
   main-is: hsinspect.hs
   hs-source-dirs: tools
+  ghc-options: -Wall
   other-modules:
     Tool
   build-depends:
@@ -148,6 +150,7 @@ executable hsinspect
 executable hsclearimports
   main-is: hsclearimports.hs
   hs-source-dirs: tools
+  ghc-options: -Wall
   other-modules:
   build-depends:
     base >= 4.7 && < 5,
@@ -165,6 +168,7 @@ executable hsclearimports
 executable hscabal
   main-is: hscabal.hs
   hs-source-dirs: tools
+  ghc-options: -Wall
   other-modules:
     Tool
   build-depends:
@@ -181,6 +185,7 @@ executable hscabal
 executable hshayoo
   main-is: hshayoo.hs
   hs-source-dirs: tools
+  ghc-options: -Wall
   other-modules:
     Tool
   build-depends:
@@ -197,6 +202,7 @@ executable hshayoo
 test-suite test
   main-is: Test.hs
   hs-source-dirs: tests
+  ghc-options: -Wall
   type: exitcode-stdio-1.0
   build-depends:
     base >= 4.7 && < 5

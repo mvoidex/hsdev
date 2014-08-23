@@ -7,12 +7,14 @@ import Network.Socket
 import System.Environment
 import System.Exit
 import System.IO
+import Text.Read (readMaybe)
 
+import Control.Apply.Util
 import System.Console.Cmd hiding (brief)
 import qualified System.Console.Cmd as C (brief)
 
-import Types
-import Commands
+import qualified HsDev.Client.Commands as Client
+import qualified HsDev.Server.Commands as Server
 
 main :: IO ()
 main = withSocketsDo $ do
@@ -36,5 +38,29 @@ main = withSocketsDo $ do
 			putStrLn "Unknown command"
 			exitFailure
 
+mainCommands :: [Cmd (IO ())]
+mainCommands = withHelp "hsdev" (printWith putStrLn) $ concat [
+	map (chain [validateOpts, noArgs]) Server.commands,
+	map Server.clientCmd Client.commands]
+
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) mainCommands
+
+-- | Check that specified options are numbers
+validateNums :: [String] -> Cmd a -> Cmd a
+validateNums ns = validateArgs (check . namedArgs) where
+	check os = forM_ ns $ \n -> case fmap (readMaybe :: String -> Maybe Int) $ arg n os of
+		Just Nothing -> failMatch "Must be a number"
+		_ -> return ()
+
+-- | Check, that 'port' and 'timeout' are numbers
+validateOpts :: Cmd a -> Cmd a
+validateOpts = validateNums ["port", "timeout"]
+
+-- | Ensure no positional arguments provided
+noArgs :: Cmd a -> Cmd a
+noArgs = validateArgs (noPos . posArgs) where
+	noPos ps =
+		guard (null ps)
+		`mplus`
+		failMatch "positional arguments are not expected"

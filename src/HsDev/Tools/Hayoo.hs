@@ -130,7 +130,7 @@ hayooAsDeclaration f = ModuleDeclaration {
 -- | Search hayoo
 hayoo :: String -> ErrorT String IO HayooResult
 hayoo q = do
-	resp <- ErrorT $ fmap (show +++ rspBody) $ simpleHTTP (getRequest $ "http://holumbus.fh-wedel.de/hayoo/hayoo.json?query=" ++ urlEncode q)
+	resp <- ErrorT $ fmap (show +++ rspBody) $ simpleHTTP (getRequest $ "http://hayoo.fh-wedel.de/?query=" ++ urlEncode q)
 	ErrorT $ return $ eitherDecode $ L.pack resp
 
 -- | Remove tags in description

@@ -12,7 +12,9 @@ module HsDev.Util (
 	liftException, liftExceptionM, liftIOErrors,
 	eitherT,
 	-- * UTF-8
-	fromUtf8, toUtf8
+	fromUtf8, toUtf8,
+	-- * IO
+	hGetLineBS, logIO, ignoreIO
 	) where
 
 import Control.Arrow (second)
@@ -25,13 +27,16 @@ import Data.Aeson.Types (Parser)
 import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr)
 import qualified Data.HashMap.Strict as HM (HashMap, toList, union)
+import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lazy (ByteString)
+import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Text (Text)
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
 import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
+import System.IO (Handle)
 
 -- | Get directory contents safely
 directoryContents :: FilePath -> IO [FilePath]
@@ -123,3 +128,14 @@ fromUtf8 = T.unpack . T.decodeUtf8
 
 toUtf8 :: String -> ByteString
 toUtf8 = T.encodeUtf8 . T.pack
+
+hGetLineBS :: Handle -> IO ByteString
+hGetLineBS = fmap L.fromStrict . B.hGetLine
+
+logIO :: String -> (String -> IO ()) -> IO () -> IO ()
+logIO pre out act = handle onIO act where
+	onIO :: IOException -> IO ()
+	onIO e = out $ pre ++ show e
+
+ignoreIO :: IO () -> IO ()
+ignoreIO = handle (const (return ()) :: IOException -> IO ())

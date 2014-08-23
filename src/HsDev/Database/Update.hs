@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, MultiParamTypeClasses #-}
 
-module Update (
+module HsDev.Database.Update (
 	Status(..), Progress(..), Task(..), isStatus,
 	Settings(..),
 

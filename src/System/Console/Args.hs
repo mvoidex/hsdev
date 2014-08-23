@@ -3,7 +3,7 @@
 module System.Console.Args (
 	Args(..), Opts(..), Arg(..), Opt(..),
 	withOpts, defOpts, defArgs, selectOpts, splitOpts,
-	(%--), hoist, has, arg, listArg, flagSet,
+	(%--), (%-?), hoist, has, arg, narg, listArg, flagSet,
 	flag, req, list,
 	desc, alias, short,
 	parse, parse_, tryParse, toArgs, info,
@@ -28,26 +28,26 @@ import Data.Maybe
 import Data.Monoid
 import Data.Foldable (Foldable(foldMap))
 import Data.String (fromString)
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Traversable (Traversable(traverse))
+import Text.Read (readMaybe)
 
 import Data.Help
 import Text.Format
 
 data Args = Args {
 	posArgs :: [String],
-	namedArgs :: (Opts String) }
-		deriving (Eq)
+	namedArgs :: Opts String }
+		deriving (Eq, Show)
 
 instance Monoid Args where
 	mempty = Args [] mempty
 	(Args largs lopts) `mappend` (Args rargs ropts) = Args (largs ++ rargs) (lopts `mappend` ropts)
 
-newtype Opts a = Opts { getOpts :: Map String [a] }
+newtype Opts a = Opts { getOpts :: Map String [a] } deriving (Eq, Show)
 
-instance Eq a => Eq (Opts a) where
-	Opts l == Opts r = l == r
+--instance Eq a => Eq (Opts a) where
+--	Opts l == Opts r = l == r
 
 instance Functor Opts where
 	fmap f = Opts . fmap (fmap f) . getOpts
@@ -110,6 +110,9 @@ splitOpts opts = (Opts *** Opts) . M.partitionWithKey (\n _ -> n `elem` optNames
 (%--) :: Format a => String -> a -> Opts String
 n %-- v = Opts $ M.singleton n [format v]
 
+(%-?) :: Format a => String -> Maybe a -> Opts String
+n %-? v = maybe mempty (n %--) v
+
 -- | Make 'Opts' with flag set
 hoist :: String -> Opts a
 hoist n = Opts $ M.singleton n []
@@ -120,6 +123,10 @@ has n = M.member n . getOpts
 -- | Get argument value
 arg :: String -> Opts a -> Maybe a
 arg n = M.lookup n . getOpts >=> listToMaybe
+
+-- | Get numeric value
+narg :: (Read a, Num a) => String -> Opts String -> Maybe a
+narg n = join . fmap readMaybe . arg n
 
 -- | Get list argument
 listArg :: String -> Opts a -> [a]
@@ -209,13 +216,13 @@ toArgs (Args p o) = p ++ (concatMap toArgs' . M.toList . getOpts $ o) where
 	toArgs' (n, vs) = concat [["--" ++ n, v] | v <- vs]
 
 instance Help Opt where
-	brief (Opt n _ _ _ arg) = concat [
+	brief (Opt n _ _ _ arg') = concat [
 		longOpt n,
-		maybe "" (" " ++) $ argName arg]
-	help (Opt n ss ls desc arg) = [concat [
+		maybe "" (" " ++) $ argName arg']
+	help (Opt n ss ls desc' arg') = [concat [
 		unwords (map shortOpt ss ++ map longOpt (n : ls)),
-		maybe "" (" " ++) $ argName arg,
-		maybe "" (" -- " ++) desc]]
+		maybe "" (" " ++) $ argName arg',
+		maybe "" (" -- " ++) desc']]
 
 instance Help [Opt] where
 	brief = unwords . map ((\s -> "[" ++ s ++ "]") . brief)
@@ -254,9 +261,9 @@ unsplitArgs = unwords . map escape where
 			_ -> [ch]
 
 verify :: [Opt] -> Args -> Either String Args
-verify os = withOpts $ fmap (Opts . M.fromList) . mapM (uncurry verify') . M.toList . getOpts where
-	withOpts :: Functor f => (Opts String -> f (Opts String)) -> Args -> f Args
-	withOpts f (Args a o) = Args a <$> f o
+verify os = withOpts' $ fmap (Opts . M.fromList) . mapM (uncurry verify') . M.toList . getOpts where
+	withOpts' :: Functor f => (Opts String -> f (Opts String)) -> Args -> f Args
+	withOpts' f (Args a o) = Args a <$> f o
 	verify' :: String -> [String] -> Either String (String, [String])
 	verify' n v = case findOpt n os of
 		Nothing -> Left $ "Invalid option '$'" ~~ n

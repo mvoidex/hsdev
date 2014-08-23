@@ -25,28 +25,28 @@ Use `hsdev server start` to start remove server. Specify `--cache`, where `hsdev
 ### Examples
 
 <pre>
-PS> hsdev server start --cache cache
+PS> hsdev start --cache cache
 Server started at port 4567
-PS> hsdev scan cabal
+PS> hsdev scan --cabal
 {}
-PS> hsdev scan --proj hsdev
+PS> hsdev scan --project hsdev
 {}
-PS> hsdev list modules --proj hsdev | json | % { $_.name } | select -first 3
+PS> hsdev modules --project hsdev | json | % { $_.result.name } | select -first 3
 Data.Async
 Data.Group
 HsDev
-PS> hsdev symbol enumProject | json | % { $_.declaration } | % { $_.name + ' :: ' + $_.decl.type }
+PS> hsdev symbol enumProject | json | % { $_.result.declaration } | % { $_.name + ' :: ' + $_.decl.type }
 enumProject :: Project -> ErrorT String IO ProjectToScan
-PS> hsdev complete C -f .\hsdev\tools\hsdev.hs | json | % { $_.declaration.name }
+PS> hsdev complete C -f .\hsdev\tools\hsdev.hs | json | % { $_.result.declaration.name }
 ClientOpts
 CommandAction
 CommandOptions
 CommandResult
-PS> hsdev symbol foldr | json | % { $_.declaration.name + ' :: ' + $_.declaration.decl.type + ' -- ' + $_.'module-id'.name } | select -first 3
+PS> hsdev symbol foldr | json | % result | % { $_.declaration.name + ' :: ' + $_.declaration.decl.type + ' -- ' + $_.'module-id'.name } | select -first 3
 foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString
 foldr :: (Char -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Char8
 foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Lazy
-PS> hsdev server stop
+PS> hsdev stop
 {}
 </pre>
 

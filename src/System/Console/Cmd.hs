@@ -32,7 +32,7 @@ data Cmd a = Cmd {
 	cmdName :: String,
 	cmdArgs :: [String],
 	cmdOpts :: [Opt],
-	cmdDesc :: Maybe String,
+	cmdDesc :: String,
 	cmdGetArgs :: Args -> CmdAction Args,
 	-- ^ Get command arguments from source arguments, by default it cuts command name
 	cmdAction :: Args -> CmdAction a }
@@ -46,7 +46,7 @@ runCmd :: Cmd a -> Args -> CmdAction a
 runCmd c = cmdGetArgs c >=> cmdAction c
 
 -- | Set default opts
-defaultOpts :: (Opts String) -> Cmd a -> Cmd a
+defaultOpts :: Opts String -> Cmd a -> Cmd a
 defaultOpts opts = alterArgs (cmdAct $ withOpts $ defOpts opts)
 
 -- | Validate Args in command
@@ -79,7 +79,7 @@ cmda name as os desc act = Cmd {
 	cmdName = name,
 	cmdArgs = as,
 	cmdOpts = os,
-	cmdDesc = if null desc then Nothing else Just desc,
+	cmdDesc = desc,
 	cmdGetArgs = cut',
 	cmdAction = verifyOpts os >=> act }
 	where
@@ -136,9 +136,11 @@ printWith fn = fn . either id (unlines . print') where
 	print' (HelpCommands cs) = map ('\t':) $ concatMap snd cs
 
 instance Help (Cmd a) where
-	brief c = unwords $ filter (not . null) $ [cmdName c, unwords (map angled (cmdArgs c)), brief (cmdOpts c)] ++ maybeToList desc' where
+	brief c = unwords $ filter (not . null) $ [cmdName c, unwords (map angled (cmdArgs c)), brief (cmdOpts c)] ++ [desc'] where
 		angled s = "<" ++ s ++ ">"
-		desc' = fmap ("-- " ++) $ cmdDesc c
+		desc'
+			| null (cmdDesc c) = ""
+			| otherwise = " -- " ++ cmdDesc c
 	help = help . cmdOpts
 
 -- | Run commands
