@@ -36,7 +36,6 @@ library
     HsDev.Database.Update
     HsDev.Display
     HsDev.Inspect
-    HsDev.Message
     HsDev.Project
     HsDev.Scan
     HsDev.Scan.Browse
