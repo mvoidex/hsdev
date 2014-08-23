@@ -66,6 +66,10 @@ library
       System.Win32.PowerShell
       System.Win32.FileMapping.NamePool
       System.Win32.FileMapping.Memory
+  else
+    build-depends:
+      unix >= 2.7.0
+
 
   build-depends:
     base >= 4.7 && < 5,
@@ -102,10 +106,6 @@ executable hsdev
   main-is: hsdev.hs
   hs-source-dirs: tools
   ghc-options: -threaded -Wall
-
-  if !os(windows)
-    build-depends:
-      unix >= 2.7.0
 
   build-depends:
     base >= 4.7 && < 5,
