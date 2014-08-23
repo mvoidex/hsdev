@@ -3,17 +3,17 @@ module Main (
 	) where
 
 import Control.Monad
-import Network.Socket
-import System.Environment
+import Network.Socket (withSocketsDo)
+import System.Environment (getArgs)
 import System.Exit
 import System.IO
 import Text.Read (readMaybe)
 
-import Control.Apply.Util
-import System.Console.Cmd hiding (brief)
+import Control.Apply.Util (chain)
+import System.Console.Cmd
 import qualified System.Console.Cmd as C (brief)
 
-import qualified HsDev.Client.Commands as Client
+import qualified HsDev.Client.Commands as Client (commands)
 import qualified HsDev.Server.Commands as Server
 
 main :: IO ()
