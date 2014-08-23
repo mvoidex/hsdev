@@ -473,9 +473,11 @@ mmap mmapPool r
 					threadDelay 10000000)
 	where
 		msg = encode r
+#endif
 
 -- | If response points to mmap, get its contents and parse
 unMmap :: Response -> IO Response
+#if mingw32_HOST_OS
 unMmap (Right (Result v))
 	| Just (MmapFile f) <- parseMaybe parseJSON v = do
 		cts <- runErrorT (fmap L.fromStrict (readMapFile f))
@@ -484,8 +486,8 @@ unMmap (Right (Result v))
 			Right r' -> case eitherDecode r' of
 				Left e' -> return $ responseError "Invalid response" ["response" .= fromUtf8 r', "parser error" .= e']
 				Right r'' -> return r''
-unMmap r = return r
 #endif
+unMmap r = return r
 
 -- | Log message
 logMsg :: Opts String -> String -> IO ()
