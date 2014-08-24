@@ -3,7 +3,7 @@
 module System.Console.Args (
 	Args(..), Opts(..), Arg(..), Opt(..),
 	withOpts, defOpts, defArgs, selectOpts, splitOpts,
-	(%--), (%-?), hoist, has, arg, narg, listArg, flagSet,
+	(%--), (%-?), hoist, has, arg, narg, iarg, listArg, flagSet,
 	flag, req, list,
 	desc, alias, short,
 	parse, parse_, tryParse, toArgs, info,
@@ -127,6 +127,10 @@ arg n = M.lookup n . getOpts >=> listToMaybe
 -- | Get numeric value
 narg :: (Read a, Num a) => String -> Opts String -> Maybe a
 narg n = join . fmap readMaybe . arg n
+
+-- | Get integer value
+iarg :: String -> Opts String -> Maybe Integer
+iarg = narg
 
 -- | Get list argument
 listArg :: String -> Opts a -> [a]

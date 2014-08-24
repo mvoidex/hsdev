@@ -1,8 +1,13 @@
+{-# LANGUAGE TemplateHaskell #-}
+
 module Main (
 	main
 	) where
 
 import Control.Monad
+import Data.List
+import Data.Char
+import Data.Maybe (listToMaybe, mapMaybe)
 import Network.Socket (withSocketsDo)
 import System.Environment (getArgs)
 import System.Exit
@@ -15,6 +20,7 @@ import qualified System.Console.Cmd as C (brief)
 
 import qualified HsDev.Client.Commands as Client (commands)
 import qualified HsDev.Server.Commands as Server
+import HsDev.Version
 
 main :: IO ()
 main = withSocketsDo $ do
@@ -40,8 +46,11 @@ main = withSocketsDo $ do
 
 mainCommands :: [Cmd (IO ())]
 mainCommands = withHelp "hsdev" (printWith putStrLn) $ concat [
+	[cmd "version" [] [] "hsdev version" version'],
 	map (chain [validateOpts, noArgs]) Server.commands,
 	map Server.clientCmd Client.commands]
+	where
+		version' _ = putStrLn $cabalVersion
 
 printUsage :: IO ()
 printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) mainCommands

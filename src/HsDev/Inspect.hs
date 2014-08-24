@@ -78,12 +78,12 @@ getBinds _ = []
 getDecl :: H.Decl -> [Declaration]
 getDecl decl = case decl of
 	H.TypeSig loc names typeSignature -> map
-		(\n -> setPosition loc (Declaration (identOfName n) Nothing Nothing (Function (Just $ H.prettyPrint typeSignature) [])))
+		(\n -> setPosition loc (Declaration (identOfName n) Nothing Nothing (Function (Just $ oneLinePrint typeSignature) [])))
 		names
-	H.TypeDecl loc n args _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Type $ TypeInfo Nothing (map H.prettyPrint args) Nothing)]
-	H.DataDecl loc dataOrNew ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
-	H.GDataDecl loc dataOrNew ctx n args _ _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
-	H.ClassDecl loc ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Class $ TypeInfo (makeCtx ctx) (map H.prettyPrint args) Nothing)]
+	H.TypeDecl loc n args _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Type $ TypeInfo Nothing (map oneLinePrint args) Nothing)]
+	H.DataDecl loc dataOrNew ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map oneLinePrint args) Nothing)]
+	H.GDataDecl loc dataOrNew ctx n args _ _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map oneLinePrint args) Nothing)]
+	H.ClassDecl loc ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Class $ TypeInfo (makeCtx ctx) (map oneLinePrint args) Nothing)]
 	_ -> []
 	where
 		ctor :: H.DataOrNew -> TypeInfo -> DeclarationInfo
@@ -91,7 +91,10 @@ getDecl decl = case decl of
 		ctor H.NewType = NewType
 
 		makeCtx [] = Nothing
-		makeCtx ctx = Just $ intercalate ", " $ map H.prettyPrint ctx
+		makeCtx ctx = Just $ intercalate ", " $ map oneLinePrint ctx
+
+		oneLinePrint :: H.Pretty a => a -> String
+		oneLinePrint = H.prettyPrintStyleMode (H.style { H.mode = H.OneLineMode }) H.defaultMode
 
 getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []

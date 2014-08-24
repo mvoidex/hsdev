@@ -2,7 +2,7 @@
 --  see http://haskell.org/cabal/users-guide/
 
 name:                hsdev
-version:             0.1.0.1
+version:             0.1.1.0
 synopsis:            Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references etc.
 -- description:
 homepage:            https://github.com/mvoidex/hsdev
@@ -55,6 +55,7 @@ library
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Util
+    HsDev.Version
     System.Console.Args
     System.Console.Cmd
     Text.Format
@@ -98,6 +99,7 @@ library
     regex-posix >= 0.95,
     time >= 1.4.0,
     attoparsec >= 0.11.0,
+    template-haskell,
     unordered-containers >= 0.2.0,
     vector >= 0.10.0,
     text >= 1.1.0

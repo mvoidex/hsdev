@@ -18,17 +18,14 @@ import Control.Concurrent
 import Control.Exception
 import Control.Monad
 import Control.Monad.Error
-import Control.Monad.IO.Class
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
 import Data.Aeson.Types hiding (Result, Error)
-import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Char
 import Data.Either (isLeft)
 import Data.List
-import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid
@@ -38,7 +35,6 @@ import qualified Network.Socket as Net
 import System.Directory
 import System.Environment
 import System.Exit
-import System.FilePath
 import System.IO
 import System.Process
 import Text.Read (readMaybe)
@@ -47,22 +43,13 @@ import Control.Apply.Util
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import System.Console.Cmd hiding (run)
-import qualified System.Console.Cmd as Cmd
 
-import HsDev.Cache
 import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
-import HsDev.Project
-import HsDev.Scan
 import HsDev.Server.Message as M
 import HsDev.Server.Types
-import HsDev.Symbols
-import HsDev.Symbols.Util
-import qualified HsDev.Tools.Cabal as Cabal
-import qualified HsDev.Tools.GhcMod as GhcMod (typeOf, check, lint)
-import qualified HsDev.Tools.Hayoo as Hayoo
 import HsDev.Util
 
 #if mingw32_HOST_OS
@@ -139,7 +126,7 @@ commands = [
 				me <- myThreadId
 				s <- socket AF_INET Stream defaultProtocol
 				addr' <- inet_addr "127.0.0.1"
-				Net.connect s $ SockAddrInet (fromIntegral $ fromJust $ narg "port" sopts) addr'
+				Net.connect s $ SockAddrInet (fromIntegral $ fromJust $ iarg "port" sopts) addr'
 				bracket (socketToHandle s ReadWriteMode) hClose $ \h ->
 					processClient (show s) (hGetLineBS h) (L.hPutStrLn h) (copts {
 						commandExit = killThread me })
@@ -159,7 +146,7 @@ commands = [
 							killThread accepter
 
 					s <- socket AF_INET Stream defaultProtocol
-					bind s $ SockAddrInet (fromIntegral $ fromJust $ narg "port" sopts) iNADDR_ANY
+					bind s $ SockAddrInet (fromIntegral $ fromJust $ iarg "port" sopts) iNADDR_ANY
 					listen s maxListenQueue
 					forever $ logIO "accept client exception: " (commandLog copts) $ do
 						s' <- fst <$> accept s
@@ -199,14 +186,14 @@ commands = [
 			curDir <- getCurrentDirectory
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
-			Net.connect s (SockAddrInet (fromIntegral $ fromJust $ narg "port" copts) addr')
+			Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [1..] $ \i -> ignoreIO $ do
-				cmd <- hGetLineBS stdin
-				case eitherDecode cmd of
-					Left e -> L.putStrLn $ encodeValue $ object ["error" .= ("invalid command" :: String)]
-					Right cmd' -> do
+				input' <- hGetLineBS stdin
+				case eitherDecode input' of
+					Left _ -> L.putStrLn $ encodeValue $ object ["error" .= ("invalid command" :: String)]
+					Right req' -> do
 						L.hPutStrLn h $ encode $ Message (Just $ show i) $
-							cmd' `M.withOpts` ["current-directory" %-- curDir]
+							req' `M.withOpts` ["current-directory" %-- curDir]
 						waitResp h
 			where
 				pretty = flagSet "pretty" copts
@@ -285,12 +272,12 @@ sendCmd name (Args args opts) = ignoreIO sendReceive where
 
 		s <- socket AF_INET Stream defaultProtocol
 		addr' <- inet_addr "127.0.0.1"
-		Net.connect s (SockAddrInet (fromIntegral $ fromJust $ narg "port" copts) addr')
+		Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
 		h <- socketToHandle s ReadWriteMode
 		L.hPutStrLn h $ encode $ Message Nothing $ reqCall `M.withOpts` [
 			"current-directory" %-- curDir,
 			"data" %-? (fromUtf8 . encode <$> stdinData),
-			"timeout" %-? (narg "timeout" copts :: Maybe Integer),
+			"timeout" %-? (iarg "timeout" copts :: Maybe Integer),
 			if flagSet "silent" copts then hoist "silent" else mempty]
 		peekResponse h
 
