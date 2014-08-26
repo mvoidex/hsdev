@@ -359,12 +359,13 @@ processClient name receive send copts = do
 	forkIO $ do
 		responses <- getChanContents respChan
 		mapM_ (send . encode) responses
+	linkVar <- newMVar $ return ()
 	let
 		answer :: Message Response -> IO ()
 		answer m@(Message i r) = do
 			commandLog copts $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ fromUtf8 (encode r)
 			writeChan respChan m
-	flip finally disconnected $ forever $ do
+	flip finally (disconnected linkVar) $ forever $ do
 		req <- receive
 		case fmap extractMeta <$> eitherDecode req of
 			Left err -> do
@@ -379,7 +380,12 @@ processClient name receive send copts = do
 							| otherwise = traverse (const $ mmap' noFile (Left n)) m >>= answer
 					commandLog copts $ name ++ " >> " ++ fromMaybe "_" (messageId m) ++ ":" ++ fromUtf8 (encode reqArgs)
 					resp <- fmap Right $ handleTimeout tm $ handleError $
-						processRequest (copts { commandRoot = cdir }) onNotify reqArgs
+						processRequest
+							(copts {
+								commandRoot = cdir,
+								commandLink = void (swapMVar linkVar $ commandExit copts) })
+							onNotify
+							reqArgs
 					mmap' noFile resp
 				answer resp'
 	where
@@ -411,8 +417,10 @@ processClient name receive send copts = do
 #endif
 		mmap' _ = return
 
-		disconnected :: IO ()
-		disconnected = commandLog copts $ name ++ " disconnected"
+		disconnected :: MVar (IO ()) -> IO ()
+		disconnected var = do
+			commandLog copts $ name ++ " disconnected"
+			join $ takeMVar var
 
 -- | Process client by Handle
 processClientHandle :: Show a => a -> Handle -> CommandOptions -> IO ()
