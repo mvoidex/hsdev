@@ -128,7 +128,7 @@ commands = [
 				addr' <- inet_addr "127.0.0.1"
 				Net.connect s $ SockAddrInet (fromIntegral $ fromJust $ iarg "port" sopts) addr'
 				bracket (socketToHandle s ReadWriteMode) hClose $ \h ->
-					processClient (show s) (hGetLineBS h) (L.hPutStrLn h) (copts {
+					processClientHandle s h (copts {
 						commandExit = killThread me })
 			| otherwise = runServer sopts $ \copts -> do
 				commandLog copts $ "Server started at port " ++ (fromJust $ arg "port" sopts)
@@ -165,7 +165,7 @@ commands = [
 												takeMVar done
 										waitForever = forever $ hGetLineBS h
 									F.putChan clientChan timeoutWait
-									processClient (show s') (hGetLineBS h) (L.hPutStrLn h) (copts {
+									processClientHandle s' h (copts {
 										commandHold = waitForever,
 										commandExit = serverStop })
 
@@ -279,6 +279,7 @@ sendCmd name (Args args opts) = ignoreIO sendReceive where
 			"data" %-? (fromUtf8 . encode <$> stdinData),
 			"timeout" %-? (iarg "timeout" copts :: Maybe Integer),
 			if flagSet "silent" copts then hoist "silent" else mempty]
+		hFlush h
 		peekResponse h
 
 	peekResponse h = do
@@ -412,6 +413,10 @@ processClient name receive send copts = do
 
 		disconnected :: IO ()
 		disconnected = commandLog copts $ name ++ " disconnected"
+
+-- | Process client by Handle
+processClientHandle :: Show a => a -> Handle -> CommandOptions -> IO ()
+processClientHandle n h = processClient (show n) (hGetLineBS h) (\s -> L.hPutStrLn h s >> hFlush h)
 
 -- | Perform action on cache
 withCache :: Opts String -> a -> (FilePath -> IO a) -> IO a
