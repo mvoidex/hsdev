@@ -40,7 +40,7 @@ import HsDev.Util
 
 -- | Analize source contents
 analyzeModule :: [String] -> Maybe FilePath -> String -> Either String Module
-analyzeModule exts file source = case H.parseFileContentsWithMode pmode source of
+analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' of
 		H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
 		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ _ imports declarations) -> Right $ Module {
 			moduleName = mname,
@@ -55,6 +55,11 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source o
 			H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
 			H.baseLanguage = H.Haskell2010,
 			H.extensions = map H.parseExtension exts }
+
+		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
+		source' = map untab source
+		untab '\t' = ' '
+		untab ch = ch
 
 getImport :: H.ImportDecl -> Import
 getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mname $ H.importAs d) (Just $ toPosition $ H.importLoc d) where
