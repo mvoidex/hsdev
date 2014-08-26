@@ -309,9 +309,10 @@ commands = [
 				hasFilters = not $ null projs && null packages && null cabals
 				filters = allOf $ catMaybes [
 					if hasFilters
-						then Just $ anyOf [
-							\m -> any (`inProject` m) projs,
-							\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals)]
+						then Just $ anyOf $ catMaybes [
+							if null projs then Nothing else Just (\m -> any (`inProject` m) projs),
+							if null packages && null cabals then Nothing
+								else Just (\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals))]
 						else Nothing,
 					if flagSet "src" as then Just byFile else Nothing,
 					if flagSet "stand" as then Just standalone else Nothing]
