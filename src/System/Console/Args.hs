@@ -122,7 +122,7 @@ has n = M.member n . getOpts
 
 -- | Get argument value
 arg :: String -> Opts a -> Maybe a
-arg n = M.lookup n . getOpts >=> listToMaybe
+arg n = (M.lookup n . getOpts) >=> listToMaybe
 
 -- | Get numeric value
 narg :: (Read a, Num a) => String -> Opts String -> Maybe a
@@ -174,7 +174,7 @@ findOpt n = find opt' where
 	opt' (Opt n' s l _ _) = n `elem` (n' : (map return s ++ l))
 
 parse :: [Opt] -> [String] -> Either String Args
-parse os = unfoldrM parseCmd >=> verify os . mconcat where
+parse os = unfoldrM parseCmd >=> (verify os . mconcat) where
 	parseCmd :: [String] -> Either String (Maybe (Args, [String]))
 	parseCmd [] = Right Nothing
 	parseCmd (cmd:cmds)

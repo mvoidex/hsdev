@@ -62,7 +62,12 @@ fmt %~ hargs = case fmt =~ "\\$({([a-zA-Z]+)})?" of
 
 		split' :: String -> Either String (String, FormatArgs)
 		split' n = maybe
-			(Left $ maybe "Not enough arguments" ("Format argument '$' not found" ~~) n')
+			(Left $ maybe
+				(concat [
+					"Format: not enough arguments for format string '",
+					fmt,
+					"'"])
+				("Format argument '$' not found" ~~) n')
 			(\v -> Right (v, delete (n', v) args))
 			(lookup n' args)
 			where

@@ -245,7 +245,7 @@ clientDefCfg = mconcat ["port" %-- (4567 :: Int)]
 
 -- | Command to send to client
 clientCmd :: Cmd CommandAction -> Cmd (IO ())
-clientCmd c = cmd (cmdName c) (cmdArgs c) (clientOpts ++ cmdOpts c) (cmdDesc c) (sendCmd (cmdName c))
+clientCmd c = cmd (cmdName c) (cmdArgs c) (cmdOpts c ++ clientOpts) (cmdDesc c) (sendCmd (cmdName c))
 	`with` [defaultOpts clientDefCfg]
 
 -- | Send command to server

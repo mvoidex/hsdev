@@ -1,7 +1,7 @@
 module System.Console.Cmd (
 	CmdAction, notMatch, failMatch, runCmd, defaultOpts, validateArgs, alterArgs,
 	Cmd(..), cmdAct, cutName, cmda, cmda_, cmd, cmd_, defCmd,
-	CmdHelp(..), withHelp, printWith,
+	CmdHelp(..), helpCommand, withHelp, printWith,
 	run, runArgs, runOn,
 
 	module System.Console.Args
@@ -107,14 +107,14 @@ data CmdHelp =
 	HelpCommands [(String, [String])]
 		deriving (Eq, Ord, Read, Show)
 
-withHelp :: String -> (Either String CmdHelp -> a) -> [Cmd a] -> [Cmd a]
-withHelp tool toCmd cmds = cmds' where
-	cmds' = helpcmd : cmds
+-- | Make help command, which will show help on for specified commands
+helpCommand :: String -> (Either String CmdHelp -> a) -> [Cmd a] -> Cmd a
+helpCommand tool toCmd cmds = helpcmd where
 	helpcmd = fmap toCmd $ alterArgs (cmdAct checkHelp) $ cmd
 		"help"
 		["command"]
-		[flag "help" `short` ['?'] `desc` "show help (when using form 'command -?')"]
-		("help command, can be called in form '$ [command] -?'" ~~ tool)
+		[flag "help" `short` ['?'] `desc` "show help (when using form 'command -?' or 'command --help')"]
+		("help command, can be called in form '$ [command] -?' or '$ [command] --help" ~~ tool % tool)
 		onHelp
 	checkHelp :: Args -> Args
 	checkHelp a
@@ -122,12 +122,16 @@ withHelp tool toCmd cmds = cmds' where
 			posArgs = "help" : posArgs a,
 			namedArgs = Opts $ M.delete "help" $ getOpts $ namedArgs a }
 		| otherwise = a
-	onHelp (Args [] _) = Right $ HelpUsage [tool ++ " " ++ brief c | c <- cmds']
-	onHelp (Args cmdname _) = case filter ((cmdname ==) . words . cmdName) cmds' of
+	onHelp (Args [] _) = Right $ HelpUsage [tool ++ " " ++ brief c | c <- (helpcmd:cmds)]
+	onHelp (Args cmdname _) = case filter ((cmdname ==) . words . cmdName) (helpcmd:cmds) of
 		[] -> Left $ "Unknown command: " ++ unwords cmdname
 		helps -> Right $ HelpCommands $ map (cmdName &&& (addHeader . indented)) helps
 	addHeader [] = []
 	addHeader (h:hs) = (tool ++ " " ++ h) : hs
+
+-- | Add help command
+withHelp :: String -> (Either String CmdHelp -> a) -> [Cmd a] -> [Cmd a]
+withHelp tool toCmd cmds = helpCommand tool toCmd cmds : cmds
 
 printWith :: (String -> a) -> (Either String CmdHelp -> a)
 printWith fn = fn . either id (unlines . print') where
@@ -136,11 +140,11 @@ printWith fn = fn . either id (unlines . print') where
 	print' (HelpCommands cs) = map ('\t':) $ concatMap snd cs
 
 instance Help (Cmd a) where
-	brief c = unwords $ filter (not . null) $ [cmdName c, unwords (map angled (cmdArgs c)), brief (cmdOpts c)] ++ [desc'] where
+	brief c = unwords $ filter (not . null) $ [cmdName c, unwords (map angled (cmdArgs c)), brief (cmdOpts c)] ++ desc' where
 		angled s = "<" ++ s ++ ">"
 		desc'
-			| null (cmdDesc c) = ""
-			| otherwise = " -- " ++ cmdDesc c
+			| null (cmdDesc c) = []
+			| otherwise = ["-- " ++ cmdDesc c]
 	help = help . cmdOpts
 
 -- | Run commands
