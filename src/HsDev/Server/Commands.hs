@@ -48,6 +48,7 @@ import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
+import HsDev.Tools.Ghc.Worker
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Util
@@ -319,6 +320,7 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"
 #endif
+	worker <- startWorker
 	act $ CommandOptions
 		db
 		(writeCache sopts outputStr)
@@ -329,6 +331,7 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 #if mingw32_HOST_OS
 		mmapPool
 #endif
+		worker
 		(const $ return ())
 		(return ())
 		(return ())

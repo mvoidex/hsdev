@@ -34,6 +34,7 @@ import HsDev.Scan
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import qualified HsDev.Tools.Cabal as Cabal
+import HsDev.Tools.Ghc.Worker
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Cache.Structured as SC
@@ -115,6 +116,8 @@ commands = [
 	cmd' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
 	cmd' "ghc-mod check" ["files"] [fileArg `desc` "source files", sandbox, ghcOpts] "check source files" ghcmodCheck',
 	cmd' "ghc-mod lint" ["file"] [fileArg `desc` "source file", hlintOpts] "lint source file" ghcmodLint',
+	-- Ghc commands
+	cmd' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
 	-- Dump/load commands
 	cmd' "dump" [] (sandboxes ++ [
 		cacheDir, cacheFile,
@@ -457,6 +460,10 @@ commands = [
 			file' <- findPath copts file
 			mapErrorStr $ GhcMod.lint (listArg "hlint" as) file'
 		ghcmodLint' fs _ copts = commandError "Too much files specified" []
+
+		-- | Evaluate expression
+		ghcEval' :: [String] -> Opts String -> CommandActionT [Maybe String]
+		ghcEval' exprs _ copts = mapErrorStr $ waitWork (commandGhc copts) $ mapM evaluate exprs
 
 		-- | Dump database info
 		dump' :: [String] -> Opts String -> CommandActionT ()
