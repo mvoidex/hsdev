@@ -2,6 +2,7 @@
 
 module HsDev.Inspect (
 	analyzeModule,
+	inspectContents, contentsInspection,
 	inspectFile, fileInspection,
 	projectDirs, projectSources,
 	inspectProject
@@ -45,7 +46,7 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ _ imports declarations) -> Right $ Module {
 			moduleName = mname,
 			moduleDocs =  Nothing,
-			moduleLocation = OtherModuleSource Nothing,
+			moduleLocation = ModuleSource Nothing,
 			moduleExports = [],
 			moduleImports = map getImport imports,
 			moduleDeclarations = M.fromList $ map (declarationName &&& id) $ getDecls declarations }
@@ -194,6 +195,19 @@ addDoc docsMap decl = decl { declarationDocs = M.lookup (declarationName decl) d
 -- | Adds documentation to all declarations in module
 addDocs :: Map String String -> Module -> Module
 addDocs docsMap m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDeclarations m) }
+
+-- | Inspect contents
+inspectContents :: String -> [String] -> String -> ErrorT String IO InspectedModule
+inspectContents name opts cts = inspect (ModuleSource $ Just name) (contentsInspection cts opts) $ do
+	analyzed <- ErrorT $ return $ analyzeModule exts (Just name) cts
+	return $ setLoc analyzed
+	where
+		setLoc m = m { moduleLocation = ModuleSource (Just name) }
+
+		exts = mapMaybe flagExtension opts
+
+contentsInspection :: String -> [String] -> ErrorT String IO Inspection
+contentsInspection cts opts = return InspectionNone -- crc or smth
 
 -- | Inspect file
 inspectFile :: [String] -> FilePath -> ErrorT String IO InspectedModule

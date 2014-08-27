@@ -58,7 +58,7 @@ instance Symbol HayooFunction where
 	symbolName = hayooName
 	symbolQualifiedName f = hayooModule f ++ "." ++ hayooName f
 	symbolDocs = Just . hayooDescription
-	symbolLocation r = Location (OtherModuleSource $ Just $ hayooHackage r) Nothing where
+	symbolLocation r = Location (ModuleSource $ Just $ hayooHackage r) Nothing where
 
 instance Documented HayooFunction where
 	brief f
@@ -107,7 +107,7 @@ hayooAsDeclaration :: HayooFunction -> ModuleDeclaration
 hayooAsDeclaration f = ModuleDeclaration {
 	declarationModuleId = ModuleId {
 		moduleIdName = hayooModule f,
-		moduleIdLocation = OtherModuleSource (Just $ hayooHackage f) },
+		moduleIdLocation = ModuleSource (Just $ hayooHackage f) },
 	moduleDeclaration = Declaration {
 		declarationName = hayooName f,
 		declarationDocs = Just (addOnline $ untagDescription $ hayooDescription f),

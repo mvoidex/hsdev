@@ -60,7 +60,7 @@ inFile fpath m = case moduleIdLocation m of
 -- | Check if module in source
 inModuleSource :: Maybe String -> ModuleId -> Bool
 inModuleSource src m = case moduleIdLocation m of
-	OtherModuleSource src' -> src' == src
+	ModuleSource src' -> src' == src
 	_ -> False
 
 -- | Check if declaration is in module

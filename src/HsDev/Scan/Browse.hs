@@ -65,7 +65,7 @@ browseModule cabal m = do
 		mloc = CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
 		toDecl minfo n = do
 			tyInfo <- lift $ GHC.modInfoLookupName minfo n
-			tyResult <- lift $ maybe (inOtherModuleSource n) (return . Just) tyInfo
+			tyResult <- lift $ maybe (inModuleSource n) (return . Just) tyInfo
 			dflag <- lift GHC.getSessionDynFlags
 			return $ Declaration
 				(GHC.getOccString n)
@@ -100,8 +100,8 @@ withPackages ghcOpts cont = ErrorT $ withInitializedPackages ghcOpts (runErrorT 
 withPackages_ :: [String] -> ErrorT String GHC.Ghc a -> ErrorT String IO a
 withPackages_ ghcOpts act = withPackages ghcOpts (const act)
 
-inOtherModuleSource :: GHC.Name -> GHC.Ghc (Maybe GHC.TyThing)
-inOtherModuleSource nm = GHC.getModuleInfo (GHC.nameModule nm) >> GHC.lookupGlobalName nm
+inModuleSource :: GHC.Name -> GHC.Ghc (Maybe GHC.TyThing)
+inModuleSource nm = GHC.getModuleInfo (GHC.nameModule nm) >> GHC.lookupGlobalName nm
 
 formatType :: GHC.NamedThing a => GHC.DynFlags -> (a -> GHC.Type) -> a -> String
 formatType dflag f x = showOutputable dflag (removeForAlls $ f x)

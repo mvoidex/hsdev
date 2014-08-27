@@ -60,7 +60,7 @@ instance FromJSON ModulePackage where
 data ModuleLocation =
 	FileModule { moduleFile :: FilePath, moduleProject :: Maybe Project } |
 	CabalModule { moduleCabal :: Cabal, modulePackage :: Maybe ModulePackage, cabalModuleName :: String } |
-	OtherModuleSource { moduleOtherSource :: Maybe String }
+	ModuleSource { moduleSourceName :: Maybe String }
 		deriving (Eq, Ord)
 
 moduleSource :: ModuleLocation -> Maybe FilePath
@@ -74,23 +74,23 @@ moduleCabalPackage _ = Nothing
 instance NFData ModuleLocation where
 	rnf (FileModule f p) = rnf f `seq` rnf p
 	rnf (CabalModule c p n) = rnf c `seq` rnf p `seq` rnf n
-	rnf (OtherModuleSource m) = rnf m
+	rnf (ModuleSource m) = rnf m
 
 instance Show ModuleLocation where
 	show (FileModule f p) = f ++ maybe "" (" in " ++) (fmap projectPath p)
 	show (CabalModule c p _) = show c ++ maybe "" (" in package " ++) (fmap show p)
-	show (OtherModuleSource m) = fromMaybe "" m
+	show (ModuleSource m) = fromMaybe "" m
 
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap projectCabal p]
 	toJSON (CabalModule c p n) = object ["cabal" .= c, "package" .= fmap show p, "name" .= n]
-	toJSON (OtherModuleSource s) = object ["source" .= s]
+	toJSON (ModuleSource s) = object ["source" .= s]
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> ((fmap project) <$> (v .:: "project"))) <|>
 		(CabalModule <$> v .:: "cabal" <*> (fmap (join . fmap readMaybe) (v .:: "package")) <*> v .:: "name") <|>
-		(OtherModuleSource <$> v .:: "source")
+		(ModuleSource <$> v .:: "source")
 
 data Position = Position {
 	positionLine :: Int,

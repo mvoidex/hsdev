@@ -22,7 +22,7 @@ instance Display Cabal where
 instance Display ModuleLocation where
 	display (FileModule f _) = f
 	display (CabalModule _ _ n) = n
-	display (OtherModuleSource s) = fromMaybe "" s
+	display (ModuleSource s) = fromMaybe "" s
 	displayType _ = "module"
 
 instance Display Project where
