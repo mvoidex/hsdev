@@ -9,34 +9,20 @@ import Control.Arrow
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Trans.Maybe
-import Control.Exception
-import Control.Concurrent
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
-import Data.Aeson.Types hiding (Result, Error)
-import Data.Char
 import Data.Either
 import Data.List
 import Data.Maybe
 import Data.Monoid
-import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lazy.Char8 (ByteString)
-import qualified Data.ByteString.Lazy.Char8 as L
-import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Text (unpack)
 import Data.Traversable (traverse)
-import Network.Socket
 import System.Directory
-import System.Environment
-import System.Exit
-import System.IO
-import System.Process
-import System.Console.GetOpt
 import System.FilePath
 import Text.Read (readMaybe)
 
-import Control.Apply.Util
 import qualified HsDev.Database.Async as DB
 import HsDev.Commands
 import HsDev.Database
@@ -53,7 +39,6 @@ import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
 
-import qualified Control.Concurrent.FiniteChan as F
 import Control.Concurrent.Util
 import System.Console.Cmd
 
@@ -67,16 +52,16 @@ commands = [
 	-- Database commands
 	cmd' "add" [] [dataArg] "add info to database" add',
 	cmd' "scan" [] (sandboxes ++ [
-		projectArg `desc` "project path or .cabal",
-		fileArg `desc` "source file",
-		pathArg `desc` "directory to scan for files and projects",
+		manyReq $ projectArg `desc` "project path or .cabal",
+		manyReq $ fileArg `desc` "source file",
+		manyReq $ pathArg `desc` "directory to scan for files and projects",
 		ghcOpts])
 		"scan sources"
 		scan',
 	cmd' "rescan" [] (sandboxes ++ [
-		projectArg `desc` "project path or .cabal",
-		fileArg `desc` "source file",
-		pathArg `desc` "path to rescan",
+		manyReq $ projectArg `desc` "project path or .cabal",
+		manyReq $ fileArg `desc` "source file",
+		manyReq $ pathArg `desc` "path to rescan",
 		ghcOpts])
 		"rescan sources"
 		rescan',
@@ -90,9 +75,9 @@ commands = [
 		remove',
 	-- Context free commands
 	cmd' "modules" [] (sandboxes ++ [
-		projectArg `desc` "projects to list modules from",
+		manyReq $ projectArg `desc` "projects to list modules from",
 		noLastArg,
-		packageArg,
+		manyReq packageArg,
 		sourced, standaloned])
 		"list modules"
 		listModules',
@@ -133,8 +118,8 @@ commands = [
 	-- Dump/load commands
 	cmd' "dump" [] (sandboxes ++ [
 		cacheDir, cacheFile,
-		projectArg `desc` "project",
-		fileArg `desc` "file",
+		manyReq $ projectArg `desc` "project",
+		manyReq $ fileArg `desc` "file",
 		standaloned,
 		allFlag "dump all"])
 		"dump database info" dump',
@@ -174,9 +159,10 @@ commands = [
 		projectArg = req "project" "project"
 		packageVersionArg = req "version" "id" `short` ['v'] `desc` "package version"
 		sandbox = req "sandbox" "path" `desc` "path to cabal sandbox"
+		sandboxList = manyReq sandbox
 		sandboxes = [
 			flag "cabal" `desc` "cabal",
-			sandbox]
+			sandboxList]
 		sourced = flag "src" `desc` "source files"
 		standaloned = flag "stand" `desc` "standalone files"
 
@@ -217,7 +203,7 @@ commands = [
 				updateData (ResultProject p) = DB.update (dbVar copts) $ return $ fromProject p
 				updateData (ResultList l) = mapM_ updateData l
 				updateData (ResultMap m) = mapM_ updateData $ M.elems m
-				updateData (ResultString s) = commandError "Can't insert string" []
+				updateData (ResultString _) = commandError "Can't insert string" []
 				updateData ResultNone = return ()
 			updateData decodedData
 
@@ -395,7 +381,7 @@ commands = [
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
 			mapErrorStr $ lookupSymbol dbval cabal srcFile nm
-		lookup' _ as copts = commandError "Invalid arguments" []
+		lookup' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Get detailed info about symbol in source file
 		whois' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
@@ -403,7 +389,7 @@ commands = [
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
 			mapErrorStr $ whois dbval cabal srcFile nm
-		whois' _ as copts = commandError "Invalid arguments" []
+		whois' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Get modules accessible from module
 		scopeModules' :: [String] -> Opts String -> CommandActionT [ModuleId]
@@ -411,7 +397,7 @@ commands = [
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
 			liftM (map moduleId) $ mapErrorStr $ scopeModules dbval cabal srcFile
-		scopeModules' _ as copts = commandError "Invalid arguments" []
+		scopeModules' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Get declarations accessible from module
 		scope' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
@@ -419,7 +405,7 @@ commands = [
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
 			liftM (filterMatch as) $ mapErrorStr $ scope dbval cabal srcFile (flagSet "global" as)
-		scope' _ as copts = commandError "Invalid arguments" []
+		scope' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Completion
 		complete' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
@@ -428,15 +414,15 @@ commands = [
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
 			mapErrorStr $ completions dbval cabal srcFile input
-		complete' _ as copts = commandError "Invalid arguments" []
+		complete' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Hayoo
 		hayoo' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
-		hayoo' [] as copts = commandError "Query not specified" []
+		hayoo' [] _ copts = commandError "Query not specified" []
 		hayoo' [query] as copts = liftM
 				(map Hayoo.hayooAsDeclaration . Hayoo.hayooFunctions) $
 				mapErrorStr $ Hayoo.hayoo query
-		hayoo' _ as copts = commandError "Too much arguments" []
+		hayoo' _ _ _ = commandError "Too much arguments" []
 
 		-- | Cabal list
 		cabalList' :: [String] -> Opts String -> CommandActionT [Cabal.CabalPackage]
@@ -452,12 +438,12 @@ commands = [
 			(srcFile, cabal) <- getCtx copts as
 			(srcFile', m, mproj) <- mapErrorStr $ fileCtx dbval srcFile
 			mapErrorStr $ GhcMod.typeOf (listArg "ghc" as) cabal srcFile' mproj (moduleName m) line' column'
-		ghcmodType' [] as copts = commandError "Specify line" []
-		ghcmodType' _ as copts = commandError "Too much arguments" []
+		ghcmodType' [] _ copts = commandError "Specify line" []
+		ghcmodType' _ _ _ = commandError "Too much arguments" []
 
 		-- | Ghc-mod check
 		ghcmodCheck' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
-		ghcmodCheck' [] as copts = commandError "Specify at least one file" []
+		ghcmodCheck' [] _ copts = commandError "Specify at least one file" []
 		ghcmodCheck' files as copts = do
 			files' <- mapM (findPath copts) files
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM (locateProject) files')
@@ -466,11 +452,11 @@ commands = [
 
 		-- | Ghc-mod lint
 		ghcmodLint' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
-		ghcmodLint' [] as copts = commandError "Specify file to hlint" []
+		ghcmodLint' [] _ copts = commandError "Specify file to hlint" []
 		ghcmodLint' [file] as copts = do
 			file' <- findPath copts file
 			mapErrorStr $ GhcMod.lint (listArg "hlint" as) file'
-		ghcmodLint' fs as copts = commandError "Too much files specified" []
+		ghcmodLint' fs _ copts = commandError "Too much files specified" []
 
 		-- | Dump database info
 		dump' :: [String] -> Opts String -> CommandActionT ()
@@ -496,7 +482,7 @@ commands = [
 				do
 					f <- MaybeT $ traverse (findPath copts) $ arg "file" as
 					fork $ dump f dat]
-		dump' _ as copts = commandError "Invalid arguments" []
+		dump' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Load database
 		load' :: [String] -> Opts String -> CommandActionT ()

@@ -136,7 +136,7 @@ commands = [
 				waitListen <- newEmptyMVar
 				clientChan <- F.newChan
 
-				forkIO $ do
+				void $ forkIO $ do
 					accepter <- myThreadId
 
 					let
@@ -160,7 +160,7 @@ commands = [
 											when notDone $ do
 												void $ forkIO $ do
 													threadDelay 1000000
-													tryPutMVar done ()
+													void $ tryPutMVar done ()
 													killThread me
 												takeMVar done
 										waitForever = forever $ hGetLineBS h
@@ -288,7 +288,7 @@ sendCmd name (Args args opts) = ignoreIO sendReceive where
 
 	parseResponse h str = case eitherDecode str of
 		Left e -> putStrLn $ "Can't decode response: " ++ e
-		Right (Message i r) -> do
+		Right (Message _ r) -> do
 			r' <- unMmap r
 			L.putStrLn $ case r' of
 				Left n -> encodeValue n
@@ -336,12 +336,12 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 
 -- | Process request, notifications can be sent during processing
 processRequest :: CommandOptions -> (Notification -> IO ()) -> Request -> IO Result
-processRequest copts onNotify req =
+processRequest copts onNotify req' =
 	runArgs
 		Client.commands
 		unknownCommand
 		requestError
-		(requestToArgs req)
+		(requestToArgs req')
 		(copts { commandNotify = onNotify })
 	where
 		unknownCommand :: CommandAction
@@ -353,12 +353,12 @@ processRequest copts onNotify req =
 
 -- | Process client, listen for requests and process them
 processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> CommandOptions -> IO ()
-processClient name receive send copts = do
+processClient name receive send' copts = do
 	commandLog copts $ name ++ " connected"
 	respChan <- newChan
-	forkIO $ do
+	void $ forkIO $ do
 		responses <- getChanContents respChan
-		mapM_ (send . encode) responses
+		mapM_ (send' . encode) responses
 	linkVar <- newMVar $ return ()
 	let
 		answer :: Message Response -> IO ()
@@ -366,12 +366,12 @@ processClient name receive send copts = do
 			commandLog copts $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ fromUtf8 (encode r)
 			writeChan respChan m
 	flip finally (disconnected linkVar) $ forever $ do
-		req <- receive
-		case fmap extractMeta <$> eitherDecode req of
-			Left err -> do
-				commandLog copts $ name ++ " >> #: " ++ fromUtf8 req
+		req' <- receive
+		case fmap extractMeta <$> eitherDecode req' of
+			Left _ -> do
+				commandLog copts $ name ++ " >> #: " ++ fromUtf8 req'
 				answer $ Message Nothing $ responseError "Invalid request" [
-					"request" .= fromUtf8 req]
+					"request" .= fromUtf8 req']
 			Right m -> do
 				resp' <- flip traverse m $ \(cdir, noFile, silent, tm, reqArgs) -> do
 					let
@@ -433,21 +433,21 @@ withCache sopts v onCache = case arg "cache" sopts of
 	Just cdir -> onCache cdir
 
 writeCache :: Opts String -> (String -> IO ()) -> Database -> IO ()
-writeCache sopts logMsg d = withCache sopts () $ \cdir -> do
-	logMsg $ "writing cache to " ++ cdir
-	logIO "cache writing exception: " logMsg $ do
+writeCache sopts logMsg' d = withCache sopts () $ \cdir -> do
+	logMsg' $ "writing cache to " ++ cdir
+	logIO "cache writing exception: " logMsg' $ do
 		SC.dump cdir $ structurize d
-	logMsg $ "cache saved to " ++ cdir
+	logMsg' $ "cache saved to " ++ cdir
 
 readCache :: Opts String -> (String -> IO ()) -> (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
-readCache sopts logMsg act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runErrorT . act where
-	cacheErr e = logMsg ("Error reading cache: " ++ e) >> return Nothing
+readCache sopts logMsg' act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runErrorT . act where
+	cacheErr e = logMsg' ("Error reading cache: " ++ e) >> return Nothing
 	cacheOk s = do
-		forM_ (M.keys (structuredCabals s)) $ \c -> logMsg ("cache read: cabal " ++ show c)
-		forM_ (M.keys (structuredProjects s)) $ \p -> logMsg ("cache read: project " ++ p)
+		forM_ (M.keys (structuredCabals s)) $ \c -> logMsg' ("cache read: cabal " ++ show c)
+		forM_ (M.keys (structuredProjects s)) $ \p -> logMsg' ("cache read: project " ++ p)
 		case allModules (structuredFiles s) of
 			[] -> return ()
-			ms -> logMsg $ "cache read: " ++ show (length ms) ++ " files"
+			ms -> logMsg' $ "cache read: " ++ show (length ms) ++ " files"
 		return $ Just $ merge s
 
 #if mingw32_HOST_OS
@@ -482,7 +482,7 @@ unMmap (Right (Result v))
 	| Just (MmapFile f) <- parseMaybe parseJSON v = do
 		cts <- runErrorT (fmap L.fromStrict (readMapFile f))
 		case cts of
-			Left e -> return $ responseError "Unable to read map view of file" ["file" .= f]
+			Left _ -> return $ responseError "Unable to read map view of file" ["file" .= f]
 			Right r' -> case eitherDecode r' of
 				Left e' -> return $ responseError "Invalid response" ["response" .= fromUtf8 r', "parser error" .= e']
 				Right r'' -> return r''

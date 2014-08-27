@@ -7,16 +7,16 @@ module System.Console.Cmd (
 	module System.Console.Args
 	) where
 
-import Control.Arrow
-import Control.Monad (join, (>=>))
-import Data.List (stripPrefix, unfoldr, isPrefixOf)
+import Control.Arrow (Arrow((&&&)))
+import Control.Monad ()
+import Data.List (stripPrefix)
 import Control.Monad.Error
-import Data.Map (Map)
-import Data.Maybe (fromMaybe, mapMaybe, listToMaybe, maybeToList, isJust)
-import qualified Data.Map as M
+import Data.Map ()
+import Data.Maybe
+import qualified Data.Map as M (delete)
 
 import System.Console.Args
-import Text.Format
+import Text.Format ((~~), (%))
 
 type CmdAction a = ErrorT String Maybe a
 

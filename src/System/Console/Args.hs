@@ -4,7 +4,7 @@ module System.Console.Args (
 	Args(..), Opts(..), Arg(..), Opt(..),
 	withOpts, defOpts, defArgs, selectOpts, splitOpts,
 	(%--), (%-?), hoist, has, arg, narg, iarg, listArg, flagSet,
-	flag, req, list,
+	flag, req, list, manyReq,
 	desc, alias, short,
 	parse, parse_, tryParse, toArgs, info,
 
@@ -20,7 +20,7 @@ import Control.Monad
 import Control.Monad.Loops
 import Data.Aeson
 import Data.Char
-import qualified Data.HashMap.Strict as HM (HashMap, toList)
+import qualified Data.HashMap.Strict as HM
 import Data.List
 import Data.Map (Map)
 import qualified Data.Map as M
@@ -151,6 +151,11 @@ req n v = Opt n [] [] Nothing (Required v)
 -- | List option
 list :: String -> String -> Opt
 list n v = Opt n [] [] Nothing (List v)
+
+-- | Convert req option to list
+manyReq :: Opt -> Opt
+manyReq o@(Opt { optArg = (Required n) }) = o { optArg = List n }
+manyReq _ = error "manyReq: invalid argument"
 
 -- | Set description
 --

@@ -6,7 +6,7 @@ module HsDev.Server.Message (
 	Request(..), requestToArgs,
 	withOpts, withoutOpts,
 	Notification(..), Result(..),
-	Response(..), notification, result, responseError,
+	Response, notification, result, responseError,
 	groupResponses, responsesById
 	) where
 
@@ -42,7 +42,7 @@ instance FromJSON a => FromJSON (Message a) where
 		Message <$> (fmap join (v .::? "id")) <*> parseJSON (Object v)
 
 instance Foldable Message where
-	foldMap f (Message i m) = f m
+	foldMap f (Message _ m) = f m
 
 instance Traversable Message where
 	traverse f (Message i m) = Message i <$> f m
