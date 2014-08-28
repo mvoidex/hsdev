@@ -3,6 +3,7 @@ module HsDev.Tools.Ghc.Worker (
 	startWorker,
 	waitWork,
 	evaluate,
+	try,
 
 	Ghc
 	) where
@@ -36,20 +37,21 @@ startWorker = do
 			_ <- setSessionDynFlags fs''
 			_ <- liftIO $ initPackages fs''
 			mapM parseImportDecl ["import " ++ m | m <- startMods] >>= setContext . map IIDecl
-			liftIO (getChanContents ch) >>= mapM_ wrapError
+			liftIO (getChanContents ch) >>= mapM_ try
 	return $ Worker (writeChan ch) ch
 	where
 		startMods :: [String]
 		startMods = ["Prelude", "Data.List", "Control.Monad"]
 
-		wrapError :: Ghc a -> Ghc (Either SomeException a)
-		wrapError = gtry
-
 waitWork :: Worker -> Ghc a -> ErrorT String IO a
 waitWork w act = ErrorT $ do
 	var <- newEmptyMVar
-	ghcSendWork w $ gtry act >>= liftIO . putMVar var . left (show :: SomeException -> String)
+	ghcSendWork w $ try act >>= liftIO . putMVar var
 	takeMVar var
 
-evaluate :: String -> Ghc (Maybe String)
-evaluate expr = liftM fromDynamic $ dynCompileExpr $ "show (" ++ expr ++ ")"
+evaluate :: String -> Ghc String
+evaluate expr = liftM fromDynamic (dynCompileExpr $ "show (" ++ expr ++ ")") >>=
+	maybe (fail "evaluate fail") return
+
+try :: Ghc a -> Ghc (Either String a)
+try = liftM (left (show :: SomeException -> String)) . gtry

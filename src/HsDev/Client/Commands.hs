@@ -462,8 +462,13 @@ commands = [
 		ghcmodLint' fs _ copts = commandError "Too much files specified" []
 
 		-- | Evaluate expression
-		ghcEval' :: [String] -> Opts String -> CommandActionT [Maybe String]
-		ghcEval' exprs _ copts = mapErrorStr $ waitWork (commandGhc copts) $ mapM evaluate exprs
+		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
+		ghcEval' exprs _ copts = mapErrorStr $ liftM (map toValue) $
+			waitWork (commandGhc copts) $ mapM (try . evaluate) exprs
+			where
+				toValue :: Either String String -> Value
+				toValue (Left e) = object ["fail" .= e]
+				toValue (Right s) = toJSON s
 
 		-- | Dump database info
 		dump' :: [String] -> Opts String -> CommandActionT ()
@@ -522,10 +527,12 @@ commands = [
 -- | Check positional args count
 checkPosArgs :: Cmd a -> Cmd a
 checkPosArgs c = validateArgs pos' c where
-	pos' (Args args os) =
-		guard (length args <= length (cmdArgs c))
-		`mplus`
-		failMatch ("unexpected positional arguments: " ++ unwords (drop (length $ cmdArgs c) args))
+	pos' (Args args os) = case cmdArgs c of
+		[ellipsis]
+			| "..." `isSuffixOf` ellipsis -> return ()
+		_ -> mplus
+			(guard (length args <= length (cmdArgs c)))
+			(failMatch ("unexpected positional arguments: " ++ unwords (drop (length $ cmdArgs c) args)))
 
 -- | Find sandbox by path
 findSandbox :: (MonadIO m, Error e) => CommandOptions -> Maybe FilePath -> ErrorT e m Cabal
