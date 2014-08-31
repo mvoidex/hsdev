@@ -114,8 +114,8 @@ commands = [
 	cmd' "hayoo" ["query"] [] "find declarations online via Hayoo" hayoo',
 	cmd' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
 	cmd' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
-	cmd' "ghc-mod check" ["files"] [fileArg `desc` "source files", sandbox, ghcOpts] "check source files" ghcmodCheck',
-	cmd' "ghc-mod lint" ["file"] [fileArg `desc` "source file", hlintOpts] "lint source file" ghcmodLint',
+	cmd' "ghc-mod check" ["files..."] [sandbox, ghcOpts] "check source files" ghcmodCheck',
+	cmd' "ghc-mod lint" ["file"] [hlintOpts] "lint source file" ghcmodLint',
 	-- Ghc commands
 	cmd' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
 	-- Dump/load commands
