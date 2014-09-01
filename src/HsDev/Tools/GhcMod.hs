@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, ConstraintKinds, FlexibleContexts #-}
 
 module HsDev.Tools.GhcMod (
 	list,
@@ -8,7 +8,9 @@ module HsDev.Tools.GhcMod (
 	typeOf,
 	OutputMessage(..),
 	check,
-	lint
+	lint,
+
+	runGhcMod
 	) where
 
 import Control.Applicative
@@ -16,6 +18,7 @@ import Control.Arrow
 import Control.DeepSeq
 import Control.Exception
 import Control.Monad.Error
+import Control.Monad.CatchIO (MonadCatchIO)
 import Data.Aeson
 import Data.Char
 import Data.Maybe
@@ -34,35 +37,27 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Symbols.Location
 import HsDev.Tools.Base
-import HsDev.Util ((.::), liftException)
+import HsDev.Util ((.::), liftException, liftIOErrors)
 
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
-list opts cabal = liftException $ do
-	cradle <- cradle cabal Nothing
-	ms <- (map splitPackage . lines) <$> GhcMod.listModules
-		(GhcMod.defaultOptions { GhcMod.ghcOpts = opts })
-		cradle
+list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opts }) $ do
+	ms <- (map splitPackage . lines) <$> GhcMod.modules
 	return [CabalModule cabal (readMaybe p) m | (m, p) <- ms]
 	where
 		splitPackage :: String -> (String, String)
 		splitPackage = second (drop 1) . break isSpace
 
 browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ErrorT String IO InspectedModule
-browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ liftException $ do
-	cradle <- cradle cabal Nothing
-	ts <- lines <$> GhcMod.browseModule
-		(GhcMod.defaultOptions {
-			GhcMod.detailed = True,
-			GhcMod.ghcOpts = packageOpt mpackage ++ opts })
-		cradle
-		mpkgname
-	return $ Module {
-		moduleName = mname,
-		moduleDocs = Nothing,
-		moduleLocation = mloc,
-		moduleExports = [],
-		moduleImports = [],
-		moduleDeclarations = decls ts }
+browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ runGhcMod
+	(GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcUserOptions = packageOpt mpackage ++ opts }) $ do
+		ts <- lines <$> GhcMod.browse mpkgname
+		return $ Module {
+			moduleName = mname,
+			moduleDocs = Nothing,
+			moduleLocation = mloc,
+			moduleExports = [],
+			moduleImports = [],
+			moduleDeclarations = decls ts }
 	where
 		mpkgname = maybe mname (\p -> packageName p ++ ":" ++ mname) mpackage
 		mloc = CabalModule cabal mpackage mname
@@ -82,9 +77,8 @@ browseInspection = InspectionAt 0
 
 info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> ErrorT String IO Declaration
 info opts cabal file mproj mname sname = do
-	rs <- liftException $ do
-		cradle <- cradle cabal mproj
-		GhcMod.infoExpr (GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts }) cradle file sname
+	rs <- runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
+		GhcMod.info file sname
 	toDecl rs
 	where
 		toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
@@ -123,15 +117,9 @@ instance FromJSON TypedRegion where
 		v .:: "type"
 
 typeOf :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Int -> Int -> ErrorT String IO [TypedRegion]
-typeOf opts cabal file mproj mname line col = liftException $ do
-	fileCts <- readFile file
-	cradle <- cradle cabal mproj
-	ts <- lines <$> GhcMod.typeExpr
-		(GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts })
-		cradle
-		file
-		line
-		col
+typeOf opts cabal file mproj mname line col = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+	fileCts <- liftIO $ readFile file
+	ts <- lines <$> GhcMod.types file line col
 	return $ mapMaybe (toRegionType fileCts) ts
 	where
 		toRegionType :: String -> String -> Maybe TypedRegion
@@ -175,29 +163,14 @@ parseOutputMessage s = do
 		errorMessage = groups `at` 5 }
 
 check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> ErrorT String IO [OutputMessage]
-check opts cabal files mproj = liftException $ do
-	cradle <- cradle cabal mproj
-	msgs <- lines <$> GhcMod.checkSyntax
-		(GhcMod.defaultOptions { GhcMod.ghcOpts = cabalOpt cabal ++ opts })
-		cradle
-		files
+check opts cabal files mproj = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+	msgs <- lines <$> GhcMod.checkSyntax files
 	return $ mapMaybe parseOutputMessage msgs
 
 lint :: [String] -> FilePath -> ErrorT String IO [OutputMessage]
-lint opts file = liftException $ do
-	msgs <- lines <$> GhcMod.lintSyntax
-		(GhcMod.defaultOptions { GhcMod.hlintOpts = opts })
-		file
+lint opts file = runGhcMod (GhcMod.defaultOptions { GhcMod.hlintOpts = opts }) $ do
+	msgs <- lines <$> GhcMod.lint file
 	return $ mapMaybe parseOutputMessage msgs
 
-cradle :: Cabal -> Maybe Project -> IO GhcMod.Cradle
-cradle cabal Nothing = do
-	dir <- getCurrentDirectory
-	return $ GhcMod.Cradle dir dir Nothing []
-cradle cabal (Just proj) = do
-	dir <- getCurrentDirectory
-	return $ GhcMod.Cradle
-		dir
-		(projectPath proj)
-		(Just $ projectCabal proj)
-		[]
+runGhcMod :: (GhcMod.IOish m, MonadCatchIO m) => GhcMod.Options -> GhcMod.GhcModT m a -> ErrorT String m a
+runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ GhcMod.runGhcModT opts act
