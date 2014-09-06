@@ -26,6 +26,7 @@ library
     Data.Async
     Data.Group
     Data.Help
+    Data.Lisp
     HsDev
     HsDev.Cabal
     HsDev.Cache
@@ -99,6 +100,7 @@ library
     process >= 1.2.0,
     regexpr >= 0.5.0,
     regex-posix >= 0.95,
+    scientific >= 0.3,
     time >= 1.4.0,
     attoparsec >= 0.11.0,
     template-haskell,
