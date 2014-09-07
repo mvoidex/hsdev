@@ -14,6 +14,7 @@ module HsDev.Server.Commands (
 	) where
 
 import Control.Applicative
+import Control.Arrow (second)
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
@@ -42,6 +43,7 @@ import Text.Read (readMaybe)
 import Control.Apply.Util
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
+import Data.Lisp
 import System.Console.Cmd hiding (run)
 
 import qualified HsDev.Cache.Structured as SC
@@ -190,10 +192,10 @@ commands = [
 			Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [1..] $ \i -> ignoreIO $ do
 				input' <- hGetLineBS stdin
-				case eitherDecode input' of
+				case decodeLispOrJSON input' of
 					Left _ -> L.putStrLn $ encodeValue $ object ["error" .= ("invalid command" :: String)]
-					Right req' -> do
-						L.hPutStrLn h $ encode $ Message (Just $ show i) $
+					Right (isLisp, req') -> do
+						L.hPutStrLn h $ encodeLispOrJSON isLisp $ Message (Just $ show i) $
 							req' `M.withOpts` ["current-directory" %-- curDir]
 						waitResp h
 			where
@@ -207,9 +209,9 @@ commands = [
 					resp <- hGetLineBS h
 					parseResp h resp
 
-				parseResp h str = case eitherDecode str of
+				parseResp h str = case decodeLispOrJSON str of
 					Left e -> putStrLn $ "Can't decode response: " ++ e
-					Right (Message i r) -> do
+					Right (_, Message i r) -> do
 						r' <- unMmap r
 						putStrLn $ fromMaybe "_" i ++ ":" ++ fromUtf8 (encodeValue r')
 						case r of
@@ -287,9 +289,9 @@ sendCmd name (Args args opts) = ignoreIO sendReceive where
 		resp <- hGetLineBS h
 		parseResponse h resp
 
-	parseResponse h str = case eitherDecode str of
+	parseResponse h str = case decodeLispOrJSON str of
 		Left e -> putStrLn $ "Can't decode response: " ++ e
-		Right (Message _ r) -> do
+		Right (_, Message _ r) -> do
 			r' <- unMmap r
 			L.putStrLn $ case r' of
 				Left n -> encodeValue n
@@ -337,6 +339,22 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 		(return ())
 		(return ())
 
+decodeLispOrJSON :: FromJSON a => ByteString -> Either String (Bool, a)
+decodeLispOrJSON str =
+	((,) <$> pure False <*> eitherDecode str) <|>
+	((,) <$> pure True <*> decodeLisp)
+	where
+		decodeLisp = do
+			lisp <- maybe (Left "Not a lisp") Right $ readMaybe (fromUtf8 str)
+			parseEither parseJSON $ toJSON (lisp :: Lisp)
+
+encodeLispOrJSON :: ToJSON a => Bool -> a -> ByteString
+encodeLispOrJSON True r = toUtf8 $ maybe
+	"(:error \"can't convert response to lisp\")"
+	(show :: Lisp -> String)
+	(parseMaybe parseJSON (toJSON r))
+encodeLispOrJSON False r = encode r
+
 -- | Process request, notifications can be sent during processing
 processRequest :: CommandOptions -> (Notification -> IO ()) -> Request -> IO Result
 processRequest copts onNotify req' =
@@ -361,26 +379,26 @@ processClient name receive send' copts = do
 	respChan <- newChan
 	void $ forkIO $ do
 		responses <- getChanContents respChan
-		mapM_ (send' . encode) responses
+		mapM_ (send' . uncurry encodeLispOrJSON) responses
 	linkVar <- newMVar $ return ()
 	let
-		answer :: Message Response -> IO ()
-		answer m@(Message i r) = do
+		answer :: Bool -> Message Response -> IO ()
+		answer isLisp m@(Message i r) = do
 			commandLog copts $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ fromUtf8 (encode r)
-			writeChan respChan m
+			writeChan respChan (isLisp, m)
 	flip finally (disconnected linkVar) $ forever $ do
 		req' <- receive
-		case fmap extractMeta <$> eitherDecode req' of
+		case second (fmap extractMeta) <$> decodeLispOrJSON req' of
 			Left _ -> do
 				commandLog copts $ name ++ " >> #: " ++ fromUtf8 req'
-				answer $ Message Nothing $ responseError "Invalid request" [
+				answer False $ Message Nothing $ responseError "Invalid request" [
 					"request" .= fromUtf8 req']
-			Right m -> do
+			Right (isLisp, m) -> do
 				resp' <- flip traverse m $ \(cdir, noFile, silent, tm, reqArgs) -> do
 					let
 						onNotify n
 							| silent = return ()
-							| otherwise = traverse (const $ mmap' noFile (Left n)) m >>= answer
+							| otherwise = traverse (const $ mmap' noFile (Left n)) m >>= answer isLisp
 					commandLog copts $ name ++ " >> " ++ fromMaybe "_" (messageId m) ++ ":" ++ fromUtf8 (encode reqArgs)
 					resp <- fmap Right $ handleTimeout tm $ handleError $
 						processRequest
@@ -390,7 +408,7 @@ processClient name receive send' copts = do
 							onNotify
 							reqArgs
 					mmap' noFile resp
-				answer resp'
+				answer isLisp resp'
 	where
 		extractMeta :: Request -> (FilePath, Bool, Bool, Maybe Int, Request)
 		extractMeta c = (cdir, noFile, silent, tm, c { requestOpts = opts' }) where

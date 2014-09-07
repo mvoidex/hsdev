@@ -60,7 +60,7 @@ lisp n = R.choice [
 			maybe R.pfail return $ readMaybe s
 
 		list :: R.ReadP [Lisp]
-		list = R.between (R.char '(') (R.char ')') $ R.sepBy1 (lisp n) R.skipSpaces
+		list = R.between (R.char '(') (R.char ')') $ R.sepBy (lisp n) R.skipSpaces
 
 instance Read Lisp where
 	readsPrec = R.readP_to_S . lisp
@@ -82,8 +82,8 @@ instance ToJSON Lisp where
 	toJSON (String s) = toJSON s
 	toJSON (Number n) = toJSON n
 	toJSON (List vs)
-		| null vals = keywordsObject
 		| null keywords = toJSON $ map toJSON vals
+		| null vals = keywordsObject
 		| otherwise = toJSON $ map toJSON vals ++ [keywordsObject]
 		where
 			(vals, keywords) = partitionEithers $ unfoldr cutKeyword vs
