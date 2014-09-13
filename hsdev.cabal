@@ -52,6 +52,7 @@ library
     HsDev.Tools.Base
     HsDev.Tools.Cabal
     HsDev.Tools.ClearImports
+    HsDev.Tools.Ghc.Prelude
     HsDev.Tools.Ghc.Worker
     HsDev.Tools.GhcMod
     HsDev.Tools.GhcMod.InferType

@@ -41,7 +41,7 @@ startWorker = do
 	return $ Worker (writeChan ch) ch
 	where
 		startMods :: [String]
-		startMods = ["Prelude", "Data.List", "Control.Monad"]
+		startMods = ["Prelude", "Data.List", "Control.Monad", "HsDev.Tools.Ghc.Prelude"]
 
 waitWork :: Worker -> Ghc a -> ErrorT String IO a
 waitWork w act = ErrorT $ do
