@@ -21,12 +21,9 @@ import Control.Monad
 import Control.Monad.Error
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
-import Data.Aeson.Types hiding (Result, Error)
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
-import Data.Char
 import Data.Either (isLeft)
-import Data.List
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid
@@ -34,10 +31,8 @@ import Data.Traversable (traverse)
 import Network.Socket hiding (connect)
 import qualified Network.Socket as Net
 import System.Directory
-import System.Environment
 import System.Exit
 import System.IO
-import System.Process
 import Text.Read (readMaybe)
 
 import Control.Apply.Util
@@ -56,6 +51,11 @@ import HsDev.Server.Types
 import HsDev.Util
 
 #if mingw32_HOST_OS
+import Data.Aeson.Types hiding (Result, Error)
+import Data.Char
+import Data.List
+import System.Environment
+import System.Process
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
 import System.Win32.PowerShell (translateArg)
@@ -104,8 +104,8 @@ commands = [
 
 				proxy :: IO ()
 				proxy = do
-					createSession
-					forkProcess serverAction
+					_ <- createSession
+					_ <- forkProcess serverAction
 					exitImmediately ExitSuccess
 
 				serverAction :: IO ()
@@ -117,7 +117,7 @@ commands = [
 					run' (Args [] sopts)
 
 			handle forkError $ do
-				forkProcess proxy
+				_ <- forkProcess proxy
 				putStrLn $ "Server started at port " ++ (fromJust $ arg "port" sopts)
 #endif
 
