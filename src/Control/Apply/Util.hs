@@ -2,8 +2,6 @@ module Control.Apply.Util (
 	(&), chain, with
 	) where
 
-import Data.List (foldr)
-
 (&) :: a -> (a -> b) -> b
 (&) = flip ($)
 

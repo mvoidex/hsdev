@@ -28,7 +28,6 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust)
 import Data.Monoid
-import Data.Traversable (traverse)
 import System.Directory (canonicalizePath)
 
 import qualified HsDev.Cache.Structured as Cache
@@ -172,13 +171,12 @@ scanModule :: MonadCatchIO m => [String] -> ModuleLocation -> ErrorT String (Upd
 scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
 	im <- liftErrorT $ S.scanModule opts mloc
 	updater $ return $ fromModule im
-	ErrorT $ return $ inspectionResult im
+	_ <- ErrorT $ return $ inspectionResult im
 	return ()
 
 -- | Scan modules
 scanModules :: MonadCatchIO m => [String] -> [S.ModuleToScan] -> ErrorT String (UpdateDB m) ()
 scanModules opts ms = do
-	db <- asks database
 	dbval <- readDB
 	ms' <- liftErrorT $ filterM (S.changedModule dbval opts . fst) ms
 	runTasks $
@@ -202,13 +200,13 @@ scanFile opts fpath = do
 
 -- | Scan cabal modules
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
-scanCabal opts sandbox = runTask "scanning" (subject sandbox ["sandbox" .= sandbox]) $ do
-	loadCache $ Cache.loadCabal sandbox
+scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox" .= cabalSandbox]) $ do
+	loadCache $ Cache.loadCabal cabalSandbox
 	dbval <- readDB
 	ms <- runTask "loading modules" [] $
-		liftErrorT $ browseFilter opts sandbox (S.changedModule dbval opts)
+		liftErrorT $ browseFilter opts cabalSandbox (S.changedModule dbval opts)
 	docs <- runTask "loading docs" [] $
-		liftErrorT $ hdocsCabal sandbox opts
+		liftErrorT $ hdocsCabal cabalSandbox opts
 	updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
@@ -241,11 +239,6 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 -- | Lift errors
 liftErrorT :: MonadIO m => ErrorT String IO a -> ErrorT String m a
 liftErrorT = mapErrorT liftIO
-
--- | Merge two JSON object
-union :: Value -> Value -> Value
-union (Object l) (Object r) = Object $ HM.union l r
-union _ _ = error "Commands.union: impossible happened"
 
 subject :: Display a => a -> [Pair] -> [Pair]
 subject x ps = ["name" .= display x, "type" .= displayType x] ++ ps

@@ -18,7 +18,7 @@ createPool :: String -> IO Pool
 createPool baseName = liftM2 Pool (newMVar []) mkNewName where
 	mkNewName :: IO (IO String)
 	mkNewName = do
-		num <- newMVar 0
+		num <- newMVar (0 :: Integer)
 		return $ modifyMVar num $ \n -> do
 			return (succ n, baseName ++ show n)
 

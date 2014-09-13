@@ -3,11 +3,9 @@ module Main (
 	) where
 
 import Control.Exception (finally)
-import Control.Monad (void)
 import Control.Monad.Error
 import System.Directory
 import System.Environment (getArgs)
-import Text.Read (readMaybe)
 
 import HsDev.Tools.ClearImports (clearImports)
 import HsDev.Symbols (locateSourceDir)

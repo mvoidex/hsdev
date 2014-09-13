@@ -9,16 +9,13 @@ module HsDev.Scan (
 	) where
 
 import Control.Monad.Error
-import Data.List
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe)
 import Data.Traversable (traverse)
 
 import HsDev.Symbols
 import HsDev.Database
 import HsDev.Tools.GhcMod
 import HsDev.Tools.GhcMod.InferType (inferTypes)
-import HsDev.Tools.HDocs
 import HsDev.Inspect
 import HsDev.Project
 import HsDev.Util
@@ -51,27 +48,26 @@ enumDirectory dir = do
 	projs <- mapM (enumProject . project) projects
 	let
 		projPaths = map (projectPath . fst) projs
-		projSources = concatMap (mapMaybe (moduleSource . fst) . snd) projs
 		standalone = map (\f -> FileModule f Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
 	return (projs,  [(s, []) | s <- standalone])
 
 -- | Scan project file
 scanProjectFile :: [String] -> FilePath -> ErrorT String IO Project
-scanProjectFile opts f = do
+scanProjectFile _ f = do
 	proj <- (liftIO $ locateProject f) >>= maybe (throwError "Can't locate project") return
 	loadProject proj
 
 -- | Scan module
 scanModule :: [String] -> ModuleLocation -> ErrorT String IO InspectedModule
-scanModule opts (FileModule f p) = inspectFile opts f >>= traverse (inferTypes opts Cabal)
+scanModule opts (FileModule f _) = inspectFile opts f >>= traverse (inferTypes opts Cabal)
 scanModule opts (CabalModule c p n) = browse opts c n p
-scanModule opts (ModuleSource _) = throwError "Can inspect only modules in file or cabal"
+scanModule _ (ModuleSource _) = throwError "Can inspect only modules in file or cabal"
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> ErrorT String IO Bool
 upToDate opts (Inspected insp m _) = case m of
-	FileModule f p -> liftM (== insp) $ fileInspection f opts
-	CabalModule c p n -> return $ insp == browseInspection opts
+	FileModule f _ -> liftM (== insp) $ fileInspection f opts
+	CabalModule _ _ _ -> return $ insp == browseInspection opts
 	_ -> return False
 
 -- | Rescan inspected module

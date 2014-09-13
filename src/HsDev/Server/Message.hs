@@ -137,6 +137,7 @@ groupResponses = unfoldr break' where
 		r = case cs' of
 			(Right r' : _) -> r'
 			[] -> Error "groupResponses: no result" mempty
+			_ -> error "groupResponses: impossible happened"
 
 responsesById :: Maybe String -> [Message Response] -> [([Notification], Result)]
 responsesById i = groupResponses . messagesById i

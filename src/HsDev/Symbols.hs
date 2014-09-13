@@ -341,7 +341,7 @@ declarationTypeCtor "type" = Type
 declarationTypeCtor "newtype" = NewType
 declarationTypeCtor "data" = Data
 declarationTypeCtor "class" = Class
-declarationTypeCtor "" = error "Invalid type constructor name"
+declarationTypeCtor _ = error "Invalid type constructor name"
 
 declarationTypeName :: DeclarationInfo -> Maybe String
 declarationTypeName (Type _) = Just "type"

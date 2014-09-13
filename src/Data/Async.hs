@@ -30,7 +30,7 @@ newAsync :: (NFData a, Group a) => IO (Async a)
 newAsync = do
 	var <- newMVar zero
 	events <- newChan
-	forkIO $ do
+	_ <- forkIO $ do
 		evs <- getChanContents events
 		forM_ evs $ \e -> modifyMVar_ var $ \val -> do
 			x' <- event e val

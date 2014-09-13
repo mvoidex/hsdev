@@ -16,8 +16,6 @@ import Control.Monad.Error
 
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as L
-import qualified Data.Text.Lazy as T
-import qualified Data.Text.Lazy.Encoding as T
 import Network.HTTP
 import Text.RegexPR (gsubRegexPR)
 

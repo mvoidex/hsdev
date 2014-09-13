@@ -15,7 +15,6 @@ import Data.Either
 import Data.List
 import Data.Maybe
 import Data.Monoid
-import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.Map as M
 import Data.Text (unpack)
 import Data.Traversable (traverse)
@@ -114,7 +113,7 @@ commands = [
 	cmd' "hayoo" ["query"] [] "find declarations online via Hayoo" hayoo',
 	cmd' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
 	cmd' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
-	cmd' "ghc-mod check" ["files..."] [sandbox, ghcOpts] "check source files" ghcmodCheck',
+	cmd' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
 	cmd' "ghc-mod lint" ["file"] [hlintOpts] "lint source file" ghcmodLint',
 	-- Ghc commands
 	cmd' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
@@ -138,13 +137,13 @@ commands = [
 				r <- runErrorT (act args os copts)
 				case r of
 					Left (CommandError e ds) -> return $ Error e $ M.fromList $ map (first unpack) ds
-					Right r -> return $ Result $ toJSON r
+					Right r' -> return $ Result $ toJSON r'
 
 		-- Command arguments and flags
 		allFlag d = flag "all" `short` ['a'] `desc` d
 		cacheDir = pathArg `desc` "cache path"
 		cacheFile = fileArg `desc` "cache file"
-		ctx = [fileArg `desc` "source file", sandbox]
+		ctx = [fileArg `desc` "source file", sandboxArg]
 		dataArg = req "data" "contents" `desc` "data to pass to command"
 		fileArg = req "file" "path" `short` ['f']
 		findArg = req "find" "query" `desc` "infix match"
@@ -161,8 +160,8 @@ commands = [
 		prefixArg = req "prefix" "prefix" `desc` "prefix match"
 		projectArg = req "project" "project"
 		packageVersionArg = req "version" "id" `short` ['v'] `desc` "package version"
-		sandbox = req "sandbox" "path" `desc` "path to cabal sandbox"
-		sandboxList = manyReq sandbox
+		sandboxArg = req "sandbox" "path" `desc` "path to cabal sandbox"
+		sandboxList = manyReq sandboxArg
 		sandboxes = [
 			flag "cabal" `desc` "cabal",
 			sandboxList]
@@ -186,6 +185,7 @@ commands = [
 				eitherDecode $ toUtf8 jsonData
 
 			let
+				updateData (ResultDatabase db) = DB.update (dbVar copts) $ return db
 				updateData (ResultDeclaration d) = commandError "Can't insert declaration" ["declaration" .= d]
 				updateData (ResultModuleDeclaration md) = do
 					let
@@ -206,8 +206,8 @@ commands = [
 				updateData (ResultProject p) = DB.update (dbVar copts) $ return $ fromProject p
 				updateData (ResultList l) = mapM_ updateData l
 				updateData (ResultMap m) = mapM_ updateData $ M.elems m
-				updateData (ResultString _) = commandError "Can't insert string" []
 				updateData ResultNone = return ()
+				updateData _ = commandError "Invalid data" []
 			updateData decodedData
 
 		-- | Scan sources and installed packages
@@ -421,15 +421,15 @@ commands = [
 
 		-- | Hayoo
 		hayoo' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
-		hayoo' [] _ copts = commandError "Query not specified" []
-		hayoo' [query] as copts = liftM
+		hayoo' [] _ _ = commandError "Query not specified" []
+		hayoo' [query] _ _ = liftM
 				(map Hayoo.hayooAsDeclaration . Hayoo.hayooFunctions) $
 				mapErrorStr $ Hayoo.hayoo query
 		hayoo' _ _ _ = commandError "Too much arguments" []
 
 		-- | Cabal list
 		cabalList' :: [String] -> Opts String -> CommandActionT [Cabal.CabalPackage]
-		cabalList' qs as copts = mapErrorStr $ Cabal.cabalList qs
+		cabalList' qs _ _ = mapErrorStr $ Cabal.cabalList qs
 
 		-- | Ghc-mod type
 		ghcmodType' :: [String] -> Opts String -> CommandActionT [GhcMod.TypedRegion]
@@ -441,12 +441,12 @@ commands = [
 			(srcFile, cabal) <- getCtx copts as
 			(srcFile', m, mproj) <- mapErrorStr $ fileCtx dbval srcFile
 			mapErrorStr $ GhcMod.typeOf (listArg "ghc" as) cabal srcFile' mproj (moduleName m) line' column'
-		ghcmodType' [] _ copts = commandError "Specify line" []
+		ghcmodType' [] _ _ = commandError "Specify line" []
 		ghcmodType' _ _ _ = commandError "Too much arguments" []
 
 		-- | Ghc-mod check
 		ghcmodCheck' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
-		ghcmodCheck' [] _ copts = commandError "Specify at least one file" []
+		ghcmodCheck' [] _ _ = commandError "Specify at least one file" []
 		ghcmodCheck' files as copts = do
 			files' <- mapM (findPath copts) files
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM (locateProject) files')
@@ -455,11 +455,11 @@ commands = [
 
 		-- | Ghc-mod lint
 		ghcmodLint' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
-		ghcmodLint' [] _ copts = commandError "Specify file to hlint" []
+		ghcmodLint' [] _ _ = commandError "Specify file to hlint" []
 		ghcmodLint' [file] as copts = do
 			file' <- findPath copts file
 			mapErrorStr $ GhcMod.lint (listArg "hlint" as) file'
-		ghcmodLint' fs _ copts = commandError "Too much files specified" []
+		ghcmodLint' _ _ _ = commandError "Too much files specified" []
 
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
@@ -527,7 +527,7 @@ commands = [
 -- | Check positional args count
 checkPosArgs :: Cmd a -> Cmd a
 checkPosArgs c = validateArgs pos' c where
-	pos' (Args args os) = case cmdArgs c of
+	pos' (Args args _) = case cmdArgs c of
 		[ellipsis]
 			| "..." `isSuffixOf` ellipsis -> return ()
 		_ -> mplus
@@ -581,10 +581,10 @@ findProject copts proj = do
 	db' <- getDb copts
 	proj' <- liftM addCabal $ findPath copts proj
 	let
-		result =
+		resultProj =
 			M.lookup proj' (databaseProjects db') <|>
 			find ((== proj) . projectName) (M.elems $ databaseProjects db')
-	maybe (throwError $ strMsg $ "Projects " ++ proj ++ " not found") return result
+	maybe (throwError $ strMsg $ "Projects " ++ proj ++ " not found") return resultProj
 	where
 		addCabal p
 			| takeExtension p == ".cabal" = p
@@ -594,12 +594,6 @@ findProject copts proj = do
 toPair :: Module -> Maybe (FilePath, Module)
 toPair m = case moduleLocation m of
 	FileModule f _ -> Just (f, m)
-	_ -> Nothing
-
--- | Module sandbox
-modCabal :: Module -> Maybe Cabal
-modCabal m = case moduleLocation m of
-	CabalModule c _ _ -> Just c
 	_ -> Nothing
 
 -- | Wait for DB to complete update

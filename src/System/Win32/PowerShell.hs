@@ -185,7 +185,7 @@ translate s = '"' : snd (foldr escape (True, "\"") s) where
 	escape '"' (_, s') = (True, '\\' : '"' : s')
 	escape '\\' (True, s') = (True, '\\' : '\\' : s')
 	escape '\\' (False, s') = (False, '\\' : s')
-	escape c (b, s') = (False, c : s')
+	escape c (_, s') = (False, c : s')
 
 translateArg :: String -> String
 translateArg s

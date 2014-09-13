@@ -8,7 +8,6 @@ module HsDev.Symbols.Util (
 	) where
 
 import Control.Arrow ((***), (&&&), second)
-import Control.Monad (join)
 import Data.Function (on)
 import Data.Maybe
 import Data.List (maximumBy, groupBy, sortBy, partition)

@@ -6,7 +6,6 @@ module HsDev.Scan.Browse (
 import Control.Arrow
 import Control.Monad.Error
 import Data.Maybe
-import Data.Either
 import qualified Data.Map as M
 import Text.Read (readMaybe)
 
@@ -17,14 +16,11 @@ import HsDev.Tools.Base (inspect)
 import qualified ConLike as GHC
 import qualified DataCon as GHC
 import qualified DynFlags as GHC
-import qualified Exception as GHC
-import qualified FastString as GHC
 import qualified GHC
 import qualified GhcMonad as GHC (liftIO)
 import qualified GHC.Paths as GHC
+import qualified Name as GHC
 import qualified Module as GHC
-import qualified Name as GHC
-import qualified Name as GHC
 import qualified Outputable as GHC
 import qualified Packages as GHC
 import qualified PatSyn as GHC
@@ -84,13 +80,14 @@ browseModule cabal m = do
 				| GHC.isClassTyCon t = Class
 				| GHC.isSynTyCon t = Type
 				| otherwise = Type
+		showResult _ _ = Nothing
 
 withInitializedPackages :: [String] -> (GHC.DynFlags -> GHC.Ghc a) -> IO a
 withInitializedPackages ghcOpts cont = GHC.runGhc (Just GHC.libdir) $ do
 		fs <- GHC.getSessionDynFlags
 		GHC.defaultCleanupHandler fs $ do
 			(fs', _, _) <- GHC.parseDynamicFlags fs (map GHC.noLoc ghcOpts)
-			GHC.setSessionDynFlags fs'
+			_ <- GHC.setSessionDynFlags fs'
 			(result, _) <- GHC.liftIO $ GHC.initPackages fs'
 			cont result
 

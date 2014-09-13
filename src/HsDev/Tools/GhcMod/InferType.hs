@@ -28,7 +28,7 @@ inferType opts cabal src mproj mname decl
 
 		setType :: DeclarationInfo -> Maybe String -> DeclarationInfo
 		setType (Function _ ds) newType = Function newType ds
-		setType info _ = info
+		setType dinfo _ = dinfo
 
 		getType :: DeclarationInfo -> Maybe String
 		getType (Function fType _) = fType

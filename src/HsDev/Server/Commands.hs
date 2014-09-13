@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, CPP #-}
+{-# LANGUAGE OverloadedStrings, CPP, PatternGuards #-}
 
 module HsDev.Server.Commands (
 	commands,
@@ -190,18 +190,20 @@ commands = [
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
 			Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
-			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [1..] $ \i -> ignoreIO $ do
+			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [(1 :: Integer)..] $ \i -> ignoreIO $ do
 				input' <- hGetLineBS stdin
 				case decodeLispOrJSON input' of
-					Left _ -> L.putStrLn $ encodeValue $ object ["error" .= ("invalid command" :: String)]
+					Left _ -> L.putStrLn $ encodeValue False $ object ["error" .= ("invalid command" :: String)]
 					Right (isLisp, req') -> do
 						L.hPutStrLn h $ encodeLispOrJSON isLisp $ Message (Just $ show i) $
 							req' `M.withOpts` ["current-directory" %-- curDir]
 						waitResp h
 			where
 				pretty = flagSet "pretty" copts
-				encodeValue :: ToJSON a => a -> L.ByteString
-				encodeValue
+
+				encodeValue :: ToJSON a => Bool -> a -> L.ByteString
+				encodeValue True = encodeLisp
+				encodeValue False
 					| pretty = encodePretty
 					| otherwise = encode
 
@@ -211,9 +213,9 @@ commands = [
 
 				parseResp h str = case decodeLispOrJSON str of
 					Left e -> putStrLn $ "Can't decode response: " ++ e
-					Right (_, Message i r) -> do
+					Right (isLisp, Message i r) -> do
 						r' <- unMmap r
-						putStrLn $ fromMaybe "_" i ++ ":" ++ fromUtf8 (encodeValue r')
+						putStrLn $ fromMaybe "_" i ++ ":" ++ fromUtf8 (encodeValue isLisp r')
 						case r of
 							Left _ -> waitResp h
 							_ -> return ()
@@ -304,7 +306,7 @@ initLog :: Opts String -> IO (String -> IO (), IO ())
 initLog sopts = do
 	msgs <- F.newChan
 	outputDone <- newEmptyMVar
-	forkIO $ finally
+	void $ forkIO $ finally
 		(F.readChan msgs >>= mapM_ (logMsg sopts))
 		(putMVar outputDone ())
 	return (F.putChan msgs, F.closeChan msgs >> takeMVar outputDone)
@@ -342,18 +344,11 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 decodeLispOrJSON :: FromJSON a => ByteString -> Either String (Bool, a)
 decodeLispOrJSON str =
 	((,) <$> pure False <*> eitherDecode str) <|>
-	((,) <$> pure True <*> decodeLisp)
-	where
-		decodeLisp = do
-			lisp <- maybe (Left "Not a lisp") Right $ readMaybe (fromUtf8 str)
-			parseEither parseJSON $ toJSON (lisp :: Lisp)
+	((,) <$> pure True <*> decodeLisp str)
 
 encodeLispOrJSON :: ToJSON a => Bool -> a -> ByteString
-encodeLispOrJSON True r = toUtf8 $ maybe
-	"(:error \"can't convert response to lisp\")"
-	(show :: Lisp -> String)
-	(parseMaybe parseJSON (toJSON r))
-encodeLispOrJSON False r = encode r
+encodeLispOrJSON True = encodeLisp
+encodeLispOrJSON False = encode
 
 -- | Process request, notifications can be sent during processing
 processRequest :: CommandOptions -> (Notification -> IO ()) -> Request -> IO Result

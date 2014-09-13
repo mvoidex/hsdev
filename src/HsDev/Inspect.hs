@@ -21,7 +21,6 @@ import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Traversable (traverse, sequenceA)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
-import qualified Language.Haskell.Exts.Extension as H
 import qualified Documentation.Haddock as Doc
 import qualified System.Directory as Dir
 import System.IO
@@ -67,15 +66,15 @@ getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mnam
 	mname (H.ModuleName n) = n
 
 getDecls :: [H.Decl] -> [Declaration]
-getDecls decls = map addLocals infos ++ filter noInfo defs where
-	infos = concatMap getDecl decls
+getDecls decls = map addLocals declInfos ++ filter noInfo defs where
+	declInfos = concatMap getDecl decls
 	addLocals :: Declaration -> Declaration
 	addLocals decl = decl `where_` maybe [] locals def where
 		def = find (\d -> declarationName d == declarationName decl) defs
 	defs = concatMap getDef decls
 	noInfo :: Declaration -> Bool
 	noInfo d = declarationName d `notElem` names
-	names = map declarationName infos
+	names = map declarationName declInfos
 
 getBinds :: H.Binds -> [Declaration]
 getBinds (H.BDecls decls) = getDecls decls
@@ -183,7 +182,7 @@ documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems ifa
 		printDoc (Doc.DocHyperlink link) = fromMaybe (Doc.hyperlinkUrl link) (Doc.hyperlinkLabel link)
 		printDoc (Doc.DocProperty prop) = prop
 		-- Catch all unsupported ones
-		-- printDoc _ = "[unsupported-by-extractDocs]" -- TODO
+		printDoc _ = "[unsupported-by-extractDocs]" -- TODO
 
 	locatedName :: Loc.Located Name.Name -> String
 	locatedName (Loc.L _ nm) = Name.getOccString nm
@@ -207,7 +206,7 @@ inspectContents name opts cts = inspect (ModuleSource $ Just name) (contentsInsp
 		exts = mapMaybe flagExtension opts
 
 contentsInspection :: String -> [String] -> ErrorT String IO Inspection
-contentsInspection cts opts = return InspectionNone -- crc or smth
+contentsInspection _ _ = return InspectionNone -- crc or smth
 
 -- | Inspect file
 inspectFile :: [String] -> FilePath -> ErrorT String IO InspectedModule
@@ -215,15 +214,18 @@ inspectFile opts file = do
 	let
 		noReturn :: E.SomeException -> IO [Doc.Interface]
 		noReturn _ = return []
+
+		hdocsWorkaround = True
 	proj <- liftIO $ locateProject file
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
-		docsMap <- liftIO $ hdocsProcess absFilename opts
-		--docsMap <- liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
-		--	is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
-		--	forM is $ \i -> do
-		--		mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
-		--		return (mfile, i)
+		docsMap <- case hdocsWorkaround of
+			True -> liftIO $ hdocsProcess absFilename opts
+			False -> liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
+				is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
+				forM is $ \i -> do
+					mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
+					return (mfile, i)
 		forced <- ErrorT $ E.handle onError $ do
 			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
 			force analyzed `deepseq` return analyzed

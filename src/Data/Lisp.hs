@@ -1,6 +1,7 @@
 module Data.Lisp (
 	Lisp(..),
-	lisp
+	lisp,
+	encodeLisp, decodeLisp
 	) where
 
 import Prelude hiding (String, Bool)
@@ -9,6 +10,8 @@ import qualified Prelude as P (String, Bool)
 import Control.Applicative
 import Data.Aeson (ToJSON(..), FromJSON(..), (.=))
 import qualified Data.Aeson as A
+import Data.Aeson.Types (parseMaybe, parseEither)
+import Data.ByteString.Lazy (ByteString)
 import Data.Char (isAlpha, isDigit)
 import Data.Either (partitionEithers)
 import qualified Data.HashMap.Strict as HM
@@ -16,6 +19,8 @@ import Data.List (unfoldr)
 import Data.Scientific
 import Data.String (fromString)
 import qualified Data.Text as T (unpack)
+import qualified Data.Text.Lazy as LT (pack, unpack)
+import qualified Data.Text.Lazy.Encoding as LT (encodeUtf8, decodeUtf8)
 import qualified Text.ParserCombinators.ReadP as R
 import Text.Read (readMaybe)
 import qualified Data.Vector as V
@@ -52,7 +57,9 @@ lisp n = R.choice [
 			R.munch (\ch -> isAlpha ch || isDigit ch || ch == '-')]
 
 		string :: R.ReadP P.String
-		string = readable n
+		string = (R.<++ R.pfail) $ do
+			('"':_) <- R.look
+			readable n
 
 		number :: R.ReadP Scientific
 		number = do
@@ -107,3 +114,14 @@ instance FromJSON Lisp where
 	parseJSON (A.Number n) = return $ Number n
 	parseJSON (A.Array vs) = fmap List $ mapM parseJSON $ V.toList vs
 	parseJSON (A.Object obj) = fmap (List . concat) $ mapM (\(k, v) -> sequence [pure $ Symbol (':' : T.unpack k), parseJSON v]) $ HM.toList obj
+
+decodeLisp :: FromJSON a => ByteString -> Either P.String a
+decodeLisp str = do
+	sexp <- maybe (Left "Not a s-exp") Right . readMaybe . LT.unpack . LT.decodeUtf8 $ str
+	parseEither parseJSON $ toJSON (sexp :: Lisp)
+
+encodeLisp :: ToJSON a => a -> ByteString
+encodeLisp r = LT.encodeUtf8 . LT.pack $ maybe
+	"(:error \"can't convert to s-exp\")"
+	(show :: Lisp -> P.String)
+	(parseMaybe parseJSON (toJSON r))

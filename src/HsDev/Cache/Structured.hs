@@ -13,7 +13,6 @@ import System.FilePath
 
 import Data.Group (Group(zero))
 import qualified HsDev.Cache as Cache
-import HsDev.Cabal (Cabal)
 import HsDev.Database
 import HsDev.Symbols
 import HsDev.Project (project)
@@ -41,10 +40,10 @@ dump dir db = do
 
 -- | Load all cache
 load :: FilePath -> IO (Either String Structured)
-load dir = runErrorT $ join $ either throwError return <$> (structured <$> loadCabals <*> loadProjects <*> loadFiles) where
+load dir = runErrorT $ join $ either throwError return <$> (structured <$> loadCabals <*> loadProjects <*> loadStandaloneFiles) where
 	loadCabals = loadDir (dir </> "cabal")
 	loadProjects = loadDir (dir </> "projects")
-	loadFiles = ErrorT $ Cache.load (dir </> Cache.standaloneCache)
+	loadStandaloneFiles = ErrorT $ Cache.load (dir </> Cache.standaloneCache)
 
 	loadDir p = do
 		fs <- liftIO $ liftM (filter ((== ".json") . takeExtension)) $ directoryContents p

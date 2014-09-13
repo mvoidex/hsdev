@@ -67,7 +67,7 @@ cmdAct f = return . f
 --
 -- > cutName >=> cmdAct act
 cutName :: String -> Args -> CmdAction Args
-cutName name args@(Args as os) = case stripPrefix (words name) as of
+cutName name (Args as os) = case stripPrefix (words name) as of
 	Just as' -> return (Args as' os)
 	Nothing -> notMatch
 
@@ -75,11 +75,11 @@ verifyOpts :: [Opt] -> Args -> CmdAction Args
 verifyOpts os = ErrorT . Just . verify os
 
 cmda :: String -> [String] -> [Opt] -> String -> (Args -> CmdAction a) -> Cmd a
-cmda name as os desc act = Cmd {
+cmda name as os cdesc act = Cmd {
 	cmdName = name,
 	cmdArgs = as,
 	cmdOpts = os,
-	cmdDesc = desc,
+	cmdDesc = cdesc,
 	cmdGetArgs = cut',
 	cmdAction = verifyOpts os >=> act }
 	where
@@ -88,19 +88,19 @@ cmda name as os desc act = Cmd {
 			| otherwise = cutName name
 
 cmda_ :: String -> [Opt] -> String -> (Opts String -> CmdAction a) -> Cmd a
-cmda_ name os desc act = validateArgs noPos $ cmda name [] os desc (act . namedArgs) where
+cmda_ name os cdesc act = validateArgs noPos $ cmda name [] os cdesc (act . namedArgs) where
 	noPos (Args [] _) = return ()
 	noPos (Args _ _) = failMatch "No positional argument expected"
 
 cmd :: String -> [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
-cmd name as os desc act = cmda name as os desc (cmdAct act)
+cmd name as os cdesc act = cmda name as os cdesc (cmdAct act)
 
 cmd_ :: String -> [Opt] -> String -> (Opts String -> a) -> Cmd a
-cmd_ name os desc act = cmda_ name os desc (cmdAct act)
+cmd_ name os cdesc act = cmda_ name os cdesc (cmdAct act)
 
 -- | Unnamed command
 defCmd :: [String] -> [Opt] -> String -> (Args -> a) -> Cmd a
-defCmd as os desc act = cmda "" as os desc (cmdAct act)
+defCmd as os cdesc act = cmda "" as os cdesc (cmdAct act)
 
 data CmdHelp =
 	HelpUsage [String] |

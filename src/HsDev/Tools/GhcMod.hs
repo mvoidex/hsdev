@@ -16,28 +16,21 @@ module HsDev.Tools.GhcMod (
 import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq
-import Control.Exception
 import Control.Monad.Error
 import Control.Monad.CatchIO (MonadCatchIO)
 import Data.Aeson
 import Data.Char
 import Data.Maybe
-import Data.List (sort, nub)
 import qualified Data.Map as M
-import Exception (ghandle)
-import GHC (Ghc, runGhc, getSessionDynFlags, defaultCleanupHandler)
-import GHC.Paths (libdir)
 import Text.Read (readMaybe)
-import System.Directory (getCurrentDirectory)
 
 import qualified Language.Haskell.GhcMod as GhcMod
 
 import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols
-import HsDev.Symbols.Location
 import HsDev.Tools.Base
-import HsDev.Util ((.::), liftException, liftIOErrors)
+import HsDev.Util ((.::), liftIOErrors)
 
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
 list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opts }) $ do
@@ -76,7 +69,7 @@ browseInspection :: [String] -> Inspection
 browseInspection = InspectionAt 0
 
 info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> ErrorT String IO Declaration
-info opts cabal file mproj mname sname = do
+info opts cabal file _ _ sname = do
 	rs <- runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
 		GhcMod.info file sname
 	toDecl rs
@@ -117,7 +110,7 @@ instance FromJSON TypedRegion where
 		v .:: "type"
 
 typeOf :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Int -> Int -> ErrorT String IO [TypedRegion]
-typeOf opts cabal file mproj mname line col = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+typeOf opts cabal file _ _ line col = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
 	fileCts <- liftIO $ readFile file
 	ts <- lines <$> GhcMod.types file line col
 	return $ mapMaybe (toRegionType fileCts) ts
@@ -163,7 +156,7 @@ parseOutputMessage s = do
 		errorMessage = groups `at` 5 }
 
 check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> ErrorT String IO [OutputMessage]
-check opts cabal files mproj = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+check opts cabal files _ = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
 	msgs <- lines <$> GhcMod.checkSyntax files
 	return $ mapMaybe parseOutputMessage msgs
 

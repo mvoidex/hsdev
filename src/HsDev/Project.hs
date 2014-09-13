@@ -234,16 +234,16 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 		flattenDescr :: PD.GenericPackageDescription -> PD.PackageDescription
 		flattenDescr (PD.GenericPackageDescription pkg _ mlib mexes mtests _) = pkg {
 			PD.library = flip fmap mlib $ flattenTree
-				(insert PD.libBuildInfo (\i l -> l { PD.libBuildInfo = i })),
+				(insertInfo PD.libBuildInfo (\i l -> l { PD.libBuildInfo = i })),
 			PD.executables = flip fmap mexes $
-				second (flattenTree (insert PD.buildInfo (\i l -> l { PD.buildInfo = i }))) >>>
+				second (flattenTree (insertInfo PD.buildInfo (\i l -> l { PD.buildInfo = i }))) >>>
 				(\(n, e) -> e { PD.exeName = n }),
 			PD.testSuites = flip fmap mtests $
-				second (flattenTree (insert PD.testBuildInfo (\i l -> l { PD.testBuildInfo = i }))) >>>
+				second (flattenTree (insertInfo PD.testBuildInfo (\i l -> l { PD.testBuildInfo = i }))) >>>
 				(\(n, t) -> t { PD.testName = n }) }
 			where
-				insert :: (a -> PD.BuildInfo) -> (PD.BuildInfo -> a -> a) -> [P.Dependency] -> a -> a
-				insert f s deps x = s ((f x) { PD.targetBuildDepends = deps }) x
+				insertInfo :: (a -> PD.BuildInfo) -> (PD.BuildInfo -> a -> a) -> [P.Dependency] -> a -> a
+				insertInfo f s deps x = s ((f x) { PD.targetBuildDepends = deps }) x
 
 		flattenTree :: Monoid a => (c -> a -> a) -> PD.CondTree v c a -> a
 		flattenTree f (PD.CondNode x cs cmps) = f cs x `mappend` mconcat (concatMap flattenBranch cmps) where

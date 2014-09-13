@@ -5,9 +5,6 @@ module Main (
 	) where
 
 import Control.Monad
-import Data.List
-import Data.Char
-import Data.Maybe (listToMaybe, mapMaybe)
 import Network.Socket (withSocketsDo)
 import System.Environment (getArgs)
 import System.Exit

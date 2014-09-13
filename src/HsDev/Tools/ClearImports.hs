@@ -42,7 +42,7 @@ dumpMinimalImports opts f = do
 				objectDir = Just cur,
 				hiDir = Just cur }
 		(df'', _, _) <- parseDynamicFlags df' (map noLoc ("-ddump-minimal-imports" : opts))
-		setSessionDynFlags df''
+		_ <- setSessionDynFlags df''
 		defaultCleanupHandler df'' $ do
 			t <- guessTarget file Nothing
 			setTargets [t]
