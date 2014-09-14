@@ -19,7 +19,7 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Tools.GhcMod (OutputMessage, TypedRegion)
-import HsDev.Tools.Ghc.Worker (Worker)
+import HsDev.Tools.Ghc.Worker (Worker, Ghc)
 
 #if mingw32_HOST_OS
 import System.Win32.FileMapping.NamePool (Pool)
@@ -35,7 +35,7 @@ data CommandOptions = CommandOptions {
 #if mingw32_HOST_OS
 	commandMmapPool :: Maybe Pool,
 #endif
-	commandGhc :: Worker,
+	commandGhc :: Worker (Ghc ()),
 	commandNotify :: Notification -> IO (),
 	commandLink :: IO (),
 	commandHold :: IO (),

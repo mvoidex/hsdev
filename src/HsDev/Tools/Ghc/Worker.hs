@@ -1,11 +1,12 @@
 module HsDev.Tools.Ghc.Worker (
-	Worker(..),
-	startWorker,
+	ghcWorker,
 	waitWork,
 	evaluate,
 	try,
 
-	Ghc
+	Ghc,
+
+	module Control.Concurrent.Worker
 	) where
 
 import Control.Arrow (left)
@@ -19,14 +20,11 @@ import GHC
 import GHC.Paths
 import Packages
 
-data Worker = Worker {
-	ghcSendWork :: Ghc () -> IO (),
-	ghcWorkerChan :: Chan (Ghc ()) }
+import Control.Concurrent.Worker
 
-startWorker :: IO Worker
-startWorker = do
-	ch <- newChan
-	void $ forkIO $ runGhc (Just libdir) $ do
+ghcWorker :: IO (Worker (Ghc ()))
+ghcWorker = worker_ (runGhc (Just libdir)) ghcInit try where
+	ghcInit f = do
 		fs <- getSessionDynFlags
 		defaultCleanupHandler fs $ do
 			(fs', _, _) <- parseDynamicFlags fs (map noLoc [])
@@ -37,16 +35,14 @@ startWorker = do
 			_ <- setSessionDynFlags fs''
 			_ <- liftIO $ initPackages fs''
 			mapM parseImportDecl ["import " ++ m | m <- startMods] >>= setContext . map IIDecl
-			liftIO (getChanContents ch) >>= mapM_ try
-	return $ Worker (writeChan ch) ch
-	where
-		startMods :: [String]
-		startMods = ["Prelude", "Data.List", "Control.Monad", "HsDev.Tools.Ghc.Prelude"]
+			f
+	startMods :: [String]
+	startMods = ["Prelude", "Data.List", "Control.Monad", "HsDev.Tools.Ghc.Prelude"]
 
-waitWork :: Worker -> Ghc a -> ErrorT String IO a
+waitWork :: Worker (Ghc ()) -> Ghc a -> ErrorT String IO a
 waitWork w act = ErrorT $ do
 	var <- newEmptyMVar
-	ghcSendWork w $ try act >>= liftIO . putMVar var
+	sendWork w $ try act >>= liftIO . putMVar var
 	takeMVar var
 
 evaluate :: String -> Ghc String

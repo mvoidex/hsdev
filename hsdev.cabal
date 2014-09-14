@@ -22,6 +22,7 @@ library
   exposed-modules:
     Control.Apply.Util
     Control.Concurrent.FiniteChan
+    Control.Concurrent.Worker
     Control.Concurrent.Util
     Data.Async
     Data.Group

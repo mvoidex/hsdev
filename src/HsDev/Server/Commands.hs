@@ -324,7 +324,7 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"
 #endif
-	worker <- startWorker
+	ghcw <- ghcWorker
 	act $ CommandOptions
 		db
 		(writeCache sopts outputStr)
@@ -335,7 +335,7 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 #if mingw32_HOST_OS
 		mmapPool
 #endif
-		worker
+		ghcw
 		(const $ return ())
 		(return ())
 		(return ())
