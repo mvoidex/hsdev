@@ -11,6 +11,7 @@ module HsDev.Scan (
 import Control.Monad.Error
 import qualified Data.Map as M
 import Data.Traversable (traverse)
+import Language.Haskell.GhcMod (defaultOptions)
 
 import HsDev.Symbols
 import HsDev.Database
@@ -59,7 +60,7 @@ scanProjectFile _ f = do
 
 -- | Scan module
 scanModule :: [String] -> ModuleLocation -> ErrorT String IO InspectedModule
-scanModule opts (FileModule f _) = inspectFile opts f >>= traverse (inferTypes opts Cabal)
+scanModule opts (FileModule f _) = inspectFile opts f >>= traverse (runGhcMod defaultOptions . inferTypes opts Cabal)
 scanModule opts (CabalModule c p n) = browse opts c n p
 scanModule _ (ModuleSource _) = throwError "Can inspect only modules in file or cabal"
 

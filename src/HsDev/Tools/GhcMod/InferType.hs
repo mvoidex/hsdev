@@ -1,5 +1,6 @@
 module HsDev.Tools.GhcMod.InferType (
-	untyped, inferType, inferTypes
+	untyped, inferType, inferTypes,
+	GhcModT
 	) where
 
 import Control.Monad.Error
@@ -16,7 +17,7 @@ untyped (Function Nothing _) = True
 untyped _ = False
 
 -- | Infer type of declaration
-inferType :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Declaration -> ErrorT String IO Declaration
+inferType :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Declaration -> GhcModT IO Declaration
 inferType opts cabal src mproj mname decl
 	| untyped (declaration decl) = infer
 	| otherwise = return decl
@@ -35,9 +36,9 @@ inferType opts cabal src mproj mname decl
 		getType _ = Nothing
 
 -- | Infer types for module
-inferTypes :: [String] -> Cabal -> Module -> ErrorT String IO Module
+inferTypes :: [String] -> Cabal -> Module -> GhcModT IO Module
 inferTypes opts cabal m = case moduleLocation m of
 	FileModule src p -> do
 		inferredDecls <- traverse (inferType opts cabal src p (moduleName m)) $ moduleDeclarations m
 		return m { moduleDeclarations = inferredDecls }
-	_ -> throwError "Type infer works only for source files"
+	_ -> throwError $ strMsg "Type infer works only for source files"

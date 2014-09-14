@@ -13,6 +13,7 @@ module HsDev.Tools.GhcMod (
 	runGhcMod,
 
 	ghcModWorker,
+	waitGhcMod,
 
 	GhcModT,
 	module Control.Concurrent.Worker
@@ -20,16 +21,19 @@ module HsDev.Tools.GhcMod (
 
 import Control.Applicative
 import Control.Arrow
+import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
 import Control.DeepSeq
+import Control.Exception (SomeException)
 import Control.Monad.Error
 import Control.Monad.CatchIO (MonadCatchIO)
 import Data.Aeson
 import Data.Char
 import Data.Maybe
 import qualified Data.Map as M
+import Exception (gtry)
 import Text.Read (readMaybe)
 
-import Language.Haskell.GhcMod (GhcModT, runGhcModT)
+import Language.Haskell.GhcMod (GhcModT, runGhcModT, withOptions)
 import qualified Language.Haskell.GhcMod as GhcMod
 
 import Control.Concurrent.Worker
@@ -75,13 +79,13 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 browseInspection :: [String] -> Inspection
 browseInspection = InspectionAt 0
 
-info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> ErrorT String IO Declaration
+info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> GhcModT IO Declaration
 info opts cabal file _ _ sname = do
-	rs <- runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
+	rs <- withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
 		GhcMod.info file sname
 	toDecl rs
 	where
-		toDecl s = maybe (throwError $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
+		toDecl s = maybe (throwError $ strMsg $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
 		parseFunction s = do
 			groups <- match (sname ++ "\\s+::\\s+(.*?)(\\s+--(.*))?$") s
 			return $ Declaration sname Nothing Nothing (Function (Just $ groups `at` 1) [])
@@ -116,8 +120,8 @@ instance FromJSON TypedRegion where
 		v .:: "expr" <*>
 		v .:: "type"
 
-typeOf :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Int -> Int -> ErrorT String IO [TypedRegion]
-typeOf opts cabal file _ _ line col = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+typeOf :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Int -> Int -> GhcModT IO [TypedRegion]
+typeOf opts cabal file _ _ line col = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
 	fileCts <- liftIO $ readFile file
 	ts <- lines <$> GhcMod.types file line col
 	return $ mapMaybe (toRegionType fileCts) ts
@@ -162,13 +166,13 @@ parseOutputMessage s = do
 		errorWarning = isJust (groups 4),
 		errorMessage = groups `at` 5 }
 
-check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> ErrorT String IO [OutputMessage]
-check opts cabal files _ = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [OutputMessage]
+check opts cabal files _ = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
 	msgs <- lines <$> GhcMod.checkSyntax files
 	return $ mapMaybe parseOutputMessage msgs
 
-lint :: [String] -> FilePath -> ErrorT String IO [OutputMessage]
-lint opts file = runGhcMod (GhcMod.defaultOptions { GhcMod.hlintOpts = opts }) $ do
+lint :: [String] -> FilePath -> GhcModT IO [OutputMessage]
+lint opts file = withOptions (\o -> o { GhcMod.hlintOpts = opts }) $ do
 	msgs <- lines <$> GhcMod.lint file
 	return $ mapMaybe parseOutputMessage msgs
 
@@ -176,4 +180,13 @@ runGhcMod :: (GhcMod.IOish m, MonadCatchIO m) => GhcMod.Options -> GhcModT m a -
 runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ runGhcModT opts act
 
 ghcModWorker :: IO (Worker (GhcModT IO ()))
-ghcModWorker = worker_ (void . runGhcModT GhcMod.defaultOptions) id id
+ghcModWorker = worker_ (void . runGhcModT GhcMod.defaultOptions) id try
+
+waitGhcMod :: Worker (GhcModT IO ()) -> GhcModT IO a -> ErrorT String IO a
+waitGhcMod w act = ErrorT $ do
+	var <- newEmptyMVar
+	sendWork w $ try act >>= liftIO . putMVar var
+	takeMVar var
+
+try :: GhcModT IO a -> GhcModT IO (Either String a)
+try = liftM (left (show :: SomeException -> String)) . gtry

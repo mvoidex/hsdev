@@ -1,6 +1,6 @@
 module HsDev.Tools.Ghc.Worker (
 	ghcWorker,
-	waitWork,
+	waitGhc,
 	evaluate,
 	try,
 
@@ -39,8 +39,8 @@ ghcWorker = worker_ (runGhc (Just libdir)) ghcInit try where
 	startMods :: [String]
 	startMods = ["Prelude", "Data.List", "Control.Monad", "HsDev.Tools.Ghc.Prelude"]
 
-waitWork :: Worker (Ghc ()) -> Ghc a -> ErrorT String IO a
-waitWork w act = ErrorT $ do
+waitGhc :: Worker (Ghc ()) -> Ghc a -> ErrorT String IO a
+waitGhc w act = ErrorT $ do
 	var <- newEmptyMVar
 	sendWork w $ try act >>= liftIO . putMVar var
 	takeMVar var

@@ -440,7 +440,8 @@ commands = [
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
 			(srcFile', m, mproj) <- mapErrorStr $ fileCtx dbval srcFile
-			mapErrorStr $ GhcMod.typeOf (listArg "ghc" as) cabal srcFile' mproj (moduleName m) line' column'
+			mapErrorStr $ GhcMod.waitGhcMod (commandGhcMod copts) $
+				GhcMod.typeOf (listArg "ghc" as) cabal srcFile' mproj (moduleName m) line' column'
 		ghcmodType' [] _ _ = commandError "Specify line" []
 		ghcmodType' _ _ _ = commandError "Too much arguments" []
 
@@ -451,20 +452,22 @@ commands = [
 			files' <- mapM (findPath copts) files
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM (locateProject) files')
 			cabal <- getCabal copts as
-			mapErrorStr $ GhcMod.check (listArg "ghc" as) cabal files' mproj
+			mapErrorStr $ GhcMod.waitGhcMod (commandGhcMod copts) $
+				GhcMod.check (listArg "ghc" as) cabal files' mproj
 
 		-- | Ghc-mod lint
 		ghcmodLint' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
 		ghcmodLint' [] _ _ = commandError "Specify file to hlint" []
 		ghcmodLint' [file] as copts = do
 			file' <- findPath copts file
-			mapErrorStr $ GhcMod.lint (listArg "hlint" as) file'
+			mapErrorStr $ GhcMod.waitGhcMod (commandGhcMod copts) $
+				GhcMod.lint (listArg "hlint" as) file'
 		ghcmodLint' _ _ _ = commandError "Too much files specified" []
 
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
 		ghcEval' exprs _ copts = mapErrorStr $ liftM (map toValue) $
-			waitWork (commandGhc copts) $ mapM (try . evaluate) exprs
+			waitGhc (commandGhc copts) $ mapM (try . evaluate) exprs
 			where
 				toValue :: Either String String -> Value
 				toValue (Left e) = object ["fail" .= e]
