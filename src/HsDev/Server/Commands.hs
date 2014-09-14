@@ -46,6 +46,7 @@ import qualified HsDev.Client.Commands as Client
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
 import HsDev.Tools.Ghc.Worker
+import HsDev.Tools.GhcMod (ghcModWorker)
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Util
@@ -325,6 +326,7 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 	mmapPool <- Just <$> createPool "hsdev"
 #endif
 	ghcw <- ghcWorker
+	ghcmodw <- ghcModWorker
 	act $ CommandOptions
 		db
 		(writeCache sopts outputStr)
@@ -336,6 +338,7 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 		mmapPool
 #endif
 		ghcw
+		ghcmodw
 		(const $ return ())
 		(return ())
 		(return ())

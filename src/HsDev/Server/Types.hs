@@ -18,7 +18,7 @@ import qualified HsDev.Database.Async as DB
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
-import HsDev.Tools.GhcMod (OutputMessage, TypedRegion)
+import HsDev.Tools.GhcMod (OutputMessage, TypedRegion, GhcModT)
 import HsDev.Tools.Ghc.Worker (Worker, Ghc)
 
 #if mingw32_HOST_OS
@@ -36,6 +36,7 @@ data CommandOptions = CommandOptions {
 	commandMmapPool :: Maybe Pool,
 #endif
 	commandGhc :: Worker (Ghc ()),
+	commandGhcMod :: Worker (GhcModT IO ()),
 	commandNotify :: Notification -> IO (),
 	commandLink :: IO (),
 	commandHold :: IO (),

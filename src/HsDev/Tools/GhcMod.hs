@@ -10,7 +10,12 @@ module HsDev.Tools.GhcMod (
 	check,
 	lint,
 
-	runGhcMod
+	runGhcMod,
+
+	ghcModWorker,
+
+	GhcModT,
+	module Control.Concurrent.Worker
 	) where
 
 import Control.Applicative
@@ -24,8 +29,10 @@ import Data.Maybe
 import qualified Data.Map as M
 import Text.Read (readMaybe)
 
+import Language.Haskell.GhcMod (GhcModT, runGhcModT)
 import qualified Language.Haskell.GhcMod as GhcMod
 
+import Control.Concurrent.Worker
 import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols
@@ -165,5 +172,8 @@ lint opts file = runGhcMod (GhcMod.defaultOptions { GhcMod.hlintOpts = opts }) $
 	msgs <- lines <$> GhcMod.lint file
 	return $ mapMaybe parseOutputMessage msgs
 
-runGhcMod :: (GhcMod.IOish m, MonadCatchIO m) => GhcMod.Options -> GhcMod.GhcModT m a -> ErrorT String m a
-runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ GhcMod.runGhcModT opts act
+runGhcMod :: (GhcMod.IOish m, MonadCatchIO m) => GhcMod.Options -> GhcModT m a -> ErrorT String m a
+runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ runGhcModT opts act
+
+ghcModWorker :: IO (Worker (GhcModT IO ()))
+ghcModWorker = worker_ (void . runGhcModT GhcMod.defaultOptions) id id
