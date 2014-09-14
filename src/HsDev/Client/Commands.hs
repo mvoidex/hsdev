@@ -440,7 +440,7 @@ commands = [
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
 			(srcFile', m, mproj) <- mapErrorStr $ fileCtx dbval srcFile
-			mapErrorStr $ GhcMod.waitGhcMod (commandGhcMod copts) $
+			mapErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) srcFile' $
 				GhcMod.typeOf (listArg "ghc" as) cabal srcFile' mproj (moduleName m) line' column'
 		ghcmodType' [] _ _ = commandError "Specify line" []
 		ghcmodType' _ _ _ = commandError "Too much arguments" []
@@ -452,15 +452,16 @@ commands = [
 			files' <- mapM (findPath copts) files
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM (locateProject) files')
 			cabal <- getCabal copts as
-			mapErrorStr $ GhcMod.waitGhcMod (commandGhcMod copts) $
-				GhcMod.check (listArg "ghc" as) cabal files' mproj
+			mapErrorStr $ liftM concat $ forM files' $ \file' ->
+				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
+					GhcMod.check (listArg "ghc" as) cabal [file'] mproj
 
 		-- | Ghc-mod lint
 		ghcmodLint' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
 		ghcmodLint' [] _ _ = commandError "Specify file to hlint" []
 		ghcmodLint' [file] as copts = do
 			file' <- findPath copts file
-			mapErrorStr $ GhcMod.waitGhcMod (commandGhcMod copts) $
+			mapErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
 				GhcMod.lint (listArg "hlint" as) file'
 		ghcmodLint' _ _ _ = commandError "Too much files specified" []
 

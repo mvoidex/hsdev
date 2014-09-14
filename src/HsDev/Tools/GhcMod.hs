@@ -12,8 +12,11 @@ module HsDev.Tools.GhcMod (
 
 	runGhcMod,
 
+	locateGhcModEnv, ghcModEnvPath,
 	ghcModWorker,
+	ghcModMultiWorker,
 	waitGhcMod,
+	waitMultiGhcMod,
 
 	GhcModT,
 	module Control.Concurrent.Worker
@@ -21,9 +24,9 @@ module HsDev.Tools.GhcMod (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Concurrent (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (newEmptyMVar, putMVar, takeMVar, newMVar, modifyMVar_)
 import Control.DeepSeq
-import Control.Exception (SomeException)
+import Control.Exception (SomeException, bracket)
 import Control.Monad.Error
 import Control.Monad.CatchIO (MonadCatchIO)
 import Data.Aeson
@@ -31,10 +34,13 @@ import Data.Char
 import Data.Maybe
 import qualified Data.Map as M
 import Exception (gtry)
+import GHC (getSessionDynFlags, defaultCleanupHandler)
+import System.Directory
 import Text.Read (readMaybe)
 
 import Language.Haskell.GhcMod (GhcModT, runGhcModT, withOptions)
 import qualified Language.Haskell.GhcMod as GhcMod
+import qualified Language.Haskell.GhcMod.Internal as GhcMod
 
 import Control.Concurrent.Worker
 import HsDev.Cabal
@@ -179,13 +185,62 @@ lint opts file = withOptions (\o -> o { GhcMod.hlintOpts = opts }) $ do
 runGhcMod :: (GhcMod.IOish m, MonadCatchIO m) => GhcMod.Options -> GhcModT m a -> ErrorT String m a
 runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ runGhcModT opts act
 
-ghcModWorker :: IO (Worker (GhcModT IO ()))
-ghcModWorker = worker_ (void . runGhcModT GhcMod.defaultOptions) id try
+locateGhcModEnv :: FilePath -> IO (Either Project Cabal)
+locateGhcModEnv f = do
+	mproj <- locateProject f
+	maybe (liftM Right $ getSandbox f) (return . Left) mproj
+
+ghcModEnvPath :: FilePath -> Either Project Cabal -> FilePath
+ghcModEnvPath defaultPath = either projectPath (fromMaybe defaultPath . sandbox)
+
+-- | Create ghc-mod worker for project or for sandbox
+ghcModWorker :: Either Project Cabal -> IO (Worker (GhcModT IO ()))
+ghcModWorker p = do
+	home <- getHomeDirectory
+	worker_ (runGhcModT'' $ ghcModEnvPath home p) id try
+	where
+		makeEnv :: FilePath -> IO GhcMod.GhcModEnv
+		makeEnv = GhcMod.newGhcModEnv GhcMod.defaultOptions
+		functionNotExported = True
+		runGhcModT'' :: FilePath -> GhcModT IO () -> IO ()
+		runGhcModT'' cur act
+			| functionNotExported = withCurrentDirectory cur
+				(void . runGhcModT GhcMod.defaultOptions $ act)
+			| otherwise = do
+				env' <- makeEnv cur
+				void $ GhcMod.runGhcModT' env' GhcMod.defaultState $ do
+					dflags <- getSessionDynFlags
+					defaultCleanupHandler dflags $ do
+						--GhcMod.initializeFlagsWithCradle GhcMod.defaultOptions (GhcMod.gmCradle env')
+						act
+		withCurrentDirectory :: FilePath -> IO a -> IO a
+		withCurrentDirectory cur act = bracket getCurrentDirectory setCurrentDirectory $
+			const (setCurrentDirectory cur >> act)
+
+-- | Manage many ghc-mod workers for each project/sandbox
+ghcModMultiWorker :: IO (Worker (FilePath, GhcModT IO ()))
+ghcModMultiWorker = worker id initMultiGhcMod multiWork where
+	initMultiGhcMod f = newMVar M.empty >>= f
+	multiWork ghcMods (file, act) = do
+		home <- getHomeDirectory
+		env' <- locateGhcModEnv file
+		let
+			envPath' = ghcModEnvPath home env'
+		modifyMVar_ ghcMods $ \ghcModsMap -> do
+			w <- maybe (ghcModWorker env') return $ M.lookup envPath' ghcModsMap
+			sendWork w act
+			return $ M.insert envPath' w ghcModsMap
 
 waitGhcMod :: Worker (GhcModT IO ()) -> GhcModT IO a -> ErrorT String IO a
 waitGhcMod w act = ErrorT $ do
 	var <- newEmptyMVar
 	sendWork w $ try act >>= liftIO . putMVar var
+	takeMVar var
+
+waitMultiGhcMod :: Worker (FilePath, GhcModT IO ()) -> FilePath -> GhcModT IO a -> ErrorT String IO a
+waitMultiGhcMod w f act = ErrorT $ do
+	var <- newEmptyMVar
+	sendWork w (f, try act >>= liftIO . putMVar var)
 	takeMVar var
 
 try :: GhcModT IO a -> GhcModT IO (Either String a)

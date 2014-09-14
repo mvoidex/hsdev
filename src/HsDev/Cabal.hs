@@ -2,7 +2,7 @@
 
 module HsDev.Cabal (
 	Cabal(..), sandbox,
-	findPackageDb, locateSandbox,
+	findPackageDb, locateSandbox, getSandbox,
 	cabalOpt
 	) where
 
@@ -58,6 +58,10 @@ locateSandbox :: FilePath -> ErrorT String IO Cabal
 locateSandbox p = liftIO (findPackageDb p) >>= maybe
 	(throwError $ "Can't locate package-db in sandbox: " ++ p)
 	(return . Sandbox)
+
+-- | Try find sandbox by parent directory
+getSandbox :: FilePath -> IO Cabal
+getSandbox = liftM (either (const Cabal) id) . runErrorT . locateSandbox
 
 -- | Cabal ghc option
 cabalOpt :: Cabal -> [String]
