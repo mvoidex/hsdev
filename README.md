@@ -6,21 +6,26 @@ Haskell development library and tool with support of autocompletion, symbol info
 
 ## Usage
 
-Use `hsdev server start` to start remove server. Specify `--cache`, where `hsdev` will store information.
+Use `hsdev start` to start remove server. Specify `--cache`, where `hsdev` will store information.
 
 ### Commands
 
-* `server` — server commands: `start`, `run` and `stop`
-* `scan` — scan installed modules, cabal projects and files
-* `list` — list modules, packages and projects
-* `symbol`, `module` and `project` — get info about symbol, module or project
-* `lookup`, `whois` — find visible symbol, or symbol in scope of file
+* `start`, `run` and `stop` — server commands
+* `connect` — interactive connect to server
+* `ping` — ping server
+* `add` — add inspected modules
+* `scan`, `rescan` — scan installed modules, cabal projects and files
+* `remove` — unload data
+* `modules`, `packages`, `projects` — list information about specified modules, packages or projects
+* `symbol`, `module`, `project` — find symbol, module or project
+* `lookup`, `whois` — find visible or imported symbol
 * `scope` — get modules or declarations, accessible from file
 * `complete` — get completions for file and input
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
-* `ghc-mod type` — get type of expression at line and column of file
+* `ghc-mod type`, `ghc-mod check`, `ghc-mod lint` — run `ghc-mod` command in corresponding ghc-mod worker (separate workers per project and per sandbox)
 * `dump` — dump modules or projects info
+* `load` — load data
 
 ### Examples
 
