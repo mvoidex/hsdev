@@ -141,9 +141,25 @@ typeOf opts cabal file _ _ line col = withOptions (\o -> o { GhcMod.ghcUserOptio
 		parsePosition :: ReadM Position
 		parsePosition = Position <$> readParse <*> readParse
 
+data OutputMessageLevel = WarningMessage | ErrorMessage deriving (Eq, Ord, Bounded, Enum, Read, Show)
+
+instance NFData OutputMessageLevel where
+
+instance ToJSON OutputMessageLevel where
+	toJSON WarningMessage = toJSON ("warning" :: String)
+	toJSON ErrorMessage = toJSON ("error" :: String)
+
+instance FromJSON OutputMessageLevel where
+	parseJSON v = do
+		s <- parseJSON v
+		msum [
+			guard (s == ("warning" :: String)) >> return WarningMessage,
+			guard (s == ("error" :: String)) >> return ErrorMessage,
+			fail "Invalid output message level"]
+
 data OutputMessage = OutputMessage {
 	errorLocation :: Location,
-	errorWarning :: Bool,
+	errorLevel :: OutputMessageLevel,
 	errorMessage :: String }
 		deriving (Eq, Show)
 
@@ -153,13 +169,13 @@ instance NFData OutputMessage where
 instance ToJSON OutputMessage where
 	toJSON (OutputMessage l w m) = object [
 		"location" .= l,
-		"warning" .= w,
+		"level" .= w,
 		"message" .= m]
 
 instance FromJSON OutputMessage where
 	parseJSON = withObject "error message" $ \v -> OutputMessage <$>
 		v .:: "location" <*>
-		v .:: "warning" <*>
+		v .:: "level" <*>
 		v .:: "message"
 
 parseOutputMessage :: String -> Maybe OutputMessage
@@ -169,7 +185,7 @@ parseOutputMessage s = do
 		errorLocation = Location {
 			locationModule = FileModule (groups `at` 1) Nothing,
 			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
-		errorWarning = (groups 5 == Just "Warning"),
+		errorLevel = if groups 5 == Just "Warning" then WarningMessage else ErrorMessage,
 		errorMessage = map nullToNL (groups `at` 6) }
 	where
 		nullToNL = \case
