@@ -36,6 +36,7 @@ import qualified Data.Map as M
 import Exception (gtry)
 import GHC (getSessionDynFlags, defaultCleanupHandler)
 import System.Directory
+import System.FilePath (normalise)
 import Text.Read (readMaybe)
 
 import Language.Haskell.GhcMod (GhcModT, runGhcModT, withOptions)
@@ -183,7 +184,7 @@ parseOutputMessage s = do
 	groups <- match "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
 	return $ OutputMessage {
 		errorLocation = Location {
-			locationModule = FileModule (groups `at` 1) Nothing,
+			locationModule = FileModule (normalise (groups `at` 1)) Nothing,
 			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
 		errorLevel = if groups 5 == Just "Warning" then WarningMessage else ErrorMessage,
 		errorMessage = map nullToNL (groups `at` 6) }
