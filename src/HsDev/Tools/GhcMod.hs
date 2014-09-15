@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ConstraintKinds, FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings, ConstraintKinds, FlexibleContexts, LambdaCase #-}
 
 module HsDev.Tools.GhcMod (
 	list,
@@ -164,13 +164,17 @@ instance FromJSON OutputMessage where
 
 parseOutputMessage :: String -> Maybe OutputMessage
 parseOutputMessage s = do
-	groups <- match "^(.+):(\\d+):(\\d+):(\\s*Warning:)?\\s*(.*)$" s
+	groups <- match "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
 	return $ OutputMessage {
 		errorLocation = Location {
 			locationModule = FileModule (groups `at` 1) Nothing,
 			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
-		errorWarning = isJust (groups 4),
-		errorMessage = groups `at` 5 }
+		errorWarning = (groups 5 == Just "Warning"),
+		errorMessage = map nullToNL (groups `at` 6) }
+	where
+		nullToNL = \case
+			'\0' -> '\n'
+			ch -> ch
 
 check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [OutputMessage]
 check opts cabal files _ = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
