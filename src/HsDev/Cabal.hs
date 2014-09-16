@@ -12,7 +12,7 @@ import Control.Monad.Error
 import Data.Aeson
 import Data.List
 import System.Directory
-import System.FilePath ((</>))
+import System.FilePath
 
 -- | Cabal or sandbox
 data Cabal = Cabal | Sandbox FilePath deriving (Eq, Ord)
@@ -46,10 +46,18 @@ instance FromJSON Cabal where
 -- | Find -package-db path for sandbox
 findPackageDb :: FilePath -> IO (Maybe FilePath)
 findPackageDb sand = do
-	cts <- getDirectoryContents sand
-	return $ fmap (sand </>) $
-		find cabalDev cts <|> find cabalSandbox cts
+	sand' <- canonicalizePath sand
+	isDir <- doesDirectoryExist sand'
+	if isDir then locateHere sand' else locateParent (takeDirectory sand')
 	where
+		locateHere path = do
+			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents path
+			return $ fmap (path </>) $ find cabalDev cts <|> find cabalSandbox cts
+		locateParent dir = do
+			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents dir
+			case find cabalDev cts <|> find cabalSandbox cts of
+				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
+				Just packagef -> return $ Just (dir </> packagef)
 		cabalDev p = "packages-" `isPrefixOf` p && ".conf" `isSuffixOf` p
 		cabalSandbox p = "-packages.conf.d" `isSuffixOf` p
 
