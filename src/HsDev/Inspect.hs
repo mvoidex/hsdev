@@ -106,10 +106,9 @@ getDef (H.FunBind []) = []
 getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (identOfName n) Nothing Nothing fun] where
 	fun = Function Nothing $ concatMap (getBinds . matchBinds) matches
 	matchBinds (H.Match _ _ _ _ _ binds) = binds
-getDef (H.PatBind loc pat _ _ binds) = map (\name -> setPosition loc (Declaration (identOfName name) Nothing Nothing (Function Nothing $ getBinds binds))) (names pat) where
+getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (Declaration (identOfName name) Nothing Nothing (Function Nothing $ getBinds binds))) (names pat) where
 	names :: H.Pat -> [H.Name]
 	names (H.PVar n) = [n]
-	names (H.PNeg n) = names n
 	names (H.PNPlusK n _) = [n]
 	names (H.PInfixApp l _ r) = names l ++ names r
 	names (H.PApp _ ns) = concatMap names ns
@@ -127,7 +126,10 @@ getDef (H.PatBind loc pat _ _ binds) = map (\name -> setPosition loc (Declaratio
 
 	fieldNames :: H.PatField -> [H.Name]
 	fieldNames (H.PFieldPat _ n) = names n
-	fieldNames (H.PFieldPun n) = [n]
+	fieldNames (H.PFieldPun n) = case n of
+		H.Qual _ n' -> [n']
+		H.UnQual n' -> [n']
+		_ -> []
 	fieldNames H.PFieldWildcard = []
 getDef _ = []
 
