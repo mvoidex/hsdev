@@ -55,7 +55,7 @@ printUsage = mapM_ (putStrLn . ('\t':) . ("hsdev " ++) . C.brief) mainCommands
 -- | Check that specified options are numbers
 validateNums :: [String] -> Cmd a -> Cmd a
 validateNums ns = validateArgs (check . namedArgs) where
-	check os = forM_ ns $ \n -> case fmap (readMaybe :: String -> Maybe Int) $ arg n os of
+	check os = forM_ ns $ \n -> case (readMaybe :: String -> Maybe Int) <$> arg n os of
 		Just Nothing -> failMatch "Must be a number"
 		_ -> return ()
 
