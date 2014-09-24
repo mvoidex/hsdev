@@ -6,7 +6,7 @@ module HsDev.Server.Message (
 	Request(..), requestToArgs,
 	withOpts, withoutOpts,
 	Notification(..), Result(..),
-	Response, notification, result, responseError,
+	Response, isNotification, notification, result, responseError,
 	groupResponses, responsesById
 	) where
 
@@ -111,6 +111,9 @@ instance FromJSON Result where
 		Error <$> v .:: "error" <*> v .:: "details"]
 
 type Response = Either Notification Result
+
+isNotification :: Response -> Bool
+isNotification = either (const True) (const False)
 
 notification :: ToJSON a => a -> Response
 notification = Left . Notification . toJSON

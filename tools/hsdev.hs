@@ -4,6 +4,7 @@ module Main (
 	main
 	) where
 
+import Control.Applicative
 import Control.Monad
 import Network.Socket (withSocketsDo)
 import System.Environment (getArgs)

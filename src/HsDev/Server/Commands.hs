@@ -119,14 +119,14 @@ commands = [
 
 			handle forkError $ do
 				_ <- forkProcess proxy
-				putStrLn $ "Server started at port " ++ (fromJust $ arg "port" sopts)
+				putStrLn $ "Server started at port " ++ fromJust (arg "port" sopts)
 #endif
 
 		-- | Run server
 		run' :: Args -> IO ()
 		run' (Args _ sopts)
 			| flagSet "as-client" sopts = runServer sopts $ \copts -> do
-				commandLog copts $ "Server started as client connecting at port " ++ (fromJust $ arg "port" sopts)
+				commandLog copts $ "Server started as client connecting at port " ++ fromJust (arg "port" sopts)
 				me <- myThreadId
 				s <- socket AF_INET Stream defaultProtocol
 				addr' <- inet_addr "127.0.0.1"
@@ -135,7 +135,7 @@ commands = [
 					processClientHandle s h (copts {
 						commandExit = killThread me })
 			| otherwise = runServer sopts $ \copts -> do
-				commandLog copts $ "Server started at port " ++ (fromJust $ arg "port" sopts)
+				commandLog copts $ "Server started at port " ++ fromJust (arg "port" sopts)
 
 				waitListen <- newEmptyMVar
 				clientChan <- F.newChan
@@ -155,23 +155,23 @@ commands = [
 					forever $ logIO "accept client exception: " (commandLog copts) $ do
 						s' <- fst <$> accept s
 						void $ forkIO $ logIO (show s' ++ " exception: ") (commandLog copts) $
-							bracket (socketToHandle s' ReadWriteMode) hClose $ \h -> do
-								bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-									me <- myThreadId
-									let
-										timeoutWait = do
-											notDone <- isEmptyMVar done
-											when notDone $ do
-												void $ forkIO $ do
-													threadDelay 1000000
-													void $ tryPutMVar done ()
-													killThread me
-												takeMVar done
-										waitForever = forever $ hGetLineBS h
-									F.putChan clientChan timeoutWait
-									processClientHandle s' h (copts {
-										commandHold = waitForever,
-										commandExit = serverStop })
+							bracket (socketToHandle s' ReadWriteMode) hClose $ \h ->
+							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+								me <- myThreadId
+								let
+									timeoutWait = do
+										notDone <- isEmptyMVar done
+										when notDone $ do
+											void $ forkIO $ do
+												threadDelay 1000000
+												void $ tryPutMVar done ()
+												killThread me
+											takeMVar done
+									waitForever = forever $ hGetLineBS h
+								F.putChan clientChan timeoutWait
+								processClientHandle s' h (copts {
+									commandHold = waitForever,
+									commandExit = serverStop })
 
 				takeMVar waitListen
 				DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
@@ -256,65 +256,73 @@ clientCmd c = cmd (cmdName c) (cmdArgs c) (cmdOpts c ++ clientOpts) (cmdDesc c) 
 
 -- | Send command to server
 sendCmd :: String -> Args -> IO ()
-sendCmd name (Args args opts) = ignoreIO sendReceive where
-	(copts, opts') = splitOpts clientOpts opts
-	reqCall = Request name args opts'
-	pretty = flagSet "pretty" copts
-	encodeValue :: ToJSON a => a -> L.ByteString
-	encodeValue
-		| pretty = encodePretty
-		| otherwise = encode
-	sendReceive = do
-		curDir <- getCurrentDirectory
-		stdinData <- if flagSet "data" copts
-			then do
-				cdata <- liftM (eitherDecode :: L.ByteString -> Either String Value) L.getContents
-				case cdata of
-					Left cdataErr -> do
-						putStrLn $ "Invalid data: " ++ cdataErr
-						exitFailure
-					Right dataValue -> return $ Just dataValue
-			else return Nothing
+sendCmd name (Args args opts) = do
+	var <- newEmptyMVar
+	thId <- forkIO $ ignoreIO sendReceive >> putMVar var ()
+	handle (\(SomeException _) -> killThread thId) $ takeMVar var
+	where
+		(copts, opts') = splitOpts clientOpts opts
+		reqCall = Request name args opts'
+		pretty = flagSet "pretty" copts
+		encodeValue :: ToJSON a => a -> L.ByteString
+		encodeValue
+			| pretty = encodePretty
+			| otherwise = encode
+		sendReceive = do
+			curDir <- getCurrentDirectory
+			stdinData <- if flagSet "data" copts
+				then do
+					cdata <- liftM (eitherDecode :: L.ByteString -> Either String Value) L.getContents
+					case cdata of
+						Left cdataErr -> do
+							putStrLn $ "Invalid data: " ++ cdataErr
+							exitFailure
+						Right dataValue -> return $ Just dataValue
+				else return Nothing
 
-		s <- socket AF_INET Stream defaultProtocol
-		addr' <- inet_addr "127.0.0.1"
-		Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
-		h <- socketToHandle s ReadWriteMode
-		L.hPutStrLn h $ encode $ Message Nothing $ reqCall `M.withOpts` [
-			"current-directory" %-- curDir,
-			"data" %-? (fromUtf8 . encode <$> stdinData),
-			"timeout" %-? (iarg "timeout" copts :: Maybe Integer),
-			if flagSet "silent" copts then hoist "silent" else mempty]
-		hFlush h
-		peekResponse h
+			s <- socket AF_INET Stream defaultProtocol
+			addr' <- inet_addr "127.0.0.1"
+			Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
+			h <- socketToHandle s ReadWriteMode
+			L.hPutStrLn h $ encode $ Message Nothing $ reqCall `M.withOpts` [
+				"current-directory" %-- curDir,
+				"data" %-? (fromUtf8 . encode <$> stdinData),
+				"timeout" %-? (iarg "timeout" copts :: Maybe Integer),
+				if flagSet "silent" copts then hoist "silent" else mempty]
+			hFlush h
+			peekResponse h
 
-	peekResponse h = do
-		resp <- hGetLineBS h
-		parseResponse h resp
+		peekResponse h = do
+			resp <- hGetLineBS h
+			parseResponse h resp
 
-	parseResponse h str = case decodeLispOrJSON str of
-		Left e -> putStrLn $ "Can't decode response: " ++ e
-		Right (_, Message _ r) -> do
-			r' <- unMmap r
-			L.putStrLn $ case r' of
-				Left n -> encodeValue n
-				Right (Result v) -> encodeValue v
-				Right e -> encodeValue e
-			when (isLeft r') $ peekResponse h
+		parseResponse h str = case decodeLispOrJSON str of
+			Left e -> putStrLn $ "Can't decode response: " ++ e
+			Right (_, Message _ r) -> do
+				r' <- unMmap r
+				L.putStrLn $ case r' of
+					Left n -> encodeValue n
+					Right (Result v) -> encodeValue v
+					Right e -> encodeValue e
+				when (isLeft r') $ peekResponse h
 
 -- | Inits log chan and returns functions (print message, wait channel)
-initLog :: Opts String -> IO (String -> IO (), IO ())
+initLog :: Opts String -> IO (String -> IO (), ([String] -> IO ()) -> IO (), IO ())
 initLog sopts = do
 	msgs <- F.newChan
 	outputDone <- newEmptyMVar
 	void $ forkIO $ finally
 		(F.readChan msgs >>= mapM_ (logMsg sopts))
 		(putMVar outputDone ())
-	return (F.putChan msgs, F.closeChan msgs >> takeMVar outputDone)
+	let
+		listenLog f = logException "listen log" (F.putChan msgs) $ do
+			msgs' <- F.dupChan msgs
+			F.readChan msgs' >>= f
+	return (F.putChan msgs, listenLog, F.closeChan msgs >> takeMVar outputDone)
 
 -- | Run server
 runServer :: Opts String -> (CommandOptions -> IO ()) -> IO ()
-runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> do
+runServer sopts act = bracket (initLog sopts) (\(_, _, x) -> x) $ \(outputStr, listenLog, waitOutput) -> do
 	db <- DB.newAsync
 	when (flagSet "load" sopts) $ withCache sopts () $ \cdir -> do
 		outputStr $ "Loading cache from " ++ cdir
@@ -333,6 +341,7 @@ runServer sopts act = bracket (initLog sopts) snd $ \(outputStr, waitOutput) -> 
 		(readCache sopts outputStr)
 		"."
 		outputStr
+		listenLog
 		waitOutput
 #if mingw32_HOST_OS
 		mmapPool
@@ -382,7 +391,8 @@ processClient name receive send' copts = do
 	let
 		answer :: Bool -> Message Response -> IO ()
 		answer isLisp m@(Message i r) = do
-			commandLog copts $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ fromUtf8 (encode r)
+			when (not $ isNotification r) $
+				commandLog copts $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ fromUtf8 (encode r)
 			writeChan respChan (isLisp, m)
 	flip finally (disconnected linkVar) $ forever $ do
 		req' <- receive
@@ -414,11 +424,12 @@ processClient name receive send' copts = do
 			noFile = flagSet "no-file" metaOpts
 			silent = flagSet "silent" metaOpts
 			tm = join $ fmap readMaybe $ arg "timeout" metaOpts
-			(metaOpts, opts') = flip splitOpts (requestOpts c) [
+			(metaOpts, opts') = splitOpts [
 				req "current-directory" "path",
 				flag "no-file",
 				flag "silent",
 				req "timeout" "ms"]
+				(requestOpts c)
 
 		handleTimeout :: Maybe Int -> IO Result -> IO Result
 		handleTimeout Nothing = id

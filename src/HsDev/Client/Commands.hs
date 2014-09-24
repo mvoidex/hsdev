@@ -49,6 +49,7 @@ commands :: [Cmd CommandAction]
 commands = [
 	-- Ping command
 	cmd' "ping" [] [] "ping server" ping',
+	cmd' "listen" [] [] "listen server log" listen',
 	-- Database commands
 	cmd' "add" [] [dataArg] "add info to database" add',
 	cmd' "scan" [] (sandboxes ++ [
@@ -171,6 +172,11 @@ commands = [
 		-- | Ping server
 		ping' :: [String] -> Opts String -> CommandActionT Value
 		ping' _ _ _ = return $ object ["message" .= ("pong" :: String)]
+
+		-- | Listen server log
+		listen' :: [String] -> Opts String -> CommandActionT ()
+		listen' _ _ copts = liftIO $ commandListenLog copts $
+			mapM_ (\msg -> commandNotify copts (Notification $ object ["message" .= msg]))
 
 		-- | Add data
 		add' :: [String] -> Opts String -> CommandActionT ()

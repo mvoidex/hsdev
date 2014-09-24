@@ -14,7 +14,7 @@ module HsDev.Util (
 	-- * UTF-8
 	fromUtf8, toUtf8,
 	-- * IO
-	hGetLineBS, logIO, ignoreIO
+	hGetLineBS, logException, logIO, ignoreIO
 	) where
 
 import Control.Arrow (second)
@@ -132,8 +132,13 @@ toUtf8 = T.encodeUtf8 . T.pack
 hGetLineBS :: Handle -> IO ByteString
 hGetLineBS = fmap L.fromStrict . B.hGetLine
 
+logException :: String -> (String -> IO ()) -> IO () -> IO ()
+logException pre out = handle onErr where
+	onErr :: SomeException -> IO ()
+	onErr e = out $ pre ++ show e
+
 logIO :: String -> (String -> IO ()) -> IO () -> IO ()
-logIO pre out act = handle onIO act where
+logIO pre out = handle onIO where
 	onIO :: IOException -> IO ()
 	onIO e = out $ pre ++ show e
 
