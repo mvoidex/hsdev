@@ -122,7 +122,8 @@ cabalDB cabal = filterDB (inCabal cabal . moduleId) (const False)
 
 -- | Standalone database
 standaloneDB :: Database -> Database
-standaloneDB db = filterDB (noProject . moduleId) (const False) db where
+standaloneDB db = filterDB (check' . moduleId) (const False) db where
+	check' m = noProject m && byFile m
 	noProject m = all (not . flip inProject m) ps
 	ps = M.elems $ databaseProjects db
 
