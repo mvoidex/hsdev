@@ -34,7 +34,13 @@ import HsDev.Symbols.Util
 
 -- | Find declaration by name
 findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
-findDeclaration db ident = return $ selectDeclarations ((== ident) . declarationName . moduleDeclaration) db
+findDeclaration db ident = return $ selectDeclarations checkName db where
+	checkName :: ModuleDeclaration -> Bool
+	checkName m =
+		(declarationName (moduleDeclaration m) == iname) &&
+		(maybe True (moduleIdName (declarationModuleId m) ==) qname)
+
+	(qname, iname) = splitIdentifier ident
 
 -- | Find module by name
 findModule :: Database -> String -> ErrorT String IO [Module]
