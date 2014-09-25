@@ -43,7 +43,7 @@ instance Hole [(String, String)] where
 infixr 1 %~
 
 (%~) :: Hole a => String -> a -> Either String String
-fmt %~ hargs = case fmt =~ "\\$({([a-zA-Z]+)})?" of
+fmt %~ hargs = case fmt =~ "\\$(\\{([a-zA-Z]+)\\})?" of
 	(pre, "", "", []) -> Right pre
 	(pre, _, post, []) -> Right $ pre ++ post
 	(pre, _, post, gs) -> do
