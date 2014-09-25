@@ -111,7 +111,7 @@ commands = [
 	cmd' "scope" [] (ctx ++ matches ++ [globalArg]) "get declarations accessible from module or within a project" scope',
 	cmd' "complete" ["input"] ctx "show completions for input" complete',
 	-- Tool commands
-	cmd' "hayoo" ["query"] [] "find declarations online via Hayoo" hayoo',
+	cmd' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
 	cmd' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
 	cmd' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
 	cmd' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
@@ -150,6 +150,9 @@ commands = [
 		findArg = req "find" "query" `desc` "infix match"
 		ghcOpts = list "ghc" "option" `short` ['g'] `desc` "options to pass to GHC"
 		globalArg = flag "global" `desc` "scope of project"
+		hayooArgs = [
+			req "page" "n" `short` ['p'] `desc` "page number (0 by default)",
+			req "pages" "count" `short` ['n'] `desc` "pages count (1 by default)"]
 		hlintOpts = list "hlint" "option" `short` ['h'] `desc` "options to pass to hlint"
 		holdArg = flag "hold" `short` ['h'] `desc` "don't return any response"
 		localsArg = flag "locals" `short` ['l'] `desc` "look in local declarations"
@@ -428,9 +431,12 @@ commands = [
 		-- | Hayoo
 		hayoo' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
 		hayoo' [] _ _ = commandError "Query not specified" []
-		hayoo' [query] _ _ = liftM
-				(map Hayoo.hayooAsDeclaration . Hayoo.hayooFunctions) $
-				mapErrorStr $ Hayoo.hayoo query
+		hayoo' [query] opts _ = liftM concat $ forM [page .. page + pred pages] $ \i -> liftM
+			(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
+			mapErrorStr $ Hayoo.hayoo query (Just i)
+			where
+				page = fromMaybe 0 $ narg "page" opts
+				pages = fromMaybe 1 $ narg "pages" opts
 		hayoo' _ _ _ = commandError "Too much arguments" []
 
 		-- | Cabal list
