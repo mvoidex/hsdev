@@ -68,7 +68,7 @@ lookupSymbol db cabal file ident = do
 			restrictCabal cabal,
 			visibleFrom mproj mthis,
 			maybe (const True) inModule qname])
-		(findDeclaration db iname)
+		(newestPackage <$> findDeclaration db iname)
 	where
 		(qname, iname) = splitIdentifier ident
 
@@ -80,7 +80,7 @@ whois db cabal file ident = do
 		(filter $ checkModule $ allOf [
 			restrictCabal cabal,
 			inScope mthis qname])
-		(findDeclaration db iname)
+		(newestPackage <$> findDeclaration db iname)
 	where
 		(qname, iname) = splitIdentifier ident
 
@@ -88,7 +88,7 @@ whois db cabal file ident = do
 scopeModules :: Database -> Cabal -> FilePath -> ErrorT String IO [Module]
 scopeModules db cabal file = do
 	(file', mthis, mproj) <- fileCtxMaybe db file
-	case mproj of
+	newestPackage <$> case mproj of
 		Nothing -> return $ maybe id (:) mthis $ selectModules (inCabal cabal . moduleId) db
 		Just proj -> let deps' = deps file' proj in
 			return $ concatMap (\p -> selectModules (p . moduleId) db) [

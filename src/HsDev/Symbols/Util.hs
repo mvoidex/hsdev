@@ -7,7 +7,7 @@ module HsDev.Symbols.Util (
 	allOf, anyOf
 	) where
 
-import Control.Arrow ((***), (&&&), second)
+import Control.Arrow ((***), (&&&), first)
 import Data.Function (on)
 import Data.Maybe
 import Data.List (maximumBy, groupBy, sortBy, partition)
@@ -108,21 +108,23 @@ visible _ _ _ = False
 inScope :: Module -> Maybe String -> ModuleId -> Bool
 inScope this q m = m `imported` qualifier this q
 
--- | Select modules with last package version
+-- | Select symbols with last package version
 newestPackage :: Symbol a => [a] -> [a]
 newestPackage =
 	uncurry (++) .
-	(selectNewest *** map fst) .
-	partition (isJust . snd) .
-	map (id &&& (moduleNamePackage . symbolModuleLocation))
+	((selectNewest . groupPackages) *** map snd) .
+	partition (isJust . fst) .
+	map ((mpackage . symbolModuleLocation) &&& id)
 	where
-		moduleNamePackage (CabalModule _ (Just p) mname) = Just (mname, p)
-		moduleNamePackage _ = Nothing
-		pname = fmap (second packageName) . snd
-		pver = fmap (packageVersion . snd) . snd
-		selectNewest :: Symbol a => [(a, Maybe (String, ModulePackage))] -> [a]
+		mpackage (CabalModule _ (Just p) _) = Just p
+		mpackage _ = Nothing
+		pname = fmap packageName . fst
+		pver = fmap packageVersion . fst
+		groupPackages :: Symbol a => [(Maybe ModulePackage, a)] -> [(Maybe ModulePackage, [a])]
+		groupPackages = map (first head . unzip) . groupBy ((==) `on` fst) . sortBy (comparing fst)
+		selectNewest :: [(Maybe ModulePackage, [a])] -> [a]
 		selectNewest =
-			map (fst . maximumBy (comparing pver)) .
+			concatMap (snd . maximumBy (comparing pver)) .
 			groupBy ((==) `on` pname) .
 			sortBy (comparing pname)
 
