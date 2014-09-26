@@ -142,8 +142,8 @@ commands = [
 
 		-- Command arguments and flags
 		allFlag d = flag "all" `short` ['a'] `desc` d
-		cacheDir = pathArg `desc` "cache path"
-		cacheFile = fileArg `desc` "cache file"
+		cacheDir = req "cache-dir" "path" `desc` "cache path"
+		cacheFile = req "cache-file" "path" `desc` "cache file"
 		ctx = [fileArg `desc` "source file", sandboxArg]
 		dataArg = req "data" "contents" `desc` "data to pass to command"
 		fileArg = req "file" "path" `short` ['f']
