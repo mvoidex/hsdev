@@ -94,6 +94,7 @@ commands = [
 					translateArg myExe,
 					intercalate ", " (map translateArg args),
 					"-WindowStyle Hidden",
+					"-WorkingDirectory .",
 					"}"]] ""
 			if all isSpace r
 				then putStrLn $ "Server started at port " ++ (fromJust $ arg "port" sopts)
