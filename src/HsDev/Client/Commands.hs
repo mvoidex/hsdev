@@ -659,6 +659,7 @@ updateProcess copts as act = lift $ Update.updateDB settings act where
 	settings = Update.Settings
 		(commandDatabase copts)
 		(commandReadCache copts)
+		(commandWriteCache copts)
 		(commandNotify copts . Notification . toJSON)
 		(listArg "ghc" as)
 

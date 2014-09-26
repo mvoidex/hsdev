@@ -1,5 +1,5 @@
 module HsDev.Symbols.Util (
-	packageOf, projectOf,
+	projectOf, cabalOf, packageOf,
 	inProject, inCabal, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
 	imports, qualifier, imported, visible, inScope,
 	newestPackage,
@@ -21,6 +21,12 @@ import HsDev.Project
 projectOf :: ModuleId -> Maybe Project
 projectOf m = case moduleIdLocation m of
 	FileModule _ proj -> proj
+	_ -> Nothing
+
+-- | Get module cabal
+cabalOf :: ModuleId -> Maybe Cabal
+cabalOf m = case moduleIdLocation m of
+	CabalModule c _ _ -> Just c
 	_ -> Nothing
 
 -- | Get module package

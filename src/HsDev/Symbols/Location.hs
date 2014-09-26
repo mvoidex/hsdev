@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), ModuleLocation(..), moduleSource, moduleProject_, moduleCabalPackage,
+	ModulePackage(..), ModuleLocation(..), moduleSource, moduleProject_, moduleStandalone, moduleCabal_, moduleCabalPackage,
 	Position(..), Region(..), region, regionLines, regionStr,
 	Location(..),
 
@@ -70,6 +70,14 @@ moduleSource _ = Nothing
 moduleProject_ :: ModuleLocation -> Maybe Project
 moduleProject_ (FileModule _ p) = p
 moduleProject_ _ = Nothing
+
+moduleStandalone :: ModuleLocation -> Bool
+moduleStandalone (FileModule _ Nothing) = True
+moduleStandalone _ = False
+
+moduleCabal_ :: ModuleLocation -> Maybe Cabal
+moduleCabal_ (CabalModule c _ _) = Just c
+moduleCabal_ _ = Nothing
 
 moduleCabalPackage :: ModuleLocation -> Maybe ModulePackage
 moduleCabalPackage (CabalModule _ p _) = p

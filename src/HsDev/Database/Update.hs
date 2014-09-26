@@ -20,6 +20,7 @@ import Control.Applicative
 import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Data.Aeson
 import Data.Aeson.Types
 import qualified Data.HashMap.Strict as HM
@@ -27,7 +28,6 @@ import Data.List (nub)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust)
-import Data.Monoid
 import System.Directory (canonicalizePath)
 
 import qualified HsDev.Cache.Structured as Cache
@@ -96,15 +96,29 @@ isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
 data Settings = Settings {
 	database :: Async Database,
 	databaseCacheReader :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
+	databaseCacheWriter :: Database -> IO (),
 	onStatus :: Task -> IO (),
 	ghcOptions :: [String] }
 
-newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings m a }
-	deriving (Applicative, Monad, MonadIO, MonadCatchIO, Functor, MonadReader Settings)
+newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [ModuleLocation] m) a }
+	deriving (Applicative, Monad, MonadIO, MonadCatchIO, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
 
 -- | Run `UpdateDB` monad
-updateDB :: Monad m => Settings -> ErrorT String (UpdateDB m) () -> m ()
-updateDB sets act = runUpdateDB (runErrorT act >> return ()) `runReaderT` sets
+updateDB :: MonadIO m => Settings -> ErrorT String (UpdateDB m) () -> m ()
+updateDB sets act = do
+	updatedMods <- execWriterT (runUpdateDB (runErrorT act >> return ()) `runReaderT` sets)
+	wait $ database sets
+	dbval <- liftIO $ readAsync $ database sets
+	let
+		cabals = nub $ mapMaybe moduleCabal_ updatedMods
+		projs = nub $ mapMaybe moduleProject_ updatedMods
+		stand = any moduleStandalone updatedMods
+
+		modifiedDb = mconcat $ concat [
+			map (`cabalDB` dbval) cabals,
+			map (`projectDB` dbval) projs,
+			[standaloneDB dbval | stand]]
+	liftIO $ databaseCacheWriter sets modifiedDb
 
 -- | Post status
 postStatus :: (MonadIO m, MonadReader Settings m) => Task -> m ()
