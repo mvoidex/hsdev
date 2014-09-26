@@ -134,13 +134,15 @@ waiter act = do
 	wait db
 
 -- | Update task result to database
-updater :: (MonadIO m, MonadReader Settings m) => m Database -> m ()
+updater :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => m Database -> m ()
 updater act = do
 	db <- asks database
-	act >>= update db . return
+	db' <- act
+	update db $ return db'
+	tell $ map moduleLocation $ allModules db'
 
 -- | Load data from cache and wait
-loadCache :: (MonadIO m, MonadReader Settings m) => (FilePath -> ErrorT String IO Structured) -> m ()
+loadCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ErrorT String IO Structured) -> m ()
 loadCache act = do
 	cacheReader <- asks databaseCacheReader
 	mdat <- liftIO $ cacheReader act
@@ -192,7 +194,7 @@ scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
 scanModules :: MonadCatchIO m => [String] -> [S.ModuleToScan] -> ErrorT String (UpdateDB m) ()
 scanModules opts ms = do
 	dbval <- readDB
-	ms' <- liftErrorT $ filterM (S.changedModule dbval opts . fst) ms
+	ms' <- liftErrorT $ filterM (\m -> S.changedModule dbval (opts ++ snd m) (fst m)) ms
 	runTasks $
 		[scanProjectFile opts p >> return () | p <- ps] ++
 		[scanModule (opts ++ snd m) (fst m) | m <- ms']

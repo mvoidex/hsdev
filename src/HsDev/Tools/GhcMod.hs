@@ -31,6 +31,7 @@ import Control.Monad.Error
 import Control.Monad.CatchIO (MonadCatchIO)
 import Data.Aeson
 import Data.Char
+import Data.List (nub, sort)
 import Data.Maybe
 import qualified Data.Map as M
 import Exception (gtry)
@@ -84,7 +85,7 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 		parseDecl s = parseFunction s `mplus` parseType s
 
 browseInspection :: [String] -> Inspection
-browseInspection = InspectionAt 0
+browseInspection = InspectionAt 0 . sort . nub
 
 info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> GhcModT IO Declaration
 info opts cabal file _ _ sname = do

@@ -4,6 +4,7 @@ module HsDev.Cache.Structured (
 	) where
 
 import Control.Applicative
+import Control.DeepSeq
 import Control.Exception
 import Control.Monad.Error
 import qualified Data.Map as M (assocs)
@@ -32,8 +33,7 @@ dump dir db = do
 	files' <- either (const zero) id <$>
 		handle wrapIO
 		(Cache.load (dir </> Cache.standaloneCache))
-	Cache.dump (dir </> Cache.standaloneCache) $
-		files' `mappend` structuredFiles db
+	files' `deepseq` Cache.dump (dir </> Cache.standaloneCache) (files' `mappend` structuredFiles db)
 	where
 		wrapIO :: SomeException -> IO (Either String Database)
 		wrapIO = return . Left . show

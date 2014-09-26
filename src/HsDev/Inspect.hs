@@ -14,7 +14,7 @@ import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
-import Data.List (intercalate, find, nub)
+import Data.List (intercalate, find, nub, delete, sort)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
@@ -245,7 +245,7 @@ inspectFile opts file = do
 fileInspection :: FilePath -> [String] -> ErrorT String IO Inspection
 fileInspection f opts = do
 	tm <- liftIO $ Dir.getModificationTime f
-	return $ InspectionAt (utcTimeToPOSIXSeconds tm) opts
+	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ sort $ nub opts
 
 -- | Enumerate project dirs
 projectDirs :: Project -> ErrorT String IO [Extensions FilePath]
@@ -258,7 +258,13 @@ projectSources :: Project -> ErrorT String IO [Extensions FilePath]
 projectSources p = do
 	dirs <- projectDirs p
 	let
-		enumHs = liftM (filter haskellSource) . traverseDirectory
+		enumCabals = liftM (map takeDirectory . filter cabalFile) . traverseDirectory
+		dirs' = map entity dirs
+	-- enum inner projects and dont consider them as part of this project
+	subProjs <- liftIO $ liftM (delete (projectPath p) . nub . concat) $ mapM (liftIO . enumCabals) dirs'
+	let
+		enumHs = liftM (filter thisProjectSource) . traverseDirectory
+		thisProjectSource h = haskellSource h && not (any (\sp -> sp `isParent` h) subProjs)
 	liftIO $ liftM (nub . concat) $ mapM (liftM sequenceA . traverse (liftIO . enumHs)) dirs
 
 -- | Inspect project

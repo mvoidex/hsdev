@@ -87,6 +87,7 @@ commands = [
 			let
 				args = ["run"] ++ toArgs (Args [] sopts)
 			myExe <- getExecutablePath
+			curDir <- getCurrentDirectory
 			r <- readProcess "powershell" [
 				"-Command",
 				unwords [
@@ -94,7 +95,7 @@ commands = [
 					translateArg myExe,
 					intercalate ", " (map translateArg args),
 					"-WindowStyle Hidden",
-					"-WorkingDirectory .",
+					"-WorkingDirectory " ++ translateArg curDir,
 					"}"]] ""
 			if all isSpace r
 				then putStrLn $ "Server started at port " ++ (fromJust $ arg "port" sopts)
@@ -467,7 +468,14 @@ writeCache :: Opts String -> (String -> IO ()) -> Database -> IO ()
 writeCache sopts logMsg' d = withCache sopts () $ \cdir -> do
 	logMsg' $ "writing cache to " ++ cdir
 	logIO "cache writing exception: " logMsg' $ do
-		SC.dump cdir $ structurize d
+		let
+			sd = structurize d
+		SC.dump cdir sd
+		forM_ (M.keys (structuredCabals sd)) $ \c -> logMsg' ("cache write: cabal " ++ show c)
+		forM_ (M.keys (structuredProjects sd)) $ \p -> logMsg' ("cache write: project " ++ p)
+		case allModules (structuredFiles sd) of
+			[] -> return ()
+			ms -> logMsg' $ "cache write: " ++ show (length ms) ++ " files"
 	logMsg' $ "cache saved to " ++ cdir
 
 readCache :: Opts String -> (String -> IO ()) -> (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
