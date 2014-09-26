@@ -190,13 +190,18 @@ scanModules opts ms = do
 -- | Scan source file
 scanFile :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanFile opts fpath = do
+	dbval <- readDB
 	fpath' <- liftIO $ canonicalizePath fpath
-	mproj <- liftIO $ locateProject fpath'
+	mloc <- case lookupFile fpath' dbval of
+		Just m -> return $ moduleLocation m
+		Nothing -> do
+			mproj <- liftIO $ locateProject fpath'
+			return $ FileModule fpath' mproj
+	dirty <- liftErrorT $ S.changedModule dbval opts mloc
 	let
-		mtarget = mproj >>= (`fileTarget` fpath')
+		mtarget = moduleProject_ mloc >>= (`fileTarget` fpath')
 		fileExts = maybe [] (extensionsOpts . infoExtensions) mtarget
-
-	scanModule (opts ++ fileExts) (FileModule fpath' mproj)
+	when dirty $ scanModule (opts ++ fileExts) mloc
 
 -- | Scan cabal modules
 scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) ()

@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), ModuleLocation(..), moduleSource, moduleCabalPackage,
+	ModulePackage(..), ModuleLocation(..), moduleSource, moduleProject_, moduleCabalPackage,
 	Position(..), Region(..), region, regionLines, regionStr,
 	Location(..),
 
@@ -67,6 +67,10 @@ moduleSource :: ModuleLocation -> Maybe FilePath
 moduleSource (FileModule f _) = Just f
 moduleSource _ = Nothing
 
+moduleProject_ :: ModuleLocation -> Maybe Project
+moduleProject_ (FileModule _ p) = p
+moduleProject_ _ = Nothing
+
 moduleCabalPackage :: ModuleLocation -> Maybe ModulePackage
 moduleCabalPackage (CabalModule _ p _) = p
 moduleCabalPackage _ = Nothing
@@ -88,8 +92,8 @@ instance ToJSON ModuleLocation where
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
-		(FileModule <$> v .:: "file" <*> ((fmap project) <$> (v .:: "project"))) <|>
-		(CabalModule <$> v .:: "cabal" <*> (fmap (join . fmap readMaybe) (v .:: "package")) <*> v .:: "name") <|>
+		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .:: "project"))) <|>
+		(CabalModule <$> v .:: "cabal" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
 		(ModuleSource <$> v .:: "source")
 
 data Position = Position {
