@@ -14,7 +14,7 @@ import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
-import Data.List (intercalate, find)
+import Data.List (intercalate, find, nub)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
@@ -54,7 +54,7 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 		pmode = H.defaultParseMode {
 			H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
 			H.baseLanguage = H.Haskell2010,
-			H.extensions = map H.parseExtension exts,
+			H.extensions = H.glasgowExts ++ map H.parseExtension exts,
 			H.fixities = Just H.baseFixities }
 
 		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
@@ -251,7 +251,7 @@ fileInspection f opts = do
 projectDirs :: Project -> ErrorT String IO [Extensions FilePath]
 projectDirs p = do
 	p' <- loadProject p
-	return $ map (fmap (projectPath p' </>)) $ maybe [] sourceDirs $ projectDescription p'
+	return $ nub $ map (fmap (normalise . (projectPath p' </>))) $ maybe [] sourceDirs $ projectDescription p'
 
 -- | Enumerate project source files
 projectSources :: Project -> ErrorT String IO [Extensions FilePath]
@@ -259,7 +259,7 @@ projectSources p = do
 	dirs <- projectDirs p
 	let
 		enumHs = liftM (filter haskellSource) . traverseDirectory
-	liftIO $ liftM concat $ mapM (liftM sequenceA . traverse (liftIO . enumHs)) dirs
+	liftIO $ liftM (nub . concat) $ mapM (liftM sequenceA . traverse (liftIO . enumHs)) dirs
 
 -- | Inspect project
 inspectProject :: [String] -> Project -> ErrorT String IO (Project, [InspectedModule])

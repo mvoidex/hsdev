@@ -282,6 +282,7 @@ project file
 data Extensions a = Extensions {
 	extensions :: [Extension],
 	entity :: a }
+		deriving (Eq, Read, Show)
 
 instance Functor Extensions where
 	fmap f (Extensions e x) = Extensions e (f x)
@@ -326,7 +327,7 @@ findSourceDir p f = do
 
 -- | Returns source dirs for library, executables and tests
 sourceDirs :: ProjectDescription -> [Extensions FilePath]
-sourceDirs = concatMap dirs . infos where
+sourceDirs = nub . concatMap dirs . infos where
 	dirs i = map (`withExtensions` i) $ infoSourceDirs i
 
 parseDT :: Distribution.Text.Text a => String -> String -> Parser a
