@@ -54,7 +54,8 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 		pmode = H.defaultParseMode {
 			H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
 			H.baseLanguage = H.Haskell2010,
-			H.extensions = map H.parseExtension exts }
+			H.extensions = map H.parseExtension exts,
+			H.fixities = Just H.baseFixities }
 
 		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
 		source' = map untab source
