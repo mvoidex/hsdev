@@ -5,6 +5,7 @@ module HsDev.Scan.Browse (
 
 import Control.Arrow
 import Control.Monad.Error
+import Data.List (nub)
 import Data.Maybe
 import qualified Data.Map as M
 import Text.Read (readMaybe)
@@ -50,24 +51,27 @@ browseModule :: Cabal -> GHC.Module -> ErrorT String GHC.Ghc Module
 browseModule cabal m = do
 	mi <- lift (GHC.getModuleInfo m) >>= maybe (throwError "Can't find module info") return
 	ds <- mapM (toDecl mi) (GHC.modInfoExports mi)
-	return $ Module {
-		moduleName = GHC.moduleNameString (GHC.moduleName m),
+	let
+		thisModule = GHC.moduleNameString (GHC.moduleName m)
+	return Module {
+		moduleName = thisModule,
 		moduleDocs = Nothing,
 		moduleLocation = mloc,
-		moduleExports = [],
-		moduleImports = [],
-		moduleDeclarations = M.fromList (map (declarationName &&& id) ds) }
+		moduleExports = Just $ map (ExportName . declarationName . snd) ds,
+		moduleImports = [import_ iname | iname <- nub (map fst ds), iname /= thisModule],
+		moduleDeclarations = M.fromList (map ((declarationName &&& id) . snd) ds) }
 	where
 		mloc = CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
 		toDecl minfo n = do
 			tyInfo <- lift $ GHC.modInfoLookupName minfo n
 			tyResult <- lift $ maybe (inModuleSource n) (return . Just) tyInfo
 			dflag <- lift GHC.getSessionDynFlags
-			return $ Declaration
-				(GHC.getOccString n)
-				Nothing
-				Nothing
-				(fromMaybe (Function Nothing []) (tyResult >>= showResult dflag))
+			let
+				srcMod = GHC.moduleNameString $ GHC.moduleName $ GHC.nameModule n
+				decl' = decl (GHC.getOccString n) $ fromMaybe
+					(Function Nothing [])
+					(tyResult >>= showResult dflag)
+			return (srcMod, decl')
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe DeclarationInfo
 		showResult dflags (GHC.AnId i) = Just $ Function (Just $ formatType dflags GHC.varType i) []
 		showResult dflags (GHC.AConLike c) = case c of

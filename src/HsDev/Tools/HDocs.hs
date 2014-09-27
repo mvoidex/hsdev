@@ -35,7 +35,7 @@ hdocsCabal cabal opts = liftM (M.map HDocs.formatDocs) $ HDocs.installedDocs (ca
 -- | Set docs for module
 setDocs :: Map String String -> Module -> Module
 setDocs d m = m { moduleDeclarations = M.mapWithKey setDoc $ moduleDeclarations m } where
-	setDoc name decl = decl { declarationDocs = M.lookup name d }
+	setDoc name decl' = decl' { declarationDocs = M.lookup name d }
 
 -- | Load docs for module
 loadDocs :: [String] -> Module -> IO Module

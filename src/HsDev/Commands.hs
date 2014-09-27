@@ -101,7 +101,7 @@ scopeModules db cabal file = do
 scope :: Database -> Cabal -> FilePath -> Bool -> ErrorT String IO [ModuleDeclaration]
 scope db cabal file False = do
 	(_, mthis, _) <- fileCtx db file
-	depModules <- liftM (filter ((`imported` (moduleImports' mthis)) . moduleId)) $
+	depModules <- liftM (filter ((`imported` moduleImports' mthis) . moduleId)) $
 		scopeModules db cabal file
 	return $ concatMap moduleModuleDeclarations $ mthis : depModules
 scope db cabal file True = concatMap moduleModuleDeclarations <$> scopeModules db cabal file
@@ -111,15 +111,15 @@ completions :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [Modu
 completions db cabal file prefix = do
 	(_, mthis, _) <- fileCtx db file
 	decls <- scope db cabal file False
-	return [decl |
-		decl <- decls,
-		imp <- filter ((== moduleIdName (declarationModuleId decl)) . importModuleName) $
+	return [decl' |
+		decl' <- decls,
+		imp <- filter ((== moduleIdName (declarationModuleId decl')) . importModuleName) $
 			moduleImports' mthis,
 		qname `elem` catMaybes [
 			if not (importIsQualified imp) then Just Nothing else Nothing,
 			Just $ Just $ importModuleName imp,
 			fmap Just $ importAs imp],
-		iname `isPrefixOf` (declarationName . moduleDeclaration $ decl)]
+		iname `isPrefixOf` (declarationName . moduleDeclaration $ decl')]
 	where
 		(qname, iname) = splitIdentifier prefix
 
@@ -153,7 +153,10 @@ splitBy ch = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break (=
 
 -- | Get module imports with Prelude and self import
 moduleImports' :: Module -> [Import]
-moduleImports' m = Import "Prelude" False Nothing Nothing : Import (moduleName m) False Nothing Nothing : moduleImports m
+moduleImports' m =
+	import_ "Prelude" :
+	import_ (moduleName m) :
+	moduleImports m
 
 -- | Split identifier into module name and identifier itself
 splitIdentifier :: String -> (Maybe String, String)

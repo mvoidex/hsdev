@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, ConstraintKinds, FlexibleContexts, LambdaCase #-}
+{-# LANGUAGE OverloadedStrings, ConstraintKinds, FlexibleContexts, LambdaCase, FlexibleInstances #-}
 
 module HsDev.Tools.GhcMod (
 	list,
@@ -14,8 +14,8 @@ module HsDev.Tools.GhcMod (
 
 	locateGhcModEnv, ghcModEnvPath,
 	ghcModWorker,
-	ghcModMultiWorker,
-	waitGhcMod,
+	WorkerMap,
+	ghcModMultiWorker, dispatch,
 	waitMultiGhcMod,
 
 	GhcModT,
@@ -24,17 +24,18 @@ module HsDev.Tools.GhcMod (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Concurrent (newEmptyMVar, putMVar, takeMVar, newMVar, modifyMVar_)
+import Control.Concurrent
 import Control.DeepSeq
-import Control.Exception (SomeException, bracket)
+import Control.Exception (SomeException(..), bracket)
 import Control.Monad.Error
-import Control.Monad.CatchIO (MonadCatchIO)
+import Control.Monad.Catch (MonadThrow(..), MonadCatch(..))
+import Control.Monad.Reader
 import Data.Aeson
 import Data.Char
 import Data.List (nub, sort)
 import Data.Maybe
 import qualified Data.Map as M
-import Exception (gtry)
+import Exception (gcatch)
 import GHC (getSessionDynFlags, defaultCleanupHandler)
 import System.Directory
 import System.FilePath (normalise)
@@ -61,28 +62,33 @@ list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opt
 
 browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ErrorT String IO InspectedModule
 browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ runGhcMod
-	(GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.ghcUserOptions = packageOpt mpackage ++ opts }) $ do
-		ts <- lines <$> GhcMod.browse mpkgname
-		return $ Module {
+	(GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.qualified = True, GhcMod.ghcUserOptions = packageOpt mpackage ++ opts }) $ do
+		ds <- (mapMaybe parseDecl . lines) <$> GhcMod.browse mpkgname
+		return Module {
 			moduleName = mname,
 			moduleDocs = Nothing,
 			moduleLocation = mloc,
-			moduleExports = [],
-			moduleImports = [],
-			moduleDeclarations = decls ts }
+			moduleExports = Just $ map (ExportName . declarationName . snd) ds,
+			moduleImports = [import_ iname | iname <- nub (map fst ds), iname /= mname],
+			moduleDeclarations = M.fromList (map ((declarationName &&& id) . snd) ds) }
 	where
 		mpkgname = maybe mname (\p -> packageName p ++ ":" ++ mname) mpackage
 		mloc = CabalModule cabal mpackage mname
-		decls rs = M.fromList $ map (declarationName &&& id) $ mapMaybe parseDecl rs
-		parseFunction s = do
-			groups <- match "(\\w+)\\s+::\\s+(.*)" s
-			return $ Declaration (groups `at` 1) Nothing Nothing (Function (Just $ groups `at` 2) [])
-		parseType s = do
-			groups <- match "(class|type|data|newtype)\\s+(\\w+)(\\s+(\\w+(\\s+\\w+)*))?" s
-			let
-				args = maybe [] words $ groups 3
-			return $ Declaration (groups `at` 2) Nothing Nothing (declarationTypeCtor (groups `at` 1) $ TypeInfo Nothing args Nothing)
-		parseDecl s = parseFunction s `mplus` parseType s
+		parseDecl s = do
+			groups <- match rx s
+			curry return (init $ groups `at` 1) $
+				decl (groups `at` 3) $ case groups 5 of
+					Nothing -> Function (Just $ groups `at` 4) []
+					Just k -> declarationTypeCtor k $
+						TypeInfo Nothing (maybe [] words $ groups 7) Nothing
+		-- groups:
+		-- 1: "<module>."
+		-- 3: "<name>"
+		-- 4: "<type>" or "<rest>"
+		-- 5: "<kind>" (class, type, data or newtype)
+		-- 6: "<name>"
+		-- 7: " <args>"
+		rx = "^((\\w+\\.)*)(\\w+)\\s+::\\s+((class|type|data|newtype)\\s+(\\w+)((\\s+\\w+)*)?|.*)$"
 
 browseInspection :: [String] -> Inspection
 browseInspection = InspectionAt 0 . sort . nub
@@ -183,7 +189,7 @@ instance FromJSON OutputMessage where
 parseOutputMessage :: String -> Maybe OutputMessage
 parseOutputMessage s = do
 	groups <- match "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
-	return $ OutputMessage {
+	return OutputMessage {
 		errorLocation = Location {
 			locationModule = FileModule (normalise (groups `at` 1)) Nothing,
 			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
@@ -204,7 +210,7 @@ lint opts file = withOptions (\o -> o { GhcMod.hlintOpts = opts }) $ do
 	msgs <- lines <$> GhcMod.lint file
 	return $ mapMaybe parseOutputMessage msgs
 
-runGhcMod :: (GhcMod.IOish m, MonadCatchIO m) => GhcMod.Options -> GhcModT m a -> ErrorT String m a
+runGhcMod :: (GhcMod.IOish m, MonadCatch m) => GhcMod.Options -> GhcModT m a -> ErrorT String m a
 runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ runGhcModT opts act
 
 locateGhcModEnv :: FilePath -> IO (Either Project Cabal)
@@ -216,10 +222,10 @@ ghcModEnvPath :: FilePath -> Either Project Cabal -> FilePath
 ghcModEnvPath defaultPath = either projectPath (fromMaybe defaultPath . sandbox)
 
 -- | Create ghc-mod worker for project or for sandbox
-ghcModWorker :: Either Project Cabal -> IO (Worker (GhcModT IO ()))
+ghcModWorker :: Either Project Cabal -> IO (Worker (GhcModT IO))
 ghcModWorker p = do
 	home <- getHomeDirectory
-	worker_ (runGhcModT'' $ ghcModEnvPath home p) id try
+	startWorker (runGhcModT'' $ ghcModEnvPath home p) id
 	where
 		makeEnv :: FilePath -> IO GhcMod.GhcModEnv
 		makeEnv = GhcMod.newGhcModEnv GhcMod.defaultOptions
@@ -239,31 +245,35 @@ ghcModWorker p = do
 		withCurrentDirectory cur act = bracket getCurrentDirectory setCurrentDirectory $
 			const (setCurrentDirectory cur >> act)
 
+type WorkerMap = MVar (M.Map FilePath (Worker (GhcModT IO)))
+
 -- | Manage many ghc-mod workers for each project/sandbox
-ghcModMultiWorker :: IO (Worker (FilePath, GhcModT IO ()))
-ghcModMultiWorker = worker id initMultiGhcMod multiWork where
-	initMultiGhcMod f = newMVar M.empty >>= f
-	multiWork ghcMods (file, act) = do
-		home <- getHomeDirectory
-		env' <- locateGhcModEnv file
-		let
-			envPath' = ghcModEnvPath home env'
-		modifyMVar_ ghcMods $ \ghcModsMap -> do
-			w <- maybe (ghcModWorker env') return $ M.lookup envPath' ghcModsMap
-			sendWork w act
-			return $ M.insert envPath' w ghcModsMap
+ghcModMultiWorker :: IO (Worker (ReaderT WorkerMap IO))
+ghcModMultiWorker = newMVar M.empty >>= \m -> startWorker (`runReaderT` m) id
 
-waitGhcMod :: Worker (GhcModT IO ()) -> GhcModT IO a -> ErrorT String IO a
-waitGhcMod w act = ErrorT $ do
-	var <- newEmptyMVar
-	sendWork w $ try act >>= liftIO . putMVar var
-	takeMVar var
+instance MonadThrow (GhcModT IO) where
+	throwM = lift . throwM
 
-waitMultiGhcMod :: Worker (FilePath, GhcModT IO ()) -> FilePath -> GhcModT IO a -> ErrorT String IO a
-waitMultiGhcMod w f act = ErrorT $ do
-	var <- newEmptyMVar
-	sendWork w (f, try act >>= liftIO . putMVar var)
-	takeMVar var
+instance MonadCatch (GhcModT IO) where
+	catch = gcatch
 
-try :: GhcModT IO a -> GhcModT IO (Either String a)
-try = liftM (left (show :: SomeException -> String)) . gtry
+dispatch :: FilePath -> GhcModT IO a -> ReaderT WorkerMap IO (Task a)
+dispatch file act = do
+	mvar <- ask
+	home <- liftIO getHomeDirectory
+	env' <- liftIO $ locateGhcModEnv file
+	let
+		envPath' = ghcModEnvPath home env'
+	liftIO $ modifyMVar mvar $ \wmap -> do
+		w <- maybe (ghcModWorker env') return $ M.lookup envPath' wmap
+		t <- pushTask w act
+		return (M.insert envPath' w wmap, t)
+
+waitMultiGhcMod :: Worker (ReaderT WorkerMap IO) -> FilePath -> GhcModT IO a -> ErrorT String IO a
+waitMultiGhcMod w f =
+	liftIO . pushTask w . dispatch f >=>
+	asErrorT . taskWait >=>
+	asErrorT . taskWait
+	where
+		asErrorT :: Monad m => m (Either SomeException a) -> ErrorT String m a
+		asErrorT = ErrorT . liftM (left (\(SomeException e) -> show e))

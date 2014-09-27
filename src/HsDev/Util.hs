@@ -14,14 +14,16 @@ module HsDev.Util (
 	-- * UTF-8
 	fromUtf8, toUtf8,
 	-- * IO
-	hGetLineBS, logException, logIO, ignoreIO
+	hGetLineBS, logException, logIO, ignoreIO,
+	-- * Task
+	liftTask
 	) where
 
-import Control.Arrow (second)
+import Control.Arrow (second, left)
 import Control.Exception
 import Control.Monad
 import Control.Monad.Error
-import qualified Control.Monad.CatchIO as C
+import qualified Control.Monad.Catch as C
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.Char (isSpace)
@@ -37,6 +39,8 @@ import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
 import System.IO (Handle)
+
+import Control.Concurrent.Task
 
 -- | Get directory contents safely
 directoryContents :: FilePath -> IO [FilePath]
@@ -107,17 +111,16 @@ objectUnion _ (Object r) = Object r
 objectUnion _ _ = Null
 
 -- | Lift IO exception to ErrorT
-liftException :: C.MonadCatchIO m => m a -> ErrorT String m a
-liftException act = ErrorT $ C.catch (liftM Right act) onError where
-	onError = return . Left . (show :: SomeException -> String)
+liftException :: C.MonadCatch m => m a -> ErrorT String m a
+liftException = ErrorT . liftM (left $ \(SomeException e) -> show e) . C.try
 
 -- | Lift IO exception to MonadError
-liftExceptionM :: (C.MonadCatchIO m, Error e, MonadError e m) => m a -> m a
+liftExceptionM :: (C.MonadCatch m, Error e, MonadError e m) => m a -> m a
 liftExceptionM act = C.catch act onError where
-	onError = throwError . strMsg . (show :: SomeException -> String)
+	onError = throwError . strMsg . (\(SomeException e) -> show e)
 
 -- | Lift IO exceptions to ErrorT
-liftIOErrors :: C.MonadCatchIO m => ErrorT String m a -> ErrorT String m a
+liftIOErrors :: C.MonadCatch m => ErrorT String m a -> ErrorT String m a
 liftIOErrors act = liftException (runErrorT act) >>= either throwError return
 
 eitherT :: (Monad m, Error e, MonadError e m) => Either String a -> m a
@@ -144,3 +147,6 @@ logIO pre out = handle onIO where
 
 ignoreIO :: IO () -> IO ()
 ignoreIO = handle (const (return ()) :: IOException -> IO ())
+
+liftTask :: MonadIO m => IO (Task a) -> ErrorT String m a
+liftTask = ErrorT . liftM (left (\(SomeException e) -> show e)) . liftIO . join . liftM taskWait

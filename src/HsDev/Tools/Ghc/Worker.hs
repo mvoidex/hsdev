@@ -1,29 +1,24 @@
 module HsDev.Tools.Ghc.Worker (
 	ghcWorker,
-	waitGhc,
 	evaluate,
-	try,
 
 	Ghc,
 
 	module Control.Concurrent.Worker
 	) where
 
-import Control.Arrow (left)
-import Control.Concurrent
-import Control.Exception (SomeException)
 import Control.Monad
 import Control.Monad.Error
+import Control.Monad.Catch
 import Data.Dynamic
-import Exception (gtry)
 import GHC
 import GHC.Paths
 import Packages
 
 import Control.Concurrent.Worker
 
-ghcWorker :: IO (Worker (Ghc ()))
-ghcWorker = worker_ (runGhc (Just libdir)) ghcInit try where
+ghcWorker :: IO (Worker Ghc)
+ghcWorker = startWorker (runGhc (Just libdir)) ghcInit where
 	ghcInit f = do
 		fs <- getSessionDynFlags
 		defaultCleanupHandler fs $ do
@@ -39,15 +34,12 @@ ghcWorker = worker_ (runGhc (Just libdir)) ghcInit try where
 	startMods :: [String]
 	startMods = ["Prelude", "Data.List", "Control.Monad", "HsDev.Tools.Ghc.Prelude"]
 
-waitGhc :: Worker (Ghc ()) -> Ghc a -> ErrorT String IO a
-waitGhc w act = ErrorT $ do
-	var <- newEmptyMVar
-	sendWork w $ try act >>= liftIO . putMVar var
-	takeMVar var
-
 evaluate :: String -> Ghc String
 evaluate expr = liftM fromDynamic (dynCompileExpr $ "show (" ++ expr ++ ")") >>=
 	maybe (fail "evaluate fail") return
 
-try :: Ghc a -> Ghc (Either String a)
-try = liftM (left (show :: SomeException -> String)) . gtry
+instance MonadThrow Ghc where
+	throwM = liftIO . throwM
+
+instance MonadCatch Ghc where
+	catch = gcatch

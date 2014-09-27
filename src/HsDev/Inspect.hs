@@ -14,9 +14,11 @@ import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
-import Data.List (intercalate, find, nub, delete, sort)
+import Data.Function (on)
+import Data.List
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
+import Data.Ord (comparing)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Traversable (traverse, sequenceA)
 import qualified Data.Map as M
@@ -25,6 +27,7 @@ import qualified Documentation.Haddock as Doc
 import qualified System.Directory as Dir
 import System.IO
 import System.FilePath
+import Data.Generics.Uniplate.Data
 
 import qualified Name (Name, getOccString, occNameString)
 import qualified Module (moduleNameString)
@@ -42,11 +45,11 @@ import HsDev.Util
 analyzeModule :: [String] -> Maybe FilePath -> String -> Either String Module
 analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' of
 		H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
-		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ _ imports declarations) -> Right $ Module {
+		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ mexports imports declarations) -> Right Module {
 			moduleName = mname,
 			moduleDocs =  Nothing,
 			moduleLocation = ModuleSource Nothing,
-			moduleExports = [],
+			moduleExports = fmap (concatMap getExports) mexports,
 			moduleImports = map getImport imports,
 			moduleDeclarations = M.fromList $ map (declarationName &&& id) $ getDecls declarations }
 	where
@@ -62,36 +65,62 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 		untab '\t' = ' '
 		untab ch = ch
 
+getExports :: H.ExportSpec -> [Export]
+getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule m]
+getExports e = map (ExportName . identOfName) $ childrenBi e
+
 getImport :: H.ImportDecl -> Import
-getImport d = Import (mname (H.importModule d)) (H.importQualified d) (fmap mname $ H.importAs d) (Just $ toPosition $ H.importLoc d) where
-	mname (H.ModuleName n) = n
+getImport d = Import
+	(mname (H.importModule d))
+	(H.importQualified d)
+	(mname <$> H.importAs d)
+	(importLst <$> H.importSpecs d)
+	(Just $ toPosition $ H.importLoc d)
+	where
+		mname (H.ModuleName n) = n
+		importLst (hiding, specs) = ImportList hiding $ map identOfName (concatMap childrenBi specs :: [H.Name])
 
 getDecls :: [H.Decl] -> [Declaration]
-getDecls decls = map addLocals declInfos ++ filter noInfo defs where
-	declInfos = concatMap getDecl decls
-	addLocals :: Declaration -> Declaration
-	addLocals decl = decl `where_` maybe [] locals def where
-		def = find (\d -> declarationName d == declarationName decl) defs
-	defs = concatMap getDef decls
-	noInfo :: Declaration -> Bool
-	noInfo d = declarationName d `notElem` names
-	names = map declarationName declInfos
+getDecls decls =
+	map mergeDecls .
+	groupBy ((==) `on` declarationName) .
+	sortBy (comparing declarationName) $
+	concatMap getDecl decls ++ concatMap getDef decls 
+	where
+		mergeDecls :: [Declaration] -> Declaration
+		mergeDecls [] = error "Impossible"
+		mergeDecls ds = Declaration
+			(declarationName $ head ds)
+			(msum $ map declarationDocs ds)
+			(minimum <$> mapM declarationPosition ds)
+			(foldr1 mergeInfos $ map declaration ds)
+
+		mergeInfos :: DeclarationInfo -> DeclarationInfo -> DeclarationInfo
+		mergeInfos (Function ln ld) (Function rn rd) = Function (ln `mplus` rn) (ld ++ rd)
+		mergeInfos l _ = l
 
 getBinds :: H.Binds -> [Declaration]
 getBinds (H.BDecls decls) = getDecls decls
 getBinds _ = []
 
 getDecl :: H.Decl -> [Declaration]
-getDecl decl = case decl of
-	H.TypeSig loc names typeSignature -> map
-		(\n -> setPosition loc (Declaration (identOfName n) Nothing Nothing (Function (Just $ oneLinePrint typeSignature) [])))
-		names
-	H.TypeDecl loc n args _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Type $ TypeInfo Nothing (map oneLinePrint args) Nothing)]
-	H.DataDecl loc dataOrNew ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map oneLinePrint args) Nothing)]
-	H.GDataDecl loc dataOrNew ctx n args _ _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (ctor dataOrNew $ TypeInfo (makeCtx ctx) (map oneLinePrint args) Nothing)]
-	H.ClassDecl loc ctx n args _ _ -> [setPosition loc $ Declaration (identOfName n) Nothing Nothing (Class $ TypeInfo (makeCtx ctx) (map oneLinePrint args) Nothing)]
+getDecl decl' = case decl' of
+	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ oneLinePrint typeSignature) []) | n <- names]
+	H.TypeDecl loc n args _ -> [mkType loc n Type args]
+	H.DataDecl loc dataOrNew ctx n args _ _ -> [mkType loc n (ctor dataOrNew `withCtx` ctx) args]
+	H.GDataDecl loc dataOrNew ctx n args _ _ _ -> [mkType loc n (ctor dataOrNew `withCtx` ctx) args]
+	H.ClassDecl loc ctx n args _ _ -> [mkType loc n (Class `withCtx` ctx) args]
 	_ -> []
 	where
+		mkFun :: H.SrcLoc -> H.Name -> DeclarationInfo -> Declaration
+		mkFun loc n = setPosition loc . decl (identOfName n)
+
+		mkType :: H.SrcLoc -> H.Name -> (TypeInfo -> DeclarationInfo) -> [H.TyVarBind] -> Declaration
+		mkType loc n ctor' args = setPosition loc $ decl (identOfName n) $ ctor' $ TypeInfo Nothing (map oneLinePrint args) Nothing
+
+		withCtx :: (TypeInfo -> DeclarationInfo) -> H.Context -> TypeInfo -> DeclarationInfo
+		withCtx ctor' ctx tinfo = ctor' (tinfo { typeInfoContext = makeCtx ctx })
+
 		ctor :: H.DataOrNew -> TypeInfo -> DeclarationInfo
 		ctor H.DataType = Data
 		ctor H.NewType = NewType
@@ -149,7 +178,7 @@ setPosition loc d = d { declarationPosition = Just (toPosition loc) }
 documentationMap :: Doc.Interface -> Map String String
 documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems iface where
 	toDoc :: Doc.ExportItem Name.Name -> [(String, String)]
-	toDoc (Doc.ExportDecl decl docs _ _ _ _) = maybe [] (zip (extractNames decl) . repeat) $ extractDocs docs
+	toDoc (Doc.ExportDecl decl' docs _ _ _ _) = maybe [] (zip (extractNames decl') . repeat) $ extractDocs docs
 	toDoc _ = []
 
 	extractNames :: HsDecls.LHsDecl Name.Name -> [String]
@@ -162,7 +191,7 @@ documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems ifa
 		_ -> []
 
 	extractDocs :: Doc.DocForDecl Name.Name -> Maybe String
-	extractDocs (mbDoc, _) = fmap printDoc $ Doc.documentationDoc mbDoc where
+	extractDocs (mbDoc, _) = printDoc <$> Doc.documentationDoc mbDoc where
 		printDoc :: Doc.Doc Name.Name -> String
 		printDoc Doc.DocEmpty = ""
 		printDoc (Doc.DocAppend l r) = printDoc l ++ printDoc r
@@ -192,7 +221,7 @@ documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems ifa
 
 -- | Adds documentation to declaration
 addDoc :: Map String String -> Declaration -> Declaration
-addDoc docsMap decl = decl { declarationDocs = M.lookup (declarationName decl) docsMap }
+addDoc docsMap decl' = decl' { declarationDocs = M.lookup (declarationName decl') docsMap }
 
 -- | Adds documentation to all declarations in module
 addDocs :: Map String String -> Module -> Module
@@ -222,9 +251,9 @@ inspectFile opts file = do
 	proj <- liftIO $ locateProject file
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
-		docsMap <- case hdocsWorkaround of
-			True -> liftIO $ hdocsProcess absFilename opts
-			False -> liftIO $ fmap (fmap documentationMap . lookup absFilename) $ do
+		docsMap <- liftIO $ if hdocsWorkaround
+			then hdocsProcess absFilename opts
+			else fmap (fmap documentationMap . lookup absFilename) $ do
 				is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
 				forM is $ \i -> do
 					mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
@@ -264,7 +293,7 @@ projectSources p = do
 	subProjs <- liftIO $ liftM (delete (projectPath p) . nub . concat) $ mapM (liftIO . enumCabals) dirs'
 	let
 		enumHs = liftM (filter thisProjectSource) . traverseDirectory
-		thisProjectSource h = haskellSource h && not (any (\sp -> sp `isParent` h) subProjs)
+		thisProjectSource h = haskellSource h && not (any (`isParent` h) subProjs)
 	liftIO $ liftM (nub . concat) $ mapM (liftM sequenceA . traverse (liftIO . enumHs)) dirs
 
 -- | Inspect project

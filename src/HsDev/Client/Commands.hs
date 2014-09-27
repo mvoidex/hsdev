@@ -8,6 +8,7 @@ import Control.Applicative
 import Control.Arrow
 import Control.Monad
 import Control.Monad.Error
+import Control.Monad.Catch (try, SomeException(..))
 import Control.Monad.Trans.Maybe
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
@@ -199,7 +200,7 @@ commands = [
 				updateData (ResultModuleDeclaration md) = do
 					let
 						ModuleId mname mloc = declarationModuleId md
-						defMod = Module mname Nothing mloc [] mempty mempty
+						defMod = Module mname Nothing mloc mempty mempty mempty
 						defInspMod = Inspected InspectionNone mloc (Right defMod)
 						dbmod = maybe
 							defInspMod
@@ -209,7 +210,7 @@ commands = [
 							inspectionResult = fmap (addDeclaration $ moduleDeclaration md) (inspectionResult dbmod) }
 					DB.update (dbVar copts) $ return $ fromModule updatedMod
 				updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
-					DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone mloc (Right $ Module mname Nothing mloc [] mempty mempty)
+					DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone mloc (Right $ Module mname Nothing mloc mempty mempty mempty)
 				updateData (ResultModule m) = DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone (moduleLocation m) (Right m)
 				updateData (ResultInspectedModule m) = DB.update (dbVar copts) $ return $ fromModule m
 				updateData (ResultProject p) = DB.update (dbVar copts) $ return $ fromProject p
@@ -479,11 +480,11 @@ commands = [
 
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
-		ghcEval' exprs _ copts = mapErrorStr $ liftM (map toValue) $
-			waitGhc (commandGhc copts) $ mapM (try . evaluate) exprs
+		ghcEval' exprs _ copts = mapErrorStr $ liftM (map toValue) $ liftTask $
+			pushTask (commandGhc copts) $ mapM (try . evaluate) exprs
 			where
-				toValue :: Either String String -> Value
-				toValue (Left e) = object ["fail" .= e]
+				toValue :: Either SomeException String -> Value
+				toValue (Left (SomeException e)) = object ["fail" .= show e]
 				toValue (Right s) = toJSON s
 
 		-- | Dump database info

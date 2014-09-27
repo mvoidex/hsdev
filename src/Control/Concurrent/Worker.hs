@@ -1,38 +1,45 @@
 module Control.Concurrent.Worker (
 	Worker(..),
-	worker_, worker,
+	startWorker,
+	sendTask, pushTask,
 	stopWorker,
-	ignoreException
+
+	module Control.Concurrent.Task
 	) where
 
-import Control.Exception (SomeException)
-import Control.Monad (void)
+import Control.Concurrent.MVar
+import Control.Monad (void, when)
 import Control.Monad.IO.Class
-import Control.Monad.CatchIO
+import Control.Monad.Catch
 
-import Control.Concurrent (forkIO)
 import Control.Concurrent.FiniteChan
+import Control.Concurrent.Task
 
-data Worker a = Worker {
-	sendWork :: a -> IO (),
-	workerChan :: Chan a }
+data Worker m = Worker {
+	workerChan :: Chan (m ()),
+	workerTask :: MVar (Task ()),
+	workerRestart :: IO Bool }
 
-worker_ :: MonadIO m => (m () -> IO ()) -> (m () -> m ()) -> (a -> m b) -> IO (Worker a)
-worker_ run initialize work = worker run initialize' work' where
-	initialize' f = initialize $ f ()
-	work' _ = work
-
-worker :: MonadIO m => (m () -> IO ()) -> ((s -> m ()) -> m ()) -> (s -> a -> m b) -> IO (Worker a)
-worker run initialize work = do
+startWorker :: MonadIO m => (m () -> IO ()) -> (m () -> m ()) -> IO (Worker m)
+startWorker run initialize = do
 	ch <- newChan
-	void $ forkIO $ run $ initialize $ \s ->
-		liftIO (readChan ch) >>= mapM_ (work s)
-	return $ Worker (putChan ch) ch
+	taskVar <- newEmptyMVar
+	let
+		start = forkTask $ run $ initialize processWork
+		processWork = liftIO (getChan ch) >>= maybe (return ()) (>> processWork)
+	start >>= putMVar taskVar
+	let
+		restart = do
+			f <- readMVar taskVar >>= taskFailed
+			when f (start >>= void . swapMVar taskVar)
+			return f
+	return $ Worker ch taskVar restart
 
-stopWorker :: Worker a -> IO ()
+sendTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Task a)
+sendTask w = runTask $ putChan (workerChan w)
+
+pushTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Task a)
+pushTask w act = workerRestart w >> sendTask w act
+
+stopWorker :: Worker m -> IO ()
 stopWorker = closeChan . workerChan
-
-ignoreException :: MonadCatchIO m => m () -> m ()
-ignoreException act = catch act onError where
-	onError :: MonadCatchIO m => SomeException -> m ()
-	onError _ = return ()

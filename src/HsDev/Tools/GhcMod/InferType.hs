@@ -18,14 +18,14 @@ untyped _ = False
 
 -- | Infer type of declaration
 inferType :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Declaration -> GhcModT IO Declaration
-inferType opts cabal src mproj mname decl
-	| untyped (declaration decl) = infer
-	| otherwise = return decl
+inferType opts cabal src mproj mname decl'
+	| untyped (declaration decl') = infer
+	| otherwise = return decl'
 	where
 		infer = do
-			inferred <- liftM declaration $ info opts cabal src mproj mname (declarationName decl)
-			return decl {
-				declaration = setType (declaration decl) (getType inferred) }
+			inferred <- liftM declaration $ info opts cabal src mproj mname (declarationName decl')
+			return decl' {
+				declaration = setType (declaration decl') (getType inferred) }
 
 		setType :: DeclarationInfo -> Maybe String -> DeclarationInfo
 		setType (Function _ ds) newType = Function newType ds

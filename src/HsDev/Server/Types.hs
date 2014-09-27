@@ -8,6 +8,7 @@ module HsDev.Server.Types (
 
 import Control.Applicative
 import Control.Monad.Error
+import Control.Monad.Reader
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Types (Pair)
 import qualified Data.HashMap.Strict as HM (null)
@@ -18,7 +19,7 @@ import qualified HsDev.Database.Async as DB
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
-import HsDev.Tools.GhcMod (OutputMessage, TypedRegion, GhcModT)
+import HsDev.Tools.GhcMod (OutputMessage, TypedRegion, WorkerMap)
 import HsDev.Tools.Ghc.Worker (Worker, Ghc)
 
 #if mingw32_HOST_OS
@@ -36,8 +37,8 @@ data CommandOptions = CommandOptions {
 #if mingw32_HOST_OS
 	commandMmapPool :: Maybe Pool,
 #endif
-	commandGhc :: Worker (Ghc ()),
-	commandGhcMod :: Worker (FilePath, GhcModT IO ()),
+	commandGhc :: Worker Ghc,
+	commandGhcMod :: Worker (ReaderT WorkerMap IO),
 	commandNotify :: Notification -> IO (),
 	commandLink :: IO (),
 	commandHold :: IO (),

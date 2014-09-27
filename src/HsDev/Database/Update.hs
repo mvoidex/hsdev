@@ -17,7 +17,7 @@ module HsDev.Database.Update (
 	) where
 
 import Control.Applicative
-import Control.Monad.CatchIO
+import Control.Monad.Catch
 import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -101,7 +101,7 @@ data Settings = Settings {
 	ghcOptions :: [String] }
 
 newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [ModuleLocation] m) a }
-	deriving (Applicative, Monad, MonadIO, MonadCatchIO, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
+	deriving (Applicative, Monad, MonadIO, MonadThrow, MonadCatch, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
 
 -- | Run `UpdateDB` monad
 updateDB :: MonadIO m => Settings -> ErrorT String (UpdateDB m) () -> m ()
@@ -183,7 +183,7 @@ readDB :: (MonadIO m, MonadReader Settings m) => m Database
 readDB = asks database >>= liftIO . readAsync
 
 -- | Scan module
-scanModule :: MonadCatchIO m => [String] -> ModuleLocation -> ErrorT String (UpdateDB m) ()
+scanModule :: (MonadIO m, MonadCatch m) => [String] -> ModuleLocation -> ErrorT String (UpdateDB m) ()
 scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
 	im <- liftErrorT $ S.scanModule opts mloc
 	updater $ return $ fromModule im
@@ -191,7 +191,7 @@ scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
 	return ()
 
 -- | Scan modules
-scanModules :: MonadCatchIO m => [String] -> [S.ModuleToScan] -> ErrorT String (UpdateDB m) ()
+scanModules :: (MonadIO m, MonadCatch m) => [String] -> [S.ModuleToScan] -> ErrorT String (UpdateDB m) ()
 scanModules opts ms = do
 	dbval <- readDB
 	ms' <- liftErrorT $ filterM (\m -> S.changedModule dbval (opts ++ snd m) (fst m)) ms
@@ -204,7 +204,7 @@ scanModules opts ms = do
 		toProj _ = Nothing
 
 -- | Scan source file
-scanFile :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
+scanFile :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanFile opts fpath = do
 	dbval <- readDB
 	fpath' <- liftIO $ canonicalizePath fpath
@@ -220,7 +220,7 @@ scanFile opts fpath = do
 	when dirty $ scanModule (opts ++ fileExts) mloc
 
 -- | Scan cabal modules
-scanCabal :: MonadCatchIO m => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
+scanCabal :: (MonadIO m, MonadCatch m) => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
 scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox" .= cabalSandbox]) $ do
 	loadCache $ Cache.loadCabal cabalSandbox
 	dbval <- readDB
@@ -234,14 +234,14 @@ scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox
 		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (moduleName m) docs
 
 -- | Scan project file
-scanProjectFile :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) Project
+scanProjectFile :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) Project
 scanProjectFile opts cabal = runTask "scanning" (subject cabal ["file" .= cabal]) $ do
 	proj <- liftErrorT $ S.scanProjectFile opts cabal
 	updater $ return $ fromProject proj
 	return proj
 
 -- | Scan project
-scanProject :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
+scanProject :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" .= cabal]) $ do
 	proj <- scanProjectFile opts cabal
 	loadCache $ Cache.loadProject $ projectCabal proj
@@ -249,7 +249,7 @@ scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" 
 	scanModules opts sources
 
 -- | Scan directory for source files and projects
-scanDirectory :: MonadCatchIO m => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
+scanDirectory :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 	(projSrcs, standSrcs) <- runTask "getting list of sources" [] $
 		liftErrorT $ S.enumDirectory dir

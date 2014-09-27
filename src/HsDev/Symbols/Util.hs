@@ -96,7 +96,10 @@ imports = moduleImports
 
 -- | Get list of imports, which can be accessed with specified qualifier or unqualified
 qualifier :: Module -> Maybe String -> [Import]
-qualifier m q = filter (importQualifier q) $ (Import "Prelude" False Nothing Nothing : Import (moduleName m) False Nothing Nothing : imports m)
+qualifier m q = filter (importQualifier q) $
+	import_ "Prelude" :
+	import_ (moduleName m) :
+	imports m
 
 -- | Check if module imported via imports specified
 imported :: ModuleId -> [Import] -> Bool
