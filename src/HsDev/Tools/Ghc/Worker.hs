@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module HsDev.Tools.Ghc.Worker (
 	ghcWorker,
 	evaluate,

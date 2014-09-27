@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, ConstraintKinds, FlexibleContexts, LambdaCase, FlexibleInstances #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.GhcMod (
 	list,
