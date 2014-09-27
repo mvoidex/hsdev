@@ -60,7 +60,7 @@ import System.Environment
 import System.Process
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
-import System.Win32.PowerShell (escape, quote)
+import System.Win32.PowerShell (escape, quote, quoteDouble)
 #else
 import System.Posix.Process
 import System.Posix.IO
@@ -90,9 +90,14 @@ commands = [
 			myExe <- getExecutablePath
 			curDir <- getCurrentDirectory
 			let
+				-- one escape for start-process and other for callable process
+				-- seems, that start-process just concats arguments into one string
+				-- start-process foo 'bar baz' ⇒ foo bar baz -- not expected
+				-- start-process foo '"bar baz"' ⇒ foo "bar baz" -- ok
+				biescape = escape quote . escape quoteDouble
 				script = "try { start-process $ $ -WindowStyle Hidden -WorkingDirectory $ } catch { $$_.Exception, $$_.InvocationInfo.Line }" ~~ (
 					escape quote myExe %
-					(intercalate ", " (map (escape quote) args)) %
+					(intercalate ", " (map biescape args)) %
 					escape quote curDir)
 			r <- readProcess "powershell" [
 				"-Command",

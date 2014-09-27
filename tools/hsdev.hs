@@ -5,7 +5,9 @@ module Main (
 	) where
 
 import Control.Applicative
+import Control.Exception
 import Control.Monad
+import Data.List (intercalate)
 import Network.Socket (withSocketsDo)
 import System.Environment (getArgs)
 import System.Exit
@@ -21,10 +23,11 @@ import qualified HsDev.Server.Commands as Server
 import HsDev.Version
 
 main :: IO ()
-main = withSocketsDo $ do
+main = handle logErr' $ withSocketsDo $ do
 	hSetBuffering stdout LineBuffering
 	hSetEncoding stdout utf8
 	as <- getArgs
+	debugLog $ "hsdev " ++ intercalate ", " as
 	when (null as) $ do
 		printUsage
 		exitSuccess
@@ -34,6 +37,7 @@ main = withSocketsDo $ do
 	where
 		onError :: String -> IO ()
 		onError errs = do
+			debugLog $ "error " ++ errs
 			putStrLn errs
 			exitFailure
 
@@ -41,6 +45,10 @@ main = withSocketsDo $ do
 		onDef = do
 			putStrLn "Unknown command"
 			exitFailure
+
+		debugLog s = withFile "debug.log" AppendMode (`hPutStrLn` s)
+
+		logErr' (SomeException e) = debugLog $ "exception " ++ show e
 
 mainCommands :: [Cmd (IO ())]
 mainCommands = withHelp "hsdev" (printWith putStrLn) $ concat [
