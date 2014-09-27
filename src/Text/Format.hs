@@ -10,7 +10,7 @@ module Text.Format (
 	) where
 
 import Control.Arrow (first)
-import Data.List (delete, isSuffixOf)
+import Data.List (delete, isPrefixOf)
 import Text.Regex.Posix
 
 class Format a where
@@ -51,12 +51,14 @@ fmt %~ hargs = case fmt =~ "\\$(\\{([a-zA-Z]+)\\})?" of
 			name = case gs of
 				_:name':_ -> name'
 				_ -> ""
-		(arg', args') <- split' name
-		post' <- post %~ args'
-		return $ concat [
-			pre,
-			if "$" `isSuffixOf` pre then name else arg',
-			post']
+		if null name && "$" `isPrefixOf` post
+			then do
+				post' <- tail post %~ hargs
+				return $ pre ++ "$" ++ post'
+			else do
+				(arg', args') <- split' name
+				post' <- post %~ args'
+				return $ pre ++ arg' ++ post'
 	where
 		args = hole hargs
 

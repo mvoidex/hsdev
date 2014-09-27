@@ -40,6 +40,7 @@ import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
 import System.Console.Cmd hiding (run)
+import Text.Format ((~~), (%))
 
 import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
@@ -59,7 +60,7 @@ import System.Environment
 import System.Process
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
-import System.Win32.PowerShell (translateArg)
+import System.Win32.PowerShell (escape, quote)
 #else
 import System.Posix.Process
 import System.Posix.IO
@@ -88,18 +89,20 @@ commands = [
 				args = ["run"] ++ toArgs (Args [] sopts)
 			myExe <- getExecutablePath
 			curDir <- getCurrentDirectory
+			let
+				script = "try { start-process $ $ -WindowStyle Hidden -WorkingDirectory $ } catch { $$_.Exception, $$_.InvocationInfo.Line }" ~~ (
+					escape quote myExe %
+					(intercalate ", " (map (escape quote) args)) %
+					escape quote curDir)
 			r <- readProcess "powershell" [
 				"-Command",
-				unwords [
-					"&", "{", "start-process",
-					translateArg myExe,
-					intercalate ", " (map translateArg args),
-					"-WindowStyle Hidden",
-					"-WorkingDirectory " ++ translateArg curDir,
-					"}"]] ""
+				script] ""
 			if all isSpace r
 				then putStrLn $ "Server started at port " ++ (fromJust $ arg "port" sopts)
-				else putStrLn $ "Failed to start server: " ++ r
+				else mapM_ putStrLn [
+					"Failed to start server",
+					"\tCommand: " ++ script,
+					"\tResult: " ++ r]
 #else
 			let
 				forkError :: SomeException -> IO ()

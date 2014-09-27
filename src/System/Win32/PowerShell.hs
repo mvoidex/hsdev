@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, OverlappingInstances, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, OverlappingInstances, GeneralizedNewtypeDeriving, LambdaCase #-}
 
 module System.Win32.PowerShell (
 	-- * Run PowerShell
@@ -9,11 +9,13 @@ module System.Win32.PowerShell (
 	PS(..), seqPS, emit, emit_, (=:), invoke,
 	-- * Expression
 	Args(..), CmdLet(..), Expr(..), compile,
-	raw, name, lit, var, bra, (.=), flag, named, call, cmdlet, lambda, (.|), foreach, filter,
+	raw, name, lit, var, bra, cbra, (.=), flag, named, call, cmdlet, lambda, (.|), foreach, filter,
 	-- * Convertible
 	ToPS(..),
 	-- * Escape functions
-	translate, translateArg
+	translate, translateArg,
+	quote, quoteDouble,
+	escape
 	) where
 
 import Prelude hiding (filter)
@@ -23,6 +25,7 @@ import Control.Monad
 import Control.Monad.Writer
 import Data.Char (isAlphaNum)
 import Data.List (intercalate)
+import qualified Data.List as List (filter)
 import Data.Map (Map)
 import qualified Data.Map as M
 
@@ -103,16 +106,16 @@ compile (Emit s) = s
 compile (Literal l) = l
 compile (Var v) = '$':v
 compile (Bracket e) = "(" ++ compile e ++ ")"
-compile (Assign vs es) = intercalate ", " (map ('$':) vs) ++ " = " ++ intercalate ", " (map (compile . bra) es)
-compile (Invoke (CmdLet e (Args p ns))) = unwords [invoke', p', ns'] where
+compile (Assign vs es) = intercalate ", " (map ('$':) vs) ++ " = " ++ intercalate ", " (map (compile . cbra) es)
+compile (Invoke (CmdLet e (Args p ns))) = unwords $ List.filter (not . null) [invoke', p', ns'] where
 	invoke' = case e of
 		Var n -> n
-		_ -> unwords ["&", compile $ bra e]
-	p' = intercalate " " $ map (compile . bra) p
+		_ -> unwords ["&", compile $ cbra e]
+	p' = intercalate " " $ map (compile . cbra) p
 	ns' = intercalate " " $ concatMap named' $ M.toList ns where
 		named' :: (String, Maybe Expr) -> [String]
-		named' (n, Just v) = [n, compile $ bra v]
-		named' (n, Nothing) = [n]
+		named' (n, Just v) = ['-':n, compile $ cbra v]
+		named' (n, Nothing) = ['-':n]
 -- { param($File); $args[0]; }
 compile (Lambda ns body) = unwords ["{", param', body', "}"] where
 	param' = "param(" ++ intercalate "," ns ++ ");"
@@ -134,6 +137,11 @@ var = Var
 
 bra :: Expr -> Expr
 bra = Bracket
+
+cbra :: Expr -> Expr
+cbra e@(Literal _) = e
+cbra v@(Var _) = v
+cbra b = bra b
 
 infixr 6 .= 
 (.=) :: String -> Expr -> Expr
@@ -181,13 +189,27 @@ instance ToPS a => ToPS [a] where
 	toPS = intercalate ", " . map toPS
 
 translate :: String -> String
-translate s = '"' : snd (foldr escape (True, "\"") s) where
-	escape '"' (_, s') = (True, '\\' : '"' : s')
-	escape '\\' (True, s') = (True, '\\' : '\\' : s')
-	escape '\\' (False, s') = (False, '\\' : s')
-	escape c (_, s') = (False, c : s')
+translate s
+	| all (\ch -> isAlphaNum ch || ch `elem` "-_") s = s
+	| otherwise = '"' : snd (foldr escape' (True, "\"") s)
+	where
+		escape' '"' (_, s') = (True, '\\' : '"' : s')
+		escape' '\\' (True, s') = (True, '\\' : '\\' : s')
+		escape' '\\' (False, s') = (False, '\\' : s')
+		escape' c (_, s') = (False, c : s')
 
 translateArg :: String -> String
 translateArg s
 	| all isAlphaNum s = s
 	| otherwise = "'" ++ translate s ++ "'"
+
+quote :: String -> String
+quote s = "'" ++ concatMap (\case { '\'' -> "''"; ch -> [ch] }) s ++ "'"
+
+quoteDouble :: String -> String
+quoteDouble s = "\"" ++ concatMap (\case { '"' -> "\"\""; ch -> [ch] }) s ++ "\""
+
+escape :: (String -> String) -> String -> String
+escape fn s
+	| all (\ch -> isAlphaNum ch || ch `elem` "-_") s = s
+	| otherwise = fn s
