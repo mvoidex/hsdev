@@ -1,6 +1,6 @@
 # hsdev
 
-[![Build Status](https://travis-ci.org/mvoidex/hsdev.png)](https://travis-ci.org/mvoidex/hsdev)
+[![Hackage version](https://img.shields.io/hackage/v/hsdev.svg?style=flat)](http://hackage.haskell.org/package/hsdev) [![Build Status](https://travis-ci.org/mvoidex/hsdev.png)](https://travis-ci.org/mvoidex/hsdev)
 
 Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
 
