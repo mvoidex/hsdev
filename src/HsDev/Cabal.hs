@@ -1,8 +1,8 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, MultiWayIf #-}
 
 module HsDev.Cabal (
 	Cabal(..), sandbox,
-	findPackageDb, locateSandbox, getSandbox,
+	isPackageDb, findPackageDb, locateSandbox, getSandbox,
 	cabalOpt
 	) where
 
@@ -43,25 +43,25 @@ instance FromJSON Cabal where
 		sandboxP = withObject "sandbox" sandboxPath where
 			sandboxPath obj = fmap Sandbox $ obj .: "sandbox"
 
--- | Find -package-db path for sandbox
+-- | Is -package-db file
+isPackageDb :: FilePath -> Bool
+isPackageDb p = cabalDev p || cabalSandbox p where
+	cabalDev dir = "packages-" `isPrefixOf` dir && ".conf" `isSuffixOf` dir
+	cabalSandbox dir = "-packages.conf.d" `isSuffixOf` dir
+
+-- | Find -package-db path for sandbox directory or package-db file itself
 findPackageDb :: FilePath -> IO (Maybe FilePath)
 findPackageDb sand = do
 	sand' <- canonicalizePath sand
 	isDir <- doesDirectoryExist sand'
-	if isDir then locateHere sand' else locateParent (takeDirectory sand')
-	where
-		locateHere path = do
-			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents path
-			return $ fmap (path </>) $ find cabalDev cts <|> find cabalSandbox cts
-		locateParent dir = do
-			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents dir
-			case find cabalDev cts <|> find cabalSandbox cts of
-				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
-				Just packagef -> return $ Just (dir </> packagef)
-		cabalDev p = "packages-" `isPrefixOf` p && ".conf" `isSuffixOf` p
-		cabalSandbox p = "-packages.conf.d" `isSuffixOf` p
+	if
+		| isDir && isPackageDb sand' -> return $ Just sand'
+		| isDir -> do
+			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents sand'
+			return $ fmap (sand' </>) $ find isPackageDb cts
+		| otherwise -> return Nothing
 
--- | Create sandbox by parent directory
+-- | Create sandbox by directory or package-db file
 locateSandbox :: FilePath -> ErrorT String IO Cabal
 locateSandbox p = liftIO (findPackageDb p) >>= maybe
 	(throwError $ "Can't locate package-db in sandbox: " ++ p)
