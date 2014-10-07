@@ -27,28 +27,17 @@ main = handle logErr' $ withSocketsDo $ do
 	hSetBuffering stdout LineBuffering
 	hSetEncoding stdout utf8
 	as <- getArgs
-	debugLog $ "hsdev " ++ intercalate ", " as
 	when (null as) $ do
 		printUsage
 		exitSuccess
 	let
 		asr = if last as == "-?" then "help" : init as else as 
-	run mainCommands onDef onError asr
+	run mainCommands (onError "Unknown command") onError asr
 	where
 		onError :: String -> IO ()
-		onError errs = do
-			debugLog $ "error " ++ errs
-			putStrLn errs
-			exitFailure
+		onError errs = putStrLn errs >> exitFailure
 
-		onDef :: IO ()
-		onDef = do
-			putStrLn "Unknown command"
-			exitFailure
-
-		debugLog s = withFile "debug.log" AppendMode (`hPutStrLn` s)
-
-		logErr' (SomeException e) = debugLog $ "exception " ++ show e
+		logErr' (SomeException e) = putStrLn $ "exception " ++ show e
 
 mainCommands :: [Cmd (IO ())]
 mainCommands = withHelp "hsdev" (printWith putStrLn) $ concat [
