@@ -200,30 +200,29 @@ You can use this `ghci.conf` to allow search from `ghci`:
 
 import Control.Monad.Error
 import HsDev.Tools.Hayoo
+import Data.List (intercalate)
 
 :{
 let
-	showHayooFunction f =
-		(hayooName f ++ " :: " ++ hayooSignature f) :
-		(map ('\t':) $
-			lines (untagDescription (hayooDescription f)) ++
-			["-- Defined in '" ++ hayooModule f ++ "', " ++ hayooPackage f])
-	showHayoo = concatMap showHayooFunction . hayooFunctions
+    showHayooFunction f =
+        (hayooName f ++ " :: " ++ hayooSignature f) :
+        (map ('\t':) $
+            lines (untagDescription (hayooDescription f)) ++
+            ["-- Defined in '" ++ intercalate ", " (hayooModules f) ++ "', " ++ hayooPackage f])
+    showHayoo = concatMap showHayooFunction . resultResult
 :}
 
-:def hayoo \s -> return $ "runErrorT (hayoo \"" ++ s ++ "\") >>= (mapM_ putStrLn) . either (return . (\"Error: \" ++)) showHayoo"
+:def hayoo \s -> return $ "runErrorT (hayoo \"" ++ s ++ "\" Nothing) >>= (mapM_ putStrLn) . either (return . (\"Error: \" ++)) showHayoo"
 </pre>
 
 Usage:
 
 <pre>
 λ> :hayoo (a -> c) -> (b -> c)
-either :: (a -> c) -> (b -> c) -> Either a b -> c
-	Case analysis for the Either type.
-	 If the value is Left a, apply the first function to a;
-	 if it is Right b, apply the second function to b.
-	-- Defined in 'Prelude', base
-...
+query :: (a -> c) -> b -> c
+        query f x walks the structure x (bottom up) and applies f
+         to every a, appending the results.
+        -- Defined in 'Text.Pandoc.Walk', pandoc-types...
 </pre>
 
 ### JSON
