@@ -222,7 +222,8 @@ Usage:
 query :: (a -> c) -> b -> c
         query f x walks the structure x (bottom up) and applies f
          to every a, appending the results.
-        -- Defined in 'Text.Pandoc.Walk', pandoc-types...
+        -- Defined in 'Text.Pandoc.Walk', pandoc-types
+...
 </pre>
 
 ### JSON
