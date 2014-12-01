@@ -94,13 +94,13 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 browseInspection :: [String] -> Inspection
 browseInspection = InspectionAt 0 . sort . nub
 
-info :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> String -> GhcModT IO Declaration
-info opts cabal file _ _ sname = do
+info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
+info opts cabal file sname = do
 	rs <- withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
 		GhcMod.info file sname
 	toDecl rs
 	where
-		toDecl s = maybe (throwError $ strMsg $ "Can't parse info: '" ++ s ++ "'") return $ parseData s `mplus` parseFunction s
+		toDecl s = maybe (throwError $ strMsg $ "Can't parse info: '" ++ sname ++ "'") return $ parseData s `mplus` parseFunction s
 		parseFunction s = do
 			groups <- match (sname ++ "\\s+::\\s+(.*?)(\\s+--(.*))?$") s
 			return $ Declaration sname Nothing Nothing (Function (Just $ groups `at` 1) [])
