@@ -37,7 +37,7 @@ inferType opts cabal src decl'
 -- | Infer types for module
 inferTypes :: [String] -> Cabal -> Module -> GhcModT IO Module
 inferTypes opts cabal m = case moduleLocation m of
-	FileModule src p -> do
+	FileModule src _ -> do
 		inferredDecls <- traverse (inferType opts cabal src) $ moduleDeclarations m
 		return m { moduleDeclarations = inferredDecls }
 	_ -> throwError $ strMsg "Type infer works only for source files"

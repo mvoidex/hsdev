@@ -7,7 +7,6 @@ module Main (
 import Control.Applicative
 import Control.Exception
 import Control.Monad
-import Data.List (intercalate)
 import Network.Socket (withSocketsDo)
 import System.Environment (getArgs)
 import System.Exit

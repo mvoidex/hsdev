@@ -67,7 +67,7 @@ commands = [
 		ghcOpts])
 		"rescan sources"
 		rescan',
-	cmd' "remove" [] (sandboxes ++ [
+	cmdList' "remove" [] (sandboxes ++ [
 		projectArg `desc` "module project",
 		fileArg `desc` "module source file",
 		moduleArg,
@@ -76,16 +76,16 @@ commands = [
 		"remove modules info"
 		remove',
 	-- Context free commands
-	cmd' "modules" [] (sandboxes ++ [
+	cmdList' "modules" [] (sandboxes ++ [
 		manyReq $ projectArg `desc` "projects to list modules from",
 		noLastArg,
 		manyReq packageArg,
 		sourced, standaloned])
 		"list modules"
 		listModules',
-	cmd' "packages" [] [] "list packages" listPackages',
-	cmd' "projects" [] [] "list projects" listProjects',
-	cmd' "symbol" ["name"] (matches ++ sandboxes ++ [
+	cmdList' "packages" [] [] "list packages" listPackages',
+	cmdList' "projects" [] [] "list projects" listProjects',
+	cmdList' "symbol" ["name"] (matches ++ sandboxes ++ [
 		projectArg `desc` "related project",
 		fileArg `desc` "source file",
 		moduleArg, localsArg,
@@ -106,19 +106,19 @@ commands = [
 		"get project info"
 		project',
 	-- Context commands
-	cmd' "lookup" ["symbol"] ctx "lookup for symbol" lookup',
-	cmd' "whois" ["symbol"] ctx "get info for symbol" whois',
-	cmd' "scope modules" [] ctx "get modules accessible from module or within a project" scopeModules',
-	cmd' "scope" [] (ctx ++ matches ++ [globalArg]) "get declarations accessible from module or within a project" scope',
-	cmd' "complete" ["input"] ctx "show completions for input" complete',
+	cmdList' "lookup" ["symbol"] ctx "lookup for symbol" lookup',
+	cmdList' "whois" ["symbol"] ctx "get info for symbol" whois',
+	cmdList' "scope modules" [] ctx "get modules accessible from module or within a project" scopeModules',
+	cmdList' "scope" [] (ctx ++ matches ++ [globalArg]) "get declarations accessible from module or within a project" scope',
+	cmdList' "complete" ["input"] ctx "show completions for input" complete',
 	-- Tool commands
-	cmd' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
-	cmd' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
-	cmd' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
-	cmd' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
-	cmd' "ghc-mod lint" ["file"] [hlintOpts] "lint source file" ghcmodLint',
+	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
+	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
+	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
+	cmdList' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
+	cmdList' "ghc-mod lint" ["file"] [hlintOpts] "lint source file" ghcmodLint',
 	-- Ghc commands
-	cmd' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
+	cmdList' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
 	-- Dump/load commands
 	cmd' "dump" [] (sandboxes ++ [
 		cacheDir, cacheFile,
@@ -140,6 +140,19 @@ commands = [
 				case r of
 					Left (CommandError e ds) -> return $ Error e $ M.fromList $ map (first unpack) ds
 					Right r' -> return $ Result $ toJSON r'
+
+		cmdList' :: ToJSON a => String -> [String] -> [Opt] -> String -> ([String] -> Opts String -> CommandActionT [a]) -> Cmd CommandAction
+		cmdList' nm pos named descr act = cmd' nm pos (named ++ [splitRes]) descr act' where
+			splitRes = flag "split-result" `desc` "split result list and return it with notifications"
+			act' args os copts = do
+				rs <- act args os' copts
+				if flagSet "split-result" isSplit
+					then do
+						liftIO $ mapM_ (commandNotify copts . resultPart) rs
+						return []
+					else return rs
+				where
+					(isSplit, os') = splitOpts [splitRes] os
 
 		-- Command arguments and flags
 		allFlag d = flag "all" `short` ['a'] `desc` d

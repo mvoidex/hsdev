@@ -5,8 +5,8 @@ module HsDev.Server.Message (
 	messagesById,
 	Request(..), requestToArgs,
 	withOpts, withoutOpts,
-	Notification(..), Result(..),
-	Response, isNotification, notification, result, responseError,
+	Notification(..), Result(..), ResultPart(..),
+	Response, isNotification, notification, result, responseError, resultPart,
 	groupResponses, responsesById
 	) where
 
@@ -39,7 +39,7 @@ instance ToJSON a => ToJSON (Message a) where
 
 instance FromJSON a => FromJSON (Message a) where
 	parseJSON = withObject "message" $ \v ->
-		Message <$> (fmap join (v .::? "id")) <*> parseJSON (Object v)
+		Message <$> fmap join (v .::? "id") <*> parseJSON (Object v)
 
 instance Foldable Message where
 	foldMap f (Message _ m) = f m
@@ -110,6 +110,15 @@ instance FromJSON Result where
 		Result <$> v .:: "result",
 		Error <$> v .:: "error" <*> v .:: "details"]
 
+-- | Part of result list, returns via notification
+data ResultPart = ResultPart Value
+
+instance ToJSON ResultPart where
+	toJSON (ResultPart r) = object ["result-part" .= r]
+
+instance FromJSON ResultPart where
+	parseJSON = withObject "result-part" $ \v -> ResultPart <$> v .:: "result-part"
+
 type Response = Either Notification Result
 
 isNotification :: Response -> Bool
@@ -123,6 +132,9 @@ result = Right . Result . toJSON
 
 responseError :: String -> [Pair] -> Response
 responseError e ds = Right $ Error e $ M.fromList $ map (first unpack) ds
+
+resultPart :: ToJSON a => a  -> Notification
+resultPart = Notification . toJSON . ResultPart . toJSON
 
 instance ToJSON Response where
 	toJSON (Left n) = toJSON n
