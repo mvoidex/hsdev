@@ -31,10 +31,7 @@ toolMain name commands = do
 	hSetBuffering stdout LineBuffering
 	hSetEncoding stdout utf8
 	hSetEncoding stdin utf8
-	as <- getArgs
-	case as of
-		[] -> usage name toolCmds
-		_ -> run toolCmds unknownCmd onError as
+	getArgs >>= run toolCmds unknownCmd onError
 	where
 		onError :: String -> IO ()
 		onError = putStrLn
