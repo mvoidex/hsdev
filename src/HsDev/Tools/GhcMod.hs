@@ -135,8 +135,8 @@ instance FromJSON TypedRegion where
 		v .:: "expr" <*>
 		v .:: "type"
 
-typeOf :: [String] -> Cabal -> FilePath -> Maybe Project -> String -> Int -> Int -> GhcModT IO [TypedRegion]
-typeOf opts cabal file _ _ line col = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+typeOf :: [String] -> Cabal -> FilePath -> Int -> Int -> GhcModT IO [TypedRegion]
+typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
 	fileCts <- liftIO $ readFile file
 	ts <- lines <$> GhcMod.types file line col
 	return $ mapMaybe (toRegionType fileCts) ts

@@ -465,9 +465,9 @@ commands = [
 			column' <- maybe (commandError "column must be a number" []) return $ readMaybe column
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			(srcFile', m, mproj) <- mapErrorStr $ fileCtx dbval srcFile
+			(srcFile', _, _) <- mapErrorStr $ fileCtx dbval srcFile
 			mapErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) srcFile' $
-				GhcMod.typeOf (listArg "ghc" as) cabal srcFile' mproj (moduleName m) line' column'
+				GhcMod.typeOf (listArg "ghc" as) cabal srcFile' line' column'
 		ghcmodType' [] _ _ = commandError "Specify line" []
 		ghcmodType' _ _ _ = commandError "Too much arguments" []
 

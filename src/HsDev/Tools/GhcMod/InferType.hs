@@ -3,6 +3,7 @@ module HsDev.Tools.GhcMod.InferType (
 	GhcModT
 	) where
 
+import Control.Applicative
 import Control.Monad.Error
 import Data.Traversable (traverse)
 
@@ -38,6 +39,7 @@ inferType opts cabal src decl'
 inferTypes :: [String] -> Cabal -> Module -> GhcModT IO Module
 inferTypes opts cabal m = case moduleLocation m of
 	FileModule src _ -> do
-		inferredDecls <- traverse (inferType opts cabal src) $ moduleDeclarations m
+		inferredDecls <- traverse (\d -> inferType opts cabal src d <|> return d) $
+			moduleDeclarations m
 		return m { moduleDeclarations = inferredDecls }
 	_ -> throwError $ strMsg "Type infer works only for source files"
