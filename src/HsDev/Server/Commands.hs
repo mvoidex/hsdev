@@ -293,14 +293,14 @@ sendCmd name (Args args opts) = do
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
 			Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
-			h <- socketToHandle s ReadWriteMode
-			L.hPutStrLn h $ encode $ Message Nothing $ reqCall `M.withOpts` [
-				"current-directory" %-- curDir,
-				"data" %-? (fromUtf8 . encode <$> stdinData),
-				"timeout" %-? (iarg "timeout" copts :: Maybe Integer),
-				if flagSet "silent" copts then hoist "silent" else mempty]
-			hFlush h
-			peekResponse h
+			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> do
+				L.hPutStrLn h $ encode $ Message Nothing $ reqCall `M.withOpts` [
+					"current-directory" %-- curDir,
+					"data" %-? (fromUtf8 . encode <$> stdinData),
+					"timeout" %-? (iarg "timeout" copts :: Maybe Integer),
+					if flagSet "silent" copts then hoist "silent" else mempty]
+				hFlush h
+				peekResponse h
 
 		peekResponse h = do
 			resp <- hGetLineBS h
