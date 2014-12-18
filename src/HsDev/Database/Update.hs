@@ -28,6 +28,7 @@ import Data.List (nub)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust)
+import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath)
 
 import qualified HsDev.Cache.Structured as Cache
@@ -231,7 +232,7 @@ scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox
 	updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
-		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (moduleName m) docs
+		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ moduleName m) docs
 
 -- | Scan project file
 scanProjectFile :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) Project

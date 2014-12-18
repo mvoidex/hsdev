@@ -18,6 +18,7 @@ import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Either
 import Network.HTTP
+import Data.String (fromString)
 import Text.RegexPR (gsubRegexPR)
 
 import HsDev.Symbols
@@ -56,11 +57,11 @@ instance FromJSON HayooResult where
 		((rights . map hayooValue) <$> (v .:: "result"))
 
 instance Symbol HayooSymbol where
-	symbolName = hayooName
-	symbolQualifiedName f = case hayooModules f of
+	symbolName = fromString . hayooName
+	symbolQualifiedName f = fromString $ case hayooModules f of
 		[] -> hayooName f
 		(m:_) -> m ++ "." ++ hayooName f
-	symbolDocs = Just . hayooDescription
+	symbolDocs = Just . fromString . hayooDescription
 	symbolLocation r = Location (ModuleSource $ Just $ resultUri r) Nothing where
 
 instance Documented HayooSymbol where
@@ -94,11 +95,11 @@ hayooAsDeclaration :: HayooSymbol -> Maybe ModuleDeclaration
 hayooAsDeclaration f
 	| hayooType f `elem` ["function", "type", "newtype", "data", "class"] = Just ModuleDeclaration {
 		declarationModuleId = ModuleId {
-			moduleIdName = head $ hayooModules f,
+			moduleIdName = fromString $ head $ hayooModules f,
 			moduleIdLocation = ModuleSource (Just $ resultUri f) },
 		moduleDeclaration = Declaration {
-			declarationName = hayooName f,
-			declarationDocs = Just (addOnline $ untagDescription $ hayooDescription f),
+			declarationName = fromString $ hayooName f,
+			declarationDocs = Just (fromString $ addOnline $ untagDescription $ hayooDescription f),
 			declarationPosition = Nothing,
 			declaration = declInfo } }
 	| otherwise = Nothing
@@ -112,7 +113,7 @@ hayooAsDeclaration f
 			"Hackage URL: " ++ resultUri f]
 
 		declInfo
-			| hayooType f == "function" = Function (Just $ hayooSignature f) []
+			| hayooType f == "function" = Function (Just $ fromString $ hayooSignature f) []
 			| hayooType f `elem` ["type", "newtype", "data", "class"] = declarationTypeCtor (hayooType f) $ TypeInfo Nothing [] Nothing
 			| otherwise = error "Impossible"
 

@@ -19,6 +19,7 @@ import Data.List
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
 import Data.Ord (comparing)
+import Data.String (fromString)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Traversable (traverse, sequenceA)
 import qualified Data.Map as M
@@ -46,7 +47,7 @@ analyzeModule :: [String] -> Maybe FilePath -> String -> Either String Module
 analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' of
 		H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
 		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ mexports imports declarations) -> Right Module {
-			moduleName = mname,
+			moduleName = fromString mname,
 			moduleDocs =  Nothing,
 			moduleLocation = ModuleSource Nothing,
 			moduleExports = fmap (concatMap getExports) mexports,
@@ -66,8 +67,8 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 		untab ch = ch
 
 getExports :: H.ExportSpec -> [Export]
-getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule m]
-getExports e = map (ExportName . identOfName) $ childrenBi e
+getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule $ fromString m]
+getExports e = map (ExportName . fromString . identOfName) $ childrenBi e
 
 getImport :: H.ImportDecl -> Import
 getImport d = Import
@@ -77,8 +78,8 @@ getImport d = Import
 	(importLst <$> H.importSpecs d)
 	(Just $ toPosition $ H.importLoc d)
 	where
-		mname (H.ModuleName n) = n
-		importLst (hiding, specs) = ImportList hiding $ map identOfName (concatMap childrenBi specs :: [H.Name])
+		mname (H.ModuleName n) = fromString n
+		importLst (hiding, specs) = ImportList hiding $ map (fromString . identOfName) (concatMap childrenBi specs :: [H.Name])
 
 getDecls :: [H.Decl] -> [Declaration]
 getDecls decls =
@@ -105,7 +106,7 @@ getBinds _ = []
 
 getDecl :: H.Decl -> [Declaration]
 getDecl decl' = case decl' of
-	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ oneLinePrint typeSignature) []) | n <- names]
+	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ fromString $ oneLinePrint typeSignature) []) | n <- names]
 	H.TypeDecl loc n args _ -> [mkType loc n Type args]
 	H.DataDecl loc dataOrNew ctx n args _ _ -> [mkType loc n (ctor dataOrNew `withCtx` ctx) args]
 	H.GDataDecl loc dataOrNew ctx n args _ _ _ -> [mkType loc n (ctor dataOrNew `withCtx` ctx) args]
@@ -113,10 +114,10 @@ getDecl decl' = case decl' of
 	_ -> []
 	where
 		mkFun :: H.SrcLoc -> H.Name -> DeclarationInfo -> Declaration
-		mkFun loc n = setPosition loc . decl (identOfName n)
+		mkFun loc n = setPosition loc . decl (fromString $ identOfName n)
 
 		mkType :: H.SrcLoc -> H.Name -> (TypeInfo -> DeclarationInfo) -> [H.TyVarBind] -> Declaration
-		mkType loc n ctor' args = setPosition loc $ decl (identOfName n) $ ctor' $ TypeInfo Nothing (map oneLinePrint args) Nothing
+		mkType loc n ctor' args = setPosition loc $ decl (fromString $ identOfName n) $ ctor' $ TypeInfo Nothing (map (fromString . oneLinePrint) args) Nothing
 
 		withCtx :: (TypeInfo -> DeclarationInfo) -> H.Context -> TypeInfo -> DeclarationInfo
 		withCtx ctor' ctx tinfo = ctor' (tinfo { typeInfoContext = makeCtx ctx })
@@ -126,17 +127,17 @@ getDecl decl' = case decl' of
 		ctor H.NewType = NewType
 
 		makeCtx [] = Nothing
-		makeCtx ctx = Just $ intercalate ", " $ map oneLinePrint ctx
+		makeCtx ctx = Just $ fromString $ intercalate ", " $ map oneLinePrint ctx
 
 		oneLinePrint :: H.Pretty a => a -> String
 		oneLinePrint = H.prettyPrintStyleMode (H.style { H.mode = H.OneLineMode }) H.defaultMode
 
 getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []
-getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (identOfName n) Nothing Nothing fun] where
+getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (fromString $ identOfName n) Nothing Nothing fun] where
 	fun = Function Nothing $ concatMap (getBinds . matchBinds) matches
 	matchBinds (H.Match _ _ _ _ _ binds) = binds
-getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (Declaration (identOfName name) Nothing Nothing (Function Nothing $ getBinds binds))) (names pat) where
+getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (Declaration (fromString $ identOfName name) Nothing Nothing (Function Nothing $ getBinds binds))) (names pat) where
 	names :: H.Pat -> [H.Name]
 	names (H.PVar n) = [n]
 	names (H.PNPlusK n _) = [n]
@@ -221,7 +222,8 @@ documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems ifa
 
 -- | Adds documentation to declaration
 addDoc :: Map String String -> Declaration -> Declaration
-addDoc docsMap decl' = decl' { declarationDocs = M.lookup (declarationName decl') docsMap }
+addDoc docsMap decl' = decl' { declarationDocs = M.lookup (declarationName decl') docsMap' } where
+	docsMap' = M.mapKeys fromString . M.map fromString $ docsMap
 
 -- | Adds documentation to all declarations in module
 addDocs :: Map String String -> Module -> Module

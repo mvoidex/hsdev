@@ -36,6 +36,7 @@ import Data.Char
 import Data.List (nub, sort)
 import Data.Maybe
 import qualified Data.Map as M
+import Data.String (fromString)
 import Exception (gcatch)
 import GHC (getSessionDynFlags, defaultCleanupHandler)
 import System.Directory
@@ -66,11 +67,11 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 	(GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.qualified = True, GhcMod.ghcUserOptions = packageOpt mpackage ++ opts }) $ do
 		ds <- (mapMaybe parseDecl . lines) <$> GhcMod.browse mpkgname
 		return Module {
-			moduleName = mname,
+			moduleName = fromString mname,
 			moduleDocs = Nothing,
 			moduleLocation = mloc,
 			moduleExports = Just $ map (ExportName . declarationName . snd) ds,
-			moduleImports = [import_ iname | iname <- nub (map fst ds), iname /= mname],
+			moduleImports = [import_ (fromString iname) | iname <- nub (map fst ds), iname /= mname],
 			moduleDeclarations = M.fromList (map ((declarationName &&& id) . snd) ds) }
 	where
 		mpkgname = maybe mname (\p -> packageName p ++ ":" ++ mname) mpackage
@@ -78,10 +79,10 @@ browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts)
 		parseDecl s = do
 			groups <- match rx s
 			curry return (init $ groups `at` 1) $
-				decl (groups `at` 3) $ case groups 5 of
-					Nothing -> Function (Just $ groups `at` 4) []
+				decl (fromString $ groups `at` 3) $ case groups 5 of
+					Nothing -> Function (Just $ fromString $ groups `at` 4) []
 					Just k -> declarationTypeCtor k $
-						TypeInfo Nothing (maybe [] words $ groups 7) Nothing
+						TypeInfo Nothing (maybe [] (map fromString . words) $ groups 7) Nothing
 		-- groups:
 		-- 1: "<module>."
 		-- 3: "<name>"
@@ -103,14 +104,14 @@ info opts cabal file sname = do
 		toDecl s = maybe (throwError $ strMsg $ "Can't parse info: '" ++ sname ++ "'") return $ parseData s `mplus` parseFunction s
 		parseFunction s = do
 			groups <- match (sname ++ "\\s+::\\s+(.*?)(\\s+--(.*))?$") s
-			return $ Declaration sname Nothing Nothing (Function (Just $ groups `at` 1) [])
+			return $ Declaration (fromString sname) Nothing Nothing (Function (Just $ fromString $ groups `at` 1) [])
 		parseData s = do
 			groups <- match "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined)?" s
 			let
-				args = maybe [] words $ groups 5
-				ctx = fmap trim $ groups 3
-				def = groups 8
-			return $ Declaration sname Nothing Nothing (declarationTypeCtor (groups `at` 1) $ TypeInfo ctx args def)
+				args = maybe [] (map fromString . words) $ groups 5
+				ctx = fmap (fromString . trim) $ groups 3
+				def = fmap fromString $ groups 8
+			return $ Declaration (fromString sname) Nothing Nothing (declarationTypeCtor (groups `at` 1) $ TypeInfo ctx args def)
 		trim = p . p where
 			p = reverse . dropWhile isSpace
 

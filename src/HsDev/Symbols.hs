@@ -51,6 +51,8 @@ import qualified Data.Map as M
 import Data.Monoid (Monoid(mempty))
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Foldable (Foldable(..))
+import Data.Text (Text, unpack)
+import qualified Data.Text as T (concat)
 import Data.Traversable (Traversable(..))
 import System.Directory
 import System.FilePath
@@ -61,7 +63,7 @@ import HsDev.Project
 import HsDev.Util (tab, tabs, (.::))
 
 -- | Module export
-data Export = ExportName String | ExportModule String
+data Export = ExportName Text | ExportModule Text
 	deriving (Eq, Ord)
 
 instance NFData Export where
@@ -69,8 +71,8 @@ instance NFData Export where
 	rnf (ExportModule m) = rnf m
 
 instance Show Export where
-	show (ExportName n) = n
-	show (ExportModule m) = "module " ++ m
+	show (ExportName n) = unpack n
+	show (ExportModule m) = "module " ++ unpack m
 
 instance ToJSON Export where
 	toJSON (ExportName n) = object ["name" .= n]
@@ -82,21 +84,21 @@ instance FromJSON Export where
 		(ExportModule <$> (v .:: "module"))
 
 -- | Get name of export
-export :: Export -> String
+export :: Export -> Text
 export (ExportName n) = n
 export (ExportModule m) = m
 
 -- | Import list
 data ImportList = ImportList {
 	hidingList :: Bool,
-	importSpec :: [String] }
+	importSpec :: [Text] }
 		deriving (Eq, Ord)
 
 instance NFData ImportList where
 	rnf (ImportList h ls) = rnf h `seq` rnf ls
 
 instance Show ImportList where
-	show (ImportList h ls) = (if h then ("hiding " ++) else id) $ "(" ++ intercalate ", " ls ++ ")"
+	show (ImportList h ls) = (if h then ("hiding " ++) else id) $ "(" ++ intercalate ", " (map unpack ls) ++ ")"
 
 instance ToJSON ImportList where
 	toJSON (ImportList h ls) = object [
@@ -110,9 +112,9 @@ instance FromJSON ImportList where
 
 -- | Module import
 data Import = Import {
-	importModuleName :: String,
+	importModuleName :: Text,
 	importIsQualified :: Bool,
-	importAs :: Maybe String,
+	importAs :: Maybe Text,
 	importList :: Maybe ImportList,
 	importPosition :: Maybe Position }
 		deriving (Eq, Ord)
@@ -124,8 +126,8 @@ instance Show Import where
 	show i = concat [
 		"import ",
 		(if importIsQualified i then "qualified " else ""),
-		importModuleName i,
-		maybe "" (" as " ++) (importAs i),
+		unpack $ importModuleName i,
+		maybe "" ((" as " ++) . unpack) (importAs i),
 		maybe "" ((" " ++) . show) (importList i)]
 
 instance ToJSON Import where
@@ -145,11 +147,11 @@ instance FromJSON Import where
 		v .:: "pos"
 
 -- | Simple import
-import_ :: String -> Import
+import_ :: Text -> Import
 import_ n = Import n False Nothing Nothing Nothing
 
 -- | Imported module can be accessed via qualifier
-importQualifier :: Maybe String -> Import -> Bool
+importQualifier :: Maybe Text -> Import -> Bool
 importQualifier Nothing i
 	| not (importIsQualified i) = True
 	| otherwise = False
@@ -185,7 +187,7 @@ instance Symbol ModuleDeclaration where
 
 -- | Module id
 data ModuleId = ModuleId {
-	moduleIdName :: String,
+	moduleIdName :: Text,
 	moduleIdLocation :: ModuleLocation }
 		deriving (Eq, Ord)
 
@@ -193,7 +195,7 @@ instance NFData ModuleId where
 	rnf (ModuleId n l) = rnf n `seq` rnf l
 
 instance Show ModuleId where
-	show (ModuleId n l) = "module " ++ n ++ " from " ++ show l
+	show (ModuleId n l) = "module " ++ unpack n ++ " from " ++ show l
 
 instance ToJSON ModuleId where
 	toJSON m = object [
@@ -207,12 +209,12 @@ instance FromJSON ModuleId where
 
 -- | Module
 data Module = Module {
-	moduleName :: String,
-	moduleDocs :: Maybe String,
+	moduleName :: Text,
+	moduleDocs :: Maybe Text,
 	moduleLocation :: ModuleLocation,
 	moduleExports :: Maybe [Export],
 	moduleImports :: [Import],
-	moduleDeclarations :: Map String Declaration }
+	moduleDeclarations :: Map Text Declaration }
 		deriving (Ord)
 
 instance ToJSON Module where
@@ -231,7 +233,7 @@ instance FromJSON Module where
 		v .:: "location" <*>
 		v .:: "exports" <*>
 		v .:: "imports" <*>
-		((M.fromList . map (declarationName &&& id)) <$>v .:: "declarations")
+		((M.fromList . map (declarationName &&& id)) <$> v .:: "declarations")
 
 instance NFData Module where
 	rnf (Module n d s e i ds) = rnf n `seq` rnf d `seq` rnf s `seq` rnf e `seq` rnf i `seq` rnf ds
@@ -241,21 +243,21 @@ instance Eq Module where
 
 instance Show Module where
 	show m = unlines $ filter (not . null) [
-		"module " ++ moduleName m,
+		"module " ++ unpack (moduleName m),
 		"\tlocation: " ++ show (moduleLocation m),
 		"\texports: " ++ maybe "*" (intercalate ", " . map show) (moduleExports m),
 		"\timports:",
 		unlines $ map (tab 2 . show) $ moduleImports m,
 		"\tdeclarations:",
 		unlines $ map (tabs 2 . show) $ M.elems (moduleDeclarations m),
-		maybe "" ("\tdocs: " ++) (moduleDocs m)]
+		maybe "" (("\tdocs: " ++) . unpack) (moduleDocs m)]
 
 -- | Bring locals to top
 moduleLocals :: Module -> Module
 moduleLocals m = m { moduleDeclarations = moduleLocalDeclarations m }
 
 -- | Get declarations with locals
-moduleLocalDeclarations :: Module -> Map String Declaration
+moduleLocalDeclarations :: Module -> Map Text Declaration
 moduleLocalDeclarations =
 	M.fromList .
 	map (declarationName &&& id) . 
@@ -282,8 +284,8 @@ class Locals a where
 
 -- | Declaration
 data Declaration = Declaration {
-	declarationName :: String,
-	declarationDocs :: Maybe String,
+	declarationName :: Text,
+	declarationDocs :: Maybe Text,
 	declarationPosition :: Maybe Position,
 	declaration :: DeclarationInfo }
 		deriving (Eq, Ord)
@@ -294,7 +296,7 @@ instance NFData Declaration where
 instance Show Declaration where
 	show d = unlines $ filter (not . null) [
 		brief d,
-		maybe "" ("\tdocs: " ++) $ declarationDocs d,
+		maybe "" (("\tdocs: " ++) . unpack) $ declarationDocs d,
 		maybe "" (("\tlocation: " ++ ) . show) $ declarationPosition d]
 
 instance ToJSON Declaration where
@@ -313,9 +315,9 @@ instance FromJSON Declaration where
 
 instance Locals Declaration where
 	locals = locals . declaration
-	where_ d ds = d { declaration = where_ (declaration d) ds }
+	where_ d ds = d { declaration = (declaration d) `where_` ds }
 
-decl :: String -> DeclarationInfo -> Declaration
+decl :: Text -> DeclarationInfo -> Declaration
 decl n = Declaration n Nothing Nothing
 
 declarationLocals :: Declaration -> [Declaration]
@@ -324,9 +326,9 @@ declarationLocals d = map prefix' $ locals $ declaration d where
 
 -- | Common info for type/newtype/data/class
 data TypeInfo = TypeInfo {
-	typeInfoContext :: Maybe String,
-	typeInfoArgs :: [String],
-	typeInfoDefinition :: Maybe String }
+	typeInfoContext :: Maybe Text,
+	typeInfoArgs :: [Text],
+	typeInfoDefinition :: Maybe Text }
 		deriving (Eq, Ord, Read, Show)
 
 instance NFData TypeInfo where
@@ -345,11 +347,16 @@ instance FromJSON TypeInfo where
 		v .:: "def"
 
 showTypeInfo :: TypeInfo -> String -> String -> String
-showTypeInfo ti pre name = pre ++ maybe "" (++ " =>") (typeInfoContext ti) ++ " " ++ name ++ " " ++ unwords (typeInfoArgs ti) ++ maybe "" (" = " ++) (typeInfoDefinition ti)
+showTypeInfo ti pre name = concat [
+	pre,
+	maybe "" ((++ " =>") . unpack) (typeInfoContext ti), " ",
+	name, " ",
+	unwords (map unpack $ typeInfoArgs ti),
+	maybe "" ((" = " ++) . unpack) (typeInfoDefinition ti)]
 
 -- | Declaration info
 data DeclarationInfo =
-	Function { functionType :: Maybe String, localDeclarations :: [Declaration] } |
+	Function { functionType :: Maybe Text, localDeclarations :: [Declaration] } |
 	Type { typeInfo :: TypeInfo } |
 	NewType { newTypeInfo :: TypeInfo } |
 	Data { dataInfo :: TypeInfo } |
@@ -390,7 +397,7 @@ instance Locals DeclarationInfo where
 	where_ d _ = d
 
 -- | Get function type of type info
-declarationInfo :: DeclarationInfo -> Either (Maybe String, [Declaration]) TypeInfo
+declarationInfo :: DeclarationInfo -> Either (Maybe Text, [Declaration]) TypeInfo
 declarationInfo (Function t ds) = Left (t, ds)
 declarationInfo (Type ti) = Right ti
 declarationInfo (NewType ti) = Right ti
@@ -440,8 +447,8 @@ instance FromJSON ModuleDeclaration where
 		v .:: "declaration"
 
 -- | Returns qualified name of symbol
-qualifiedName :: ModuleId -> Declaration -> String
-qualifiedName m d = moduleIdName m ++ "." ++ declarationName d
+qualifiedName :: ModuleId -> Declaration -> Text
+qualifiedName m d = T.concat [moduleIdName m, ".", declarationName d]
 
 class Canonicalize a where
 	canonicalize :: a -> IO a
@@ -488,25 +495,25 @@ addDeclaration decl' m = m { moduleDeclarations = decls' } where
 	decls' = M.insert (declarationName decl') decl' $ moduleDeclarations m
 
 -- | Unalias import name
-unalias :: Module -> String -> [String]
+unalias :: Module -> Text -> [Text]
 unalias m alias = [importModuleName i | i <- moduleImports m, importAs i == Just alias]
 
 instance Documented ModuleId where
-	brief m = moduleIdName m ++ " in " ++ show (moduleIdLocation m)
+	brief m = unpack (moduleIdName m) ++ " in " ++ show (moduleIdLocation m)
 
 instance Documented Module where
-	brief m = moduleName m ++ " in " ++ show (moduleLocation m)
+	brief m = unpack (moduleName m) ++ " in " ++ show (moduleLocation m)
 	detailed m = unlines $ header ++ docs ++ cts where
 		header = [brief m, ""]
-		docs = maybe [] return $ moduleDocs m
+		docs = maybe [] (return . unpack) $ moduleDocs m
 		cts = moduleContents m
 
 instance Documented Declaration where
 	brief d = case declarationInfo $ declaration d of
-		Left (f, _) -> name ++ maybe "" (" :: " ++) f
+		Left (f, _) -> name ++ maybe "" ((" :: " ++) . unpack) f
 		Right ti -> showTypeInfo ti (fromMaybe err $ declarationTypeName $ declaration d) name
 		where
-			name = declarationName d
+			name = unpack $ declarationName d
 			err = error "Impossible happened: declarationTypeName"
 
 instance Documented ModuleDeclaration where
@@ -515,7 +522,7 @@ instance Documented ModuleDeclaration where
 -- | Module contents
 moduleContents :: Module -> [String]
 moduleContents = map showDecl . M.elems . moduleDeclarations where
-	showDecl d = brief d ++ maybe "" (" -- " ++) (declarationDocs d)
+	showDecl d = brief d ++ maybe "" ((" -- " ++) . unpack) (declarationDocs d)
 
 -- | Inspection data
 data Inspection =

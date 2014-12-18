@@ -19,11 +19,12 @@ module HsDev.Commands (
 	) where
 
 import Control.Applicative
-import Control.Arrow (Arrow(second))
 import Control.Monad.Error
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M (lookup)
+import Data.String (fromString)
+import qualified Data.Text as T (isPrefixOf, split, unpack)
 import Data.Traversable (traverse)
 import System.Directory (canonicalizePath)
 
@@ -37,14 +38,14 @@ findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
 findDeclaration db ident = return $ selectDeclarations checkName db where
 	checkName :: ModuleDeclaration -> Bool
 	checkName m =
-		(declarationName (moduleDeclaration m) == iname) &&
-		(maybe True (moduleIdName (declarationModuleId m) ==) qname)
+		(declarationName (moduleDeclaration m) == fromString iname) &&
+		(maybe True ((moduleIdName (declarationModuleId m) ==) . fromString) qname)
 
 	(qname, iname) = splitIdentifier ident
 
 -- | Find module by name
 findModule :: Database -> String -> ErrorT String IO [Module]
-findModule db mname = return $ selectModules ((== mname) . moduleName) db
+findModule db mname = return $ selectModules ((== fromString mname) . moduleName) db
 
 -- | Find module in file
 fileModule :: Database -> FilePath -> ErrorT String IO Module
@@ -115,20 +116,20 @@ completions db cabal file prefix = do
 		decl' <- decls,
 		imp <- filter ((== moduleIdName (declarationModuleId decl')) . importModuleName) $
 			moduleImports' mthis,
-		qname `elem` catMaybes [
+		fmap fromString qname `elem` catMaybes [
 			if not (importIsQualified imp) then Just Nothing else Nothing,
 			Just $ Just $ importModuleName imp,
 			fmap Just $ importAs imp],
-		iname `isPrefixOf` (declarationName . moduleDeclaration $ decl')]
+		fromString iname `T.isPrefixOf` (declarationName . moduleDeclaration $ decl')]
 	where
 		(qname, iname) = splitIdentifier prefix
 
 -- | Module completions
 moduleCompletions :: Database -> [Module] -> String -> ErrorT String IO [String]
-moduleCompletions _ ms prefix = return $ nub $ completions' $ map moduleName ms where
+moduleCompletions _ ms prefix = return $ map T.unpack $ nub $ completions' $ map moduleName ms where
 	completions' = mapMaybe getNext where
 		getNext m
-			| prefix `isPrefixOf` m = listToMaybe $ map snd $ dropWhile (uncurry (==)) $ zip (splitBy '.' prefix) (splitBy '.' m)
+			| fromString prefix `T.isPrefixOf` m = listToMaybe $ map snd $ dropWhile (uncurry (==)) $ zip (T.split (== '.') $ fromString prefix) (T.split (== '.') m)
 			| otherwise = Nothing
 
 -- | Check module
@@ -148,13 +149,10 @@ visibleFrom :: Maybe Project -> Module -> ModuleId -> Bool
 visibleFrom (Just p) this m = visible p (moduleId this) m
 visibleFrom Nothing this m = (moduleId this) == m || byCabal m
 
-splitBy :: Char -> String -> [String]
-splitBy ch = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break (== ch))
-
 -- | Get module imports with Prelude and self import
 moduleImports' :: Module -> [Import]
 moduleImports' m =
-	import_ "Prelude" :
+	import_ (fromString "Prelude") :
 	import_ (moduleName m) :
 	moduleImports m
 

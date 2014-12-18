@@ -17,7 +17,9 @@ import Data.List
 import Data.Maybe
 import Data.Monoid
 import qualified Data.Map as M
+import Data.String (fromString)
 import Data.Text (unpack)
+import qualified Data.Text as T (isInfixOf, isPrefixOf)
 import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
@@ -687,7 +689,7 @@ findMatch as = case arg "find" as of
 	Nothing -> id
 	Just str -> filter (match' str)
 	where
-		match' str m = str `isInfixOf` declarationName (moduleDeclaration m)
+		match' str m = fromString str `T.isInfixOf` declarationName (moduleDeclaration m)
 
 -- | Filter declarations with prefix match
 prefMatch :: Opts String -> [ModuleDeclaration] -> [ModuleDeclaration]
@@ -696,6 +698,6 @@ prefMatch as = case fmap splitIdentifier (arg "prefix" as) of
 	Just (qname, pref) -> filter (match' qname pref)
 	where
 		match' qname pref m =
-			pref `isPrefixOf` declarationName (moduleDeclaration m) &&
-			maybe True (== moduleIdName (declarationModuleId m)) qname
+			fromString pref `T.isPrefixOf` declarationName (moduleDeclaration m) &&
+			maybe True (== moduleIdName (declarationModuleId m)) (fmap fromString qname)
 

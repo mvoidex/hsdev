@@ -5,6 +5,8 @@ module HsDev.Tools.GhcMod.InferType (
 
 import Control.Applicative
 import Control.Monad.Error
+import Data.String (fromString)
+import qualified Data.Text as T (unpack)
 import Data.Traversable (traverse)
 
 import HsDev.Cabal
@@ -23,16 +25,16 @@ inferType opts cabal src decl'
 	| otherwise = return decl'
 	where
 		infer = do
-			inferred <- liftM declaration $ info opts cabal src (declarationName decl')
+			inferred <- liftM declaration $ info opts cabal src (T.unpack $ declarationName decl')
 			return decl' {
 				declaration = setType (declaration decl') (getType inferred) }
 
 		setType :: DeclarationInfo -> Maybe String -> DeclarationInfo
-		setType (Function _ ds) newType = Function newType ds
+		setType (Function _ ds) newType = Function (fmap fromString newType) ds
 		setType dinfo _ = dinfo
 
 		getType :: DeclarationInfo -> Maybe String
-		getType (Function fType _) = fType
+		getType (Function fType _) = fmap T.unpack fType
 		getType _ = Nothing
 
 -- | Infer types for module

@@ -14,7 +14,8 @@ import Data.Aeson (decode)
 import qualified Data.ByteString.Lazy.Char8 as L (pack)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe ()
+import Data.String (fromString)
+import Data.Text (unpack)
 import System.Process (readProcess)
 
 import qualified HDocs.Module as HDocs
@@ -35,12 +36,13 @@ hdocsCabal cabal opts = liftM (M.map HDocs.formatDocs) $ HDocs.installedDocs (ca
 -- | Set docs for module
 setDocs :: Map String String -> Module -> Module
 setDocs d m = m { moduleDeclarations = M.mapWithKey setDoc $ moduleDeclarations m } where
-	setDoc name decl' = decl' { declarationDocs = M.lookup name d }
+	setDoc name decl' = decl' { declarationDocs = M.lookup name d' }
+	d' = M.mapKeys fromString . M.map fromString $ d
 
 -- | Load docs for module
 loadDocs :: [String] -> Module -> IO Module
 loadDocs opts m = do
-	d <- hdocs (moduleName m) opts
+	d <- hdocs (unpack $ moduleName m) opts
 	return $ setDocs d m
 
 hdocsProcess :: String -> [String] -> IO (Maybe (Map String String))

@@ -8,6 +8,7 @@ import Control.Monad.Error
 import Data.List (nub)
 import Data.Maybe
 import qualified Data.Map as M
+import Data.String (fromString)
 import Text.Read (readMaybe)
 
 import HsDev.Cabal
@@ -54,11 +55,11 @@ browseModule cabal m = do
 	let
 		thisModule = GHC.moduleNameString (GHC.moduleName m)
 	return Module {
-		moduleName = thisModule,
+		moduleName = fromString thisModule,
 		moduleDocs = Nothing,
 		moduleLocation = mloc,
 		moduleExports = Just $ map (ExportName . declarationName . snd) ds,
-		moduleImports = [import_ iname | iname <- nub (map fst ds), iname /= thisModule],
+		moduleImports = [import_ (fromString iname) | iname <- nub (map fst ds), iname /= thisModule],
 		moduleDeclarations = M.fromList (map ((declarationName &&& id) . snd) ds) }
 	where
 		mloc = CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
@@ -68,16 +69,16 @@ browseModule cabal m = do
 			dflag <- lift GHC.getSessionDynFlags
 			let
 				srcMod = GHC.moduleNameString $ GHC.moduleName $ GHC.nameModule n
-				decl' = decl (GHC.getOccString n) $ fromMaybe
+				decl' = decl (fromString $ GHC.getOccString n) $ fromMaybe
 					(Function Nothing [])
 					(tyResult >>= showResult dflag)
 			return (srcMod, decl')
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe DeclarationInfo
-		showResult dflags (GHC.AnId i) = Just $ Function (Just $ formatType dflags GHC.varType i) []
+		showResult dflags (GHC.AnId i) = Just $ Function (Just $ fromString $ formatType dflags GHC.varType i) []
 		showResult dflags (GHC.AConLike c) = case c of
-			GHC.RealDataCon d -> Just $ Function (Just $ formatType dflags GHC.dataConRepType d) []
-			GHC.PatSynCon p -> Just $ Function (Just $ formatType dflags GHC.patSynType p) []
-		showResult _ (GHC.ATyCon t) = Just $ tcon $ TypeInfo Nothing (map GHC.getOccString $ GHC.tyConTyVars t) Nothing where
+			GHC.RealDataCon d -> Just $ Function (Just $ fromString $ formatType dflags GHC.dataConRepType d) []
+			GHC.PatSynCon p -> Just $ Function (Just $ fromString $ formatType dflags GHC.patSynType p) []
+		showResult _ (GHC.ATyCon t) = Just $ tcon $ TypeInfo Nothing (map (fromString . GHC.getOccString) $ GHC.tyConTyVars t) Nothing where
 			tcon
 				| GHC.isAlgTyCon t && not (GHC.isNewTyCon t) && not (GHC.isClassTyCon t) = Data
 				| GHC.isNewTyCon t = NewType

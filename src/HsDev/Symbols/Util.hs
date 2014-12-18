@@ -12,6 +12,7 @@ import Data.Function (on)
 import Data.Maybe
 import Data.List (maximumBy, groupBy, sortBy, partition)
 import Data.Ord (comparing)
+import Data.String (fromString)
 import System.FilePath (normalise)
 
 import HsDev.Symbols
@@ -70,7 +71,7 @@ inModuleSource src m = case moduleIdLocation m of
 
 -- | Check if declaration is in module
 inModule :: String -> ModuleId -> Bool
-inModule mname m = mname == moduleIdName m
+inModule mname m = fromString mname == moduleIdName m
 
 -- | Check if module defined in file
 byFile :: ModuleId -> Bool
@@ -96,8 +97,8 @@ imports = moduleImports
 
 -- | Get list of imports, which can be accessed with specified qualifier or unqualified
 qualifier :: Module -> Maybe String -> [Import]
-qualifier m q = filter (importQualifier q) $
-	import_ "Prelude" :
+qualifier m q = filter (importQualifier (fmap fromString q)) $
+	import_ (fromString "Prelude") :
 	import_ (moduleName m) :
 	imports m
 

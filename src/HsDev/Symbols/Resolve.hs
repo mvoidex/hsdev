@@ -14,6 +14,7 @@ import qualified Data.Map as M
 import Data.Maybe
 import Data.Foldable (Foldable, toList)
 import Data.Traversable (Traversable, traverse)
+import Data.Text (Text)
 
 import HsDev.Symbols
 --import HsDev.Symbols.Util
@@ -21,10 +22,10 @@ import HsDev.Symbols
 -- | Declarations in scope of module
 data ResolvedModule = ResolvedModule {
 	resolved :: Module,
-	-- | String : declaration exported from (or self), ModuleDeclaration : declaration defined
-	scope :: Maybe [(String, ModuleDeclaration)] }
+	-- | Text : declaration exported from (or self), ModuleDeclaration : declaration defined
+	scope :: Maybe [(Text, ModuleDeclaration)] }
 
-type ModuleTree = Map String ResolvedModule
+type ModuleTree = Map Text ResolvedModule
 
 newtype ResolveM a = ResolveM { runResolveM :: State ModuleTree a }
 	deriving (Functor, Applicative, Monad, MonadState ModuleTree)
@@ -34,7 +35,7 @@ resolve :: (Traversable t, Foldable t) => t Module -> t ResolvedModule
 resolve ms = (`evalState` tree') . runResolveM . traverse resolveModule $ ms where
 	tree' = M.fromList [(moduleName m, ResolvedModule m Nothing) | m <- toList ms]
 
-lookupTree :: String -> ResolveM Module
+lookupTree :: Text -> ResolveM Module
 lookupTree mname = gets (maybe emptyModule resolved . M.lookup mname) where
 	emptyModule = Module mname Nothing (ModuleSource Nothing) Nothing [] M.empty
 
@@ -43,7 +44,7 @@ resolveModule :: Module -> ResolveM ResolvedModule
 resolveModule m = (ResolvedModule m . Just) <$> resolveScope m
 
 -- | Resolve step
-resolveScope :: Module -> ResolveM [(String, ModuleDeclaration)]
+resolveScope :: Module -> ResolveM [(Text, ModuleDeclaration)]
 resolveScope m = 
 	gets (M.lookup (moduleName m) >=> scope) >>=
 	maybe resolve' return >>=
@@ -55,13 +56,13 @@ resolveScope m =
 
 		selfDecls = [(moduleName m, d) | d <- moduleModuleDeclarations m]
 
-		save :: [(String, ModuleDeclaration)] -> ResolveM [(String, ModuleDeclaration)]
+		save :: [(Text, ModuleDeclaration)] -> ResolveM [(Text, ModuleDeclaration)]
 		save decls = do
 			modify (M.insert (moduleName m) . ResolvedModule m . Just $ decls)
 			return decls
 
 -- | Resolve exported module declarations
-resolveExports :: Module -> ResolveM [(String, ModuleDeclaration)]
+resolveExports :: Module -> ResolveM [(Text, ModuleDeclaration)]
 resolveExports m = do
 	decls <- resolveScope m
 	return [(moduleName m, decl') | (mname, decl') <- decls, spec <- specs, spec `exports` (mname, decl')]
@@ -69,7 +70,7 @@ resolveExports m = do
 		specs = fromMaybe [ExportModule $ moduleName m] (moduleExports m)
 
 -- | Bring declarations into scope
-resolveImport :: Import -> ResolveM [(String, ModuleDeclaration)]
+resolveImport :: Import -> ResolveM [(Text, ModuleDeclaration)]
 resolveImport i = lookupTree (importModuleName i) >>= liftM (filter (imports i . snd)) . resolveExports
 
 -- | Does import imports specified declaration
@@ -79,6 +80,6 @@ imports i decl' = case importList i of
 	Just (ImportList hidden_ specs) -> (declarationName (moduleDeclaration decl') `elem` specs) /= hidden_
 
 -- | Does export exports declaration
-exports :: Export -> (String, ModuleDeclaration) -> Bool
+exports :: Export -> (Text, ModuleDeclaration) -> Bool
 exports (ExportName n) (_, decl') = declarationName (moduleDeclaration decl') == n
 exports (ExportModule m) (mname, _) = m == mname
