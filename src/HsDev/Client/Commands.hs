@@ -172,7 +172,7 @@ commands = [
 		hlintOpts = list "hlint" "option" `short` ['h'] `desc` "options to pass to hlint"
 		holdArg = flag "hold" `short` ['h'] `desc` "don't return any response"
 		localsArg = flag "locals" `short` ['l'] `desc` "look in local declarations"
-		noLastArg = flag "no-last" `desc` "don't select last package version"
+		noLastArg = flag "no-last" `desc` "select not only last version packages"
 		matches = [prefixArg, findArg]
 		moduleArg = req "module" "name" `short` ['m'] `desc` "module name"
 		packageArg = req "package" "name" `desc` "module package"
@@ -648,7 +648,7 @@ localsDatabase as
 	| flagSet "locals" as = databaseLocals
 	| otherwise = id
 
--- | Select newest packages if 'no-last' flag set
+-- | Select newest packages if 'no-last' flag not set
 newest :: Symbol a => Opts String -> [a] -> [a]
 newest as
 	| flagSet "no-last" as = id
@@ -700,4 +700,3 @@ prefMatch as = case fmap splitIdentifier (arg "prefix" as) of
 		match' qname pref m =
 			fromString pref `T.isPrefixOf` declarationName (moduleDeclaration m) &&
 			maybe True (== moduleIdName (declarationModuleId m)) (fmap fromString qname)
-
