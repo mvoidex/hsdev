@@ -21,6 +21,7 @@ import Control.Monad
 import Control.Monad.Error
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
+import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Either (isLeft)
@@ -29,7 +30,9 @@ import Data.Maybe
 import Data.Monoid
 import Data.Traversable (traverse)
 import Network.Socket hiding (connect)
-import qualified Network.Socket as Net
+import qualified Network.Socket as Net hiding (send)
+import qualified Network.Socket.ByteString as Net (send)
+import qualified Network.Socket.ByteString.Lazy as Net (getContents)
 import System.Directory
 import System.Exit
 import System.IO
@@ -141,9 +144,8 @@ commands = [
 				s <- socket AF_INET Stream defaultProtocol
 				addr' <- inet_addr "127.0.0.1"
 				Net.connect s $ SockAddrInet (fromIntegral $ fromJust $ iarg "port" sopts) addr'
-				bracket (socketToHandle s ReadWriteMode) hClose $ \h ->
-					processClientHandle s h (copts {
-						commandExit = killThread me })
+				flip finally (close s) $ processClientSocket s (copts {
+					commandExit = killThread me })
 			| otherwise = runServer sopts $ \copts -> do
 				commandLog copts $ "Server started at port " ++ fromJust (arg "port" sopts)
 
@@ -165,23 +167,23 @@ commands = [
 					forever $ logIO "accept client exception: " (commandLog copts) $ do
 						s' <- fst <$> accept s
 						void $ forkIO $ logIO (show s' ++ " exception: ") (commandLog copts) $
-							bracket (socketToHandle s' ReadWriteMode) hClose $ \h ->
-							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-								me <- myThreadId
-								let
-									timeoutWait = do
-										notDone <- isEmptyMVar done
-										when notDone $ do
-											void $ forkIO $ do
-												threadDelay 1000000
-												void $ tryPutMVar done ()
-												killThread me
-											takeMVar done
-									waitForever = forever $ hGetLineBS h
-								F.putChan clientChan timeoutWait
-								processClientHandle s' h (copts {
-									commandHold = waitForever,
-									commandExit = serverStop })
+							flip finally (close s') $
+								bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+									me <- myThreadId
+									let
+										timeoutWait = do
+											notDone <- isEmptyMVar done
+											when notDone $ do
+												void $ forkIO $ do
+													threadDelay 1000000
+													void $ tryPutMVar done ()
+													killThread me
+												takeMVar done
+										-- waitForever = forever $ hGetLineBS h
+									F.putChan clientChan timeoutWait
+									processClientSocket s' (copts {
+										-- commandHold = waitForever,
+										commandExit = serverStop })
 
 				takeMVar waitListen
 				DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
@@ -462,9 +464,37 @@ processClient name receive send' copts = do
 			commandLog copts $ name ++ " disconnected"
 			join $ takeMVar var
 
+{-
 -- | Process client by Handle
 processClientHandle :: Show a => a -> Handle -> CommandOptions -> IO ()
 processClientHandle n h = processClient (show n) (hGetLineBS h) (\s -> L.hPutStrLn h s >> hFlush h)
+-}
+
+-- | Process client by socket
+processClientSocket :: Socket -> CommandOptions -> IO ()
+processClientSocket s copts = do
+	recvChan <- F.newChan
+	void $ forkIO $ finally
+		(Net.getContents s >>= mapM_ (F.putChan recvChan) . L.lines)
+		(F.closeChan recvChan)
+	processClient (show s) (getChan_ recvChan) (sendLine s) (copts {
+		commandHold = forever (getChan_ recvChan) })
+	where
+		getChan_ :: F.Chan a -> IO a
+		getChan_ = F.getChan >=> maybe noData return
+		noData :: IO a
+		noData = throwIO $ userError "Receive chan closed"
+		-- NOTE: Network version of `sendAll` goes to infinite loop on client socket close
+		-- when server's send is blocked, see https://github.com/haskell/network/issues/155
+		-- After that issue fixed we may revert to `processClientHandle`
+		sendLine :: Socket -> ByteString -> IO ()
+		sendLine sock bs = sendAll sock $ L.toStrict $ L.snoc bs '\n'
+		sendAll :: Socket -> BS.ByteString -> IO ()
+		sendAll sock bs
+			| BS.null bs = return ()
+			| otherwise = do
+				sent <- Net.send sock bs
+				when (sent > 0) $ sendAll sock (BS.drop sent bs)
 
 -- | Perform action on cache
 withCache :: Opts String -> a -> (FilePath -> IO a) -> IO a
