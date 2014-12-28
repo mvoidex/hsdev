@@ -99,6 +99,7 @@ hayooAsDeclaration f
 			moduleIdLocation = ModuleSource (Just $ resultUri f) },
 		moduleDeclaration = Declaration {
 			declarationName = fromString $ hayooName f,
+			declarationDefined = Nothing,
 			declarationDocs = Just (fromString $ addOnline $ untagDescription $ hayooDescription f),
 			declarationPosition = Nothing,
 			declaration = declInfo } }

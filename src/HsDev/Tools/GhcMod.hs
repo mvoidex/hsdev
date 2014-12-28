@@ -63,26 +63,31 @@ list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opt
 		splitPackage = second (drop 1) . break isSpace
 
 browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ErrorT String IO InspectedModule
-browse opts cabal mname mpackage = inspect mloc (return $ browseInspection opts) $ runGhcMod
+browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection opts) $ runGhcMod
 	(GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.qualified = True, GhcMod.ghcUserOptions = packageOpt mpackage ++ opts }) $ do
 		ds <- (mapMaybe parseDecl . lines) <$> GhcMod.browse mpkgname
 		return Module {
 			moduleName = fromString mname,
 			moduleDocs = Nothing,
-			moduleLocation = mloc,
-			moduleExports = Just $ map (ExportName . declarationName . snd) ds,
-			moduleImports = [import_ (fromString iname) | iname <- nub (map fst ds), iname /= mname],
-			moduleDeclarations = M.fromList (map ((declarationName &&& id) . snd) ds) }
+			moduleLocation = thisLoc,
+			moduleExports = Just $ map (ExportName . declarationName) ds,
+			moduleImports = [import_ iname |
+				iname <- nub (mapMaybe definedModule ds),
+				iname /= fromString mname],
+			moduleDeclarations = M.fromList (map (declarationName &&& id) ds) }
 	where
 		mpkgname = maybe mname (\p -> packageName p ++ ":" ++ mname) mpackage
-		mloc = CabalModule cabal mpackage mname
+		thisLoc = moduleIdLocation $ mloc mname
+		mloc mname' = ModuleId (fromString mname') $ CabalModule cabal Nothing mname'
 		parseDecl s = do
 			groups <- match rx s
-			curry return (init $ groups `at` 1) $
-				decl (fromString $ groups `at` 3) $ case groups 5 of
+			let
+				rdecl = decl (fromString $ groups `at` 3) $ case groups 5 of
 					Nothing -> Function (Just $ fromString $ groups `at` 4) []
 					Just k -> declarationTypeCtor k $
 						TypeInfo Nothing (maybe [] (map fromString . words) $ groups 7) Nothing
+			return $ rdecl `definedIn` mloc (init $ groups `at` 1)
+		definedModule = fmap moduleIdName . declarationDefined
 		-- groups:
 		-- 1: "<module>."
 		-- 3: "<name>"
@@ -103,15 +108,29 @@ info opts cabal file sname = do
 	where
 		toDecl s = maybe (throwError $ strMsg $ "Can't parse info: '" ++ sname ++ "'") return $ parseData s `mplus` parseFunction s
 		parseFunction s = do
-			groups <- match (sname ++ "\\s+::\\s+(.*?)(\\s+--(.*))?$") s
-			return $ Declaration (fromString sname) Nothing Nothing (Function (Just $ fromString $ groups `at` 1) [])
+			groups <- match (sname ++ "\\s+::\\s+(.*?)(\\s+-- Defined (at (.*)|in `(.*)'))?$") s
+			return (decl (fromString sname) (Function (Just $ fromString $ groups `at` 1) [])) {
+				declarationDefined = unnamedModuleId <$>
+					((groups 4 >>= parseSrc) <|> (mkMod <$> groups 5)),
+				declarationPosition = groups 4 >>= parsePos }
 		parseData s = do
 			groups <- match "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined)?" s
 			let
 				args = maybe [] (map fromString . words) $ groups 5
 				ctx = fmap (fromString . trim) $ groups 3
 				def = fmap fromString $ groups 8
-			return $ Declaration (fromString sname) Nothing Nothing (declarationTypeCtor (groups `at` 1) $ TypeInfo ctx args def)
+			return (decl (fromString sname) (declarationTypeCtor (groups `at` 1) $ TypeInfo ctx args def)) {
+				declarationDefined = unnamedModuleId <$>
+					((groups 10 >>= parseSrc) <|> (mkMod <$> groups 11)),
+				declarationPosition = groups 10 >>= parsePos }
+		parseSrc src = case splitRx ":(?=\\d)" src of
+			[srcFile, _, _] -> Just $ FileModule srcFile Nothing
+			_ -> Nothing
+		-- FIXME: Position is returned by ghc-mod and it interprets tab as several spaces instead of one symbol
+		parsePos src = case splitRx ":(?=\\d)" src of
+			[_, line, column] ->  Position <$> readMaybe line <*> readMaybe column
+			_ -> Nothing
+		mkMod = CabalModule cabal Nothing
 		trim = p . p where
 			p = reverse . dropWhile isSpace
 

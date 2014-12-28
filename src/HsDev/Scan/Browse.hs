@@ -57,22 +57,26 @@ browseModule cabal m = do
 	return Module {
 		moduleName = fromString thisModule,
 		moduleDocs = Nothing,
-		moduleLocation = mloc,
-		moduleExports = Just $ map (ExportName . declarationName . snd) ds,
-		moduleImports = [import_ (fromString iname) | iname <- nub (map fst ds), iname /= thisModule],
-		moduleDeclarations = M.fromList (map ((declarationName &&& id) . snd) ds) }
+		moduleLocation = thisLoc,
+		moduleExports = Just $ map (ExportName . declarationName) ds,
+		moduleImports = [import_ iname | iname <- nub (mapMaybe definedModule ds), iname /= fromString thisModule],
+		moduleDeclarations = M.fromList (map (declarationName &&& id) ds) }
 	where
-		mloc = CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
+		thisLoc = moduleIdLocation $ mloc m
+		mloc m' = ModuleId (fromString mname') $
+			CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m') mname'
+			where
+				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl minfo n = do
 			tyInfo <- lift $ GHC.modInfoLookupName minfo n
 			tyResult <- lift $ maybe (inModuleSource n) (return . Just) tyInfo
 			dflag <- lift GHC.getSessionDynFlags
 			let
-				srcMod = GHC.moduleNameString $ GHC.moduleName $ GHC.nameModule n
 				decl' = decl (fromString $ GHC.getOccString n) $ fromMaybe
 					(Function Nothing [])
 					(tyResult >>= showResult dflag)
-			return (srcMod, decl')
+			return $ decl' `definedIn` mloc (GHC.nameModule n)
+		definedModule = fmap moduleIdName . declarationDefined
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe DeclarationInfo
 		showResult dflags (GHC.AnId i) = Just $ Function (Just $ fromString $ formatType dflags GHC.varType i) []
 		showResult dflags (GHC.AConLike c) = case c of
@@ -129,4 +133,4 @@ styleUnqualified :: GHC.PprStyle
 styleUnqualified = GHC.mkUserStyle GHC.neverQualify GHC.AllTheWay
 
 tryT :: (Monad m, Error e) => ErrorT e m a -> ErrorT e m (Maybe a)
-tryT act = catchError (liftM Just $ act) (const $ return Nothing)
+tryT act = catchError (liftM Just act) (const $ return Nothing)

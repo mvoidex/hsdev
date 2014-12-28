@@ -7,9 +7,12 @@ module HsDev.Symbols (
 	ImportList(..),
 	Import(..), import_,
 	Symbol(..),
-	ModuleId(..), Module(..), moduleLocals, moduleLocalDeclarations, moduleModuleDeclarations, moduleId,
+	ModuleId(..), unnamedModuleId,
+	Module(..), moduleLocals,
+	setDefinedIn, dropExternals, clearDefinedIn,
+	moduleLocalDeclarations, moduleModuleDeclarations, moduleId,
 	Locals(..),
-	Declaration(..), decl, declarationLocals,
+	Declaration(..), decl, definedIn, declarationLocals,
 	TypeInfo(..),
 	DeclarationInfo(..),
 	ModuleDeclaration(..),
@@ -125,7 +128,7 @@ instance NFData Import where
 instance Show Import where
 	show i = concat [
 		"import ",
-		(if importIsQualified i then "qualified " else ""),
+		if importIsQualified i then "qualified " else "",
 		unpack $ importModuleName i,
 		maybe "" ((" as " ++) . unpack) (importAs i),
 		maybe "" ((" " ++) . show) (importList i)]
@@ -207,6 +210,9 @@ instance FromJSON ModuleId where
 		v .:: "name" <*>
 		v .:: "location"
 
+unnamedModuleId :: ModuleLocation -> ModuleId
+unnamedModuleId = ModuleId ""
+
 -- | Module
 data Module = Module {
 	moduleName :: Text,
@@ -256,6 +262,21 @@ instance Show Module where
 moduleLocals :: Module -> Module
 moduleLocals m = m { moduleDeclarations = moduleLocalDeclarations m }
 
+-- | Set all declaration `definedIn` to this module
+setDefinedIn :: Module -> Module
+setDefinedIn m = m {
+	moduleDeclarations = M.map (`definedIn` moduleId m) (moduleDeclarations m) }
+
+-- | Drop all declarations, that not defined in this module
+dropExternals :: Module -> Module
+dropExternals m = m {
+	moduleDeclarations = M.filter ((/= Just (moduleId m)) . declarationDefined) (moduleDeclarations m) }
+
+-- | Clear `definedIn` information
+clearDefinedIn :: Module -> Module
+clearDefinedIn m = m {
+	moduleDeclarations = M.map (\d -> d { declarationDefined = Nothing }) (moduleDeclarations m) }
+
 -- | Get declarations with locals
 moduleLocalDeclarations :: Module -> Map Text Declaration
 moduleLocalDeclarations =
@@ -285,23 +306,26 @@ class Locals a where
 -- | Declaration
 data Declaration = Declaration {
 	declarationName :: Text,
+	declarationDefined :: Maybe ModuleId,
 	declarationDocs :: Maybe Text,
 	declarationPosition :: Maybe Position,
 	declaration :: DeclarationInfo }
 		deriving (Eq, Ord)
 
 instance NFData Declaration where
-	rnf (Declaration n d l x) = rnf n `seq` rnf d `seq` rnf l `seq` rnf x
+	rnf (Declaration n d dd l x) = rnf n `seq` rnf dd `seq` rnf d `seq` rnf l `seq` rnf x
 
 instance Show Declaration where
 	show d = unlines $ filter (not . null) [
 		brief d,
 		maybe "" (("\tdocs: " ++) . unpack) $ declarationDocs d,
+		maybe "" (("\tdefined in: " ++) . show) $ declarationDefined d,
 		maybe "" (("\tlocation: " ++ ) . show) $ declarationPosition d]
 
 instance ToJSON Declaration where
 	toJSON d = object [
 		"name" .= declarationName d,
+		"defined" .= declarationDefined d,
 		"docs" .= declarationDocs d,
 		"pos" .= declarationPosition d,
 		"decl" .= declaration d]
@@ -309,16 +333,20 @@ instance ToJSON Declaration where
 instance FromJSON Declaration where
 	parseJSON = withObject "declaration" $ \v -> Declaration <$>
 		v .:: "name" <*>
+		v .:: "defined" <*>
 		v .:: "docs" <*>
 		v .:: "pos" <*>
 		v .:: "decl"
 
 instance Locals Declaration where
 	locals = locals . declaration
-	where_ d ds = d { declaration = (declaration d) `where_` ds }
+	where_ d ds = d { declaration = declaration d `where_` ds }
 
 decl :: Text -> DeclarationInfo -> Declaration
-decl n = Declaration n Nothing Nothing
+decl n = Declaration n Nothing Nothing Nothing
+
+definedIn :: Declaration -> ModuleId -> Declaration
+definedIn d m = d { declarationDefined = Just m }
 
 declarationLocals :: Declaration -> [Declaration]
 declarationLocals d = map prefix' $ locals $ declaration d where

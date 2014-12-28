@@ -92,6 +92,7 @@ getDecls decls =
 		mergeDecls [] = error "Impossible"
 		mergeDecls ds = Declaration
 			(declarationName $ head ds)
+			Nothing
 			(msum $ map declarationDocs ds)
 			(minimum <$> mapM declarationPosition ds)
 			(foldr1 mergeInfos $ map declaration ds)
@@ -134,10 +135,10 @@ getDecl decl' = case decl' of
 
 getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []
-getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ Declaration (fromString $ identOfName n) Nothing Nothing fun] where
+getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ decl (fromString $ identOfName n) fun] where
 	fun = Function Nothing $ concatMap (getBinds . matchBinds) matches
 	matchBinds (H.Match _ _ _ _ _ binds) = binds
-getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (Declaration (fromString $ identOfName name) Nothing Nothing (Function Nothing $ getBinds binds))) (names pat) where
+getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (decl (fromString $ identOfName name) (Function Nothing $ getBinds binds))) (names pat) where
 	names :: H.Pat -> [H.Name]
 	names (H.PVar n) = [n]
 	names (H.PNPlusK n _) = [n]
@@ -233,7 +234,7 @@ addDocs docsMap m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDecla
 inspectContents :: String -> [String] -> String -> ErrorT String IO InspectedModule
 inspectContents name opts cts = inspect (ModuleSource $ Just name) (contentsInspection cts opts) $ do
 	analyzed <- ErrorT $ return $ analyzeModule exts (Just name) cts
-	return $ setLoc analyzed
+	return $ setDefinedIn $ setLoc analyzed
 	where
 		setLoc m = m { moduleLocation = ModuleSource (Just name) }
 
@@ -264,7 +265,7 @@ inspectFile opts file = do
 			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
 			force analyzed `deepseq` return analyzed
 			--E.evaluate $ force analyzed
-		return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
+		return $ setDefinedIn $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }
 		onError :: E.ErrorCall -> IO (Either String Module)

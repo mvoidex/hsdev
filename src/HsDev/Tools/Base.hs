@@ -2,7 +2,7 @@ module HsDev.Tools.Base (
 	Result, ToolM,
 	runWait, runWait_,
 	tool, tool_,
-	match,
+	match, splitRx,
 	at,
 	inspect,
 	-- * Read parse utils
@@ -15,7 +15,7 @@ import Control.Monad.State
 import Data.Maybe (fromMaybe, listToMaybe)
 import System.Exit
 import System.Process
-import Text.RegexPR (matchRegexPR)
+import Text.RegexPR (matchRegexPR, splitRegexPR)
 
 import HsDev.Symbols
 import HsDev.Util (liftIOErrors)
@@ -45,6 +45,9 @@ match :: String -> String -> Maybe (Int -> Maybe String)
 match pat str = do
 	(_, groups) <- matchRegexPR pat str
 	return $ \i -> lookup i groups
+
+splitRx :: String -> String -> [String]
+splitRx = splitRegexPR
 
 at :: (Int -> Maybe String) -> Int -> String
 at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
