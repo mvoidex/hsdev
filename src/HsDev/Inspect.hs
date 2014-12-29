@@ -68,7 +68,7 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 
 getExports :: H.ExportSpec -> [Export]
 getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule $ fromString m]
-getExports e = map (ExportName . fromString . identOfName) $ childrenBi e
+getExports e = map (uncurry ExportName . (fmap fromString *** fromString) . identOfQName) $ childrenBi e
 
 getImport :: H.ImportDecl -> Import
 getImport d = Import
@@ -165,6 +165,11 @@ getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (decl (fromSt
 	fieldNames H.PFieldWildcard = []
 getDef _ = []
 
+identOfQName :: H.QName -> (Maybe String, String)
+identOfQName (H.Qual (H.ModuleName mname) name) = (Just mname, identOfName name)
+identOfQName (H.UnQual name) = (Nothing, identOfName name)
+identOfQName (H.Special sname) = (Nothing, H.prettyPrint sname)
+
 identOfName :: H.Name -> String
 identOfName name = case name of
 	H.Ident s -> s
@@ -234,7 +239,7 @@ addDocs docsMap m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDecla
 inspectContents :: String -> [String] -> String -> ErrorT String IO InspectedModule
 inspectContents name opts cts = inspect (ModuleSource $ Just name) (contentsInspection cts opts) $ do
 	analyzed <- ErrorT $ return $ analyzeModule exts (Just name) cts
-	return $ setDefinedIn $ setLoc analyzed
+	return $ setLoc analyzed
 	where
 		setLoc m = m { moduleLocation = ModuleSource (Just name) }
 
@@ -265,7 +270,7 @@ inspectFile opts file = do
 			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
 			force analyzed `deepseq` return analyzed
 			--E.evaluate $ force analyzed
-		return $ setDefinedIn $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
+		return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }
 		onError :: E.ErrorCall -> IO (Either String Module)

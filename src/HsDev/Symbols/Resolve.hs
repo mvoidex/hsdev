@@ -1,76 +1,146 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module HsDev.Symbols.Resolve (
-	ModuleTree,
-	ResolveM(..),
-	resolve,
-	resolveModule, resolveScope, resolveExports, resolveImport
+	ResolveM(..), ResolvedTree, ResolvedModule(..), resolvedTopScope, ImportedDeclaration(..),
+	resolve, resolveModule, exported, resolveImport,
+	mergeImported
 	) where
 
 import Control.Applicative
+import Control.Arrow
+import Control.Monad.Reader
 import Control.Monad.State
+import Data.Foldable (Foldable)
+import Data.Function (on)
+import Data.List (sortBy, groupBy, find)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe
-import Data.Foldable (Foldable, toList)
-import Data.Traversable (Traversable, traverse)
+import Data.Maybe (fromMaybe, maybeToList)
+import Data.Ord (comparing)
+import Data.String (fromString)
 import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Traversable (Traversable, traverse)
+import System.FilePath
 
+import HsDev.Database
+import HsDev.Project
 import HsDev.Symbols
+import HsDev.Symbols.Util
 
-type ModuleTree = Map ModuleId Module
+-- | Resolve monad uses existing @Database@ and @ResolvedTree@ as state.
+newtype ResolveM a = ResolveM { runResolveM :: ReaderT Database (State ResolvedTree) a }
+	deriving (Functor, Applicative, Monad, MonadState ResolvedTree, MonadReader Database)
 
-newtype ResolveM a = ResolveM { runResolveM :: State ModuleTree a }
-	deriving (Functor, Applicative, Monad, MonadState ModuleTree)
+-- | Tree of resolved modules
+type ResolvedTree = Map ModuleId ResolvedModule
 
--- | Resolve modules
-resolve :: (Traversable t, Foldable t) => ModuleTree -> t Module -> t Module
-resolve db = (`evalState` db) . runResolveM . traverse resolveModule
+-- | Module with declarations bringed to scope and with exported declarations
+data ResolvedModule = ResolvedModule {
+	resolvedModule :: Module,
+	resolvedScope :: [ImportedDeclaration],
+	resolvedExports :: [Declaration] }
 
-lookupTree :: ModuleId -> ResolveM Module
-lookupTree m = undefined -- TODO: Implement
+-- | Get top-level scope
+resolvedTopScope :: ResolvedModule -> [Declaration]
+resolvedTopScope = map importedDeclaration . filter isTop . resolvedScope where
+	isTop :: ImportedDeclaration -> Bool
+	isTop = any (not . importIsQualified) . importedBy
 
--- | Resolve step
-resolveModule :: Module -> ResolveM Module
-resolveModule m = undefined -- TODO: Implement
+-- | Imported declaration holds info about which imports (there can be many for one declaration) brought it to scope
+data ImportedDeclaration = ImportedDeclaration {
+	importedBy :: [Import],
+	importedDeclaration :: Declaration }
 
--- | Resolve step
-resolveScope :: Module -> ResolveM [Declaration]
-resolveScope m = undefined -- TODO: Implement
-	-- gets (M.lookup (moduleId m) >=> scope) >>=
-	-- maybe resolve' return >>=
-	-- save
-	-- where
-	-- 	resolve' = do
-	-- 		decls <- liftM concat $ mapM resolveImport (moduleImports m)
-	-- 		return $ selfDecls ++ decls
+-- | Resolve modules, function is not IO, so all file names must be canonicalized
+resolve :: (Traversable t, Foldable t) => Database -> t Module -> t ResolvedModule
+resolve db = flip evalState M.empty . flip runReaderT db . runResolveM . traverse resolveModule
 
-	-- 	selfDecls = [(moduleName m, d) | d <- moduleModuleDeclarations m]
+-- | Resolve module
+resolveModule :: Module -> ResolveM ResolvedModule
+resolveModule m = gets (M.lookup $ moduleId m) >>= maybe resolveModule' return where
+	resolveModule' = save $ case moduleLocation m of
+		CabalModule {} -> return ResolvedModule {
+			resolvedModule = m,
+			resolvedScope = map (ImportedDeclaration []) (M.elems $ moduleDeclarations m),
+			resolvedExports = M.elems (moduleDeclarations m) }
+		_ -> do
+			scope' <-
+				liftM ((thisDecls ++) . mergeImported . concat) .
+				mapM (resolveImport m) .
+				(import_ (fromString "Prelude") :) .
+				moduleImports $ m
+			let
+				exports' =
+					concatMap (exported scope') .
+					fromMaybe [] .
+					moduleExports $ m
+			return $ ResolvedModule m scope' exports'
+	thisDecls :: [ImportedDeclaration]
+	thisDecls = map (ImportedDeclaration []) $ M.elems $ moduleDeclarations m
+	save :: ResolveM ResolvedModule -> ResolveM ResolvedModule
+	save act = do
+		rm <- act
+		modify $ M.insert (moduleId (resolvedModule rm)) rm
+		return rm
 
-	-- 	save :: [(Text, ModuleDeclaration)] -> ResolveM [(Text, ModuleDeclaration)]
-	-- 	save decls = do
-	-- 		modify (M.insert (moduleName m) . ResolvedModule m . Just $ decls)
-	-- 		return decls
-
--- | Resolve exported module declarations
-resolveExports :: Module -> ResolveM [Declaration]
-resolveExports m = do
-	decls <-  (M.elems . moduleDeclarations) <$> resolveModule m
-	return [decl' | decl' <- decls, spec <- specs, spec `exports` decl']
+-- | Select declarations exported with @Export@
+exported :: [ImportedDeclaration] -> Export -> [Declaration]
+exported ds (ExportName q n) = maybeToList $ importedDeclaration <$> find isExported ds where
+	isExported :: ImportedDeclaration -> Bool
+	isExported (ImportedDeclaration imps decl') = declarationName decl' == n && case q of
+		Nothing -> any (not . importIsQualified) imps
+		Just q' -> any ((== q') . importName) imps
+exported ds (ExportModule m) =
+	map importedDeclaration $
+	filter (any (unqualBy m) . importedBy) ds
 	where
-		specs = fromMaybe [ExportModule $ moduleName m] (moduleExports m)
+		unqualBy :: Text -> Import -> Bool
+		unqualBy m' i = importName i == m' && not (importIsQualified i)
 
 -- | Bring declarations into scope
-resolveImport :: Import -> ResolveM [Declaration]
-resolveImport i = undefined -- lookupTree (importModuleName i) >>= liftM (filter (imports i . snd)) . resolveExports
+resolveImport :: Module -> Import -> ResolveM [ImportedDeclaration]
+resolveImport m i = liftM (map $ ImportedDeclaration [i]) resolveImport' where
+	resolveImport' :: ResolveM [Declaration]
+	resolveImport' = do
+		ms <- case moduleLocation m of
+			FileModule file proj -> do
+				db <- ask
+				let
+					proj' = proj >>= refineProject db
+				case proj' of
+					Nothing -> selectImport i [
+						inFile $ importedModuleFilePath m file i,
+						byCabal]
+					Just p -> selectImport i [
+						inProject p,
+						inDepsOf file p]
+			CabalModule cabal _ _ -> selectImport i [inCabal cabal]
+			ModuleSource _ -> selectImport i [byCabal]
+		liftM (concatMap resolvedExports) $ mapM resolveModule ms
+	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM [Module]
+	selectImport i' fs = liftM (selectModules (\md -> all ($ moduleId md) (byImport i' : fs))) ask
+	byImport :: Import -> ModuleId -> Bool
+	byImport i' m' = importModuleName i' == moduleIdName m'
+	importedModuleFilePath :: Module -> FilePath -> Import -> FilePath
+	importedModuleFilePath m' f' i' =
+		(`addExtension` "hs") . joinPath .
+		(++ ipath) . reverse . drop (length mpath) .
+		reverse $ fpath
+		where
+			mpath = map T.unpack $ T.split (== '.') $ moduleName m'
+			ipath = map T.unpack $ T.split (== '.') $ importModuleName i'
+			fpath = splitDirectories $ dropExtension f'
+	deps f p = maybe [] infoDepends $ fileTarget p f
+	inDepsOf f p m' = any (`inPackage` m') (deps f p)
 
--- | Does import imports specified declaration
-imports :: Import -> ModuleDeclaration -> Bool
-imports i decl' = case importList i of
-	Nothing -> True
-	Just (ImportList hidden_ specs) -> (declarationName (moduleDeclaration decl') `elem` specs) /= hidden_
-
--- | Does export exports declaration
-exports :: Export -> Declaration -> Bool
-exports (ExportName n) decl' = declarationName decl' == n
-exports (ExportModule m) _ = undefined -- m == mname -- TODO: We need `imported from` for declaration
+-- | Merge imported declarations
+mergeImported :: [ImportedDeclaration] -> [ImportedDeclaration]
+mergeImported =
+	map (uncurry ImportedDeclaration .
+		(concatMap importedBy &&& importedDeclaration . head)) .
+	groupBy ((==) `on` declId) .
+	sortBy (comparing declId)
+	where
+		declId :: ImportedDeclaration -> (Text, Maybe ModuleId)
+		declId = importedDeclaration >>> declarationName &&& declarationDefined

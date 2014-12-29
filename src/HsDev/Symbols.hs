@@ -5,7 +5,7 @@ module HsDev.Symbols (
 	-- * Information
 	Export(..), export,
 	ImportList(..),
-	Import(..), import_,
+	Import(..), importName, import_,
 	Symbol(..),
 	ModuleId(..), unnamedModuleId,
 	Module(..), moduleLocals,
@@ -66,29 +66,31 @@ import HsDev.Project
 import HsDev.Util (tab, tabs, (.::))
 
 -- | Module export
-data Export = ExportName Text | ExportModule Text
+data Export = ExportName (Maybe Text) Text | ExportModule Text
 	deriving (Eq, Ord)
 
 instance NFData Export where
-	rnf (ExportName n) = rnf n
+	rnf (ExportName q n) = rnf q `seq` rnf n
 	rnf (ExportModule m) = rnf m
 
 instance Show Export where
-	show (ExportName n) = unpack n
+	show (ExportName Nothing n) = unpack n
+	show (ExportName (Just q) n) = unpack q ++ "." ++ unpack n
 	show (ExportModule m) = "module " ++ unpack m
 
 instance ToJSON Export where
-	toJSON (ExportName n) = object ["name" .= n]
+	toJSON (ExportName q n) = object ["module" .= q, "name" .= n]
 	toJSON (ExportModule m) = object ["module" .= m]
 
 instance FromJSON Export where
 	parseJSON = withObject "export" $ \v ->
-		(ExportName <$> (v .:: "name")) <|>
+		(ExportName <$> (v .:: "module") <*> (v .:: "name")) <|>
 		(ExportModule <$> (v .:: "module"))
 
 -- | Get name of export
 export :: Export -> Text
-export (ExportName n) = n
+export (ExportName Nothing n) = n
+export (ExportName (Just q) n) = T.concat [q, ".", n]
 export (ExportModule m) = m
 
 -- | Import list
@@ -148,6 +150,10 @@ instance FromJSON Import where
 		v .:: "as" <*>
 		v .:: "import-list" <*>
 		v .:: "pos"
+
+-- | Get import module name
+importName :: Import -> Text
+importName i = fromMaybe (importModuleName i) $ importAs i
 
 -- | Simple import
 import_ :: Text -> Import

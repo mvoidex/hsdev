@@ -6,7 +6,7 @@ module HsDev.Database (
 	fromModule, fromProject,
 	filterDB,
 	projectDB, cabalDB, standaloneDB,
-	selectModules, selectDeclarations, lookupModule, lookupFile,
+	selectModules, selectDeclarations, lookupModule, lookupFile, refineProject,
 	getInspected,
 
 	append, remove,
@@ -144,6 +144,10 @@ lookupModule mloc db = do
 -- | Lookup module by its source file
 lookupFile :: FilePath -> Database -> Maybe Module
 lookupFile f = listToMaybe . selectModules (inFile f . moduleId)
+
+-- | Refine project
+refineProject :: Database -> Project -> Maybe Project
+refineProject db proj = M.lookup (projectCabal proj) $ databaseProjects db
 
 -- | Get inspected module
 getInspected :: Database -> Module -> InspectedModule

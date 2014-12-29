@@ -70,7 +70,7 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 			moduleName = fromString mname,
 			moduleDocs = Nothing,
 			moduleLocation = thisLoc,
-			moduleExports = Just $ map (ExportName . declarationName) ds,
+			moduleExports = Just $ map (ExportName Nothing . declarationName) ds,
 			moduleImports = [import_ iname |
 				iname <- nub (mapMaybe definedModule ds),
 				iname /= fromString mname],

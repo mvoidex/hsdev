@@ -58,7 +58,7 @@ browseModule cabal m = do
 		moduleName = fromString thisModule,
 		moduleDocs = Nothing,
 		moduleLocation = thisLoc,
-		moduleExports = Just $ map (ExportName . declarationName) ds,
+		moduleExports = Just $ map (ExportName Nothing . declarationName) ds,
 		moduleImports = [import_ iname | iname <- nub (mapMaybe definedModule ds), iname /= fromString thisModule],
 		moduleDeclarations = M.fromList (map (declarationName &&& id) ds) }
 	where
