@@ -80,7 +80,7 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 		thisLoc = moduleIdLocation $ mloc mname
 		mloc mname' = ModuleId (fromString mname') $ CabalModule cabal Nothing mname'
 		parseDecl s = do
-			groups <- match rx s
+			groups <- matchRx rx s
 			let
 				rdecl = decl (fromString $ groups `at` 3) $ case groups 5 of
 					Nothing -> Function (Just $ fromString $ groups `at` 4) []
@@ -108,13 +108,13 @@ info opts cabal file sname = do
 	where
 		toDecl s = maybe (throwError $ strMsg $ "Can't parse info: '" ++ sname ++ "'") return $ parseData s `mplus` parseFunction s
 		parseFunction s = do
-			groups <- match (sname ++ "\\s+::\\s+(.*?)(\\s+-- Defined (at (.*)|in `(.*)'))?$") s
+			groups <- matchRx (sname ++ "\\s+::\\s+(.*?)(\\s+-- Defined (at (.*)|in `(.*)'))?$") s
 			return (decl (fromString sname) (Function (Just $ fromString $ groups `at` 1) [])) {
 				declarationDefined = unnamedModuleId <$>
 					((groups 4 >>= parseSrc) <|> (mkMod <$> groups 5)),
 				declarationPosition = groups 4 >>= parsePos }
 		parseData s = do
-			groups <- match "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined)?" s
+			groups <- matchRx "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined)?" s
 			let
 				args = maybe [] (map fromString . words) $ groups 5
 				ctx = fmap (fromString . trim) $ groups 3
@@ -209,7 +209,7 @@ instance FromJSON OutputMessage where
 
 parseOutputMessage :: String -> Maybe OutputMessage
 parseOutputMessage s = do
-	groups <- match "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
+	groups <- matchRx "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
 	return OutputMessage {
 		errorLocation = Location {
 			locationModule = FileModule (normalise (groups `at` 1)) Nothing,

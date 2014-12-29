@@ -19,10 +19,10 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Either
 import Network.HTTP
 import Data.String (fromString)
-import Text.RegexPR (gsubRegexPR)
 
 import HsDev.Symbols
 import HsDev.Symbols.Documented
+import HsDev.Tools.Base (replaceRx)
 import HsDev.Util
 
 -- | Hayoo response
@@ -129,4 +129,4 @@ hayoo q page = do
 
 -- | Remove tags in description
 untagDescription :: String -> String
-untagDescription = gsubRegexPR "</?\\w+[^>]*>" ""
+untagDescription = replaceRx "</?\\w+[^>]*>" ""

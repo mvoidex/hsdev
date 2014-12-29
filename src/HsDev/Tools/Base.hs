@@ -2,7 +2,7 @@ module HsDev.Tools.Base (
 	Result, ToolM,
 	runWait, runWait_,
 	tool, tool_,
-	match, splitRx,
+	matchRx, splitRx, replaceRx,
 	at,
 	inspect,
 	-- * Read parse utils
@@ -12,10 +12,12 @@ module HsDev.Tools.Base (
 
 import Control.Monad.Error
 import Control.Monad.State
+import Data.Array (assocs)
+import Data.List (unfoldr, intercalate)
 import Data.Maybe (fromMaybe, listToMaybe)
 import System.Exit
 import System.Process
-import Text.RegexPR (matchRegexPR, splitRegexPR)
+import Text.Regex.PCRE ((=~), MatchResult(..))
 
 import HsDev.Symbols
 import HsDev.Util (liftIOErrors)
@@ -41,13 +43,24 @@ tool name args input = liftIOErrors $ ErrorT $ runWait name args input
 tool_ :: FilePath -> [String] -> ToolM String
 tool_ name args = tool name args ""
 
-match :: String -> String -> Maybe (Int -> Maybe String)
-match pat str = do
-	(_, groups) <- matchRegexPR pat str
-	return $ \i -> lookup i groups
+matchRx :: String -> String -> Maybe (Int -> Maybe String)
+matchRx pat str = if matched then Just look else Nothing where
+	m :: MatchResult String
+	m = str =~ pat
+	matched = not $ null $ mrMatch m
+	groups = filter (not . null . snd) $ assocs $ mrSubs m
+	look i = lookup i groups
 
 splitRx :: String -> String -> [String]
-splitRx = splitRegexPR
+splitRx pat = unfoldr split' . Just where
+	split' :: Maybe String -> Maybe (String, Maybe String)
+	split' Nothing = Nothing
+	split' (Just str) = case str =~ pat of
+		(pre, "", "") -> Just (pre, Nothing)
+		(pre, _, post) -> Just (pre, Just post)
+
+replaceRx :: String -> String -> String -> String
+replaceRx pat w = intercalate w . splitRx pat
 
 at :: (Int -> Maybe String) -> Int -> String
 at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i

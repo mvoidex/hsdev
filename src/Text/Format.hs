@@ -11,7 +11,7 @@ module Text.Format (
 
 import Control.Arrow (first)
 import Data.List (delete, isPrefixOf)
-import Text.Regex.Posix
+import Text.Regex.PCRE
 
 class Format a where
 	format :: a -> String
