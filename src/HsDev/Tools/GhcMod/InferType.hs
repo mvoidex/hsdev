@@ -5,6 +5,7 @@ module HsDev.Tools.GhcMod.InferType (
 
 import Control.Applicative
 import Control.Monad.Error
+import Data.Maybe (listToMaybe)
 import Data.String (fromString)
 import qualified Data.Text as T (unpack)
 import Data.Traversable (traverse)
@@ -25,9 +26,14 @@ inferType opts cabal src decl'
 	| otherwise = return decl'
 	where
 		infer = do
-			inferred <- liftM declaration $ info opts cabal src (T.unpack $ declarationName decl')
+			inferred <- ((getType . declaration) <$> byInfo) <|> byTypeOf
 			return decl' {
-				declaration = setType (declaration decl') (getType inferred) }
+				declaration = setType (declaration decl') inferred }
+
+		byInfo = info opts cabal src (T.unpack $ declarationName decl')
+		byTypeOf = case declarationPosition decl' of
+			Nothing -> fail "No position"
+			Just (Position l c) -> (fmap typedType . listToMaybe) <$> typeOf opts cabal src l c
 
 		setType :: DeclarationInfo -> Maybe String -> DeclarationInfo
 		setType (Function _ ds) newType = Function (fmap fromString newType) ds
