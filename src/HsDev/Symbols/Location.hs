@@ -6,6 +6,7 @@ module HsDev.Symbols.Location (
 	Location(..),
 
 	packageOpt,
+	recalcTabs,
 
 	module HsDev.Cabal
 	) where
@@ -15,7 +16,7 @@ import Control.DeepSeq (NFData(..))
 import Control.Monad (join)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
-import Data.List (intercalate)
+import Data.List (intercalate, findIndex)
 import Data.Maybe
 import Text.Read (readMaybe)
 
@@ -186,3 +187,17 @@ instance FromJSON Location where
 
 packageOpt :: Maybe ModulePackage -> [String]
 packageOpt = maybeToList . fmap (("-package " ++) . packageName)
+
+-- | Recalc position to interpret '\t' as one symbol instead of 8
+recalcTabs :: String -> Position -> Position
+recalcTabs cts (Position l c) = Position l c' where
+	line = listToMaybe $ drop (pred l) $ lines cts
+	c' = case line of
+		Nothing -> c
+		Just line' -> let sizes = map charSize line' in
+			succ . fromMaybe (length sizes) .
+			findIndex (>= pred c') .
+			scanl (+) 0 $ sizes
+	charSize :: Char -> Int
+	charSize '\t' = 8
+	charSize _ = 1

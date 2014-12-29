@@ -102,11 +102,17 @@ browseInspection = InspectionAt 0 . sort . nub
 
 info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
 info opts cabal file sname = do
+	fileCts <- liftIO $ readFile file
 	rs <- withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
 		GhcMod.info file sname
-	toDecl rs
+	toDecl fileCts rs
 	where
-		toDecl s = maybe (throwError $ strMsg $ "Can't parse info: '" ++ sname ++ "'") return $ parseData s `mplus` parseFunction s
+		toDecl fstr s =
+			liftM (recalcDeclTabs fstr) .
+			maybe (throwError $ strMsg $ "Can't parse info: '" ++ sname ++ "'") return $
+			parseData s `mplus` parseFunction s
+		recalcDeclTabs :: String -> Declaration -> Declaration
+		recalcDeclTabs fstr d = d { declarationPosition = fmap (recalcTabs fstr) (declarationPosition d) }
 		parseFunction s = do
 			groups <- matchRx (sname ++ "\\s+::\\s+(.*?)(\\s+-- Defined (at (.*)|in `(.*)'))?$") s
 			return (decl (fromString sname) (Function (Just $ fromString $ groups `at` 1) [])) {
@@ -163,12 +169,12 @@ typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.ghcUserOptions =
 	where
 		toRegionType :: String -> String -> Maybe TypedRegion
 		toRegionType fstr s = do
-			(r, tp) <- parseRead s $ (,) <$> parseRegion <*> readParse
+			(r, tp) <- parseRead s $ (,) <$> parseRegion fstr <*> readParse
 			return $ TypedRegion r (regionStr r fstr) tp
-		parseRegion :: ReadM Region
-		parseRegion = Region <$> parsePosition <*> parsePosition
-		parsePosition :: ReadM Position
-		parsePosition = Position <$> readParse <*> readParse
+		parseRegion :: String -> ReadM Region
+		parseRegion fstr = Region <$> parsePosition fstr <*> parsePosition fstr
+		parsePosition :: String -> ReadM Position
+		parsePosition fstr = recalcTabs fstr <$> (Position <$> readParse <*> readParse)
 
 data OutputMessageLevel = WarningMessage | ErrorMessage deriving (Eq, Ord, Bounded, Enum, Read, Show)
 
