@@ -196,7 +196,7 @@ recalcTabs cts (Position l c) = Position l c' where
 		Nothing -> c
 		Just line' -> let sizes = map charSize line' in
 			succ . fromMaybe (length sizes) .
-			findIndex (>= pred c') .
+			findIndex (>= pred c) .
 			scanl (+) 0 $ sizes
 	charSize :: Char -> Int
 	charSize '\t' = 8
