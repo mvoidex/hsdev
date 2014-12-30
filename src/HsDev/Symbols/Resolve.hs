@@ -1,8 +1,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module HsDev.Symbols.Resolve (
-	ResolveM(..), ResolvedTree, ResolvedModule(..), resolvedTopScope, ImportedDeclaration(..),
-	resolve, resolveModule, exported, resolveImport,
+	ResolveM(..), ResolvedTree, ResolvedModule(..), resolvedTopScope, ImportedDeclaration(..), scopes,
+	resolve, resolveOne, resolveModule, exported, resolveImport,
 	mergeImported
 	) where
 
@@ -52,9 +52,20 @@ data ImportedDeclaration = ImportedDeclaration {
 	importedBy :: [Import],
 	importedDeclaration :: Declaration }
 
+-- | Get scopes of @ImportedDeclaration@, where @Nothing@ is global scope
+scopes :: ImportedDeclaration -> [Maybe Text]
+scopes (ImportedDeclaration is _) = globalScope $ map (Just . importName) is where
+	globalScope
+		| any (not . importIsQualified) is = (Nothing :)
+		| otherwise = id
+
 -- | Resolve modules, function is not IO, so all file names must be canonicalized
 resolve :: (Traversable t, Foldable t) => Database -> t Module -> t ResolvedModule
 resolve db = flip evalState M.empty . flip runReaderT db . runResolveM . traverse resolveModule
+
+-- | Resolve one module
+resolveOne :: Database -> Module -> ResolvedModule
+resolveOne db = fromMaybe (error "Resolve: impossible happened") . resolve db . Just
 
 -- | Resolve module
 resolveModule :: Module -> ResolveM ResolvedModule
