@@ -29,6 +29,8 @@ module HsDev.Symbols (
 	Canonicalize(..),
 	locateProject,
 	locateSourceDir,
+	sourceModuleRoot,
+	importedModulePath,
 
 	-- * Modifiers
 	addDeclaration,
@@ -55,7 +57,7 @@ import Data.Monoid (Monoid(mempty))
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Foldable (Foldable(..))
 import Data.Text (Text, unpack)
-import qualified Data.Text as T (concat)
+import qualified Data.Text as T (concat, split, unpack)
 import Data.Traversable (Traversable(..))
 import System.Directory
 import System.FilePath
@@ -537,6 +539,23 @@ locateSourceDir f = runMaybeT $ do
 	p <- MaybeT $ locateProject file
 	proj <- MaybeT $ fmap (either (const Nothing) Just) $ runErrorT $ loadProject p
 	MaybeT $ return $ findSourceDir proj file
+
+-- | Get source module root directory, i.e. for "...\src\Foo\Bar.hs" with module 'Foo.Bar' will return "...\src"
+sourceModuleRoot :: Text -> FilePath -> FilePath
+sourceModuleRoot mname = 
+	joinPath .
+	reverse . drop (length $ T.split (== '.') mname) . reverse .
+	splitDirectories
+
+-- | Get path of imported module
+-- >importedModulePath "Foo.Bar" "...\src\Foo\Bar.hs" "Quux.Blah" = "...\src\Quux\Blah.hs"
+importedModulePath :: Text -> FilePath -> Text -> FilePath
+importedModulePath mname file imp =
+	(`addExtension` "hs") . joinPath .
+	(++ ipath) . splitDirectories $
+	sourceModuleRoot mname file
+	where
+		ipath = map T.unpack $ T.split (== '.') imp
 
 -- | Add declaration to module
 addDeclaration :: Declaration -> Module -> Module

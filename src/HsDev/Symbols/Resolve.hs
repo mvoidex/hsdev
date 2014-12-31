@@ -20,9 +20,7 @@ import Data.Monoid (mconcat, mappend)
 import Data.Ord (comparing)
 import Data.String (fromString)
 import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Traversable (Traversable, traverse)
-import System.FilePath
 
 import HsDev.Database
 import HsDev.Project
@@ -119,7 +117,7 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 					proj' = proj >>= refineProject db
 				case proj' of
 					Nothing -> selectImport i [
-						inFile $ importedModuleFilePath m file i,
+						inFile $ importedModulePath (moduleName m) file (importModuleName i),
 						byCabal]
 					Just p -> selectImport i [
 						inProject p,
@@ -134,15 +132,6 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 		select' md = moduleName md == importModuleName i' && any ($ moduleId md) (byImport i' : fs)
 	byImport :: Import -> ModuleId -> Bool
 	byImport i' m' = importModuleName i' == moduleIdName m'
-	importedModuleFilePath :: Module -> FilePath -> Import -> FilePath
-	importedModuleFilePath m' f' i' =
-		(`addExtension` "hs") . joinPath .
-		(++ ipath) . reverse . drop (length mpath) .
-		reverse $ fpath
-		where
-			mpath = map T.unpack $ T.split (== '.') $ moduleName m'
-			ipath = map T.unpack $ T.split (== '.') $ importModuleName i'
-			fpath = splitDirectories $ dropExtension f'
 	deps f p = maybe [] infoDepends $ fileTarget p f
 	inDepsOf' f p m' = any (`inPackage` m') (deps f p)
 

@@ -1,4 +1,5 @@
 module HsDev.Util (
+	withCurrentDirectory,
 	directoryContents,
 	traverseDirectory,
 	isParent,
@@ -41,6 +42,11 @@ import System.FilePath
 import System.IO (Handle)
 
 import Control.Concurrent.Task
+
+-- | Run action with current directory set
+withCurrentDirectory :: FilePath -> IO a -> IO a
+withCurrentDirectory cur act = bracket getCurrentDirectory setCurrentDirectory $
+	const (setCurrentDirectory cur >> act)
 
 -- | Get directory contents safely
 directoryContents :: FilePath -> IO [FilePath]

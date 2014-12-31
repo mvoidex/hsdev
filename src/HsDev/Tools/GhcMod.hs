@@ -27,7 +27,7 @@ import Control.Applicative
 import Control.Arrow
 import Control.Concurrent
 import Control.DeepSeq
-import Control.Exception (SomeException(..), bracket)
+import Control.Exception (SomeException(..))
 import Control.Monad.Error
 import Control.Monad.Catch (MonadThrow(..), MonadCatch(..))
 import Control.Monad.Reader
@@ -52,7 +52,7 @@ import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Base
-import HsDev.Util ((.::), liftIOErrors)
+import HsDev.Util ((.::), liftIOErrors, withCurrentDirectory)
 
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
 list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opts }) $ do
@@ -271,9 +271,6 @@ ghcModWorker p = do
 					defaultCleanupHandler dflags $ do
 						--GhcMod.initializeFlagsWithCradle GhcMod.defaultOptions (GhcMod.gmCradle env')
 						act
-		withCurrentDirectory :: FilePath -> IO a -> IO a
-		withCurrentDirectory cur act = bracket getCurrentDirectory setCurrentDirectory $
-			const (setCurrentDirectory cur >> act)
 
 type WorkerMap = MVar (M.Map FilePath (Worker (GhcModT IO)))
 

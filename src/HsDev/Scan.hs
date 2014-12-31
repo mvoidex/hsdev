@@ -60,7 +60,9 @@ scanProjectFile _ f = do
 
 -- | Scan module
 scanModule :: [String] -> ModuleLocation -> ErrorT String IO InspectedModule
-scanModule opts (FileModule f _) = inspectFile opts f >>= traverse (runGhcMod defaultOptions . inferTypes opts Cabal)
+scanModule opts (FileModule f _) = inspectFile opts f >>= traverse infer' where
+	infer' m = mapErrorT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
+		runGhcMod defaultOptions $ inferTypes opts Cabal m
 scanModule opts (CabalModule c p n) = browse opts c n p
 scanModule _ (ModuleSource _) = throwError "Can inspect only modules in file or cabal"
 
