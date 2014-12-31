@@ -52,7 +52,7 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 			moduleLocation = ModuleSource Nothing,
 			moduleExports = fmap (concatMap getExports) mexports,
 			moduleImports = map getImport imports,
-			moduleDeclarations = M.fromList $ map (declarationName &&& id) $ getDecls declarations }
+			moduleDeclarations = sortDeclarations $ getDecls declarations }
 	where
 		pmode :: H.ParseMode
 		pmode = H.defaultParseMode {
@@ -234,7 +234,7 @@ addDoc docsMap decl' = decl' { declarationDocs = M.lookup (declarationName decl'
 
 -- | Adds documentation to all declarations in module
 addDocs :: Map String String -> Module -> Module
-addDocs docsMap m = m { moduleDeclarations = M.map (addDoc docsMap) (moduleDeclarations m) }
+addDocs docsMap m = m { moduleDeclarations = map (addDoc docsMap) (moduleDeclarations m) }
 
 -- | Inspect contents
 inspectContents :: String -> [String] -> String -> ErrorT String IO InspectedModule

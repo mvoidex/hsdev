@@ -75,7 +75,7 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 			moduleImports = [import_ iname |
 				iname <- nub (mapMaybe definedModule ds),
 				iname /= fromString mname],
-			moduleDeclarations = M.fromList (map (declarationName &&& id) ds) }
+			moduleDeclarations = sortDeclarations ds }
 	where
 		mpkgname = maybe mname (\p -> packageName p ++ ":" ++ mname) mpackage
 		thisLoc = moduleIdLocation $ mloc mname

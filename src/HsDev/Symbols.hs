@@ -8,7 +8,7 @@ module HsDev.Symbols (
 	Import(..), importName, import_,
 	Symbol(..),
 	ModuleId(..), unnamedModuleId,
-	Module(..), declarationMap, moduleLocals,
+	Module(..), sortDeclarations, moduleLocals,
 	setDefinedIn, dropExternals, clearDefinedIn,
 	moduleLocalDeclarations, moduleModuleDeclarations, moduleId,
 	Locals(..),
@@ -50,10 +50,9 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Error
 import Data.Aeson
 import Data.List
-import Data.Map (Map)
 import Data.Maybe (fromMaybe)
-import qualified Data.Map as M
 import Data.Monoid (Monoid(mempty))
+import Data.Ord (comparing)
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Foldable (Foldable(..))
 import Data.Text (Text, unpack)
@@ -228,7 +227,7 @@ data Module = Module {
 	moduleLocation :: ModuleLocation,
 	moduleExports :: Maybe [Export],
 	moduleImports :: [Import],
-	moduleDeclarations :: Map Text Declaration }
+	moduleDeclarations :: [Declaration] }
 		deriving (Ord)
 
 instance ToJSON Module where
@@ -238,7 +237,7 @@ instance ToJSON Module where
 		"location" .= moduleLocation m,
 		"exports" .= moduleExports m,
 		"imports" .= moduleImports m,
-		"declarations" .= M.elems (moduleDeclarations m)]
+		"declarations" .= moduleDeclarations m]
 
 instance FromJSON Module where
 	parseJSON = withObject "module" $ \v -> Module <$>
@@ -247,7 +246,7 @@ instance FromJSON Module where
 		v .:: "location" <*>
 		v .:: "exports" <*>
 		v .:: "imports" <*>
-		((M.fromList . map (declarationName &&& id)) <$> v .:: "declarations")
+		v .:: "declarations"
 
 instance NFData Module where
 	rnf (Module n d s e i ds) = rnf n `seq` rnf d `seq` rnf s `seq` rnf e `seq` rnf i `seq` rnf ds
@@ -263,11 +262,11 @@ instance Show Module where
 		"\timports:",
 		unlines $ map (tab 2 . show) $ moduleImports m,
 		"\tdeclarations:",
-		unlines $ map (tabs 2 . show) $ M.elems (moduleDeclarations m),
+		unlines $ map (tabs 2 . show) $ moduleDeclarations m,
 		maybe "" (("\tdocs: " ++) . unpack) (moduleDocs m)]
 
-declarationMap :: [Declaration] -> Map Text Declaration
-declarationMap = M.fromList . map (declarationName &&& id)
+sortDeclarations :: [Declaration] -> [Declaration]
+sortDeclarations = sortBy (comparing declarationName)
 
 -- | Bring locals to top
 moduleLocals :: Module -> Module
@@ -276,25 +275,23 @@ moduleLocals m = m { moduleDeclarations = moduleLocalDeclarations m }
 -- | Set all declaration `definedIn` to this module
 setDefinedIn :: Module -> Module
 setDefinedIn m = m {
-	moduleDeclarations = M.map (`definedIn` moduleId m) (moduleDeclarations m) }
+	moduleDeclarations = map (`definedIn` moduleId m) (moduleDeclarations m) }
 
 -- | Drop all declarations, that not defined in this module
 dropExternals :: Module -> Module
 dropExternals m = m {
-	moduleDeclarations = M.filter ((/= Just (moduleId m)) . declarationDefined) (moduleDeclarations m) }
+	moduleDeclarations = filter ((/= Just (moduleId m)) . declarationDefined) (moduleDeclarations m) }
 
 -- | Clear `definedIn` information
 clearDefinedIn :: Module -> Module
 clearDefinedIn m = m {
-	moduleDeclarations = M.map (\d -> d { declarationDefined = Nothing }) (moduleDeclarations m) }
+	moduleDeclarations = map (\d -> d { declarationDefined = Nothing }) (moduleDeclarations m) }
 
 -- | Get declarations with locals
-moduleLocalDeclarations :: Module -> Map Text Declaration
+moduleLocalDeclarations :: Module -> [Declaration]
 moduleLocalDeclarations =
-	M.fromList .
-	map (declarationName &&& id) . 
+	sortDeclarations .
 	concatMap declarationLocals' .
-	M.elems .
 	moduleDeclarations
 	where
 		declarationLocals' :: Declaration -> [Declaration]
@@ -302,7 +299,7 @@ moduleLocalDeclarations =
 
 -- | Get list of declarations as ModuleDeclaration
 moduleModuleDeclarations :: Module -> [ModuleDeclaration]
-moduleModuleDeclarations m = [ModuleDeclaration (moduleId m) d | d <- M.elems (moduleDeclarations m)]
+moduleModuleDeclarations m = [ModuleDeclaration (moduleId m) d | d <- moduleDeclarations m]
 
 -- Make ModuleId by Module
 moduleId :: Module -> ModuleId
@@ -560,7 +557,7 @@ importedModulePath mname file imp =
 -- | Add declaration to module
 addDeclaration :: Declaration -> Module -> Module
 addDeclaration decl' m = m { moduleDeclarations = decls' } where
-	decls' = M.insert (declarationName decl') decl' $ moduleDeclarations m
+	decls' = sortDeclarations $ decl' : moduleDeclarations m
 
 -- | Unalias import name
 unalias :: Module -> Text -> [Text]
@@ -589,7 +586,7 @@ instance Documented ModuleDeclaration where
 
 -- | Module contents
 moduleContents :: Module -> [String]
-moduleContents = map showDecl . M.elems . moduleDeclarations where
+moduleContents = map showDecl . moduleDeclarations where
 	showDecl d = brief d ++ maybe "" ((" -- " ++) . unpack) (declarationDocs d)
 
 -- | Inspection data

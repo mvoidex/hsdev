@@ -3,11 +3,9 @@ module HsDev.Scan.Browse (
 	browseFilter, browse
 	) where
 
-import Control.Arrow
 import Control.Monad.Error
 import Data.List (nub)
 import Data.Maybe
-import qualified Data.Map as M
 import Data.String (fromString)
 import Text.Read (readMaybe)
 
@@ -60,7 +58,7 @@ browseModule cabal m = do
 		moduleLocation = thisLoc,
 		moduleExports = Just $ map (ExportName Nothing . declarationName) ds,
 		moduleImports = [import_ iname | iname <- nub (mapMaybe definedModule ds), iname /= fromString thisModule],
-		moduleDeclarations = M.fromList (map (declarationName &&& id) ds) }
+		moduleDeclarations = sortDeclarations ds }
 	where
 		thisLoc = moduleIdLocation $ mloc m
 		mloc m' = ModuleId (fromString mname') $

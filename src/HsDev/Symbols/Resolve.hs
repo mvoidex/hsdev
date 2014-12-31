@@ -42,11 +42,11 @@ data ResolvedModule = ResolvedModule {
 
 -- | Make @Module@ with scope declarations
 scopeModule :: ResolvedModule -> Module
-scopeModule r = (resolvedModule r) { moduleDeclarations = declarationMap (resolvedScope r) }
+scopeModule r = (resolvedModule r) { moduleDeclarations = resolvedScope r }
 
 -- | Make @Module@ with exported only declarations
 exportsModule :: ResolvedModule -> Module
-exportsModule r = (resolvedModule r) { moduleDeclarations = declarationMap (resolvedExports r) }
+exportsModule r = (resolvedModule r) { moduleDeclarations = resolvedExports r }
 
 -- | Get top-level scope
 resolvedTopScope :: ResolvedModule -> [Declaration]
@@ -68,8 +68,8 @@ resolveModule m = gets (M.lookup $ moduleId m) >>= maybe resolveModule' return w
 	resolveModule' = save $ case moduleLocation m of
 		CabalModule {} -> return ResolvedModule {
 			resolvedModule = m,
-			resolvedScope = M.elems $ moduleDeclarations m,
-			resolvedExports = M.elems $ moduleDeclarations m }
+			resolvedScope = moduleDeclarations m,
+			resolvedExports = moduleDeclarations m }
 		_ -> do
 			scope' <-
 				liftM ((thisDecls ++) . mergeImported . concat) .
@@ -81,9 +81,9 @@ resolveModule m = gets (M.lookup $ moduleId m) >>= maybe resolveModule' return w
 					concatMap (exported scope') .
 					fromMaybe [] .
 					moduleExports $ m
-			return $ ResolvedModule m scope' exports'
+			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exports')
 	thisDecls :: [Declaration]
-	thisDecls = map selfImport $ M.elems $ moduleDeclarations m
+	thisDecls = map selfImport $ moduleDeclarations m
 	selfImport :: Declaration -> Declaration
 	selfImport d = d { declarationImported = Just [import_ $ moduleName m] }
 	save :: ResolveM ResolvedModule -> ResolveM ResolvedModule
