@@ -9,7 +9,7 @@ module System.Console.Cmd (
 
 import Control.Arrow (Arrow((&&&)))
 import Control.Monad ()
-import Data.List (stripPrefix)
+import Data.List (stripPrefix, isPrefixOf)
 import Control.Monad.Error
 import Data.Map ()
 import Data.Maybe
@@ -123,9 +123,15 @@ helpCommand tool toCmd cmds = helpcmd where
 			namedArgs = Opts $ M.delete "help" $ getOpts $ namedArgs a }
 		| otherwise = a
 	onHelp (Args [] _) = Right $ HelpUsage [tool ++ " " ++ brief c | c <- (helpcmd:cmds)]
-	onHelp (Args cmdname _) = case filter ((cmdname ==) . words . cmdName) (helpcmd:cmds) of
-		[] -> Left $ "Unknown command: " ++ unwords cmdname
+	onHelp (Args cmdname _) = case filter ((cmdname `isPrefixOf`) . words . cmdName) (helpcmd:cmds) of
+		[] -> Left $ unlines $ ("Unknown command: " ++ unwords cmdname) : tryOut
 		helps -> Right $ HelpCommands $ map (cmdName &&& (addHeader . indented)) helps
+		where
+			pre = unwords cmdname
+			maybeCmds = filter (pre `isPrefixOf`) $ map cmdName (helpcmd:cmds)
+			tryOut = case maybeCmds of
+				[] -> []
+				_ -> "\tMaybe you mean:" : map ("\t\t" ++) maybeCmds
 	addHeader [] = []
 	addHeader (h:hs) = (tool ++ " " ++ h) : hs
 
