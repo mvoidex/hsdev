@@ -183,7 +183,8 @@ fileCtxMaybe db file = ((\(f, m, p) -> (f, Just m, p)) <$> fileCtx db file) <|> 
 -- | Restrict only modules file depends on
 fileDeps :: FilePath -> Cabal -> Maybe Project -> Database -> Database
 fileDeps file cabal mproj = filterDB fileDeps' (const True) where
-	fileDeps' = and . sequence [
-		restrictCabal cabal,
-		maybe (const True) inProject mproj,
-		maybe (const True) inDepsOf (join $ fileTarget <$> mproj <*> pure file)]
+	fileDeps' = liftM2 (||)
+		(maybe (const True) inProject mproj)
+		(liftM2 (&&)
+			(restrictCabal cabal)
+			(maybe (const True) inDepsOf (join $ fileTarget <$> mproj <*> pure file)))
