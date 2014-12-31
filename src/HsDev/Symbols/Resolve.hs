@@ -85,7 +85,9 @@ resolveModule m = gets (M.lookup $ moduleId m) >>= maybe resolveModule' return w
 					moduleExports $ m
 			return $ ResolvedModule m scope' exports'
 	thisDecls :: [Declaration]
-	thisDecls = M.elems $ moduleDeclarations m
+	thisDecls = map selfImport $ M.elems $ moduleDeclarations m
+	selfImport :: Declaration -> Declaration
+	selfImport d = d { declarationImported = Just [import_ $ moduleName m] }
 	save :: ResolveM ResolvedModule -> ResolveM ResolvedModule
 	save act = do
 		rm <- act
@@ -121,14 +123,15 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 						byCabal]
 					Just p -> selectImport i [
 						inProject p,
-						inDepsOf file p]
+						inDepsOf' file p]
 			CabalModule cabal _ _ -> selectImport i [inCabal cabal]
 			ModuleSource _ -> selectImport i [byCabal]
 		liftM (concatMap resolvedExports) $ mapM resolveModule ms
 	setImport :: Import -> Declaration -> Declaration
 	setImport i' d' = d' { declarationImported = Just [i'] `mappend` declarationImported d' }
 	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM [Module]
-	selectImport i' fs = liftM (selectModules (\md -> all ($ moduleId md) (byImport i' : fs))) ask
+	selectImport i' fs = liftM (selectModules select') ask where
+		select' md = moduleName md == importModuleName i' && any ($ moduleId md) (byImport i' : fs)
 	byImport :: Import -> ModuleId -> Bool
 	byImport i' m' = importModuleName i' == moduleIdName m'
 	importedModuleFilePath :: Module -> FilePath -> Import -> FilePath
@@ -141,7 +144,7 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 			ipath = map T.unpack $ T.split (== '.') $ importModuleName i'
 			fpath = splitDirectories $ dropExtension f'
 	deps f p = maybe [] infoDepends $ fileTarget p f
-	inDepsOf f p m' = any (`inPackage` m') (deps f p)
+	inDepsOf' f p m' = any (`inPackage` m') (deps f p)
 
 -- | Merge imported declarations
 mergeImported :: [Declaration] -> [Declaration]

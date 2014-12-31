@@ -104,7 +104,7 @@ info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
 info opts cabal file sname = do
 	fileCts <- liftIO $ readFile file
 	rs <- withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
-		GhcMod.info file sname
+		liftM nullToNL $ GhcMod.info file sname
 	toDecl fileCts rs
 	where
 		toDecl fstr s =
@@ -120,7 +120,7 @@ info opts cabal file sname = do
 					((groups 4 >>= parseSrc) <|> (mkMod <$> groups 5)),
 				declarationPosition = groups 4 >>= parsePos }
 		parseData s = do
-			groups <- matchRx "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined)?" s
+			groups <- matchRx "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined (at (.*)|in `(.*)'))?" s
 			let
 				args = maybe [] (map fromString . words) $ groups 5
 				ctx = fmap (fromString . trim) $ groups 3
@@ -221,11 +221,13 @@ parseOutputMessage s = do
 			locationModule = FileModule (normalise (groups `at` 1)) Nothing,
 			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
 		errorLevel = if groups 5 == Just "Warning" then WarningMessage else ErrorMessage,
-		errorMessage = map nullToNL (groups `at` 6) }
-	where
-		nullToNL = \case
-			'\0' -> '\n'
-			ch -> ch
+		errorMessage = nullToNL (groups `at` 6) }
+
+-- | Replace NULL with newline
+nullToNL :: String -> String
+nullToNL = map $ \case
+	'\0' -> '\n'
+	ch -> ch
 
 check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [OutputMessage]
 check opts cabal files _ = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
@@ -256,6 +258,7 @@ ghcModWorker p = do
 	where
 		makeEnv :: FilePath -> IO GhcMod.GhcModEnv
 		makeEnv = GhcMod.newGhcModEnv GhcMod.defaultOptions
+		-- TODO: Uncomment comment below after ghc-mod exports neccessary functions
 		functionNotExported = True
 		runGhcModT'' :: FilePath -> GhcModT IO () -> IO ()
 		runGhcModT'' cur act

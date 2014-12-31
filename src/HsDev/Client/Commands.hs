@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, MultiWayIf #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Client.Commands (
 	commands
@@ -81,7 +81,6 @@ commands = [
 	-- Context free commands
 	cmdList' "modules" [] (sandboxes ++ [
 		manyReq $ projectArg `desc` "projects to list modules from",
-		resolveArg, exportsArg,
 		noLastArg,
 		manyReq packageArg,
 		sourced, standaloned])
@@ -105,6 +104,13 @@ commands = [
 		sourced])
 		"get module info"
 		modul',
+	cmd' "resolve" [] (sandboxes ++ [
+		moduleArg, localsArg,
+		projectArg `desc` "module project",
+		fileArg `desc` "module source file",
+		exportsArg])
+		"resolve module scope (or exports)"
+		resolve',
 	cmd' "project" [] [
 		projectArg `desc` "project path or name"]
 		"get project info"
@@ -164,7 +170,7 @@ commands = [
 		cacheFile = req "cache-file" "path" `desc` "cache file"
 		ctx = [fileArg `desc` "source file", sandboxArg]
 		dataArg = req "data" "contents" `desc` "data to pass to command"
-		exportsArg = flag "exports" `short` ['e'] `desc` "resolve module exports, useless for modules"
+		exportsArg = flag "exports" `short` ['e'] `desc` "resolve module exports"
 		fileArg = req "file" "path" `short` ['f']
 		findArg = req "find" "query" `desc` "infix match"
 		ghcOpts = list "ghc" "option" `short` ['g'] `desc` "options to pass to GHC"
@@ -183,7 +189,6 @@ commands = [
 		prefixArg = req "prefix" "prefix" `desc` "prefix match"
 		projectArg = req "project" "project"
 		packageVersionArg = req "version" "id" `short` ['v'] `desc` "package version"
-		resolveArg = flag "resolve" `short` ['r'] `desc` "resolve module scope, useless for cabal modules"
 		sandboxArg = req "sandbox" "path" `desc` "path to cabal sandbox"
 		sandboxList = manyReq sandboxArg
 		sandboxes = [
@@ -396,14 +401,35 @@ commands = [
 					(return $ allModules dbval)
 					(mapErrorStr . findModule dbval)
 					(arg "module" as)
-			let
-				cabaldb = filterDB (restrictCabal cabal) (const True) dbval
 			case rs of
 				[] -> commandError "Module not found" []
-				[m] -> return $ if
-					| flagSet "resolve" as -> scopeModule $ resolveOne cabaldb m
-					| flagSet "exports" as -> exportsModule $ resolveOne cabaldb m
-					| otherwise -> m
+				[m] -> return m
+				ms' -> commandError "Ambiguous modules" ["modules" .= (map moduleId ms')]
+
+		-- | Resolve module scope
+		resolve' :: [String] -> Opts String -> CommandActionT Module
+		resolve' _ as copts = do
+			dbval <- liftM (localsDatabase as) $ getDb copts
+			proj <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findProject copts) $ arg "project" as
+			cabal <- mapErrorT (fmap $ strMsg +++ id) $ getCabal copts as
+			file' <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findPath copts) $ arg "file" as
+			let
+				filters = allOf $ catMaybes [
+					fmap inProject proj,
+					fmap inFile file',
+					fmap inModule (arg "module" as),
+					Just byFile]
+			rs <- mapErrorT (fmap $ strMsg +++ id) $
+				(newest as . filter (filters . moduleId)) <$> maybe
+					(return $ allModules dbval)
+					(mapErrorStr . findModule dbval)
+					(arg "module" as)
+			let
+				cabaldb = filterDB (restrictCabal cabal) (const True) dbval
+				getScope = if flagSet "exports" as then exportsModule else scopeModule
+			case rs of
+				[] -> commandError "Module not found" []
+				[m] -> return $ getScope $ resolveOne cabaldb m
 				ms' -> commandError "Ambiguous modules" ["modules" .= (map moduleId ms')]
 
 		-- | Get project info

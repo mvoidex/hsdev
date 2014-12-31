@@ -100,6 +100,7 @@ hayooAsDeclaration f
 		moduleDeclaration = Declaration {
 			declarationName = fromString $ hayooName f,
 			declarationDefined = Nothing,
+			declarationImported = Nothing,
 			declarationDocs = Just (fromString $ addOnline $ untagDescription $ hayooDescription f),
 			declarationPosition = Nothing,
 			declaration = declInfo } }
