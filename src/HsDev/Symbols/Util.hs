@@ -1,6 +1,6 @@
 module HsDev.Symbols.Util (
 	projectOf, cabalOf, packageOf,
-	inProject, inCabal, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
+	inProject, inDepsOf, inCabal, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
 	imports, qualifier, imported, visible, inScope,
 	newestPackage,
 	sourceModule, visibleModule, preferredModule, uniqueModules,
@@ -39,6 +39,10 @@ packageOf m = case moduleIdLocation m of
 -- | Check if module in project
 inProject :: Project -> ModuleId -> Bool
 inProject p m = projectOf m == Just p
+
+-- | Check if module in deps of project target
+inDepsOf :: Info -> ModuleId -> Bool
+inDepsOf i m = any (`inPackage` m) $ infoDepends i
 
 -- | Check if module in cabal
 inCabal :: Cabal -> ModuleId -> Bool

@@ -107,22 +107,22 @@ fromProject p = zero {
 	databaseProjects = M.singleton (projectCabal p) p }
 
 -- | Filter database by predicate
-filterDB :: (Module -> Bool) -> (Project -> Bool) -> Database -> Database
+filterDB :: (ModuleId -> Bool) -> (Project -> Bool) -> Database -> Database
 filterDB m p db = mempty {
-	databaseModules = M.filter (either (const False) m . inspectionResult) (databaseModules db),
+	databaseModules = M.filter (either (const False) (m . moduleId) . inspectionResult) (databaseModules db),
 	databaseProjects = M.filter p (databaseProjects db) }
 
 -- | Project database
 projectDB :: Project -> Database -> Database
-projectDB proj = filterDB (inProject proj . moduleId) (((==) `on` projectCabal) proj)
+projectDB proj = filterDB (inProject proj) (((==) `on` projectCabal) proj)
 
 -- | Cabal database
 cabalDB :: Cabal -> Database -> Database
-cabalDB cabal = filterDB (inCabal cabal . moduleId) (const False)
+cabalDB cabal = filterDB (inCabal cabal) (const False)
 
 -- | Standalone database
 standaloneDB :: Database -> Database
-standaloneDB db = filterDB (check' . moduleId) (const False) db where
+standaloneDB db = filterDB (check') (const False) db where
 	check' m = noProject m && byFile m
 	noProject m = all (not . flip inProject m) ps
 	ps = M.elems $ databaseProjects db

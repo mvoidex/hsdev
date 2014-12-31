@@ -31,6 +31,7 @@ import System.Directory (canonicalizePath)
 import HsDev.Database
 import HsDev.Project
 import HsDev.Symbols
+import HsDev.Symbols.Resolve
 import HsDev.Symbols.Util
 
 -- | Find declaration by name
@@ -60,7 +61,7 @@ getProject db p = do
 	maybe (throwError $ "Project " ++ p' ++ " not found") return $
 		M.lookup p' $ databaseProjects db
 
--- | Lookup visible symbol
+-- | Lookup visible within project symbol
 lookupSymbol :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
 lookupSymbol db cabal file ident = do
 	(_, mthis, mproj) <- fileCtx db file
@@ -76,14 +77,14 @@ lookupSymbol db cabal file ident = do
 -- | Whois symbol in scope
 whois :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
 whois db cabal file ident = do
-	(_, mthis, _) <- fileCtx db file
-	liftM
-		(filter $ checkModule $ allOf [
-			restrictCabal cabal,
-			inScope mthis qname])
-		(newestPackage <$> findDeclaration db iname)
+	(_, mthis, mproj) <- fileCtx db file
+	return $
+		newestPackage $ filter (checkDecl . moduleDeclaration) $
+		moduleModuleDeclarations $ scopeModule $
+		resolveOne (fileDeps file cabal mproj db) mthis
 	where
 		(qname, iname) = splitIdentifier ident
+		checkDecl d = fmap fromString qname `elem` scopes d && declarationName d == fromString iname
 
 -- | Accessible modules
 scopeModules :: Database -> Cabal -> FilePath -> ErrorT String IO [Module]
@@ -101,10 +102,8 @@ scopeModules db cabal file = do
 -- | Symbols in scope
 scope :: Database -> Cabal -> FilePath -> Bool -> ErrorT String IO [ModuleDeclaration]
 scope db cabal file False = do
-	(_, mthis, _) <- fileCtx db file
-	depModules <- liftM (filter ((`imported` moduleImports' mthis) . moduleId)) $
-		scopeModules db cabal file
-	return $ concatMap moduleModuleDeclarations $ mthis : depModules
+	(_, mthis, mproj) <- fileCtx db file
+	return $ moduleModuleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) mthis
 scope db cabal file True = concatMap moduleModuleDeclarations <$> scopeModules db cabal file
 
 -- | Completions
@@ -180,3 +179,11 @@ fileCtxMaybe db file = ((\(f, m, p) -> (f, Just m, p)) <$> fileCtx db file) <|> 
 		mproj <- liftIO $ locateProject file'
 		mproj' <- traverse (getProject db) mproj
 		return (file', Nothing, mproj')
+
+-- | Restrict only modules file depends on
+fileDeps :: FilePath -> Cabal -> Maybe Project -> Database -> Database
+fileDeps file cabal mproj = filterDB fileDeps' (const True) where
+	fileDeps' = and . sequence [
+		restrictCabal cabal,
+		maybe (const True) inProject mproj,
+		maybe (const True) inDepsOf (join $ fileTarget <$> mproj <*> pure file)]

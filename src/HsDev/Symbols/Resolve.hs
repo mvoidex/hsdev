@@ -1,7 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module HsDev.Symbols.Resolve (
-	ResolveM(..), ResolvedTree, ResolvedModule(..), resolvedTopScope, ImportedDeclaration(..), scopes,
+	ResolveM(..), ResolvedTree, ResolvedModule(..), scopeModule, exportsModule, resolvedTopScope,
 	resolve, resolveOne, resolveModule, exported, resolveImport,
 	mergeImported
 	) where
@@ -16,6 +16,7 @@ import Data.List (sortBy, groupBy, find)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, maybeToList)
+import Data.Monoid (mconcat, mappend)
 import Data.Ord (comparing)
 import Data.String (fromString)
 import Data.Text (Text)
@@ -38,26 +39,22 @@ type ResolvedTree = Map ModuleId ResolvedModule
 -- | Module with declarations bringed to scope and with exported declarations
 data ResolvedModule = ResolvedModule {
 	resolvedModule :: Module,
-	resolvedScope :: [ImportedDeclaration],
+	resolvedScope :: [Declaration],
 	resolvedExports :: [Declaration] }
+
+-- | Make @Module@ with scope declarations
+scopeModule :: ResolvedModule -> Module
+scopeModule r = (resolvedModule r) { moduleDeclarations = declarationMap (resolvedScope r) }
+
+-- | Make @Module@ with exported only declarations
+exportsModule :: ResolvedModule -> Module
+exportsModule r = (resolvedModule r) { moduleDeclarations = declarationMap (resolvedExports r) }
 
 -- | Get top-level scope
 resolvedTopScope :: ResolvedModule -> [Declaration]
-resolvedTopScope = map importedDeclaration . filter isTop . resolvedScope where
-	isTop :: ImportedDeclaration -> Bool
-	isTop = any (not . importIsQualified) . importedBy
-
--- | Imported declaration holds info about which imports (there can be many for one declaration) brought it to scope
-data ImportedDeclaration = ImportedDeclaration {
-	importedBy :: [Import],
-	importedDeclaration :: Declaration }
-
--- | Get scopes of @ImportedDeclaration@, where @Nothing@ is global scope
-scopes :: ImportedDeclaration -> [Maybe Text]
-scopes (ImportedDeclaration is _) = globalScope $ map (Just . importName) is where
-	globalScope
-		| any (not . importIsQualified) is = (Nothing :)
-		| otherwise = id
+resolvedTopScope = filter isTop . resolvedScope where
+	isTop :: Declaration -> Bool
+	isTop = any (not . importIsQualified) . fromMaybe [] . declarationImported
 
 -- | Resolve modules, function is not IO, so all file names must be canonicalized
 resolve :: (Traversable t, Foldable t) => Database -> t Module -> t ResolvedModule
@@ -73,8 +70,8 @@ resolveModule m = gets (M.lookup $ moduleId m) >>= maybe resolveModule' return w
 	resolveModule' = save $ case moduleLocation m of
 		CabalModule {} -> return ResolvedModule {
 			resolvedModule = m,
-			resolvedScope = map (ImportedDeclaration []) (M.elems $ moduleDeclarations m),
-			resolvedExports = M.elems (moduleDeclarations m) }
+			resolvedScope = M.elems $ moduleDeclarations m,
+			resolvedExports = M.elems $ moduleDeclarations m }
 		_ -> do
 			scope' <-
 				liftM ((thisDecls ++) . mergeImported . concat) .
@@ -87,8 +84,8 @@ resolveModule m = gets (M.lookup $ moduleId m) >>= maybe resolveModule' return w
 					fromMaybe [] .
 					moduleExports $ m
 			return $ ResolvedModule m scope' exports'
-	thisDecls :: [ImportedDeclaration]
-	thisDecls = map (ImportedDeclaration []) $ M.elems $ moduleDeclarations m
+	thisDecls :: [Declaration]
+	thisDecls = M.elems $ moduleDeclarations m
 	save :: ResolveM ResolvedModule -> ResolveM ResolvedModule
 	save act = do
 		rm <- act
@@ -96,22 +93,21 @@ resolveModule m = gets (M.lookup $ moduleId m) >>= maybe resolveModule' return w
 		return rm
 
 -- | Select declarations exported with @Export@
-exported :: [ImportedDeclaration] -> Export -> [Declaration]
-exported ds (ExportName q n) = maybeToList $ importedDeclaration <$> find isExported ds where
-	isExported :: ImportedDeclaration -> Bool
-	isExported (ImportedDeclaration imps decl') = declarationName decl' == n && case q of
-		Nothing -> any (not . importIsQualified) imps
-		Just q' -> any ((== q') . importName) imps
+exported :: [Declaration] -> Export -> [Declaration]
+exported ds (ExportName q n) = maybeToList $ find isExported ds where
+	isExported :: Declaration -> Bool
+	isExported decl' = declarationName decl' == n && case q of
+		Nothing -> any (not . importIsQualified) $ fromMaybe [] $ declarationImported decl'
+		Just q' -> any ((== q') . importName) $ fromMaybe [] $ declarationImported decl'
 exported ds (ExportModule m) =
-	map importedDeclaration $
-	filter (any (unqualBy m) . importedBy) ds
+	filter (any (unqualBy m) . fromMaybe [] . declarationImported) ds
 	where
 		unqualBy :: Text -> Import -> Bool
 		unqualBy m' i = importName i == m' && not (importIsQualified i)
 
 -- | Bring declarations into scope
-resolveImport :: Module -> Import -> ResolveM [ImportedDeclaration]
-resolveImport m i = liftM (map $ ImportedDeclaration [i]) resolveImport' where
+resolveImport :: Module -> Import -> ResolveM [Declaration]
+resolveImport m i = liftM (map $ setImport i) resolveImport' where
 	resolveImport' :: ResolveM [Declaration]
 	resolveImport' = do
 		ms <- case moduleLocation m of
@@ -129,6 +125,8 @@ resolveImport m i = liftM (map $ ImportedDeclaration [i]) resolveImport' where
 			CabalModule cabal _ _ -> selectImport i [inCabal cabal]
 			ModuleSource _ -> selectImport i [byCabal]
 		liftM (concatMap resolvedExports) $ mapM resolveModule ms
+	setImport :: Import -> Declaration -> Declaration
+	setImport i' d' = d' { declarationImported = Just [i'] `mappend` declarationImported d' }
 	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM [Module]
 	selectImport i' fs = liftM (selectModules (\md -> all ($ moduleId md) (byImport i' : fs))) ask
 	byImport :: Import -> ModuleId -> Bool
@@ -146,12 +144,14 @@ resolveImport m i = liftM (map $ ImportedDeclaration [i]) resolveImport' where
 	inDepsOf f p m' = any (`inPackage` m') (deps f p)
 
 -- | Merge imported declarations
-mergeImported :: [ImportedDeclaration] -> [ImportedDeclaration]
+mergeImported :: [Declaration] -> [Declaration]
 mergeImported =
-	map (uncurry ImportedDeclaration .
-		(concatMap importedBy &&& importedDeclaration . head)) .
+	map merge' .
 	groupBy ((==) `on` declId) .
 	sortBy (comparing declId)
 	where
-		declId :: ImportedDeclaration -> (Text, Maybe ModuleId)
-		declId = importedDeclaration >>> declarationName &&& declarationDefined
+		declId :: Declaration -> (Text, Maybe ModuleId)
+		declId = declarationName &&& declarationDefined
+		merge' :: [Declaration] -> Declaration
+		merge' [] = error "mergeImported: impossible"
+		merge' ds@(d:_) = d { declarationImported = mconcat $ map declarationImported ds }

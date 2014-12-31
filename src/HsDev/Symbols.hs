@@ -8,11 +8,11 @@ module HsDev.Symbols (
 	Import(..), importName, import_,
 	Symbol(..),
 	ModuleId(..), unnamedModuleId,
-	Module(..), moduleLocals,
+	Module(..), declarationMap, moduleLocals,
 	setDefinedIn, dropExternals, clearDefinedIn,
 	moduleLocalDeclarations, moduleModuleDeclarations, moduleId,
 	Locals(..),
-	Declaration(..), decl, definedIn, declarationLocals,
+	Declaration(..), decl, definedIn, declarationLocals, scopes,
 	TypeInfo(..),
 	DeclarationInfo(..),
 	ModuleDeclaration(..),
@@ -264,6 +264,9 @@ instance Show Module where
 		unlines $ map (tabs 2 . show) $ M.elems (moduleDeclarations m),
 		maybe "" (("\tdocs: " ++) . unpack) (moduleDocs m)]
 
+declarationMap :: [Declaration] -> Map Text Declaration
+declarationMap = M.fromList . map (declarationName &&& id)
+
 -- | Bring locals to top
 moduleLocals :: Module -> Module
 moduleLocals m = m { moduleDeclarations = moduleLocalDeclarations m }
@@ -312,14 +315,15 @@ class Locals a where
 -- | Declaration
 data Declaration = Declaration {
 	declarationName :: Text,
-	declarationDefined :: Maybe ModuleId,
+	declarationDefined :: Maybe ModuleId, -- ^ Where declaration defined, @Nothing@ if here
+	declarationImported :: Maybe [Import], -- ^ Declaration imported with. @Nothing@ if unknown (cabal modules) or here (source file)
 	declarationDocs :: Maybe Text,
 	declarationPosition :: Maybe Position,
 	declaration :: DeclarationInfo }
 		deriving (Eq, Ord)
 
 instance NFData Declaration where
-	rnf (Declaration n d dd l x) = rnf n `seq` rnf dd `seq` rnf d `seq` rnf l `seq` rnf x
+	rnf (Declaration n def is d l x) = rnf n `seq` rnf def `seq` rnf is `seq` rnf d `seq` rnf l `seq` rnf x
 
 instance Show Declaration where
 	show d = unlines $ filter (not . null) [
@@ -332,6 +336,7 @@ instance ToJSON Declaration where
 	toJSON d = object [
 		"name" .= declarationName d,
 		"defined" .= declarationDefined d,
+		"imported" .= declarationImported d,
 		"docs" .= declarationDocs d,
 		"pos" .= declarationPosition d,
 		"decl" .= declaration d]
@@ -340,6 +345,7 @@ instance FromJSON Declaration where
 	parseJSON = withObject "declaration" $ \v -> Declaration <$>
 		v .:: "name" <*>
 		v .:: "defined" <*>
+		v .:: "imported" <*>
 		v .:: "docs" <*>
 		v .:: "pos" <*>
 		v .:: "decl"
@@ -349,7 +355,7 @@ instance Locals Declaration where
 	where_ d ds = d { declaration = declaration d `where_` ds }
 
 decl :: Text -> DeclarationInfo -> Declaration
-decl n = Declaration n Nothing Nothing Nothing
+decl n = Declaration n Nothing Nothing Nothing Nothing
 
 definedIn :: Declaration -> ModuleId -> Declaration
 definedIn d m = d { declarationDefined = Just m }
@@ -358,7 +364,15 @@ declarationLocals :: Declaration -> [Declaration]
 declarationLocals d = map prefix' $ locals $ declaration d where
 	prefix' decl' = decl' { declarationName = declarationName decl' }
 
--- | Common info for type/newtype/data/class
+-- | Get scopes of @Declaration@, where @Nothing@ is global scope
+scopes :: Declaration -> [Maybe Text]
+scopes d = globalScope $ map (Just . importName) is where
+	is = fromMaybe [] $ declarationImported d
+	globalScope
+		| any (not . importIsQualified) is = (Nothing :)
+		| otherwise = id
+
+-- | Common info for type, newtype, data and class
 data TypeInfo = TypeInfo {
 	typeInfoContext :: Maybe Text,
 	typeInfoArgs :: [Text],
@@ -484,6 +498,7 @@ instance FromJSON ModuleDeclaration where
 qualifiedName :: ModuleId -> Declaration -> Text
 qualifiedName m d = T.concat [moduleIdName m, ".", declarationName d]
 
+-- | Canonicalize all paths within something
 class Canonicalize a where
 	canonicalize :: a -> IO a
 

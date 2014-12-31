@@ -71,5 +71,5 @@ loadFiles fs dir = do
 	dat <- loadData (dir </> Cache.standaloneCache)
 	ErrorT $ return $ structured [] [] $ filterDB inFiles (const False) dat
 	where
-		inFiles = maybe False (`elem` fs') . moduleSource . moduleLocation
+		inFiles = maybe False (`elem` fs') . moduleSource . moduleIdLocation
 		fs' = map normalise fs

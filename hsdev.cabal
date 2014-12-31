@@ -99,6 +99,8 @@ library
     haskell-src-exts >= 1.16.0,
     hdocs >= 0.4.0,
     HTTP >= 4000.2.0,
+    -- ghc-mod workaround
+    monad-control >= 0.3 && < 1.0,
     monad-loops >= 0.4,
     mtl >= 2.1.0,
     network >= 2.4.0,

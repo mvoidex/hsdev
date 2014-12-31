@@ -86,12 +86,13 @@ getDecls decls =
 	map mergeDecls .
 	groupBy ((==) `on` declarationName) .
 	sortBy (comparing declarationName) $
-	concatMap getDecl decls ++ concatMap getDef decls 
+	concatMap getDecl decls ++ concatMap getDef decls
 	where
 		mergeDecls :: [Declaration] -> Declaration
 		mergeDecls [] = error "Impossible"
 		mergeDecls ds = Declaration
 			(declarationName $ head ds)
+			Nothing
 			Nothing
 			(msum $ map declarationDocs ds)
 			(minimum <$> mapM declarationPosition ds)

@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, MultiWayIf #-}
 
 module HsDev.Client.Commands (
 	commands
@@ -30,6 +30,7 @@ import HsDev.Commands
 import HsDev.Database
 import HsDev.Project
 import HsDev.Symbols
+import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util
 import HsDev.Util
 import HsDev.Scan
@@ -80,6 +81,7 @@ commands = [
 	-- Context free commands
 	cmdList' "modules" [] (sandboxes ++ [
 		manyReq $ projectArg `desc` "projects to list modules from",
+		resolveArg, exportsArg,
 		noLastArg,
 		manyReq packageArg,
 		sourced, standaloned])
@@ -162,6 +164,7 @@ commands = [
 		cacheFile = req "cache-file" "path" `desc` "cache file"
 		ctx = [fileArg `desc` "source file", sandboxArg]
 		dataArg = req "data" "contents" `desc` "data to pass to command"
+		exportsArg = flag "exports" `short` ['e'] `desc` "resolve module exports, useless for modules"
 		fileArg = req "file" "path" `short` ['f']
 		findArg = req "find" "query" `desc` "infix match"
 		ghcOpts = list "ghc" "option" `short` ['g'] `desc` "options to pass to GHC"
@@ -180,6 +183,7 @@ commands = [
 		prefixArg = req "prefix" "prefix" `desc` "prefix match"
 		projectArg = req "project" "project"
 		packageVersionArg = req "version" "id" `short` ['v'] `desc` "package version"
+		resolveArg = flag "resolve" `short` ['r'] `desc` "resolve module scope, useless for cabal modules"
 		sandboxArg = req "sandbox" "path" `desc` "path to cabal sandbox"
 		sandboxList = manyReq sandboxArg
 		sandboxes = [
@@ -392,9 +396,14 @@ commands = [
 					(return $ allModules dbval)
 					(mapErrorStr . findModule dbval)
 					(arg "module" as)
+			let
+				cabaldb = filterDB (restrictCabal cabal) (const True) dbval
 			case rs of
 				[] -> commandError "Module not found" []
-				[m] -> return m
+				[m] -> return $ if
+					| flagSet "resolve" as -> scopeModule $ resolveOne cabaldb m
+					| flagSet "exports" as -> exportsModule $ resolveOne cabaldb m
+					| otherwise -> m
 				ms' -> commandError "Ambiguous modules" ["modules" .= (map moduleId ms')]
 
 		-- | Get project info
@@ -517,7 +526,7 @@ commands = [
 					if flagSet "stand" as then standaloneDB dbval else mempty,
 					mconcat $ map (`cabalDB` dbval) cabals,
 					mconcat $ map (`projectDB` dbval) ps',
-					filterDB (\m -> any (`inFile` moduleId m) fs') (const False) dbval]
+					filterDB (\m -> any (`inFile` m) fs') (const False) dbval]
 
 			void $ runMaybeT $ msum [
 				do
