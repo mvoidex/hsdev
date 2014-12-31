@@ -81,7 +81,8 @@ whois db cabal file ident = do
 	return $
 		newestPackage $ filter (checkDecl . moduleDeclaration) $
 		moduleModuleDeclarations $ scopeModule $
-		resolveOne (fileDeps file cabal mproj db) mthis
+		resolveOne (fileDeps file cabal mproj db) $
+		moduleLocals mthis
 	where
 		(qname, iname) = splitIdentifier ident
 		checkDecl d = fmap fromString qname `elem` scopes d && declarationName d == fromString iname
