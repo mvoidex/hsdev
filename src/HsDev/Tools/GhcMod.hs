@@ -4,6 +4,7 @@
 module HsDev.Tools.GhcMod (
 	list,
 	browse, browseInspection,
+	langs, flags,
 	info,
 	TypedRegion(..),
 	typeOf,
@@ -99,6 +100,12 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 
 browseInspection :: [String] -> Inspection
 browseInspection = InspectionAt 0 . sort . nub
+
+langs :: ErrorT String IO [String]
+langs = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.languages
+
+flags :: ErrorT String IO [String]
+flags = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.flags
 
 info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
 info opts cabal file sname = do

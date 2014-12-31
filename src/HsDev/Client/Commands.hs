@@ -124,6 +124,8 @@ commands = [
 	-- Tool commands
 	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
 	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
+	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
+	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
 	cmdList' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
 	cmdList' "ghc-mod lint" ["file"] [hlintOpts] "lint source file" ghcmodLint',
@@ -493,6 +495,14 @@ commands = [
 		-- | Cabal list
 		cabalList' :: [String] -> Opts String -> CommandActionT [Cabal.CabalPackage]
 		cabalList' qs _ _ = mapErrorStr $ Cabal.cabalList qs
+
+		-- | Ghc-mod lang
+		ghcmodLang' :: [String] -> Opts String -> CommandActionT [String]
+		ghcmodLang' _ _ _ = mapErrorStr GhcMod.langs
+
+		-- | Ghc-mod flags
+		ghcmodFlags' :: [String] -> Opts String -> CommandActionT [String]
+		ghcmodFlags' _ _ _ = mapErrorStr GhcMod.flags
 
 		-- | Ghc-mod type
 		ghcmodType' :: [String] -> Opts String -> CommandActionT [GhcMod.TypedRegion]
