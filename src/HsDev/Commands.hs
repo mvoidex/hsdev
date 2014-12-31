@@ -109,19 +109,14 @@ scope db cabal file True = concatMap moduleModuleDeclarations <$> scopeModules d
 -- | Completions
 completions :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
 completions db cabal file prefix = do
-	(_, mthis, _) <- fileCtx db file
-	decls <- scope db cabal file False
-	return [decl' |
-		decl' <- decls,
-		imp <- filter ((== moduleIdName (declarationModuleId decl')) . importModuleName) $
-			moduleImports' mthis,
-		fmap fromString qname `elem` catMaybes [
-			if not (importIsQualified imp) then Just Nothing else Nothing,
-			Just $ Just $ importModuleName imp,
-			fmap Just $ importAs imp],
-		fromString iname `T.isPrefixOf` (declarationName . moduleDeclaration $ decl')]
+	(_, mthis, mproj) <- fileCtx db file
+	return $
+		newestPackage $ filter (checkDecl . moduleDeclaration) $
+		moduleModuleDeclarations $ scopeModule $
+		resolveOne (fileDeps file cabal mproj db) mthis
 	where
 		(qname, iname) = splitIdentifier prefix
+		checkDecl d = fmap fromString qname `elem` scopes d && fromString iname `T.isPrefixOf` declarationName d
 
 -- | Module completions
 moduleCompletions :: Database -> [Module] -> String -> ErrorT String IO [String]
