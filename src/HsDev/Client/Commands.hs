@@ -120,7 +120,7 @@ commands = [
 	cmdList' "whois" ["symbol"] ctx "get info for symbol" whois',
 	cmdList' "scope modules" [] ctx "get modules accessible from module or within a project" scopeModules',
 	cmdList' "scope" [] (ctx ++ matches ++ [globalArg]) "get declarations accessible from module or within a project" scope',
-	cmdList' "complete" ["input"] ctx "show completions for input" complete',
+	cmdList' "complete" ["input"] (ctx ++ [wideArg]) "show completions for input" complete',
 	-- Tool commands
 	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
 	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
@@ -198,6 +198,7 @@ commands = [
 			sandboxList]
 		sourced = flag "src" `desc` "source files"
 		standaloned = flag "stand" `desc` "standalone files"
+		wideArg = flag "wide" `short` ['f'] `desc` "wide mode - complete as if there were no import lists"
 
 		-- | Ping server
 		ping' :: [String] -> Opts String -> CommandActionT Value
@@ -478,7 +479,7 @@ commands = [
 		complete' [input] as copts = do
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			mapErrorStr $ completions dbval cabal srcFile input
+			mapErrorStr $ completions dbval cabal srcFile input (flagSet "wide" as)
 		complete' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Hayoo

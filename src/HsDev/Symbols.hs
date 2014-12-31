@@ -4,7 +4,7 @@
 module HsDev.Symbols (
 	-- * Information
 	Export(..), export,
-	ImportList(..),
+	ImportList(..), passImportList,
 	Import(..), importName, import_,
 	Symbol(..),
 	ModuleId(..), unnamedModuleId,
@@ -115,6 +115,12 @@ instance FromJSON ImportList where
 	parseJSON = withObject "import-list" $ \v -> ImportList <$>
 		v .:: "hiding" <*>
 		v .:: "spec"
+
+-- | Check whether name pass import list
+passImportList :: ImportList -> Text -> Bool
+passImportList (ImportList hiding names) n
+	| hiding = n `notElem` names
+	| otherwise = n `elem` names
 
 -- | Module import
 data Import = Import {

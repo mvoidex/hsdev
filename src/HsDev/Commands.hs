@@ -107,16 +107,21 @@ scope db cabal file False = do
 scope db cabal file True = concatMap moduleModuleDeclarations <$> scopeModules db cabal file
 
 -- | Completions
-completions :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
-completions db cabal file prefix = do
+completions :: Database -> Cabal -> FilePath -> String -> Bool -> ErrorT String IO [ModuleDeclaration]
+completions db cabal file prefix wide = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
 		newestPackage $ filter (checkDecl . moduleDeclaration) $
 		moduleModuleDeclarations $ scopeModule $
-		resolveOne (fileDeps file cabal mproj db) mthis
+		resolveOne (fileDeps file cabal mproj db) $
+		dropImportLists mthis
 	where
 		(qname, iname) = splitIdentifier prefix
 		checkDecl d = fmap fromString qname `elem` scopes d && fromString iname `T.isPrefixOf` declarationName d
+		dropImportLists m
+			| wide = m { moduleImports = map dropList (moduleImports m) }
+			| otherwise = m
+		dropList i = i { importList = Nothing }
 
 -- | Module completions
 moduleCompletions :: Database -> [Module] -> String -> ErrorT String IO [String]

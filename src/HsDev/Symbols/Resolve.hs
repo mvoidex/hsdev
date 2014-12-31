@@ -124,12 +124,16 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 						inDepsOf' file p]
 			CabalModule cabal _ _ -> selectImport i [inCabal cabal]
 			ModuleSource _ -> selectImport i [byCabal]
-		liftM (concatMap resolvedExports) $ mapM resolveModule ms
+		liftM (filterImportList . concatMap resolvedExports) $ mapM resolveModule ms
 	setImport :: Import -> Declaration -> Declaration
 	setImport i' d' = d' { declarationImported = Just [i'] `mappend` declarationImported d' }
 	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM [Module]
 	selectImport i' fs = liftM (selectModules select') ask where
 		select' md = moduleName md == importModuleName i' && any ($ moduleId md) (byImport i' : fs)
+	filterImportList :: [Declaration] -> [Declaration]
+	filterImportList = case importList i of
+		Nothing -> id
+		Just il -> filter (passImportList il . declarationName)
 	byImport :: Import -> ModuleId -> Bool
 	byImport i' m' = importModuleName i' == moduleIdName m'
 	deps f p = maybe [] infoDepends $ fileTarget p f
