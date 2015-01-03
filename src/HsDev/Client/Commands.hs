@@ -81,6 +81,8 @@ commands = [
 	-- Context free commands
 	cmdList' "modules" [] (sandboxes ++ [
 		manyReq $ projectArg `desc` "projects to list modules from",
+		moduleArg,
+		depsArg,
 		noLastArg,
 		manyReq packageArg,
 		sourced, standaloned])
@@ -330,17 +332,20 @@ commands = [
 		listModules' _ as copts = do
 			dbval <- getDb copts
 			projs <- traverse (findProject copts) $ listArg "project" as
+			deps <- traverse (findDep copts) $ listArg "deps" as
 			cabals <- getSandboxes copts as
 			let
 				packages = listArg "package" as
-				hasFilters = not $ null projs && null packages && null cabals
+				hasFilters = not $ null projs && null packages && null cabals && null deps
 				filters = allOf $ catMaybes [
 					if hasFilters
 						then Just $ anyOf $ catMaybes [
 							if null projs then Nothing else Just (\m -> any (`inProject` m) projs),
+							if null deps then Nothing else Just (\m -> any (`inDeps` m) deps),
 							if null packages && null cabals then Nothing
 								else Just (\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals))]
 						else Nothing,
+					fmap (\n m -> fromString n == moduleIdName m) $ arg "module" as,
 					if flagSet "src" as then Just byFile else Nothing,
 					if flagSet "stand" as then Just standalone else Nothing]
 			return $ map moduleId $ newest as $ selectModules (filters . moduleId) dbval
