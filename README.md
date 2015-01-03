@@ -17,13 +17,14 @@ Use `hsdev start` to start remove server. Specify `--cache`, where `hsdev` will 
 * `scan`, `rescan` — scan installed modules, cabal projects and files
 * `remove` — unload data
 * `modules`, `packages`, `projects` — list information about specified modules, packages or projects
+* `resolve` — resolve scope symbols and exports for sources module
 * `symbol`, `module`, `project` — find symbol, module or project
 * `lookup`, `whois` — find visible or imported symbol
 * `scope` — get modules or declarations, accessible from file
 * `complete` — get completions for file and input
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
-* `ghc-mod type`, `ghc-mod check`, `ghc-mod lint` — run `ghc-mod` command in corresponding ghc-mod worker (separate workers per project and per sandbox)
+* `ghc-mod type`, `ghc-mod check`, `ghc-mod lint`, `ghc-mod lang`, `ghc-mod flags` — run `ghc-mod` command in corresponding ghc-mod worker (separate workers per project and per sandbox)
 * `dump` — dump modules or projects info
 * `load` — load data
 

@@ -15,7 +15,7 @@ import Data.Function (on)
 import Data.List (sortBy, groupBy, find)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, maybeToList)
+import Data.Maybe (fromMaybe, maybeToList, listToMaybe)
 import Data.Monoid (mconcat, mappend)
 import Data.Ord (comparing)
 import Data.String (fromString)
@@ -83,7 +83,9 @@ resolveModule m = gets (M.lookup $ moduleId m) >>= maybe resolveModule' return w
 					moduleExports $ m
 			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exports')
 	thisDecls :: [Declaration]
-	thisDecls = map selfImport $ moduleDeclarations m
+	thisDecls = map (selfDefined . selfImport) $ moduleDeclarations m
+	selfDefined :: Declaration -> Declaration
+	selfDefined d = d { declarationDefined = Just (moduleId m) }
 	selfImport :: Declaration -> Declaration
 	selfImport d = d { declarationImported = Just [import_ $ moduleName m] }
 	save :: ResolveM ResolvedModule -> ResolveM ResolvedModule
@@ -128,8 +130,14 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 	setImport :: Import -> Declaration -> Declaration
 	setImport i' d' = d' { declarationImported = Just [i'] `mappend` declarationImported d' }
 	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM [Module]
-	selectImport i' fs = liftM (selectModules select') ask where
-		select' md = moduleName md == importModuleName i' && any ($ moduleId md) (byImport i' : fs)
+	selectImport i' fs = do
+		db <- ask
+		return $
+			fromMaybe [] $
+			listToMaybe $ dropWhile null $
+			[selectModules (select' f) db | f <- byImport i' : fs]
+		where
+			select' f md  = moduleName md == importModuleName i' && f (moduleId md)
 	filterImportList :: [Declaration] -> [Declaration]
 	filterImportList = case importList i of
 		Nothing -> id
