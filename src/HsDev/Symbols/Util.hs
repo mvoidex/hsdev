@@ -1,6 +1,6 @@
 module HsDev.Symbols.Util (
 	projectOf, cabalOf, packageOf,
-	inProject, inDepsOf, inCabal, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
+	inProject, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inCabal, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
 	imports, qualifier, imported, visible, inScope,
 	newestPackage,
 	sourceModule, visibleModule, preferredModule, uniqueModules,
@@ -8,9 +8,10 @@ module HsDev.Symbols.Util (
 	) where
 
 import Control.Arrow ((***), (&&&), first)
+import Control.Monad (liftM)
 import Data.Function (on)
 import Data.Maybe
-import Data.List (maximumBy, groupBy, sortBy, partition)
+import Data.List (maximumBy, groupBy, sortBy, partition, nub)
 import Data.Ord (comparing)
 import Data.String (fromString)
 import System.FilePath (normalise)
@@ -41,8 +42,18 @@ inProject :: Project -> ModuleId -> Bool
 inProject p m = projectOf m == Just p
 
 -- | Check if module in deps of project target
-inDepsOf :: Info -> ModuleId -> Bool
-inDepsOf i m = any (`inPackage` m) $ infoDepends i
+inDepsOfTarget :: Info -> ModuleId -> Bool
+inDepsOfTarget i m = any (`inPackage` m) $ infoDepends i
+
+-- | Check if module in deps of source
+inDepsOfFile :: Project -> FilePath -> ModuleId -> Bool
+inDepsOfFile p f = maybe (const False) inDepsOfTarget $ fileTarget p f
+
+-- | Check if module in deps of project
+inDepsOfProject :: Project -> ModuleId -> Bool
+inDepsOfProject = maybe (const False) (anyPackage . nub . concatMap infoDepends . infos) . projectDescription where
+	anyPackage :: [String] -> ModuleId -> Bool
+	anyPackage = liftM or . mapM inPackage
 
 -- | Check if module in cabal
 inCabal :: Cabal -> ModuleId -> Bool

@@ -188,4 +188,4 @@ fileDeps file cabal mproj = filterDB fileDeps' (const True) where
 		(maybe (const True) inProject mproj)
 		(liftM2 (&&)
 			(restrictCabal cabal)
-			(maybe (const True) inDepsOf (join $ fileTarget <$> mproj <*> pure file)))
+			(maybe (const True) inDepsOfTarget (join $ fileTarget <$> mproj <*> pure file)))

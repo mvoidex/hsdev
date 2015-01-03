@@ -92,13 +92,13 @@ commands = [
 		projectArg `desc` "related project",
 		fileArg `desc` "source file",
 		moduleArg, localsArg,
-		packageArg, noLastArg, packageVersionArg,
+		packageArg, depsArg, noLastArg, packageVersionArg,
 		sourced, standaloned])
 		"get symbol info"
 		symbol',
 	cmd' "module" [] (sandboxes ++ [
 		moduleArg, localsArg,
-		packageArg, noLastArg, packageVersionArg,
+		packageArg, depsArg, noLastArg, packageVersionArg,
 		projectArg `desc` "module project",
 		fileArg `desc` "module source file",
 		sourced])
@@ -172,6 +172,7 @@ commands = [
 		cacheFile = req "cache-file" "path" `desc` "cache file"
 		ctx = [fileArg `desc` "source file", sandboxArg]
 		dataArg = req "data" "contents" `desc` "data to pass to command"
+		depsArg = req "deps" "object" `desc` "filter to such that in dependency of specified object (file or project)"
 		exportsArg = flag "exports" `short` ['e'] `desc` "resolve module exports"
 		fileArg = req "file" "path" `short` ['f']
 		findArg = req "find" "query" `desc` "infix match"
@@ -364,6 +365,7 @@ commands = [
 			dbval <- liftM (localsDatabase as) $ getDb copts
 			proj <- traverse (findProject copts) $ arg "project" as
 			file <- traverse (findPath copts) $ arg "file" as
+			deps <- traverse (findDep copts) $ arg "deps" as
 			cabal <- getCabal_ copts as
 			let
 				filters = checkModule $ allOf $ catMaybes [
@@ -371,6 +373,7 @@ commands = [
 					fmap inFile file,
 					fmap inModule (arg "module" as),
 					fmap inPackage (arg "package" as),
+					fmap inDeps deps,
 					fmap inVersion (arg "version" as),
 					fmap inCabal cabal,
 					if flagSet "src" as then Just byFile else Nothing,
@@ -390,6 +393,7 @@ commands = [
 			proj <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findProject copts) $ arg "project" as
 			cabal <- mapErrorT (fmap $ strMsg +++ id) $ getCabal_ copts as
 			file' <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findPath copts) $ arg "file" as
+			deps <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findDep copts) $ arg "deps" as
 			let
 				filters = allOf $ catMaybes [
 					fmap inProject proj,
@@ -397,6 +401,7 @@ commands = [
 					fmap inFile file',
 					fmap inModule (arg "module" as),
 					fmap inPackage (arg "package" as),
+					fmap inDeps deps,
 					fmap inVersion (arg "version" as),
 					if flagSet "src" as then Just byFile else Nothing]
 			rs <- mapErrorT (fmap $ strMsg +++ id) $
@@ -667,6 +672,24 @@ findProject copts proj = do
 		addCabal p
 			| takeExtension p == ".cabal" = p
 			| otherwise = p </> (takeBaseName p <.> "cabal")
+
+-- | Find dependency: it may be source, project file or project name
+findDep :: (MonadIO m, Error e) => CommandOptions -> String -> ErrorT e m (Project, Maybe FilePath)
+findDep copts depName = do
+	proj <- msum [
+		mapErrorStr $ do
+			p <- liftIO (locateProject depName)
+			maybe (throwError $ strMsg $ "Project " ++ depName ++ " not found") (mapErrorT liftIO . loadProject) p,
+		findProject copts depName]
+	src <- if takeExtension depName == ".hs"
+		then liftM Just (findPath copts depName)
+		else return Nothing
+	return (proj, src)
+
+-- | Check if project or source depends from this module
+inDeps :: (Project, Maybe FilePath) -> ModuleId -> Bool
+inDeps (proj, Just src) = inDepsOfFile proj src
+inDeps (proj, Nothing) = inDepsOfProject proj
 
 -- | Supply module with its source file path if any
 toPair :: Module -> Maybe (FilePath, Module)
