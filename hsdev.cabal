@@ -2,7 +2,7 @@
 --  see http://haskell.org/cabal/users-guide/
 
 name:                hsdev
-version:             0.1.3.0
+version:             0.1.3.1
 synopsis:            Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references etc.
 description:
   Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
@@ -99,8 +99,6 @@ library
     haskell-src-exts >= 1.16.0,
     hdocs >= 0.4.0,
     HTTP >= 4000.2.0,
-    -- ghc-mod workaround
-    monad-control >= 0.3 && < 1.0,
     monad-loops >= 0.4,
     mtl >= 2.1.0,
     network >= 2.4.0,
