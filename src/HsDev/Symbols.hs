@@ -27,7 +27,7 @@ module HsDev.Symbols (
 
 	-- * Utility
 	Canonicalize(..),
-	locateProject,
+	locateProject, searchProject,
 	locateSourceDir,
 	sourceModuleRoot,
 	importedModulePath,
@@ -64,7 +64,7 @@ import System.FilePath
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented (Documented(..))
 import HsDev.Project
-import HsDev.Util (tab, tabs, (.::))
+import HsDev.Util (tab, tabs, (.::), searchPath)
 
 -- | Module export
 data Export = ExportName (Maybe Text) Text | ExportModule Text
@@ -534,6 +534,10 @@ locateProject file = do
 			case find ((== ".cabal") . takeExtension) cts of
 				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
 				Just cabalf -> return $ Just $ project (dir </> cabalf)
+
+-- | Search project up
+searchProject :: FilePath -> IO (Maybe Project)
+searchProject file = runMaybeT $ searchPath file (MaybeT . locateProject) <|> mzero
 
 -- | Locate source dir of file
 locateSourceDir :: FilePath -> IO (Maybe FilePath)

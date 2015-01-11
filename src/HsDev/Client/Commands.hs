@@ -90,6 +90,7 @@ commands = [
 		listModules',
 	cmdList' "packages" [] [] "list packages" listPackages',
 	cmdList' "projects" [] [] "list projects" listProjects',
+	cmdList' "sandboxes" [] [] "list sandboxes" listSandboxes',
 	cmdList' "symbol" ["name"] (matches ++ sandboxes ++ [
 		projectArg `desc` "related project",
 		fileArg `desc` "source file",
@@ -114,9 +115,14 @@ commands = [
 		"resolve module scope (or exports)"
 		resolve',
 	cmd' "project" [] [
-		projectArg `desc` "project path or name"]
+		projectArg `desc` "project path or name",
+		pathArg `desc` "locate project in parent of this path"]
 		"get project info"
 		project',
+	cmd' "sandbox" [] [
+		pathArg `desc` "locate sandbox in parent of this path"]
+		"get sandbox info"
+		sandbox',
 	-- Context commands
 	cmdList' "lookup" ["symbol"] ctx "lookup for symbol" lookup',
 	cmdList' "whois" ["symbol"] ctx "get info for symbol" whois',
@@ -364,6 +370,10 @@ commands = [
 			dbval <- getDb copts
 			return $ M.elems $ databaseProjects dbval
 
+		-- | List sandboxes
+		listSandboxes' :: [String] -> Opts String -> CommandActionT [Cabal]
+		listSandboxes' _ _ copts = (nub . sort . mapMaybe (cabalOf . moduleId) . allModules) <$> getDb copts
+
 		-- | Get symbol info
 		symbol' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
 		symbol' ns as copts = do
@@ -448,8 +458,16 @@ commands = [
 		-- | Get project info
 		project' :: [String] -> Opts String -> CommandActionT Project
 		project' _ as copts = do
-			proj <- maybe (commandError "Specify project name or .cabal file" []) (mapErrorStr . findProject copts) $ arg "project" as
-			return proj
+			proj <- runMaybeT $ msum $ map MaybeT [
+				traverse (mapErrorStr . findProject copts) $ arg "project" as,
+				liftM join $ traverse (liftIO . searchProject) $ arg "path" as]
+			maybe (commandError "Specify project name, .cabal file or search directory" []) return proj
+
+		-- | Locate sandbox
+		sandbox' :: [String] -> Opts String -> CommandActionT Cabal
+		sandbox' _ as _ = do
+			sbox <- traverse (liftIO . searchSandbox) (arg "path" as)
+			maybe (commandError "Specify search directory" []) return sbox
 
 		-- | Lookup info about symbol
 		lookup' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
@@ -467,7 +485,7 @@ commands = [
 			mapErrorStr $ whois dbval cabal srcFile nm
 		whois' _ _ _ = commandError "Invalid arguments" []
 
-		-- | Get modules accessible from module
+		-- | Get modules accessible from module or from directory
 		scopeModules' :: [String] -> Opts String -> CommandActionT [ModuleId]
 		scopeModules' [] as copts = do
 			dbval <- getDb copts
@@ -626,7 +644,7 @@ checkPosArgs c = validateArgs pos' c where
 findSandbox :: (MonadIO m, Error e) => CommandOptions -> Maybe FilePath -> ErrorT e m Cabal
 findSandbox copts = maybe
 	(return Cabal)
-	(findPath copts >=> mapErrorStr . mapErrorT liftIO . locateSandbox)
+	(findPath copts >=> mapErrorStr . liftIO . getSandbox)
 
 -- | Canonicalize path
 findPath :: (MonadIO m, Error e) => CommandOptions -> FilePath -> ErrorT e m FilePath
@@ -637,9 +655,10 @@ findPath copts f = liftIO $ canonicalizePath (normalise f') where
 
 -- | Get context: file and sandbox
 getCtx :: (MonadIO m, Functor m, Error e) => CommandOptions -> Opts String -> ErrorT e m (FilePath, Cabal)
-getCtx copts as = liftM2 (,)
-	(forceJust "No file specified" $ traverse (findPath copts) $ arg "file" as)
-	(getCabal copts as)
+getCtx copts as = do
+	f <- forceJust "No file specified" $ traverse (findPath copts) $ arg "file" as
+	c <- getCabal_ copts as >>= maybe (liftIO $ getSandbox f) return
+	return (f, c)
 
 -- | Get current sandbox set, user-db by default
 getCabal :: (MonadIO m, Error e) => CommandOptions -> Opts String -> ErrorT e m Cabal
@@ -678,8 +697,8 @@ findProject copts proj = do
 			| takeExtension p == ".cabal" = p
 			| otherwise = p </> (takeBaseName p <.> "cabal")
 
--- | Find dependency: it may be source, project file or project name
-findDep :: (MonadIO m, Error e) => CommandOptions -> String -> ErrorT e m (Project, Maybe FilePath)
+-- | Find dependency: it may be source, project file or project name, also returns sandbox found
+findDep :: (MonadIO m, Error e) => CommandOptions -> String -> ErrorT e m (Project, Maybe FilePath, Cabal)
 findDep copts depName = do
 	proj <- msum [
 		mapErrorStr $ do
@@ -689,12 +708,15 @@ findDep copts depName = do
 	src <- if takeExtension depName == ".hs"
 		then liftM Just (findPath copts depName)
 		else return Nothing
-	return (proj, src)
+	sbox <- liftIO $ searchSandbox $ projectPath proj
+	return (proj, src, sbox)
 
 -- | Check if project or source depends from this module
-inDeps :: (Project, Maybe FilePath) -> ModuleId -> Bool
-inDeps (proj, Just src) = inDepsOfFile proj src
-inDeps (proj, Nothing) = inDepsOfProject proj
+inDeps :: (Project, Maybe FilePath, Cabal) -> ModuleId -> Bool
+inDeps (proj, src, cabal) = liftM2 (&&) (restrictCabal cabal) deps' where
+	deps' = case src of
+		Nothing -> inDepsOfProject proj
+		Just src' -> inDepsOfFile proj src'
 
 -- | Supply module with its source file path if any
 toPair :: Module -> Maybe (FilePath, Module)

@@ -1,7 +1,7 @@
 module HsDev.Util (
 	withCurrentDirectory,
 	directoryContents,
-	traverseDirectory,
+	traverseDirectory, searchPath,
 	isParent,
 	haskellSource,
 	cabalFile,
@@ -71,6 +71,17 @@ traverseDirectory path = handle onError $ do
 	where
 		onError :: IOException -> IO [FilePath]
 		onError _ = return []
+
+-- | Search something up
+searchPath :: (MonadIO m, MonadPlus m) => FilePath -> (FilePath -> m a) -> m a
+searchPath path f = do
+	path' <- liftIO $ canonicalizePath path
+	isDir <- liftIO $ doesDirectoryExist path'
+	search' (if isDir then path' else takeDirectory path')
+	where
+		search' dir
+			| isDrive dir = f dir
+			| otherwise = f dir `mplus` search' (takeDirectory dir)
 
 -- | Is one path parent of another
 isParent :: FilePath -> FilePath -> Bool

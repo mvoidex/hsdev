@@ -8,15 +8,15 @@ module Control.Concurrent.Worker (
 	) where
 
 import Control.Concurrent.MVar
-import Control.Monad (void, when)
 import Control.Monad.IO.Class
 import Control.Monad.Catch
+import Control.Monad.Error
 
 import Control.Concurrent.FiniteChan
 import Control.Concurrent.Task
 
 data Worker m = Worker {
-	workerChan :: Chan (m ()),
+	workerChan :: Chan (Task (), m ()),
 	workerTask :: MVar (Task ()),
 	workerRestart :: IO Bool }
 
@@ -25,18 +25,25 @@ startWorker run initialize = do
 	ch <- newChan
 	taskVar <- newEmptyMVar
 	let
-		start = forkTask $ run $ initialize processWork
-		processWork = liftIO (getChan ch) >>= maybe (return ()) (>> processWork)
+		start = forkTask $ do
+			run $ initialize $ processWork
+			processSkip
+		processWork = whileJust (liftM (fmap snd) $ liftIO $ getChan ch) id
+		processSkip = whileJust (liftM (fmap fst) $ getChan ch) taskStop
+		whileJust :: Monad m => m (Maybe a) -> (a -> m b) -> m  ()
+		whileJust v act = v >>= maybe (return ()) (\x -> act x >> whileJust v act)
 	start >>= putMVar taskVar
 	let
 		restart = do
-			f <- readMVar taskVar >>= taskFailed
-			when f (start >>= void . swapMVar taskVar)
-			return f
+			task <- readMVar taskVar
+			stopped <- taskStopped task
+			when stopped (start >>= void . swapMVar taskVar)
+			return stopped
 	return $ Worker ch taskVar restart
 
 sendTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Task a)
-sendTask w = runTask $ putChan (workerChan w)
+sendTask w = runTask_ putTask' where
+	putTask' t act = putChan (workerChan w) (fmap (const ()) t, act)
 
 pushTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Task a)
 pushTask w act = workerRestart w >> sendTask w act

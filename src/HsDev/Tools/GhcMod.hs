@@ -269,8 +269,8 @@ ghcModWorker p = do
 		functionNotExported = True
 		runGhcModT'' :: FilePath -> GhcModT IO () -> IO ()
 		runGhcModT'' cur act
-			| functionNotExported = withCurrentDirectory cur
-				(void . runGhcModT GhcMod.defaultOptions $ act)
+			| functionNotExported = withCurrentDirectory cur $
+				void $ runGhcModT GhcMod.defaultOptions $ act `catchError` (void . return)
 			| otherwise = do
 				env' <- makeEnv cur
 				void $ GhcMod.runGhcModT' env' GhcMod.defaultState $ do

@@ -2,7 +2,7 @@
 
 module HsDev.Cabal (
 	Cabal(..), sandbox,
-	isPackageDb, findPackageDb, locateSandbox, getSandbox,
+	isPackageDb, findPackageDb, locateSandbox, getSandbox, searchSandbox,
 	cabalOpt
 	) where
 
@@ -13,6 +13,8 @@ import Data.Aeson
 import Data.List
 import System.Directory
 import System.FilePath
+
+import HsDev.Util (searchPath)
 
 -- | Cabal or sandbox
 data Cabal = Cabal | Sandbox FilePath deriving (Eq, Ord)
@@ -49,6 +51,10 @@ isPackageDb p = cabalDev p || cabalSandbox p where
 	cabalDev dir = "packages-" `isPrefixOf` dir && ".conf" `isSuffixOf` dir
 	cabalSandbox dir = "-packages.conf.d" `isSuffixOf` dir
 
+-- | Is .cabal-sandbox
+cabalSandboxDir :: FilePath -> Bool
+cabalSandboxDir p = takeFileName p == ".cabal-sandbox"
+
 -- | Find -package-db path for sandbox directory or package-db file itself
 findPackageDb :: FilePath -> IO (Maybe FilePath)
 findPackageDb sand = do
@@ -57,8 +63,11 @@ findPackageDb sand = do
 	if
 		| isDir && isPackageDb sand' -> return $ Just sand'
 		| isDir -> do
-			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents sand'
-			return $ fmap (sand' </>) $ find isPackageDb cts
+			cts <- getDirectoryContents sand'
+			(dir', cts') <- case find cabalSandboxDir cts of
+				Nothing -> return (sand', cts)
+				Just sbox -> (,) <$> pure (sand' </> sbox) <*> getDirectoryContents (sand' </> sbox)
+			return $ fmap (dir' </>) $ find isPackageDb cts'
 		| otherwise -> return Nothing
 
 -- | Create sandbox by directory or package-db file
@@ -70,6 +79,10 @@ locateSandbox p = liftIO (findPackageDb p) >>= maybe
 -- | Try find sandbox by parent directory
 getSandbox :: FilePath -> IO Cabal
 getSandbox = liftM (either (const Cabal) id) . runErrorT . locateSandbox
+
+-- | Search sandbox
+searchSandbox :: FilePath -> IO Cabal
+searchSandbox p = runErrorT (searchPath p locateSandbox) >>= either (const $ return Cabal) return
 
 -- | Cabal ghc option
 cabalOpt :: Cabal -> [String]
