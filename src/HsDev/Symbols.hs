@@ -15,7 +15,7 @@ module HsDev.Symbols (
 	Declaration(..), decl, definedIn, declarationLocals, scopes,
 	TypeInfo(..),
 	DeclarationInfo(..),
-	ModuleDeclaration(..),
+	ModuleDeclaration(..), ExportedDeclaration(..), mergeExported,
 	Inspection(..), inspectionOpts,
 	Inspected(..), InspectedModule,
 
@@ -49,6 +49,7 @@ import Control.DeepSeq (NFData(..))
 import Control.Monad.Trans.Maybe
 import Control.Monad.Error
 import Data.Aeson
+import Data.Function (on)
 import Data.List
 import Data.Maybe (fromMaybe)
 import Data.Monoid (Monoid(mempty))
@@ -475,7 +476,7 @@ declarationTypeName (Data _) = Just "data"
 declarationTypeName (Class _) = Just "class"
 declarationTypeName _ = Nothing
 
--- | Symbol in module
+-- | Symbol in context of some module
 data ModuleDeclaration = ModuleDeclaration {
 	declarationModuleId :: ModuleId,
 	moduleDeclaration :: Declaration }
@@ -498,6 +499,45 @@ instance FromJSON ModuleDeclaration where
 	parseJSON = withObject "module declaration" $ \v -> ModuleDeclaration <$>
 		v .:: "module-id" <*>
 		v .:: "declaration"
+
+-- | Symbol exported with
+data ExportedDeclaration = ExportedDeclaration {
+	exportedBy :: [ModuleId],
+	exportedDeclaration :: Declaration }
+		deriving (Eq, Ord)
+
+instance NFData ExportedDeclaration where
+	rnf (ExportedDeclaration m s) = rnf m `seq` rnf s
+
+instance Show ExportedDeclaration where
+	show (ExportedDeclaration m s) = unlines $ filter (not . null) [
+		show s,
+		"\tmodules: " ++ intercalate ", " (map (show . moduleIdLocation) m)]
+
+instance ToJSON ExportedDeclaration where
+	toJSON d = object [
+		"exported-by" .= exportedBy d,
+		"declaration" .= exportedDeclaration d]
+
+instance FromJSON ExportedDeclaration where
+	parseJSON = withObject "exported declaration" $ \v -> ExportedDeclaration <$>
+		v .:: "exported-by" <*>
+		v .:: "declaration"
+
+-- | Merge @ModuleDeclaration@ into @ExportedDeclaration@
+mergeExported :: [ModuleDeclaration] -> [ExportedDeclaration]
+mergeExported =
+	map merge' .
+	groupBy ((==) `on` declId) .
+	sortBy (comparing declId)
+	where
+		declId :: ModuleDeclaration -> (Text, Maybe ModuleId)
+		declId = moduleDeclaration >>> (declarationName &&& declarationDefined)
+		merge' :: [ModuleDeclaration] -> ExportedDeclaration
+		merge' [] = error "mergeExported: impossible"
+		merge' ds@(d:_) = ExportedDeclaration {
+			exportedBy = map declarationModuleId ds,
+			exportedDeclaration = moduleDeclaration d }
 
 -- | Returns qualified name of symbol
 qualifiedName :: ModuleId -> Declaration -> Text

@@ -1,4 +1,6 @@
 module HsDev.Scan.Browse (
+	-- * List all packages
+	browsePackages,
 	-- * Scan cabal modules
 	browseFilter, browse
 	) where
@@ -29,6 +31,11 @@ import qualified Type as GHC
 import qualified Var as GHC
 import Pretty
 
+-- | Browse packages
+browsePackages :: [String] -> Cabal -> ErrorT String IO [ModulePackage]
+browsePackages opts cabal = withPackages (cabalOpt cabal ++ opts) $ \dflags -> do
+	return $ mapMaybe (readPackage . GHC.packageConfigId) $ fromMaybe [] $ GHC.pkgDatabase dflags
+
 -- | Browse modules
 browseFilter :: [String] -> Cabal -> (ModuleLocation -> ErrorT String IO Bool) -> ErrorT String IO [InspectedModule]
 browseFilter opts cabal f = withPackages_ (cabalOpt cabal ++ opts) $ do
@@ -37,7 +44,7 @@ browseFilter opts cabal f = withPackages_ (cabalOpt cabal ++ opts) $ do
 	liftM catMaybes $ mapM browseModule' ms'
 	where
 		loc :: GHC.Module -> ModuleLocation
-		loc m = CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
+		loc m = CabalModule cabal (readPackage $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
 
 		browseModule' :: GHC.Module -> ErrorT String GHC.Ghc (Maybe InspectedModule)
 		browseModule' m = tryT $ inspect (loc m) (return $ InspectionAt 0 opts) (browseModule cabal m)
@@ -132,3 +139,6 @@ styleUnqualified = GHC.mkUserStyle GHC.neverQualify GHC.AllTheWay
 
 tryT :: (Monad m, Error e) => ErrorT e m a -> ErrorT e m (Maybe a)
 tryT act = catchError (liftM Just act) (const $ return Nothing)
+
+readPackage :: GHC.PackageId -> Maybe ModulePackage
+readPackage = readMaybe . GHC.packageIdString

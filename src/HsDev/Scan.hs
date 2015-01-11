@@ -16,6 +16,7 @@ import Data.Traversable (traverse)
 import Language.Haskell.GhcMod (defaultOptions)
 import System.Directory
 
+import HsDev.Scan.Browse (browsePackages)
 import HsDev.Symbols
 import HsDev.Database
 import HsDev.Tools.GhcMod
@@ -47,8 +48,18 @@ data ScanContents = ScanContents {
 enumProject :: Project -> ErrorT String IO ProjectToScan
 enumProject p = do
 	p' <- loadProject p
+	cabal <- liftIO $ searchSandbox (projectPath p')
+	pkgs <- liftM (map packageName) $ browsePackages [] cabal
+	let
+		projOpts :: FilePath -> [String]
+		projOpts f = maybe [] makeOpts $ fileTarget p' f where
+			makeOpts :: Info -> [String]
+			makeOpts i = concat [
+				["-hide-all-packages"],
+				["-package " ++ projectName p'],
+				["-package " ++ dep | dep <- infoDepends i, dep `elem` pkgs]]
 	srcs <- projectSources p'
-	return (p', [(FileModule (entity src) (Just p'), extensionsOpts (extensions src)) | src <- srcs])
+	return (p', [(FileModule (entity src) (Just p'), extensionsOpts (extensions src) ++ projOpts (entity src)) | src <- srcs])
 
 -- | Enum directory modules
 enumDirectory :: FilePath -> ErrorT String IO ScanContents

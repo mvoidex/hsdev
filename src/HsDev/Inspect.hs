@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE TypeSynonymInstances, ViewPatterns #-}
 
 module HsDev.Inspect (
 	analyzeModule,
@@ -184,7 +184,7 @@ setPosition loc d = d { declarationPosition = Just (toPosition loc) }
 
 -- | Get Map from declaration name to its documentation
 documentationMap :: Doc.Interface -> Map String String
-documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems iface where
+documentationMap iface = M.map removeCR $ M.fromList $ concatMap toDoc $ Doc.ifaceExportItems iface where
 	toDoc :: Doc.ExportItem Name.Name -> [(String, String)]
 	toDoc (Doc.ExportDecl decl' docs _ _ _ _) = maybe [] (zip (extractNames decl') . repeat) $ extractDocs docs
 	toDoc _ = []
@@ -227,6 +227,10 @@ documentationMap iface = M.fromList $ concatMap toDoc $ Doc.ifaceExportItems ifa
 	locatedName :: Loc.Located Name.Name -> String
 	locatedName (Loc.L _ nm) = Name.getOccString nm
 
+	removeCR :: String -> String
+	removeCR s@(last -> '\r') = init s
+	removeCR s = s
+
 -- | Adds documentation to declaration
 addDoc :: Map String String -> Declaration -> Declaration
 addDoc docsMap decl' = decl' { declarationDocs = M.lookup (declarationName decl') docsMap' } where
@@ -256,7 +260,7 @@ inspectFile opts file = do
 		noReturn :: E.SomeException -> IO [Doc.Interface]
 		noReturn _ = return []
 
-		hdocsWorkaround = True
+		hdocsWorkaround = False
 	proj <- liftIO $ locateProject file
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
