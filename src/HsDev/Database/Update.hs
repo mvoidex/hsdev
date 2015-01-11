@@ -252,9 +252,10 @@ scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" 
 -- | Scan directory for source files and projects
 scanDirectory :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
-	(projSrcs, standSrcs) <- runTask "getting list of sources" [] $
+	S.ScanContents standSrcs projSrcs sboxes <- runTask "getting list of sources" [] $
 		liftErrorT $ S.enumDirectory dir
 	runTasks [scanProject opts (projectCabal p) | (p, _) <- projSrcs]
+	runTasks $ map (scanCabal opts) sboxes
 	loadCache $ Cache.loadFiles $ mapMaybe (moduleSource . fst) standSrcs
 	scanModules opts standSrcs
 

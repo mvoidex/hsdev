@@ -20,6 +20,7 @@ module HsDev.Util (
 	liftTask
 	) where
 
+import Control.Applicative
 import Control.Arrow (second, left)
 import Control.Exception
 import Control.Monad
@@ -66,7 +67,7 @@ traverseDirectory path = handle onError $ do
 	liftM concat $ forM cts $ \c -> do
 		isDir <- doesDirectoryExist c
 		if isDir
-			then traverseDirectory c
+			then (c :) <$> traverseDirectory c
 			else return [c]
 	where
 		onError :: IOException -> IO [FilePath]
