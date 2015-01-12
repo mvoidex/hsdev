@@ -33,6 +33,7 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
 import HsDev.Symbols.Util
+import HsDev.Tools.Base (matchRx, at)
 
 -- | Find declaration by name
 findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
@@ -158,11 +159,13 @@ moduleImports' m =
 
 -- | Split identifier into module name and identifier itself
 splitIdentifier :: String -> (Maybe String, String)
-splitIdentifier name = (qname, name') where
-	prefix = dropWhileEnd (/= '.') name
-	prefix' = dropWhileEnd (== '.') prefix
-	qname = if null prefix' then Nothing else Just prefix'
-	name' = fromMaybe (error "Impossible happened") $ stripPrefix prefix name
+splitIdentifier name = fromMaybe (Nothing, name) $ do
+	groups <- matchRx "(([A-Z][\\w']*\\.)*)(.*)" name
+	return (fmap dropDot $ groups 1, groups `at` 3)
+	where
+		dropDot :: String -> String
+		dropDot "" = ""
+		dropDot s = init s
 
 -- | Get context file and project
 fileCtx :: Database -> FilePath -> ErrorT String IO (FilePath, Module, Maybe Project)
