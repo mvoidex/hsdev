@@ -392,30 +392,6 @@ processRequest copts onNotify req' =
 		requestError errs _ = return $ Error "Command syntax error" $ M.fromList [
 			("what", toJSON $ lines errs)]
 
-data MessageQueue i m = MessageQueue {
-	messagesMap :: Map i [m],
-	messagesQueue :: [i] }
-
-instance Ord i => Monoid (MessageQueue i m) where
-	mempty = MessageQueue mempty []
-	mappend l r = MessageQueue {
-		messagesMap = M.unionWith (++) (messagesMap l) (messagesMap r),
-		messagesQueue = messagesQueue l ++ (messagesQueue r \\ messagesQueue l) }
-
-pushMessage :: Ord i => i -> m -> MessageQueue i m -> MessageQueue i m
-pushMessage k msg q = q {
-	messagesMap = M.insertWith (flip (++)) (k) [msg] (messagesMap q),
-	messagesQueue = if k `elem` messagesQueue q then messagesQueue q else k : messagesQueue q }
-
-popMessage :: Ord i => MessageQueue i m -> (MessageQueue i m, Maybe m)
-popMessage q = case messagesQueue q of
-	[] -> (q, Nothing)
-	(i:is) -> case M.lookup i (messagesMap q) of
-		Nothing -> popMessage (q { messagesQueue = is })
-		Just [] -> popMessage (q { messagesQueue = is, messagesMap = M.delete i (messagesMap q) })
-		Just [msg] -> (q { messagesMap = M.delete i (messagesMap q), messagesQueue = is }, Just msg)
-		Just (msg:msgs) -> (q { messagesMap = M.insert i msgs (messagesMap q), messagesQueue = is ++ [i] }, Just msg)
-
 -- | Process client, listen for requests and process them
 processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> CommandOptions -> IO ()
 processClient name receive send' copts = do
