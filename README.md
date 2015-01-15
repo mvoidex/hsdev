@@ -231,32 +231,7 @@ query :: (a -> c) -> b -> c
 
 #### PowerShell
 
-I'm using PowerShell and this function (in `$env:USERPROFILE\Documents\WindowsPowerShell\profile.ps1`) to parse JSON output:
-
-<pre>
-Add-Type -AssemblyName System.Web.Extensions
-
-function json
-{
-    &lt;#
-    .synopsis
-    Decode JSON
-    .example
-    PS&gt; echo "{'x':123,'y':22}" | json | % { echo $_.y }
-    22
-    #&gt;
-
-    param(
-        [Parameter(ValueFromPipeline = $true)]$i)
-
-    $jsser = new-object System.Web.Script.Serialization.JavaScriptSerializer
-    $jsser.MaxJsonLength = $i.length + 100 # Make limit big enough
-    $jsser.RecursionLimit = 100
-    $jsser.DeserializeObject($i)
-}
-</pre>
-
-which returns `PSObject`, that can be inspected in common way:
+I'm using PowerShell and `json` function from [PSUtils](https://github.com/mvoidex/PSUtils) to parse JSON output, which returns `PSObject`, that can be inspected in common way:
 
 <pre>
 PS> hsinspect module GHC -g "-package ghc" | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type } | select -first 5
