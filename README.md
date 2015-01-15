@@ -231,7 +231,7 @@ query :: (a -> c) -> b -> c
 
 #### PowerShell
 
-I'm using PowerShell and this function (in `$env:USERPROFILE\Documents`) to parse JSON output:
+I'm using PowerShell and this function (in `$env:USERPROFILE\Documents\WindowsPowerShell\profile.ps1`) to parse JSON output:
 
 <pre>
 Add-Type -AssemblyName System.Web.Extensions
