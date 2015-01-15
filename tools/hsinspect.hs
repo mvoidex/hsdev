@@ -8,6 +8,7 @@ import Control.Applicative
 import Control.Monad (liftM)
 import Control.Monad.IO.Class
 import Data.Aeson (toJSON)
+import System.Directory (canonicalizePath)
 import System.FilePath (takeExtension)
 
 import HsDev.Project (readProject)
@@ -25,7 +26,11 @@ main = toolMain "hsinspect" [
 		ghcs = listArg "ghc"
 
 		inspect' (Args [] opts) = liftIO getContents >>= liftM toJSON . inspectContents "stdin" (ghcs opts)
-		inspect' (Args [fname@(takeExtension -> ".hs")] opts) = toJSON <$> scanModule (ghcs opts) (FileModule fname Nothing)
-		inspect' (Args [fcabal@(takeExtension -> ".cabal")] _) = toJSON <$> readProject fcabal
+		inspect' (Args [fname@(takeExtension -> ".hs")] opts) = do
+			fname' <- liftIO $ canonicalizePath fname
+			toJSON <$> scanModule (ghcs opts) (FileModule fname' Nothing)
+		inspect' (Args [fcabal@(takeExtension -> ".cabal")] _) = do
+			fcabal' <- liftIO $ canonicalizePath fcabal
+			toJSON <$> readProject fcabal'
 		inspect' (Args [mname] opts) = toJSON <$> scanModule (ghcs opts) (CabalModule Cabal Nothing mname)
 		inspect' _ = toolError "Specify module name or file name (.hs or .cabal)"

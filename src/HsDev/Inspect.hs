@@ -24,22 +24,15 @@ import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Traversable (traverse, sequenceA)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
-import qualified Documentation.Haddock as Doc
 import qualified System.Directory as Dir
 import System.IO
 import System.FilePath
 import Data.Generics.Uniplate.Data
 
-import qualified Name (Name, getOccString, occNameString)
-import qualified Module (moduleNameString)
-import qualified SrcLoc as Loc
-import qualified HsDecls
-import qualified HsBinds
-
 import HsDev.Symbols
 import HsDev.Project
 import HsDev.Tools.Base
-import HsDev.Tools.HDocs (hdocsProcess)
+import HsDev.Tools.HDocs (hdocs, hdocsProcess)
 import HsDev.Util
 
 -- | Analize source contents
@@ -182,55 +175,6 @@ toPosition (H.SrcLoc _ l c) = Position l c
 setPosition :: H.SrcLoc -> Declaration -> Declaration
 setPosition loc d = d { declarationPosition = Just (toPosition loc) }
 
--- | Get Map from declaration name to its documentation
-documentationMap :: Doc.Interface -> Map String String
-documentationMap iface = M.map removeCR $ M.fromList $ concatMap toDoc $ Doc.ifaceExportItems iface where
-	toDoc :: Doc.ExportItem Name.Name -> [(String, String)]
-	toDoc (Doc.ExportDecl decl' docs _ _ _ _) = maybe [] (zip (extractNames decl') . repeat) $ extractDocs docs
-	toDoc _ = []
-
-	extractNames :: HsDecls.LHsDecl Name.Name -> [String]
-	extractNames (Loc.L _ d) = case d of
-		HsDecls.TyClD ty -> [locatedName $ HsDecls.tcdLName ty]
-		HsDecls.SigD sig -> case sig of
-			HsBinds.TypeSig names _ -> map locatedName names
-			HsBinds.GenericSig names _ -> map locatedName names
-			_ -> []
-		_ -> []
-
-	extractDocs :: Doc.DocForDecl Name.Name -> Maybe String
-	extractDocs (mbDoc, _) = printDoc <$> Doc.documentationDoc mbDoc where
-		printDoc :: Doc.Doc Name.Name -> String
-		printDoc Doc.DocEmpty = ""
-		printDoc (Doc.DocAppend l r) = printDoc l ++ printDoc r
-		printDoc (Doc.DocString s) = s
-		printDoc (Doc.DocParagraph p) = printDoc p
-		printDoc (Doc.DocIdentifier i) = Name.getOccString i
-		printDoc (Doc.DocIdentifierUnchecked (m, i)) = Module.moduleNameString m ++ "." ++ Name.occNameString i
-		printDoc (Doc.DocModule m) = m
-		printDoc (Doc.DocWarning w) = printDoc w
-		printDoc (Doc.DocEmphasis e) = printDoc e
-		printDoc (Doc.DocMonospaced m) = printDoc m
-		printDoc (Doc.DocUnorderedList lst) = concatMap printDoc lst -- Is this right?
-		printDoc (Doc.DocOrderedList lst) = concatMap printDoc lst -- And this
-		printDoc (Doc.DocDefList defs) = concatMap (\(l, r) -> printDoc l ++ " = " ++ printDoc r) defs -- ?
-		printDoc (Doc.DocCodeBlock code) = printDoc code
-		printDoc (Doc.DocPic pic) = show pic
-		printDoc (Doc.DocAName a) = a
-		printDoc (Doc.DocExamples exs) = unlines $ map showExample exs where
-			showExample (Doc.Example expr results) = expr ++ " => " ++ intercalate ", " results
-		printDoc (Doc.DocHyperlink link) = fromMaybe (Doc.hyperlinkUrl link) (Doc.hyperlinkLabel link)
-		printDoc (Doc.DocProperty prop) = prop
-		-- Catch all unsupported ones
-		printDoc _ = "[unsupported-by-extractDocs]" -- TODO
-
-	locatedName :: Loc.Located Name.Name -> String
-	locatedName (Loc.L _ nm) = Name.getOccString nm
-
-	removeCR :: String -> String
-	removeCR s@(last -> '\r') = init s
-	removeCR s = s
-
 -- | Adds documentation to declaration
 addDoc :: Map String String -> Declaration -> Declaration
 addDoc docsMap decl' = decl' { declarationDocs = M.lookup (declarationName decl') docsMap' } where
@@ -257,24 +201,16 @@ contentsInspection _ _ = return InspectionNone -- crc or smth
 inspectFile :: [String] -> FilePath -> ErrorT String IO InspectedModule
 inspectFile opts file = do
 	let
-		noReturn :: E.SomeException -> IO [Doc.Interface]
-		noReturn _ = return []
-
 		hdocsWorkaround = False
 	proj <- liftIO $ locateProject file
 	absFilename <- liftIO $ Dir.canonicalizePath file
 	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
 		docsMap <- liftIO $ if hdocsWorkaround
 			then hdocsProcess absFilename opts
-			else fmap (fmap documentationMap . lookup absFilename) $ do
-				is <- E.catch (Doc.createInterfaces ([Doc.Flag_Verbosity "0", Doc.Flag_NoWarnings] ++ map Doc.Flag_OptGhc opts) [absFilename]) noReturn
-				forM is $ \i -> do
-					mfile <- Dir.canonicalizePath $ Doc.ifaceOrigFilename i
-					return (mfile, i)
+			else liftM Just $ hdocs (FileModule absFilename Nothing) opts
 		forced <- ErrorT $ E.handle onError $ do
 			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
 			force analyzed `deepseq` return analyzed
-			--E.evaluate $ force analyzed
 		return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }

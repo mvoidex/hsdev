@@ -15,19 +15,20 @@ import qualified Data.ByteString.Lazy.Char8 as L (pack)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.String (fromString)
-import Data.Text (unpack)
 import System.Process (readProcess)
 
 import qualified HDocs.Module as HDocs
-import qualified HDocs.Haddock as HDocs ()
+import qualified HDocs.Haddock as HDocs (readSource)
 
 import HsDev.Symbols
 
 -- | Get docs for module
-hdocs :: String -> [String] -> IO (Map String String)
-hdocs mname opts = do
-	ds <- runErrorT $ HDocs.moduleDocs opts mname
-	return $ either (const M.empty) HDocs.formatDocs ds
+hdocs :: ModuleLocation -> [String] -> IO (Map String String)
+hdocs mloc opts = runErrorT (docs' mloc) >>= return . either (const M.empty) HDocs.formatDocs where
+	docs' :: ModuleLocation -> ErrorT String IO HDocs.ModuleDocMap
+	docs' (FileModule fpath _) = liftM snd $ HDocs.readSource opts fpath
+	docs' (CabalModule _ _ mname) = HDocs.moduleDocs opts mname
+	docs' _ = throwError $ "Can't get docs for: " ++ show mloc
 
 -- | Get all docs
 hdocsCabal :: Cabal -> [String] -> ErrorT String IO (Map String (Map String String))
@@ -42,7 +43,7 @@ setDocs d m = m { moduleDeclarations = map setDoc $ moduleDeclarations m } where
 -- | Load docs for module
 loadDocs :: [String] -> Module -> IO Module
 loadDocs opts m = do
-	d <- hdocs (unpack $ moduleName m) opts
+	d <- hdocs (moduleLocation m) opts
 	return $ setDocs d m
 
 hdocsProcess :: String -> [String] -> IO (Maybe (Map String String))
