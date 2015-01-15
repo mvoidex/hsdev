@@ -6,7 +6,7 @@ Haskell development library and tool with support of autocompletion, symbol info
 
 ## Usage
 
-Use `hsdev start` to start remove server. Specify `--cache`, where `hsdev` will store information.
+Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will store information.
 
 ### Commands
 
@@ -238,13 +238,13 @@ Add-Type -AssemblyName System.Web.Extensions
 
 function json
 {
-    <#
+    &lt;#
     .synopsis
     Decode JSON
     .example
-    PS> echo "{'x':123,'y':22}" | json | % { echo $_.y }
+    PS&gt; echo "{'x':123,'y':22}" | json | % { echo $_.y }
     22
-    #>
+    #&gt;
 
     param(
         [Parameter(ValueFromPipeline = $true)]$i)
@@ -260,11 +260,11 @@ which returns `PSObject`, that can be inspected in common way:
 
 <pre>
 PS> hsinspect module GHC -g "-package ghc" | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type } | select -first 5
-ABE :: id -> id -> HsWrapper -> TcSpecPrags -> ABExport id
+ABE :: id -&gt; id -&gt; HsWrapper -&gt; TcSpecPrags -&gt; ABExport id
 ABExport :: data ABExport id
-ACoAxiom :: CoAxiom Branched -> TyThing
-AConLike :: ConLike -> TyThing
-ATyCon :: TyCon -> TyThing
+ACoAxiom :: CoAxiom Branched -&gt; TyThing
+AConLike :: ConLike -&gt; TyThing
+ATyCon :: TyCon -&gt; TyThing
 </pre>
 
 #### [jq](http://stedolan.github.io/jq/)
@@ -273,9 +273,9 @@ Another way is to use [jq](http://stedolan.github.io/jq/) tool, which is pretty 
 
 <pre>
 PS> hsinspect module GHC -g "-package ghc" | jq -r '.module.declarations[range(0;5)] | .name + \" :: \" + .decl.type'
-ABE :: id -> id -> HsWrapper -> TcSpecPrags -> ABExport id
+ABE :: id -&gt; id -&gt; HsWrapper -&gt; TcSpecPrags -&gt; ABExport id
 ABExport :: data ABExport id
-ACoAxiom :: CoAxiom Branched -> TyThing
-AConLike :: ConLike -> TyThing
-ATyCon :: TyCon -> TyThing
+ACoAxiom :: CoAxiom Branched -&gt; TyThing
+AConLike :: ConLike -&gt; TyThing
+ATyCon :: TyCon -&gt; TyThing
 </pre>
