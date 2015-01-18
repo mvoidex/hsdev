@@ -46,7 +46,7 @@ load dir = runErrorT $ join $ either throwError return <$> (structured <$> loadC
 	loadStandaloneFiles = ErrorT $ Cache.load (dir </> Cache.standaloneCache)
 
 	loadDir p = do
-		fs <- liftIO $ liftM (filter ((== ".json") . takeExtension)) $ directoryContents p
+		fs <- liftE $ liftM (filter ((== ".json") . takeExtension)) $ directoryContents p
 		mapM (ErrorT . Cache.load) fs
 
 -- | Load data from cache

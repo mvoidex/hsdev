@@ -34,6 +34,7 @@ import HsDev.Symbols
 import HsDev.Symbols.Resolve
 import HsDev.Symbols.Util
 import HsDev.Tools.Base (matchRx, at)
+import HsDev.Util (liftE)
 
 -- | Find declaration by name
 findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
@@ -52,13 +53,13 @@ findModule db mname = return $ selectModules ((== fromString mname) . moduleName
 -- | Find module in file
 fileModule :: Database -> FilePath -> ErrorT String IO Module
 fileModule db src = do
-	src' <- liftIO $ canonicalizePath src
+	src' <- liftE $ canonicalizePath src
 	maybe (throwError $ "File '" ++ src' ++ "' not found") return $ lookupFile src' db
 
 -- | Find project of module
 getProject :: Database -> Project -> ErrorT String IO Project
 getProject db p = do
-	p' <- liftIO $ canonicalizePath $ projectCabal p
+	p' <- liftE $ canonicalizePath $ projectCabal p
 	maybe (throwError $ "Project " ++ p' ++ " not found") return $
 		M.lookup p' $ databaseProjects db
 
@@ -163,7 +164,7 @@ splitIdentifier name = fromMaybe (Nothing, name) $ do
 -- | Get context file and project
 fileCtx :: Database -> FilePath -> ErrorT String IO (FilePath, Module, Maybe Project)
 fileCtx db file = do
-	file' <- liftIO $ canonicalizePath file
+	file' <- liftE $ canonicalizePath file
 	mthis <- fileModule db file'
 	mproj <- traverse (getProject db) $ projectOf $ moduleId mthis
 	return (file', mthis, mproj)
@@ -172,8 +173,8 @@ fileCtx db file = do
 fileCtxMaybe :: Database -> FilePath -> ErrorT String IO (FilePath, Maybe Module, Maybe Project)
 fileCtxMaybe db file = ((\(f, m, p) -> (f, Just m, p)) <$> fileCtx db file) <|> onlyProj where
 	onlyProj = do
-		file' <- liftIO $ canonicalizePath file
-		mproj <- liftIO $ locateProject file'
+		file' <- liftE $ canonicalizePath file
+		mproj <- liftE $ locateProject file'
 		mproj' <- traverse (getProject db) mproj
 		return (file', Nothing, mproj')
 

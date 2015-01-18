@@ -18,20 +18,22 @@ import qualified Language.Haskell.Exts as Exts
 import GHC
 import GHC.Paths (libdir)
 
+import HsDev.Util
+
 -- | Dump minimal imports
 dumpMinimalImports :: [String] -> FilePath -> ErrorT String IO String
 dumpMinimalImports opts f = do
-	cur <- liftIO getCurrentDirectory
-	file <- liftIO $ canonicalizePath f
+	cur <- liftE getCurrentDirectory
+	file <- liftE $ canonicalizePath f
 
-	m <- liftIO $ Exts.parseFile file
+	m <- liftE $ Exts.parseFile file
 	mname <- case m of
 		Exts.ParseFailed loc err -> throwError $
 			"Failed to parse file at " ++
 			Exts.prettyPrint loc ++ ":" ++ err
 		Exts.ParseOk (Exts.Module _ (Exts.ModuleName mname) _ _ _ _ _) -> return mname
 
-	ErrorT $ handle onError $ liftM Right $ void $ liftIO $ runGhc (Just libdir) $ do
+	void $ liftE $ runGhc (Just libdir) $ do
 		df <- getSessionDynFlags
 		let
 			df' = df {
@@ -49,9 +51,6 @@ dumpMinimalImports opts f = do
 			load LoadAllTargets
 
 	length mname `seq` return mname
-	where
-		onError :: SomeException -> IO (Either String ())
-		onError = return . Left . show
 
 -- | Read imports from file
 waitImports :: FilePath -> IO [String]
@@ -63,19 +62,19 @@ waitImports f = retry 1000 $ do
 cleanTmpImports :: FilePath -> IO ()
 cleanTmpImports dir = do
 	dumps <- liftM (map (dir </>) . filter ((== ".imports") . takeExtension)) $ getDirectoryContents dir
-	forM_ dumps $ handle ignoreIO . retry 1000 . removeFile
+	forM_ dumps $ handle ignoreIO' . retry 1000 . removeFile
 	where
-		ignoreIO :: IOException -> IO ()
-		ignoreIO _ = return ()
+		ignoreIO' :: IOException -> IO ()
+		ignoreIO' _ = return ()
 
 -- | Dump and read imports
 findMinimalImports :: [String] -> FilePath -> ErrorT String IO [String]
 findMinimalImports opts f = do
-	file <- liftIO $ canonicalizePath f
+	file <- liftE $ canonicalizePath f
 	mname <- dumpMinimalImports opts file
-	is <- liftIO $ waitImports (mname <.> "imports")
-	tmp <- liftIO getCurrentDirectory
-	liftIO $ cleanTmpImports tmp
+	is <- liftE $ waitImports (mname <.> "imports")
+	tmp <- liftE getCurrentDirectory
+	liftE $ cleanTmpImports tmp
 	return is
 
 -- | Groups several lines related to one import by indents
@@ -87,7 +86,6 @@ groupImports = unfoldr getPack where
 -- | Split import to import and import-list
 splitImport :: [String] -> (String, String)
 splitImport = splitBraces . unwords . map trim where
-	trim = twice $ reverse . dropWhile isSpace
 	cut = twice $ reverse . drop 1
 	twice f = f . f
 	splitBraces = (trim *** (trim . cut)) . break (== '(')

@@ -202,10 +202,10 @@ inspectFile :: [String] -> FilePath -> ErrorT String IO InspectedModule
 inspectFile opts file = do
 	let
 		hdocsWorkaround = False
-	proj <- liftIO $ locateProject file
-	absFilename <- liftIO $ Dir.canonicalizePath file
+	proj <- liftE $ locateProject file
+	absFilename <- liftE $ Dir.canonicalizePath file
 	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
-		docsMap <- liftIO $ if hdocsWorkaround
+		docsMap <- liftE $ if hdocsWorkaround
 			then hdocsProcess absFilename opts
 			else liftM Just $ hdocs (FileModule absFilename Nothing) opts
 		forced <- ErrorT $ E.handle onError $ do
@@ -222,7 +222,7 @@ inspectFile opts file = do
 -- | File inspection data
 fileInspection :: FilePath -> [String] -> ErrorT String IO Inspection
 fileInspection f opts = do
-	tm <- liftIO $ Dir.getModificationTime f
+	tm <- liftE $ Dir.getModificationTime f
 	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ sort $ nub opts
 
 -- | Enumerate project dirs
@@ -239,11 +239,11 @@ projectSources p = do
 		enumCabals = liftM (map takeDirectory . filter cabalFile) . traverseDirectory
 		dirs' = map entity dirs
 	-- enum inner projects and dont consider them as part of this project
-	subProjs <- liftIO $ liftM (delete (projectPath p) . nub . concat) $ mapM (liftIO . enumCabals) dirs'
+	subProjs <- liftM (delete (projectPath p) . nub . concat) $ triesMap (liftE . enumCabals) dirs'
 	let
 		enumHs = liftM (filter thisProjectSource) . traverseDirectory
 		thisProjectSource h = haskellSource h && not (any (`isParent` h) subProjs)
-	liftIO $ liftM (nub . concat) $ mapM (liftM sequenceA . traverse (liftIO . enumHs)) dirs
+	liftM (nub . concat) $ triesMap (liftM sequenceA . traverse (liftE . enumHs)) dirs
 
 -- | Inspect project
 inspectProject :: [String] -> Project -> ErrorT String IO (Project, [InspectedModule])

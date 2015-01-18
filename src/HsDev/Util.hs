@@ -182,5 +182,5 @@ logIO pre out = handle onIO where
 ignoreIO :: IO () -> IO ()
 ignoreIO = handle (const (return ()) :: IOException -> IO ())
 
-liftTask :: MonadIO m => IO (Task a) -> ErrorT String m a
-liftTask = ErrorT . liftM (left (\(SomeException e) -> show e)) . liftIO . join . liftM taskWait
+liftTask :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Task a) -> ErrorT String m a
+liftTask = liftExceptionM . ErrorT . liftIO . liftM (left show) . join . liftM taskWait

@@ -14,7 +14,7 @@ import Data.List
 import System.Directory
 import System.FilePath
 
-import HsDev.Util (searchPath)
+import HsDev.Util (searchPath, liftE)
 
 -- | Cabal or sandbox
 data Cabal = Cabal | Sandbox FilePath deriving (Eq, Ord)
@@ -72,7 +72,7 @@ findPackageDb sand = do
 
 -- | Create sandbox by directory or package-db file
 locateSandbox :: FilePath -> ErrorT String IO Cabal
-locateSandbox p = liftIO (findPackageDb p) >>= maybe
+locateSandbox p = liftE (findPackageDb p) >>= maybe
 	(throwError $ "Can't locate package-db in sandbox: " ++ p)
 	(return . Sandbox)
 
