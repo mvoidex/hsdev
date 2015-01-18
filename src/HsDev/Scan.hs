@@ -48,7 +48,7 @@ data ScanContents = ScanContents {
 enumProject :: Project -> ErrorT String IO ProjectToScan
 enumProject p = do
 	p' <- loadProject p
-	cabal <- liftIO $ searchSandbox (projectPath p')
+	cabal <- liftE $ searchSandbox (projectPath p')
 	pkgs <- liftM (map packageName) $ browsePackages [] cabal
 	let
 		projOpts :: FilePath -> [String]
@@ -68,9 +68,9 @@ enumDirectory dir = do
 	let
 		projects = filter cabalFile cts
 		sources = filter haskellSource cts
-	dirs <- liftIO $ filterM doesDirectoryExist cts
-	sboxes <- liftIO $ liftM catMaybes $ mapM findPackageDb dirs
-	projs <- mapM (enumProject . project) projects
+	dirs <- liftE $ filterM doesDirectoryExist cts
+	sboxes <- liftM catMaybes $ triesMap (liftE . findPackageDb) dirs
+	projs <- triesMap (enumProject . project) projects
 	let
 		projPaths = map (projectPath . fst) projs
 		standalone = map (\f -> FileModule f Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
@@ -82,7 +82,7 @@ enumDirectory dir = do
 -- | Scan project file
 scanProjectFile :: [String] -> FilePath -> ErrorT String IO Project
 scanProjectFile _ f = do
-	proj <- (liftIO $ locateProject f) >>= maybe (throwError "Can't locate project") return
+	proj <- (liftE $ locateProject f) >>= maybe (throwError "Can't locate project") return
 	loadProject proj
 
 -- | Scan module

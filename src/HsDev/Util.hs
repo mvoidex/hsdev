@@ -10,7 +10,7 @@ module HsDev.Util (
 	-- * Helper
 	(.::), (.::?), objectUnion,
 	-- * Exceptions
-	liftException, liftExceptionM, liftIOErrors,
+	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
 	eitherT,
 	-- * UTF-8
 	fromUtf8, toUtf8,
@@ -30,6 +30,7 @@ import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr)
+import Data.Maybe (catMaybes)
 import qualified Data.HashMap.Strict as HM (HashMap, toList, union)
 import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lazy (ByteString)
@@ -131,6 +132,21 @@ objectUnion _ _ = Null
 -- | Lift IO exception to ErrorT
 liftException :: C.MonadCatch m => m a -> ErrorT String m a
 liftException = ErrorT . liftM (left $ \(SomeException e) -> show e) . C.try
+
+-- | Same as @liftException@
+liftE :: C.MonadCatch m => m a -> ErrorT String m a
+liftE = liftException
+
+-- | @liftE@ for IO
+liftEIO :: (C.MonadCatch m, MonadIO m) => IO a -> ErrorT String m a
+liftEIO = liftE . liftIO
+
+-- | Run actions ignoring errors
+tries :: MonadPlus m => [m a] -> m [a]
+tries acts = liftM catMaybes $ sequence [liftM Just act `mplus` return Nothing | act <- acts]
+
+triesMap :: MonadPlus m => (a -> m b) -> [a] -> m [b]
+triesMap f = tries . map f
 
 -- | Lift IO exception to MonadError
 liftExceptionM :: (C.MonadCatch m, Error e, MonadError e m) => m a -> m a

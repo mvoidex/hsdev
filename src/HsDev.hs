@@ -1,17 +1,21 @@
 module HsDev (
-	module HsDev.Symbols,
-	module HsDev.Database,
-	module HsDev.Tools.GhcMod,
-	module HsDev.Scan,
-	module HsDev.Project,
 	module HsDev.Cache,
-	module HsDev.Commands
+	module HsDev.Commands,
+	module HsDev.Database,
+	module HsDev.Inspect,
+	module HsDev.Project,
+	module HsDev.Scan,
+	module HsDev.Symbols,
+	module HsDev.Tools.GhcMod,
+	module HsDev.Util
 	) where
 
-import HsDev.Symbols
-import HsDev.Database
-import HsDev.Tools.GhcMod
-import HsDev.Scan
-import HsDev.Project
 import HsDev.Cache
 import HsDev.Commands
+import HsDev.Database
+import HsDev.Inspect
+import HsDev.Project
+import HsDev.Scan
+import HsDev.Symbols
+import HsDev.Tools.GhcMod
+import HsDev.Util

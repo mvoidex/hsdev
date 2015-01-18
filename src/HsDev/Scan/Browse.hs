@@ -14,6 +14,7 @@ import Text.Read (readMaybe)
 import HsDev.Cabal
 import HsDev.Symbols
 import HsDev.Tools.Base (inspect)
+import HsDev.Util (liftIOErrors)
 
 import qualified ConLike as GHC
 import qualified DataCon as GHC
@@ -33,12 +34,12 @@ import Pretty
 
 -- | Browse packages
 browsePackages :: [String] -> Cabal -> ErrorT String IO [ModulePackage]
-browsePackages opts cabal = withPackages (cabalOpt cabal ++ opts) $ \dflags -> do
+browsePackages opts cabal = liftIOErrors $ withPackages (cabalOpt cabal ++ opts) $ \dflags -> do
 	return $ mapMaybe (readPackage . GHC.packageConfigId) $ fromMaybe [] $ GHC.pkgDatabase dflags
 
 -- | Browse modules
 browseFilter :: [String] -> Cabal -> (ModuleLocation -> ErrorT String IO Bool) -> ErrorT String IO [InspectedModule]
-browseFilter opts cabal f = withPackages_ (cabalOpt cabal ++ opts) $ do
+browseFilter opts cabal f = liftIOErrors $ withPackages_ (cabalOpt cabal ++ opts) $ do
 	ms <- lift $ GHC.packageDbModules False
 	ms' <- filterM (mapErrorT GHC.liftIO . f . loc) ms
 	liftM catMaybes $ mapM browseModule' ms'

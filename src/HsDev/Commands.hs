@@ -150,13 +150,6 @@ visibleFrom :: Maybe Project -> Module -> ModuleId -> Bool
 visibleFrom (Just p) this m = visible p (moduleId this) m
 visibleFrom Nothing this m = (moduleId this) == m || byCabal m
 
--- | Get module imports with Prelude and self import
-moduleImports' :: Module -> [Import]
-moduleImports' m =
-	import_ (fromString "Prelude") :
-	import_ (moduleName m) :
-	moduleImports m
-
 -- | Split identifier into module name and identifier itself
 splitIdentifier :: String -> (Maybe String, String)
 splitIdentifier name = fromMaybe (Nothing, name) $ do

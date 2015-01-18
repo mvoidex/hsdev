@@ -25,7 +25,6 @@ import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Either (isLeft)
-import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid

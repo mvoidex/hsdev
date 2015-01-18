@@ -27,7 +27,7 @@ import qualified Data.HashMap.Strict as HM
 import Data.List (nub)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe, isJust)
+import Data.Maybe (mapMaybe, isJust, fromMaybe)
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath)
 
@@ -40,7 +40,7 @@ import HsDev.Symbols
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
-import HsDev.Util ((.::))
+import HsDev.Util ((.::), liftEIO)
 
 data Status = StatusWorking | StatusOk | StatusError String
 
@@ -142,14 +142,16 @@ updater act = do
 	update db $ return db'
 	tell $ map moduleLocation $ allModules db'
 
--- | Load data from cache and wait
-loadCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ErrorT String IO Structured) -> m ()
-loadCache act = do
+-- | Get data from cache without updating DB
+getCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ErrorT String IO Structured) -> m Database
+getCache act = do
 	cacheReader <- asks databaseCacheReader
 	mdat <- liftIO $ cacheReader act
-	case mdat of
-		Nothing -> return ()
-		Just dat -> waiter (updater (return dat))
+	return $ fromMaybe mempty mdat
+
+-- | Load data from cache and wait
+loadCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ErrorT String IO Structured) -> m ()
+loadCache act = getCache act >>= waiter . updater . return
 
 -- | Run one task
 runTask :: MonadIO m => String -> [Pair] -> ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
@@ -208,11 +210,11 @@ scanModules opts ms = do
 scanFile :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanFile opts fpath = do
 	dbval <- readDB
-	fpath' <- liftIO $ canonicalizePath fpath
+	fpath' <- liftEIO $ canonicalizePath fpath
 	mloc <- case lookupFile fpath' dbval of
 		Just m -> return $ moduleLocation m
 		Nothing -> do
-			mproj <- liftIO $ locateProject fpath'
+			mproj <- liftEIO $ locateProject fpath'
 			return $ FileModule fpath' mproj
 	dirty <- liftErrorT $ S.changedModule dbval opts mloc
 	let
@@ -224,7 +226,7 @@ scanFile opts fpath = do
 scanCabal :: (MonadIO m, MonadCatch m) => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
 scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox" .= cabalSandbox]) $ do
 	loadCache $ Cache.loadCabal cabalSandbox
-	dbval <- readDB
+	dbval <- liftM (cabalDB cabalSandbox) readDB
 	ms <- runTask "loading modules" [] $
 		liftErrorT $ browseFilter opts cabalSandbox (S.changedModule dbval opts)
 	docs <- runTask "loading docs" [] $
