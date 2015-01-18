@@ -36,5 +36,5 @@ main = toolMain "hsautofix" [
 				fileCts' = autoFix fileCts (mapM_ correct corrs)
 			liftE $ withFile f' WriteMode $ \h -> do
 				hSetEncoding h utf8
-				hPutStrLn h fileCts'
+				hPutStr h fileCts'
 		fix' _ = toolError "Invalid arguments"
