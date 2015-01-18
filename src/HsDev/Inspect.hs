@@ -254,10 +254,3 @@ inspectProject opts p = do
 	return (p', catMaybes modules)
 	where
 		inspectFile' exts = liftM return (inspectFile (opts ++ extensionsOpts (extensions exts)) (entity exts)) <|> return Nothing
-
--- | Read file in UTF8
-readFileUtf8 :: FilePath -> IO String
-readFileUtf8 f = withFile f ReadMode $ \h -> do
-	hSetEncoding h utf8
-	cts <- hGetContents h
-	length cts `seq` return cts

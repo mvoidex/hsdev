@@ -13,7 +13,7 @@ module HsDev.Util (
 	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
 	eitherT,
 	-- * UTF-8
-	fromUtf8, toUtf8,
+	fromUtf8, toUtf8, readFileUtf8,
 	-- * IO
 	hGetLineBS, logException, logIO, ignoreIO,
 	-- * Task
@@ -41,7 +41,7 @@ import qualified Data.Text.Lazy.Encoding as T
 import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
-import System.IO (Handle)
+import System.IO
 
 import Control.Concurrent.Task
 
@@ -165,6 +165,13 @@ fromUtf8 = T.unpack . T.decodeUtf8
 
 toUtf8 :: String -> ByteString
 toUtf8 = T.encodeUtf8 . T.pack
+
+-- | Read file in UTF8
+readFileUtf8 :: FilePath -> IO String
+readFileUtf8 f = withFile f ReadMode $ \h -> do
+	hSetEncoding h utf8
+	cts <- hGetContents h
+	length cts `seq` return cts
 
 hGetLineBS :: Handle -> IO ByteString
 hGetLineBS = fmap L.fromStrict . B.hGetLine

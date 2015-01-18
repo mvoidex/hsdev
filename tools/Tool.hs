@@ -2,7 +2,7 @@
 
 module Tool (
 	-- * Tool
-	toolMain, usage,
+	ToolM, toolMain, usage,
 	-- * Json command
 	jsonCmd, jsonCmd_,
 	-- * Errors

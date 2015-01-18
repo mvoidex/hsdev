@@ -29,6 +29,7 @@ library
     Data.Group
     Data.Help
     Data.Lisp
+    Data.Mark
     HsDev
     HsDev.Cabal
     HsDev.Cache
@@ -52,6 +53,7 @@ library
     HsDev.Symbols.Documented
     HsDev.Symbols.Resolve
     HsDev.Symbols.Util
+    HsDev.Tools.AutoFix
     HsDev.Tools.Base
     HsDev.Tools.Cabal
     HsDev.Tools.ClearImports
@@ -209,6 +211,21 @@ executable hshayoo
     mtl >= 2.1.0,
     text >= 1.1.0,
     unordered-containers >= 0.2.0
+
+executable hsautofix
+  main-is: hsautofix.hs
+  hs-source-dirs: tools
+  ghc-options: -Wall
+  other-modules:
+    Tool
+  build-depends:
+    base >= 4.7 && < 5,
+    hsdev,
+    aeson >= 0.7.0,
+    aeson-pretty >= 0.7.0,
+    bytestring >= 0.10.0,
+    directory >= 1.2.0,
+    mtl >= 2.1.0
 
 test-suite test
   main-is: Test.hs

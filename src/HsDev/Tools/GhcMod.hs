@@ -53,7 +53,7 @@ import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Base
-import HsDev.Util ((.::), liftIOErrors, withCurrentDirectory)
+import HsDev.Util ((.::), liftIOErrors, withCurrentDirectory, readFileUtf8)
 
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
 list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opts }) $ do
@@ -109,7 +109,7 @@ flags = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.flags
 
 info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
 info opts cabal file sname = do
-	fileCts <- liftIO $ readFile file
+	fileCts <- liftIO $ readFileUtf8 file
 	rs <- withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
 		liftM nullToNL $ GhcMod.info file sname
 	toDecl fileCts rs
@@ -170,7 +170,7 @@ instance FromJSON TypedRegion where
 
 typeOf :: [String] -> Cabal -> FilePath -> Int -> Int -> GhcModT IO [TypedRegion]
 typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
-	fileCts <- liftIO $ readFile file
+	fileCts <- liftIO $ readFileUtf8 file
 	ts <- lines <$> GhcMod.types file line col
 	return $ mapMaybe (toRegionType fileCts) ts
 	where
@@ -230,6 +230,17 @@ parseOutputMessage s = do
 		errorLevel = if groups 5 == Just "Warning" then WarningMessage else ErrorMessage,
 		errorMessage = nullToNL (groups `at` 6) }
 
+recalcOutputMessageTabs :: [(FilePath, String)] -> OutputMessage -> OutputMessage
+recalcOutputMessageTabs fileCts msg = msg {
+	errorLocation = recalc' (errorLocation msg) }
+	where
+		recalc' :: Location -> Location
+		recalc' loc = fromMaybe loc $ do
+			pos <- locationPosition loc
+			src <- moduleSource (locationModule loc)
+			cts <- lookup src fileCts
+			return loc { locationPosition = Just (recalcTabs cts pos) }
+
 -- | Replace NULL with newline
 nullToNL :: String -> String
 nullToNL = map $ \case
@@ -237,14 +248,18 @@ nullToNL = map $ \case
 	ch -> ch
 
 check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [OutputMessage]
-check opts cabal files _ = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
-	msgs <- lines <$> GhcMod.checkSyntax files
-	return $ mapMaybe parseOutputMessage msgs
+check opts cabal files _ = do
+	cts <- liftIO $ mapM readFileUtf8 files
+	withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+		msgs <- lines <$> GhcMod.checkSyntax files
+		return $ map (recalcOutputMessageTabs (zip files cts)) $ mapMaybe parseOutputMessage msgs
 
 lint :: [String] -> FilePath -> GhcModT IO [OutputMessage]
-lint opts file = withOptions (\o -> o { GhcMod.hlintOpts = opts }) $ do
-	msgs <- lines <$> GhcMod.lint file
-	return $ mapMaybe parseOutputMessage msgs
+lint opts file = do
+	cts <- liftIO $ readFileUtf8 file
+	withOptions (\o -> o { GhcMod.hlintOpts = opts }) $ do
+		msgs <- lines <$> GhcMod.lint file
+		return $ map (recalcOutputMessageTabs [(file, cts)]) $ mapMaybe parseOutputMessage msgs
 
 runGhcMod :: (GhcMod.IOish m, MonadCatch m) => GhcMod.Options -> GhcModT m a -> ErrorT String m a
 runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ runGhcModT opts act
