@@ -137,7 +137,7 @@ commands = [
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
 	cmdList' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
 	cmdList' "ghc-mod lint" ["files..."] [hlintOpts] "lint source file" ghcmodLint',
-	cmdList' "ghc-mod check lint" ["files..."] [sandboxArg, ghcOpts, hlintOpts] "check & lint source files" ghcmodCheckLint',
+	cmdList' "ghc-mod check-lint" ["files..."] [sandboxArg, ghcOpts, hlintOpts] "check & lint source files" ghcmodCheckLint',
 	-- Ghc commands
 	cmdList' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
 	-- Dump/load commands
