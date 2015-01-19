@@ -66,10 +66,9 @@ loadProject p dir = do
 	ErrorT $ return $ structured [] [dat] mempty
 
 -- | Load standalone files
-loadFiles :: [FilePath] -> FilePath -> ErrorT String IO Structured
-loadFiles fs dir = do
+loadFiles :: (FilePath -> Bool) -> FilePath -> ErrorT String IO Structured
+loadFiles f dir = do
 	dat <- loadData (dir </> Cache.standaloneCache)
-	ErrorT $ return $ structured [] [] $ filterDB inFiles (const False) dat
+	ErrorT $ return $ structured [] [] $ filterDB f' (const False) dat
 	where
-		inFiles = maybe False (`elem` fs') . moduleSource . moduleIdLocation
-		fs' = map normalise fs
+		f' = maybe False f . moduleSource . moduleIdLocation

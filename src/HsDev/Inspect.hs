@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeSynonymInstances, ViewPatterns #-}
 
 module HsDev.Inspect (
-	analyzeModule,
+	analyzeModule, inspectDocs,
 	inspectContents, contentsInspection,
 	inspectFile, fileInspection,
 	projectDirs, projectSources,
@@ -20,12 +20,12 @@ import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
 import Data.Ord (comparing)
 import Data.String (fromString)
+import qualified Data.Text as T (unpack)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Traversable (traverse, sequenceA)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
 import qualified System.Directory as Dir
-import System.IO
 import System.FilePath
 import Data.Generics.Uniplate.Data
 
@@ -184,6 +184,16 @@ addDoc docsMap decl' = decl' { declarationDocs = M.lookup (declarationName decl'
 addDocs :: Map String String -> Module -> Module
 addDocs docsMap m = m { moduleDeclarations = map (addDoc docsMap) (moduleDeclarations m) }
 
+-- | Extract file docs and set them to module declarations
+inspectDocs :: [String] -> Module -> ErrorT String IO Module
+inspectDocs opts m = do
+	let
+		hdocsWorkaround = True
+	docsMap <- liftE $ if hdocsWorkaround
+		then hdocsProcess (fromMaybe (T.unpack $ moduleName m) $ moduleSource $ moduleLocation m) opts
+		else liftM Just $ hdocs (moduleLocation m) opts
+	return $ maybe id addDocs docsMap $ m
+
 -- | Inspect contents
 inspectContents :: String -> [String] -> String -> ErrorT String IO InspectedModule
 inspectContents name opts cts = inspect (ModuleSource $ Just name) (contentsInspection cts opts) $ do
@@ -200,18 +210,17 @@ contentsInspection _ _ = return InspectionNone -- crc or smth
 -- | Inspect file
 inspectFile :: [String] -> FilePath -> ErrorT String IO InspectedModule
 inspectFile opts file = do
-	let
-		hdocsWorkaround = False
 	proj <- liftE $ locateProject file
 	absFilename <- liftE $ Dir.canonicalizePath file
 	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
-		docsMap <- liftE $ if hdocsWorkaround
-			then hdocsProcess absFilename opts
-			else liftM Just $ hdocs (FileModule absFilename Nothing) opts
+		-- docsMap <- liftE $ if hdocsWorkaround
+		-- 	then hdocsProcess absFilename opts
+		-- 	else liftM Just $ hdocs (FileModule absFilename Nothing) opts
 		forced <- ErrorT $ E.handle onError $ do
 			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
 			force analyzed `deepseq` return analyzed
-		return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
+		-- return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
+		return $ setLoc absFilename proj forced
 	where
 		setLoc f p m = m { moduleLocation = FileModule f p }
 		onError :: E.ErrorCall -> IO (Either String Module)

@@ -8,19 +8,15 @@ module HsDev.Scan (
 	scanModule, upToDate, rescanModule, changedModule, changedModules
 	) where
 
-import Control.Applicative
 import Control.Monad.Error
 import qualified Data.Map as M
 import Data.Maybe (catMaybes)
-import Data.Traversable (traverse)
-import Language.Haskell.GhcMod (defaultOptions)
 import System.Directory
 
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.Symbols
 import HsDev.Database
 import HsDev.Tools.GhcMod
-import HsDev.Tools.GhcMod.InferType (inferTypes)
 import HsDev.Inspect
 import HsDev.Project
 import HsDev.Util
@@ -87,10 +83,11 @@ scanProjectFile _ f = do
 
 -- | Scan module
 scanModule :: [String] -> ModuleLocation -> ErrorT String IO InspectedModule
-scanModule opts (FileModule f _) = inspectFile opts f >>= traverse infer' where
-	infer' m = tryInfer <|> return m where
-		tryInfer = mapErrorT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
-			runGhcMod defaultOptions $ inferTypes opts Cabal m
+scanModule opts (FileModule f _) = inspectFile opts f
+-- scanModule opts (FileModule f _) = inspectFile opts f >>= traverse infer' where
+-- 	infer' m = tryInfer <|> return m where
+-- 		tryInfer = mapErrorT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
+-- 			runGhcMod defaultOptions $ inferTypes opts Cabal m
 scanModule opts (CabalModule c p n) = browse opts c n p
 scanModule _ (ModuleSource _) = throwError "Can inspect only modules in file or cabal"
 
@@ -115,5 +112,5 @@ changedModule db opts m = maybe (return True) (liftM not . upToDate opts) m' whe
 	m' = M.lookup m (databaseModules db)
 
 -- | Returns new (to scan) and changed (to rescan) modules
-changedModules :: Database -> [String] -> [ModuleLocation] -> ErrorT String IO [ModuleLocation]
-changedModules db opts ms = filterM (changedModule db opts) ms
+changedModules :: Database -> [String] -> [ModuleToScan] -> ErrorT String IO [ModuleToScan]
+changedModules db opts ms = filterM (\(m, opts') -> changedModule db (opts ++ opts') m) ms

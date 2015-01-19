@@ -1,6 +1,7 @@
 module HsDev.Tools.GhcMod.InferType (
 	untyped, inferType, inferTypes,
-	GhcModT
+	GhcModT,
+	infer
 	) where
 
 import Control.Applicative
@@ -9,10 +10,12 @@ import Data.Maybe (listToMaybe)
 import Data.String (fromString)
 import qualified Data.Text as T (unpack)
 import Data.Traversable (traverse)
+import qualified Language.Haskell.GhcMod as GhcMod
 
 import HsDev.Cabal
 import HsDev.Symbols
 import HsDev.Tools.GhcMod
+import HsDev.Util (withCurrentDirectory)
 
 -- | Is declaration untyped
 untyped :: DeclarationInfo -> Bool
@@ -22,10 +25,10 @@ untyped _ = False
 -- | Infer type of declaration
 inferType :: [String] -> Cabal -> FilePath -> Declaration -> GhcModT IO Declaration
 inferType opts cabal src decl'
-	| untyped (declaration decl') = infer
+	| untyped (declaration decl') = doInfer
 	| otherwise = return decl'
 	where
-		infer = do
+		doInfer = do
 			inferred <- ((getType . declaration) <$> byInfo) <|> byTypeOf
 			return decl' {
 				declaration = setType (declaration decl') inferred }
@@ -50,4 +53,11 @@ inferTypes opts cabal m = case moduleLocation m of
 		inferredDecls <- traverse (\d -> inferType opts cabal src d <|> return d) $
 			moduleDeclarations m
 		return m { moduleDeclarations = inferredDecls }
+	_ -> throwError $ strMsg "Type infer works only for source files"
+
+-- | Infer type in module
+infer :: [String] -> Cabal -> Module -> ErrorT String IO Module
+infer opts cabal m = case moduleLocation m of
+	FileModule src _ -> mapErrorT (withCurrentDirectory (sourceModuleRoot (moduleName m) src)) $
+		runGhcMod GhcMod.defaultOptions $ inferTypes opts cabal m
 	_ -> throwError $ strMsg "Type infer works only for source files"

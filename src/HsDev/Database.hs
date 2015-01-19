@@ -123,9 +123,7 @@ cabalDB cabal = filterDB (inCabal cabal) (const False)
 -- | Standalone database
 standaloneDB :: Database -> Database
 standaloneDB db = filterDB (check') (const False) db where
-	check' m = noProject m && byFile m
-	noProject m = all (not . flip inProject m) ps
-	ps = M.elems $ databaseProjects db
+	check' m = standalone m && byFile m
 
 -- | Select module by predicate
 selectModules :: (Module -> Bool) -> Database -> [Module]

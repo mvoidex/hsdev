@@ -7,10 +7,11 @@ module HsDev.Database.Update (
 	UpdateDB,
 	updateDB,
 
-	postStatus, waiter, updater, loadCache, runTask, runTasks,
+	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks,
 	readDB,
 
 	scanModule, scanModules, scanFile, scanCabal, scanProjectFile, scanProject, scanDirectory,
+	scan,
 
 	-- * Helpers
 	liftErrorT
@@ -27,20 +28,23 @@ import qualified Data.HashMap.Strict as HM
 import Data.List (nub)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe, isJust, fromMaybe)
+import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
 import qualified Data.Text as T (unpack)
+import Data.Traversable (traverse)
 import System.Directory (canonicalizePath)
 
 import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async
 import HsDev.Display
+import HsDev.Inspect (inspectDocs)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.HDocs
+import HsDev.Tools.GhcMod.InferType (infer)
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
-import HsDev.Util ((.::), liftEIO)
+import HsDev.Util ((.::), liftEIO, isParent)
 
 data Status = StatusWorking | StatusOk | StatusError String
 
@@ -107,7 +111,7 @@ newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [Modu
 -- | Run `UpdateDB` monad
 updateDB :: MonadIO m => Settings -> ErrorT String (UpdateDB m) () -> m ()
 updateDB sets act = do
-	updatedMods <- execWriterT (runUpdateDB (runErrorT act >> return ()) `runReaderT` sets)
+	updatedMods <- execWriterT (runUpdateDB (runErrorT act' >> return ()) `runReaderT` sets)
 	wait $ database sets
 	dbval <- liftIO $ readAsync $ database sets
 	let
@@ -120,6 +124,26 @@ updateDB sets act = do
 			map (`projectDB` dbval) projs,
 			[standaloneDB dbval | stand]]
 	liftIO $ databaseCacheWriter sets modifiedDb
+	where
+		act' = do
+			mlocs' <- liftM (filter (isJust . moduleSource) . snd) $ listen act
+			wait $ database sets
+			let
+				getMods = do
+					db' <- liftIO $ readAsync $ database sets
+					return $ catMaybes [M.lookup mloc' (databaseModules db') | mloc' <- mlocs']
+			getMods >>= waiter . runTask "inspecting source docs" [] . runTasks . map scanDocs
+			getMods >>= waiter . runTask "inferring types" [] . runTasks . map inferModTypes
+		scanDocs :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
+		scanDocs im = runTask "scanning docs" (subject (inspectedId im) ["module" .= inspectedId im]) $ do
+			im' <- liftErrorT $ traverse (inspectDocs (inspectionOpts $ inspection im)) im <|> return im
+			updater $ return $ fromModule im'
+		inferModTypes :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
+		inferModTypes im = runTask "inferring types" (subject (inspectedId im) ["module" .= inspectedId im]) $ do
+			-- TODO: locate sandbox
+			im' <- liftErrorT $ traverse (infer (inspectionOpts $ inspection im) Cabal) im <|> return im
+			updater $ return $ fromModule im'
+
 
 -- | Post status
 postStatus :: (MonadIO m, MonadReader Settings m) => Task -> m ()
@@ -142,16 +166,31 @@ updater act = do
 	update db $ return db'
 	tell $ map moduleLocation $ allModules db'
 
+-- | Clear obsolete data from database
+cleaner :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => m Database -> m ()
+cleaner act = do
+	db <- asks database
+	db' <- act
+	clear db $ return db'
+
 -- | Get data from cache without updating DB
-getCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ErrorT String IO Structured) -> m Database
-getCache act = do
+loadCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ErrorT String IO Structured) -> m Database
+loadCache act = do
 	cacheReader <- asks databaseCacheReader
 	mdat <- liftIO $ cacheReader act
 	return $ fromMaybe mempty mdat
 
--- | Load data from cache and wait
-loadCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ErrorT String IO Structured) -> m ()
-loadCache act = getCache act >>= waiter . updater . return
+-- | Load data from cache if not loaded yet and wait
+getCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ErrorT String IO Structured) -> (Database -> Database) -> m Database
+getCache act check = do
+	dbval <- liftM check readDB
+	if nullDatabase dbval
+		then do
+			db <- loadCache act
+			waiter $ updater $ return db
+			return db
+		else
+			return dbval
 
 -- | Run one task
 runTask :: MonadIO m => String -> [Pair] -> ErrorT String (UpdateDB m) a -> ErrorT String (UpdateDB m) a
@@ -195,12 +234,9 @@ scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
 
 -- | Scan modules
 scanModules :: (MonadIO m, MonadCatch m) => [String] -> [S.ModuleToScan] -> ErrorT String (UpdateDB m) ()
-scanModules opts ms = do
-	dbval <- readDB
-	ms' <- liftErrorT $ filterM (\m -> S.changedModule dbval (opts ++ snd m) (fst m)) ms
-	runTasks $
-		[scanProjectFile opts p >> return () | p <- ps] ++
-		[scanModule (opts ++ snd m) (fst m) | m <- ms']
+scanModules opts ms = runTasks $
+	[scanProjectFile opts p >> return () | p <- ps] ++
+	[scanModule (opts ++ snd m) (fst m) | m <- ms]
 	where
 		ps = nub $ mapMaybe (toProj . fst) ms
 		toProj (FileModule _ p) = fmap projectCabal p
@@ -225,31 +261,30 @@ scanFile opts fpath = do
 -- | Scan cabal modules
 scanCabal :: (MonadIO m, MonadCatch m) => [String] -> Cabal -> ErrorT String (UpdateDB m) ()
 scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox" .= cabalSandbox]) $ do
-	loadCache $ Cache.loadCabal cabalSandbox
-	dbval <- liftM (cabalDB cabalSandbox) readDB
-	ms <- runTask "loading modules" [] $
-		liftErrorT $ browseFilter opts cabalSandbox (S.changedModule dbval opts)
-	docs <- runTask "loading docs" [] $
-		liftErrorT $ hdocsCabal cabalSandbox opts
-	updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
+	mlocs <- runTask "getting list of cabal modules" [] $ 
+		liftErrorT $ listModules opts cabalSandbox
+	scan (Cache.loadCabal cabalSandbox) (cabalDB cabalSandbox) (zip mlocs $ repeat []) opts $ \mlocs' -> do
+		ms <- runTask "loading modules" [] $
+			liftErrorT $ browseModules opts cabalSandbox (map fst mlocs')
+		docs <- runTask "loading docs" [] $
+			liftErrorT $ hdocsCabal cabalSandbox opts
+		updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
 		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ moduleName m) docs
 
 -- | Scan project file
 scanProjectFile :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) Project
-scanProjectFile opts cabal = runTask "scanning" (subject cabal ["file" .= cabal]) $ do
-	proj <- liftErrorT $ S.scanProjectFile opts cabal
-	updater $ return $ fromProject proj
-	return proj
+scanProjectFile opts cabal = runTask "scanning" (subject cabal ["file" .= cabal]) $ liftErrorT $ S.scanProjectFile opts cabal
 
 -- | Scan project
 scanProject :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
 scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" .= cabal]) $ do
 	proj <- scanProjectFile opts cabal
-	loadCache $ Cache.loadProject $ projectCabal proj
 	(_, sources) <- liftErrorT $ S.enumProject proj
-	scanModules opts sources
+	scan (Cache.loadProject $ projectCabal proj) (projectDB proj) sources opts $ \ms -> do
+		scanModules opts ms
+		updater $ return $ fromProject proj
 
 -- | Scan directory for source files and projects
 scanDirectory :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) ()
@@ -258,8 +293,31 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 		liftErrorT $ S.enumDirectory dir
 	runTasks [scanProject opts (projectCabal p) | (p, _) <- projSrcs]
 	runTasks $ map (scanCabal opts) sboxes
-	loadCache $ Cache.loadFiles $ mapMaybe (moduleSource . fst) standSrcs
-	scanModules opts standSrcs
+	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
+	where
+		inDir = maybe False (dir `isParent`) . moduleSource . moduleIdLocation
+
+-- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
+scan ::
+	(MonadIO m, MonadCatch m) =>
+	(FilePath -> ErrorT String IO Structured) ->
+	-- ^ Read data from cache
+	(Database -> Database) ->
+	-- ^ Get data from database
+	[S.ModuleToScan] ->
+	-- ^ Actual modules. Other modules will be removed from database
+	[String] ->
+	-- ^ Extra scan options
+	([S.ModuleToScan] -> ErrorT String (UpdateDB m) ()) ->
+	-- ^ Function to update changed modules
+	ErrorT String (UpdateDB m) ()
+scan cache' part' mlocs opts act = do
+	dbval <- getCache cache' part'
+	let
+		obsolete = filterDB (\m -> moduleIdLocation m `notElem` map fst mlocs) (const False) dbval
+	changed <- runTask "getting list of changed modules" [] $ liftErrorT $ S.changedModules dbval opts mlocs
+	runTask "removing obsolete modules" ["modules" .= map moduleLocation (allModules obsolete)] $ cleaner $ return obsolete
+	act changed
 
 -- | Lift errors
 liftErrorT :: MonadIO m => ErrorT String IO a -> ErrorT String m a

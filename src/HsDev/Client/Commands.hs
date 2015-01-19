@@ -260,18 +260,18 @@ commands = [
 		scan' :: [String] -> Opts String -> CommandActionT ()
 		scan' _ as copts = do
 			cabals <- getSandboxes copts as
-			updateProcess copts as $ do
-				mapM_ (Update.scanCabal (listArg "ghc" as)) cabals
-				mapM_ (\(n, f) -> forM_ (listArg n as) (findPath copts >=> f (listArg "ghc" as))) [
+			updateProcess copts as $ concat [
+				map (Update.scanCabal (listArg "ghc" as)) cabals,
+				concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- listArg n as]) [
 					("project", Update.scanProject),
 					("file", Update.scanFile),
-					("path", Update.scanDirectory)]
+					("path", Update.scanDirectory)]]
 
 		-- | Rescan data
 		rescan' :: [String] -> Opts String -> CommandActionT ()
 		rescan' _ as copts = do
 			cabals <- getSandboxes copts as
-			updateProcess copts as $ mapM_ (Update.scanCabal (listArg "ghc" as)) cabals
+			updateProcess copts as $ map (Update.scanCabal (listArg "ghc" as)) cabals
 
 			dbval <- getDb copts
 			let
@@ -301,9 +301,9 @@ commands = [
 
 			if not (null errors)
 				then commandError (intercalate ", " errors) []
-				else updateProcess copts as $ Update.runTask "rescanning modules" [] $ do
+				else updateProcess copts as [Update.runTask "rescanning modules" [] $ do
 					needRescan <- Update.liftErrorT $ filterM (changedModule dbval (listArg "ghc" as) . inspectedId) rescanMods
-					Update.scanModules (listArg "ghc" as) (map (inspectedId &&& inspectionOpts . inspection) needRescan)
+					Update.scanModules (listArg "ghc" as) (map (inspectedId &&& inspectionOpts . inspection) needRescan)]
 
 		-- | Remove data
 		remove' :: [String] -> Opts String -> CommandActionT [ModuleId]
@@ -766,14 +766,16 @@ mapErrorStr :: (Monad m, Error e) => ErrorT String m a -> ErrorT e m a
 mapErrorStr = mapErrorT (liftM $ left strMsg)
 
 -- | Run DB update action
-updateProcess :: CommandOptions -> Opts String -> ErrorT String (Update.UpdateDB IO) () -> CommandM ()
-updateProcess copts as act = lift $ Update.updateDB settings act where
+updateProcess :: CommandOptions -> Opts String -> [ErrorT String (Update.UpdateDB IO) ()] -> CommandM ()
+updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `catchError` logErr | act <- acts] where
 	settings = Update.Settings
 		(commandDatabase copts)
 		(commandReadCache copts)
 		(commandWriteCache copts)
 		(commandNotify copts . Notification . toJSON)
 		(listArg "ghc" as)
+	logErr :: String -> ErrorT String (Update.UpdateDB IO) ()
+	logErr e = liftIO $ commandLog copts e
 
 -- | Filter declarations with prefix and infix
 filterMatch :: Opts String -> [ModuleDeclaration] -> [ModuleDeclaration]

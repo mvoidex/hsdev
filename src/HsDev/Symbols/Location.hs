@@ -91,7 +91,7 @@ instance NFData ModuleLocation where
 
 instance Show ModuleLocation where
 	show (FileModule f p) = f ++ maybe "" (" in " ++) (fmap projectPath p)
-	show (CabalModule c p _) = show c ++ maybe "" (" in package " ++) (fmap show p)
+	show (CabalModule _ p n) = n ++ maybe "" (" in package " ++) (fmap show p)
 	show (ModuleSource m) = fromMaybe "" m
 
 instance ToJSON ModuleLocation where

@@ -2,7 +2,7 @@ module HsDev.Scan.Browse (
 	-- * List all packages
 	browsePackages,
 	-- * Scan cabal modules
-	browseFilter, browse
+	listModules, browseModules, browse
 	) where
 
 import Control.Monad.Error
@@ -37,22 +37,22 @@ browsePackages :: [String] -> Cabal -> ErrorT String IO [ModulePackage]
 browsePackages opts cabal = liftIOErrors $ withPackages (cabalOpt cabal ++ opts) $ \dflags -> do
 	return $ mapMaybe (readPackage . GHC.packageConfigId) $ fromMaybe [] $ GHC.pkgDatabase dflags
 
--- | Browse modules
-browseFilter :: [String] -> Cabal -> (ModuleLocation -> ErrorT String IO Bool) -> ErrorT String IO [InspectedModule]
-browseFilter opts cabal f = liftIOErrors $ withPackages_ (cabalOpt cabal ++ opts) $ do
+listModules :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
+listModules opts cabal = liftIOErrors $ withPackages_ (cabalOpt cabal ++ opts) $ do
 	ms <- lift $ GHC.packageDbModules False
-	ms' <- filterM (mapErrorT GHC.liftIO . f . loc) ms
-	liftM catMaybes $ mapM browseModule' ms'
-	where
-		loc :: GHC.Module -> ModuleLocation
-		loc m = CabalModule cabal (readPackage $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
+	return $ map (ghcModuleLocation cabal) ms
 
+browseModules :: [String] -> Cabal -> [ModuleLocation] -> ErrorT String IO [InspectedModule]
+browseModules opts cabal mlocs = liftIOErrors $ withPackages_ (cabalOpt cabal ++ opts) $ do
+	ms <- lift $ GHC.packageDbModules False
+	liftM catMaybes $ mapM browseModule' [m | m <- ms, ghcModuleLocation cabal m `elem` mlocs]
+	where
 		browseModule' :: GHC.Module -> ErrorT String GHC.Ghc (Maybe InspectedModule)
-		browseModule' m = tryT $ inspect (loc m) (return $ InspectionAt 0 opts) (browseModule cabal m)
+		browseModule' m = tryT $ inspect (ghcModuleLocation cabal m) (return $ InspectionAt 0 opts) (browseModule cabal m)
 
 -- | Browse all modules
 browse :: [String] -> Cabal -> ErrorT String IO [InspectedModule]
-browse opts cabal = browseFilter opts cabal (const $ return True)
+browse opts cabal = listModules opts cabal >>= browseModules opts cabal
 
 browseModule :: Cabal -> GHC.Module -> ErrorT String GHC.Ghc Module
 browseModule cabal m = do
@@ -143,3 +143,6 @@ tryT act = catchError (liftM Just act) (const $ return Nothing)
 
 readPackage :: GHC.PackageId -> Maybe ModulePackage
 readPackage = readMaybe . GHC.packageIdString
+
+ghcModuleLocation :: Cabal -> GHC.Module -> ModuleLocation
+ghcModuleLocation cabal m = CabalModule cabal (readPackage $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
