@@ -247,7 +247,7 @@ clientOpts :: [Opt]
 clientOpts = [
 	req "port" "number" `desc` "connection port",
 	flag "pretty" `desc` "pretty json output",
-	req "stdin" "data" `desc` "pass data to stdin",
+	flag "stdin" `desc` "pass data to stdin",
 	req "timeout" "msec" `desc` "overwrite timeout duration",
 	flag "silent" `desc` "supress notifications"]
 
@@ -282,15 +282,15 @@ sendCmd name (Args args opts) = do
 			| otherwise = encode
 		sendReceive = do
 			curDir <- getCurrentDirectory
-			stdinData <- if flagSet "data" copts
-				then do
-					cdata <- liftM (eitherDecode :: L.ByteString -> Either String Value) L.getContents
-					case cdata of
-						Left cdataErr -> do
-							putStrLn $ "Invalid data: " ++ cdataErr
-							exitFailure
-						Right dataValue -> return $ Just dataValue
-				else return Nothing
+			input <- if flagSet "stdin" copts
+				then liftM Just L.getContents
+				else return $ fmap toUtf8 $ arg "data" copts
+			let
+				parseData :: L.ByteString -> IO Value
+				parseData cts = case eitherDecode cts of
+					Left err -> putStrLn ("Invalid data: " ++ err) >> exitFailure
+					Right v -> return v
+			dat <- traverse parseData input
 
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
@@ -298,7 +298,7 @@ sendCmd name (Args args opts) = do
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> do
 				L.hPutStrLn h $ encode $ Message Nothing $ reqCall `M.withOpts` [
 					"current-directory" %-- curDir,
-					"data" %-? (fromUtf8 . encode <$> stdinData),
+					"data" %-? (fromUtf8 . encode <$> dat),
 					"timeout" %-? (iarg "timeout" copts :: Maybe Integer),
 					if flagSet "silent" copts then hoist "silent" else mempty]
 				hFlush h

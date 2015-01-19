@@ -586,7 +586,7 @@ commands = [
 
 		-- | Autofix
 		autofix' :: [String] -> Opts String -> CommandActionT [AutoFix.Correction]
-		autofix' _ as copts = do
+		autofix' _ as _ = do
 			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
 			msgs <- either
 				(\err -> commandError "Unable to decode data" [
