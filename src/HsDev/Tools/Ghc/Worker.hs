@@ -20,7 +20,7 @@ import Packages
 import Control.Concurrent.Worker
 
 ghcWorker :: IO (Worker Ghc)
-ghcWorker = startWorker (runGhc (Just libdir)) ghcInit where
+ghcWorker = startWorker (runGhc (Just libdir)) ghcInit id where
 	ghcInit f = do
 		fs <- getSessionDynFlags
 		defaultCleanupHandler fs $ do

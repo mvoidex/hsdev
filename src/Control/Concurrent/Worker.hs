@@ -1,3 +1,5 @@
+{-# LANGUAGE RankNTypes #-}
+
 module Control.Concurrent.Worker (
 	Worker(..),
 	startWorker,
@@ -17,11 +19,12 @@ import Control.Concurrent.Task
 
 data Worker m = Worker {
 	workerChan :: Chan (Task (), m ()),
+	workerWrap :: forall a. m a -> m a,
 	workerTask :: MVar (Task ()),
 	workerRestart :: IO Bool }
 
-startWorker :: MonadIO m => (m () -> IO ()) -> (m () -> m ()) -> IO (Worker m)
-startWorker run initialize = do
+startWorker :: MonadIO m => (m () -> IO ()) -> (m () -> m ()) -> (forall a. m a -> m a) -> IO (Worker m)
+startWorker run initialize wrap = do
 	ch <- newChan
 	taskVar <- newEmptyMVar
 	let
@@ -39,10 +42,10 @@ startWorker run initialize = do
 			stopped <- taskStopped task
 			when stopped (start >>= void . swapMVar taskVar)
 			return stopped
-	return $ Worker ch taskVar restart
+	return $ Worker ch wrap taskVar restart
 
 sendTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Task a)
-sendTask w = runTask_ putTask' where
+sendTask w = runTask_ putTask' . workerWrap w where
 	putTask' t act = putChan (workerChan w) (fmap (const ()) t, act)
 
 pushTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Task a)

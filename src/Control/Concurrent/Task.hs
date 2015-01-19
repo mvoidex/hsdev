@@ -4,13 +4,13 @@ module Control.Concurrent.Task (
 	Task(..), TaskException(..), TaskResult(..),
 	taskStarted, taskRunning, taskStopped, taskDone, taskFailed, taskCancelled,
 	taskWaitStart, taskWait, taskKill, taskCancel, taskStop,
-	runTask, runTask_, forkTask
+	runTask, runTask_, runTaskTry, runTaskError, forkTask, tryT
 	) where
 
 import Control.Applicative
 import Control.Concurrent
 import Control.Monad
-import Control.Monad.IO.Class
+import Control.Monad.Error
 import Control.Monad.Catch
 import Data.Either
 import Data.Maybe
@@ -94,13 +94,16 @@ runTask :: (MonadCatch m, MonadIO m, MonadIO n) => (m () -> n ()) -> m a -> n (T
 runTask f = runTask_ (const f)
 
 runTask_ :: (MonadCatch m, MonadIO m, MonadIO n) => (Task a -> m () -> n ()) -> m a -> n (Task a)
-runTask_ f act = do
+runTask_ f = runTaskTry f . liftM Right
+
+runTaskTry :: (MonadCatch m, MonadIO m, MonadIO n) => (Task a -> m () -> n ()) -> m (Either SomeException a) -> n (Task a)
+runTaskTry f act = do
 	throwVar <- liftIO newEmptyMVar
 	resultVar <- liftIO newEmptyMVar
 	f (Task throwVar $ toResult resultVar) $ handle (liftIO . putMVar resultVar . Left) $ do
 		th <- liftIO myThreadId
 		ok <- liftIO $ tryPutMVar throwVar (Just $ throwTo th)
-		when ok $ act >>= liftIO . putMVar resultVar . Right
+		when ok $ act >>= liftIO . putMVar resultVar
 	return $ Task throwVar $ toResult resultVar
 	where
 		toResult :: MVar (Either SomeException a) -> TaskResult a
@@ -108,8 +111,14 @@ runTask_ f act = do
 			taskResultEmpty = isEmptyMVar var,
 			taskResultTryRead = tryReadMVar var,
 			taskResultTake = takeMVar var,
-			taskResultFail = void . tryPutMVar var . Left }
+			taskResultFail = void . tryPutMVar var . Left }	
+
+runTaskError :: (Show e, Error e, MonadError e m, MonadCatch m, MonadIO m, MonadIO n) => (Task a -> m () -> n ()) -> m a -> n (Task a)
+runTaskError f = runTaskTry f . tryT
 
 -- | Run task in separate thread
 forkTask :: IO a -> IO (Task a)
 forkTask = runTask (void . forkIO)
+
+tryT :: (Show e, Error e, MonadError e m) => m a -> m (Either SomeException a)
+tryT act = catchError (liftM Right act) (return . Left . toException . userError . show)

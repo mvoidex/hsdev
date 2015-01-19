@@ -53,7 +53,7 @@ import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Base
-import HsDev.Util ((.::), liftIOErrors, withCurrentDirectory, readFileUtf8)
+import HsDev.Util ((.::), liftIOErrors, liftThrow, withCurrentDirectory, readFileUtf8)
 
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
 list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opts }) $ do
@@ -276,7 +276,7 @@ ghcModEnvPath defaultPath = either projectPath (fromMaybe defaultPath . sandbox)
 ghcModWorker :: Either Project Cabal -> IO (Worker (GhcModT IO))
 ghcModWorker p = do
 	home <- getHomeDirectory
-	startWorker (runGhcModT'' $ ghcModEnvPath home p) id
+	startWorker (runGhcModT'' $ ghcModEnvPath home p) id liftThrow
 	where
 		makeEnv :: FilePath -> IO GhcMod.GhcModEnv
 		makeEnv = GhcMod.newGhcModEnv GhcMod.defaultOptions
@@ -298,7 +298,7 @@ type WorkerMap = MVar (M.Map FilePath (Worker (GhcModT IO)))
 
 -- | Manage many ghc-mod workers for each project/sandbox
 ghcModMultiWorker :: IO (Worker (ReaderT WorkerMap IO))
-ghcModMultiWorker = newMVar M.empty >>= \m -> startWorker (`runReaderT` m) id
+ghcModMultiWorker = newMVar M.empty >>= \m -> startWorker (`runReaderT` m) id id
 
 instance MonadThrow (GhcModT IO) where
 	throwM = lift . throwM

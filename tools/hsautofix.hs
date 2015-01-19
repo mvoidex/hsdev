@@ -6,7 +6,6 @@ import Data.Aeson
 import System.Directory (canonicalizePath)
 import System.IO
 
-import Data.Mark
 import HsDev.Tools.AutoFix
 import HsDev.Util (toUtf8, liftE)
 
@@ -15,7 +14,7 @@ import Tool
 main :: IO ()
 main = toolMain "hsautofix" [
 	jsonCmd "show" [] [] "show what can be auto-fixed" show',
-	jsonCmd "fix" ["file"] [] "fix selected errors" fix']
+	jsonCmd "fix" ["file"] [stdoutFlag] "fix selected errors" fix']
 	where
 		stdoutFlag = flag "stdout" `short` ['o'] `desc` "don't modify file, output new contents to stdout"
 

@@ -12,6 +12,7 @@ module HsDev.Util (
 	-- * Exceptions
 	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
 	eitherT,
+	liftThrow,
 	-- * UTF-8
 	fromUtf8, toUtf8, readFileUtf8,
 	-- * IO
@@ -159,6 +160,10 @@ liftIOErrors act = liftException (runErrorT act) >>= either throwError return
 
 eitherT :: (Monad m, Error e, MonadError e m) => Either String a -> m a
 eitherT = either (throwError . strMsg) return
+
+-- | Throw error as exception
+liftThrow :: (Show e, Error e, MonadError e m, C.MonadCatch m) => m a -> m a
+liftThrow act = catchError act (C.throwM . userError . show)
 
 fromUtf8 :: ByteString -> String
 fromUtf8 = T.unpack . T.decodeUtf8
