@@ -38,6 +38,7 @@ import HsDev.Server.Message as M
 import HsDev.Server.Types
 import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Worker
+import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Cache.Structured as SC
@@ -138,6 +139,8 @@ commands = [
 	cmdList' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
 	cmdList' "ghc-mod lint" ["files..."] [hlintOpts] "lint source file" ghcmodLint',
 	cmdList' "ghc-mod check-lint" ["files..."] [sandboxArg, ghcOpts, hlintOpts] "check & lint source files" ghcmodCheckLint',
+	-- Autofix
+	cmd' "autofix" [] [dataArg] "generate corrections for check & lint messages" autofix',
 	-- Ghc commands
 	cmdList' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
 	-- Dump/load commands
@@ -580,6 +583,18 @@ commands = [
 					check' <- GhcMod.check (listArg "ghc" as) cabal [file'] mproj
 					lint' <- GhcMod.lint (listArg "hlint" as) file'
 					return $ check' ++ lint'
+
+		-- | Autofix
+		autofix' :: [String] -> Opts String -> CommandActionT [AutoFix.Correction]
+		autofix' _ as copts = do
+			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
+			msgs <- either
+				(\err -> commandError "Unable to decode data" [
+					"why" .= err,
+					"data" .= jsonData])
+				return $
+				eitherDecode $ toUtf8 jsonData
+			return $ AutoFix.corrections msgs
 
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
