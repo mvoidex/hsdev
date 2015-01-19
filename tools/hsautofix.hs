@@ -2,22 +2,21 @@ module Main (
 	main
 	) where
 
+import Control.Monad (forM_)
 import Data.Aeson
+import Data.List (nub, sort)
 import System.Directory (canonicalizePath)
-import System.IO
 
 import HsDev.Tools.AutoFix
-import HsDev.Util (toUtf8, liftE)
+import HsDev.Util (toUtf8, liftE, readFileUtf8, writeFileUtf8)
 
 import Tool
 
 main :: IO ()
 main = toolMain "hsautofix" [
 	jsonCmd "show" [] [] "show what can be auto-fixed" show',
-	jsonCmd "fix" ["file"] [stdoutFlag] "fix selected errors" fix']
+	jsonCmd "fix" [] [] "fix selected errors" fix']
 	where
-		stdoutFlag = flag "stdout" `short` ['o'] `desc` "don't modify file, output new contents to stdout"
-
 		show' :: Args -> ToolM [Correction]
 		show' (Args [] _) = do
 			input <- liftE getContents
@@ -25,19 +24,11 @@ main = toolMain "hsautofix" [
 			return $ corrections msgs
 
 		fix' :: Args -> ToolM ()
-		fix' (Args [file] opts) = do
+		fix' (Args [] _) = do
 			input <- liftE getContents
 			corrs <- maybe (toolError "Can't parse messages") return $ decode (toUtf8 input)
-			f' <- liftE $ canonicalizePath file
-			fileCts <- liftE $ withFile f' ReadMode $ \h -> do
-				hSetEncoding h utf8
-				cts <- hGetContents h
-				length cts `seq` return cts
-			let
-				fileCts' = autoFix fileCts corrs
-			liftE $ if flagSet "stdout" opts
-				then putStr fileCts'
-				else withFile f' WriteMode $ \h -> do
-					hSetEncoding h utf8
-					hPutStr h fileCts'
+			files <- liftE $ mapM canonicalizePath $ nub $ sort $ map correctionFile corrs
+			forM_ files $ \f' -> do
+				fileCts <- liftE $ readFileUtf8 f'
+				liftE $ writeFileUtf8 f' $ autoFix fileCts $ filter ((== f') . correctionFile) corrs
 		fix' _ = toolError "Invalid arguments"

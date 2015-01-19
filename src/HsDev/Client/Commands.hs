@@ -140,7 +140,8 @@ commands = [
 	cmdList' "ghc-mod lint" ["files..."] [hlintOpts] "lint source file" ghcmodLint',
 	cmdList' "ghc-mod check-lint" ["files..."] [sandboxArg, ghcOpts, hlintOpts] "check & lint source files" ghcmodCheckLint',
 	-- Autofix
-	cmd' "autofix" [] [dataArg] "generate corrections for check & lint messages" autofix',
+	cmd' "autofix show" [] [dataArg] "generate corrections for check & lint messages" autofixShow',
+	cmd' "autofix fix" [] [dataArg, fixUpdateArg] "fix errors and return new corrections with updated regions" autofixFix',
 	-- Ghc commands
 	cmdList' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
 	-- Dump/load commands
@@ -188,6 +189,7 @@ commands = [
 		exportsArg = flag "exports" `short` ['e'] `desc` "resolve module exports"
 		fileArg = req "file" "path" `short` ['f']
 		findArg = req "find" "query" `desc` "infix match"
+		fixUpdateArg = req "update" "corrections" `short` ['u'] `desc` "corrections to update regions in"
 		ghcOpts = list "ghc" "option" `short` ['g'] `desc` "options to pass to GHC"
 		globalArg = flag "global" `desc` "scope of project"
 		hayooArgs = [
@@ -584,9 +586,9 @@ commands = [
 					lint' <- GhcMod.lint (listArg "hlint" as) file'
 					return $ check' ++ lint'
 
-		-- | Autofix
-		autofix' :: [String] -> Opts String -> CommandActionT [AutoFix.Correction]
-		autofix' _ as _ = do
+		-- | Autofix show
+		autofixShow' :: [String] -> Opts String -> CommandActionT [AutoFix.Correction]
+		autofixShow' _ as _ = do
 			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
 			msgs <- either
 				(\err -> commandError "Unable to decode data" [
@@ -595,6 +597,29 @@ commands = [
 				return $
 				eitherDecode $ toUtf8 jsonData
 			return $ AutoFix.corrections msgs
+
+		-- | Autofix fix
+		autofixFix' :: [String] -> Opts String -> CommandActionT [AutoFix.Correction]
+		autofixFix' _ as copts = do
+			let
+				readCorrs cts = either
+					(\err -> commandError "Unable to decode data" [
+						"why" .= err,
+						"data" .= cts])
+					return $
+					eitherDecode $ toUtf8 cts
+			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
+			corrs <- readCorrs jsonData
+			upCorrs <- liftM (fromMaybe []) $ traverse readCorrs $ arg "update" as
+			files <- liftM (nub . sort) $ mapM (findPath copts) $ map AutoFix.correctionFile corrs
+			mapErrorStr $ liftM concat $ forM files $ \file -> do
+				fileCts <- liftE $ readFileUtf8 file
+				let
+					(fileCts', corrs') = AutoFix.fixUpdate fileCts
+						(filter ((== file) . AutoFix.correctionFile) corrs)
+						(filter ((== file) . AutoFix.correctionFile) upCorrs)
+				liftE $ writeFileUtf8 file fileCts'
+				return corrs'
 
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]

@@ -3,7 +3,7 @@
 module HsDev.Tools.AutoFix (
 	Correction(..),
 	correct, corrections,
-	autoFix,
+	applyFix, updateRegion, autoFix, fixUpdate,
 	CorrectorMatch,
 	correctors,
 	match,
@@ -15,12 +15,14 @@ import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)
 
 import Data.Mark hiding (at)
-import HsDev.Symbols.Location (Location(..), Position(..))
+import HsDev.Symbols.Location (Location(..), Position(..), moduleSource)
 import HsDev.Tools.Base (matchRx, at)
 import HsDev.Tools.GhcMod
 import HsDev.Util ((.::))
 
 data Correction = Correction {
+	correctionFile :: FilePath,
+	correctionType :: String,
 	description :: String,
 	message :: String,
 	solution :: String,
@@ -28,7 +30,9 @@ data Correction = Correction {
 		deriving (Eq, Read, Show)
 
 instance ToJSON Correction where
-	toJSON (Correction desc msg sol cor) = object [
+	toJSON (Correction f t desc msg sol cor) = object [
+		"file" .= f,
+		"type" .= t,
 		"description" .= desc,
 		"message" .= msg,
 		"solution" .= sol,
@@ -36,6 +40,8 @@ instance ToJSON Correction where
 
 instance FromJSON Correction where
 	parseJSON = withObject "correction" $ \v -> Correction <$>
+		v .:: "file" <*>
+		v .:: "type" <*>
 		v .:: "description" <*>
 		v .:: "message" <*>
 		v .:: "solution" <*>
@@ -48,31 +54,45 @@ corrections :: [OutputMessage] -> [Correction]
 corrections = mapMaybe toCorrection where
 	toCorrection :: OutputMessage -> Maybe Correction
 	toCorrection msg = do
+		file <- moduleSource $ locationModule (errorLocation msg)
 		Position l c <- locationPosition (errorLocation msg)
 		let
 			pt = Point (pred l) (pred c)
-		findCorrector pt (errorMessage msg)
+		findCorrector file pt (errorMessage msg)
+
+applyFix :: [Correction] -> EditM Char [String]
+applyFix corrs = mapM_ correct corrs >> editResult
+
+updateRegion :: Correction -> EditM Char Correction
+updateRegion corr = do
+	c' <- sequence [Edit <$> mapRegion r <*> pure cts | Edit r cts <- corrector corr]
+	return $ corr { corrector = c' }
 
 autoFix :: String -> [Correction] -> String
-autoFix cts corrs = untext $ evalEdit (text cts) (mapM_ correct corrs)
+autoFix cts corrs = untext $ runEdit (text cts) (applyFix corrs)
 
-type CorrectorMatch = Point -> String -> Maybe Correction
+fixUpdate :: String -> [Correction] -> [Correction] -> (String, [Correction])
+fixUpdate cts fix' up' = runEdit (text cts) $ (,) <$> (untext <$> applyFix fix') <*> mapM updateRegion up'
+
+type CorrectorMatch = FilePath -> Point -> String -> Maybe Correction
 
 correctors :: [CorrectorMatch]
 correctors = [
-	match "^The import of `([\\w\\.]+)' is redundant" $ \g pt -> Correction
+	match "^The import of `([\\w\\.]+)' is redundant" $ \g file pt -> Correction file
+		"Redundant import"
 		("Redundant import: " ++ (g `at` 1)) ""
 		"Remove import"
 		[eraser (pt `regionSize` linesSize 1)],
-	match "Found:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g pt -> Correction
+	match "Found:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g file pt -> Correction file
+		"Why not?"
 		("Replace '" ++ (g `at` 1) ++ "' with '" ++ (g `at` 2) ++ "'") ""
 		"Replace with suggestion"
 		[replacer (pt `regionSize` stringSize (length $ g `at` 1)) (text $ g `at` 2)]]
 
-match :: String -> ((Int -> Maybe String) -> Point -> Correction) -> CorrectorMatch
-match pat f pt str = do
+match :: String -> ((Int -> Maybe String) -> FilePath -> Point -> Correction) -> CorrectorMatch
+match pat f file pt str = do
 	g <- matchRx pat str
-	return (f g pt) { message = str }
+	return (f g file pt) { correctionFile = file, message = str }
 
-findCorrector :: Point -> String -> Maybe Correction
-findCorrector pt msg = listToMaybe $ mapMaybe (\corr -> corr pt msg) correctors
+findCorrector :: FilePath -> Point -> String -> Maybe Correction
+findCorrector file pt msg = listToMaybe $ mapMaybe (\corr -> corr file pt msg) correctors

@@ -8,15 +8,15 @@ module Data.Mark (
 	insert, cut,
 
 	Mark(..), withMarkRegion, Marks, onMarks,
-	Edited(..), edited, EditM(..), edit, mapRegion, runEdit, evalEdit,
-	Contents(..), Prefix(..), prefix, Suffix(..), suffix,
+	Edited(..), edited, EditM(..), edit, mapRegion, runEdit, editResult,
+	Contents, Prefix(..), prefix, Suffix(..), suffix,
 	concatCts, splitCts,
 	erase, write, replace,
-	Edit, eraser, writer, replacer, apply,
+	Edit(..), eraser, writer, replacer, apply,
 	text, untext
 	) where
 
-import Control.Arrow (second, (&&&))
+import Control.Arrow ((&&&))
 import Control.Applicative
 import Control.Monad.State
 import Data.Aeson
@@ -86,8 +86,7 @@ regionSize :: Point -> Size -> Region
 regionSize pt sz = region pt (sz .+. pt)
 
 at :: Contents a -> Region -> Contents a
-at (Contents cts) r =
-	Contents .
+at cts r =
 	onHead (drop $ pointColumn $ regionFrom r) .
 	onLast (take $ pointColumn $ regionTo r) .
 	take (regionLines r) .
@@ -142,7 +141,7 @@ data Edited a = Edited {
 	editedRegions :: Region -> Region }
 
 instance Functor Edited where
-	fmap f (Edited cts r) = Edited (fmap f cts) r
+	fmap f (Edited cts r) = Edited (fmap (fmap f) cts) r
 
 edited :: Contents a -> Edited a
 edited cts = Edited cts id
@@ -158,18 +157,13 @@ edit rgn fr fc = do
 mapRegion :: Region -> EditM a Region
 mapRegion rgn = gets (($ rgn) . editedRegions)
 
-runEdit :: Contents s -> EditM s a -> (a, Contents s)
-runEdit cts act = second editedContents $ runState (runEditM act) (edited cts)
+runEdit :: Contents s -> EditM s a -> a
+runEdit cts act = evalState (runEditM act) (edited cts)
 
-evalEdit :: Contents s -> EditM s a -> Contents s
-evalEdit cts act = snd $ runEdit cts act
+editResult :: EditM s (Contents s)
+editResult = gets editedContents
 
-data Contents a = Contents {
-	contents :: [[a]] }
-		deriving (Eq, Ord, Read, Show)
-
-instance Functor Contents where
-	fmap f (Contents cts) = Contents $ fmap (fmap f) cts
+type Contents a = [[a]]
 
 data Prefix a = Prefix {
 	prefixLines :: [[a]],
@@ -180,7 +174,7 @@ instance Functor Prefix where
 	fmap f (Prefix ls l) = Prefix (fmap (fmap f) ls) (fmap f l)
 
 prefix :: Contents a -> Prefix a
-prefix (Contents cts) = Prefix (init cts) (last cts)
+prefix cts = Prefix (init cts) (last cts)
 
 data Suffix a = Suffix {
 	suffixLine :: [a],
@@ -191,13 +185,13 @@ instance Functor Suffix where
 	fmap f (Suffix l ls) = Suffix (fmap f l) (fmap (fmap f) ls)
 
 suffix :: Contents a -> Suffix a
-suffix (Contents cts) = Suffix (head cts) (tail cts)
+suffix cts = Suffix (head cts) (tail cts)
 
 concatCts :: Prefix a -> Suffix a -> Contents a
-concatCts (Prefix ps p) (Suffix s ss) = Contents (ps ++ [p ++ s] ++ ss)
+concatCts (Prefix ps p) (Suffix s ss) = ps ++ [p ++ s] ++ ss
 
 splitCts :: Point -> Contents a -> (Prefix a, Suffix a)
-splitCts (Point l c) (Contents cts) = (Prefix (take l cts) (take c (cts !! l)), Suffix (drop c (cts !! l)) (drop (succ l) cts))
+splitCts (Point l c) cts = (Prefix (take l cts) (take c (cts !! l)), Suffix (drop c (cts !! l)) (drop (succ l) cts))
 
 -- | Erase data
 erase :: Region -> EditM s ()
@@ -207,10 +201,10 @@ erase rgn = edit rgn cut erase' where
 
 -- | Paste data at position
 write :: Point -> Contents s -> EditM s ()
-write _ (Contents []) = error "Invalid argument"
+write _ ([]) = error "Invalid argument"
 write pt cts = edit (region pt pt') insert write' where
 	pt' :: Point
-	pt' = case contents cts of
+	pt' = case cts of
 		[] -> error "Impossible"
 		[line'] -> pt { pointColumn = pointColumn pt + length line' }
 		lines'@(last -> line') -> Point { pointLine = pointLine pt + pred (length lines'), pointColumn = length line' }
@@ -234,7 +228,7 @@ instance FromJSON (Edit Char) where
 	parseJSON = withObject "edit" $ \v -> Edit <$> v .:: "region" <*> (text <$> v .:: "contents")
 
 eraser :: Region -> Edit s
-eraser rgn = Edit rgn (Contents [[]])
+eraser rgn = Edit rgn ([[]])
 
 writer :: Point -> Contents s -> Edit s
 writer pt cts = Edit (region pt pt) cts
@@ -245,8 +239,8 @@ replacer = Edit
 apply :: [Edit s] -> EditM s ()
 apply = mapM_ (uncurry replace . (editErase &&& editWrite))
 
-text :: String -> Contents Char
-text = Contents . lines' where
+text :: String -> [String]
+text = lines' where
 	lines' :: String -> [String]
 	lines' = unfoldr breakLine . Just where
 		breakLine :: Maybe String -> Maybe (String, Maybe String)
@@ -255,5 +249,5 @@ text = Contents . lines' where
 			(pre, _:post) -> Just (pre, Just post)
 		breakLine Nothing = Nothing
 
-untext :: Contents Char -> String
-untext = intercalate "\n" . contents
+untext :: [String] -> String
+untext = intercalate "\n"

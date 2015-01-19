@@ -14,7 +14,7 @@ module HsDev.Util (
 	eitherT,
 	liftThrow,
 	-- * UTF-8
-	fromUtf8, toUtf8, readFileUtf8,
+	fromUtf8, toUtf8, readFileUtf8, writeFileUtf8,
 	-- * IO
 	hGetLineBS, logException, logIO, ignoreIO,
 	-- * Task
@@ -177,6 +177,11 @@ readFileUtf8 f = withFile f ReadMode $ \h -> do
 	hSetEncoding h utf8
 	cts <- hGetContents h
 	length cts `seq` return cts
+
+writeFileUtf8 :: FilePath -> String -> IO ()
+writeFileUtf8 f cts = withFile f WriteMode $ \h -> do
+	hSetEncoding h utf8
+	hPutStr h cts
 
 hGetLineBS :: Handle -> IO ByteString
 hGetLineBS = fmap L.fromStrict . B.hGetLine
