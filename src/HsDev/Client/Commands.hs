@@ -267,11 +267,11 @@ commands = [
 		scan' _ as copts = do
 			cabals <- getSandboxes copts as
 			updateProcess copts as $ concat [
-				map (Update.scanCabal (listArg "ghc" as)) cabals,
 				concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- listArg n as]) [
 					("project", Update.scanProject),
 					("file", Update.scanFile),
-					("path", Update.scanDirectory)]]
+					("path", Update.scanDirectory)],
+				map (Update.scanCabal (listArg "ghc" as)) cabals]
 
 		-- | Rescan data
 		rescan' :: [String] -> Opts String -> CommandActionT ()
