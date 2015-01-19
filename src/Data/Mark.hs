@@ -1,4 +1,4 @@
-{-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances #-}
+{-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances #-}
 
 module Data.Mark (
 	Point(..), (.-.), (.+.), Size, linesSize, stringSize,
@@ -12,10 +12,11 @@ module Data.Mark (
 	Contents(..), Prefix(..), prefix, Suffix(..), suffix,
 	concatCts, splitCts,
 	erase, write, replace,
+	Edit, eraser, writer, replacer, apply,
 	text, untext
 	) where
 
-import Control.Arrow (second)
+import Control.Arrow (second, (&&&))
 import Control.Applicative
 import Control.Monad.State
 import Data.Aeson
@@ -219,6 +220,30 @@ write pt cts = edit (region pt pt') insert write' where
 -- | Replace data with
 replace :: Region -> Contents s -> EditM s ()
 replace rgn cts = erase rgn >> write (regionFrom rgn) cts
+
+-- | Edit action
+data Edit s = Edit {
+	editErase :: Region,
+	editWrite :: Contents s }
+		deriving (Eq, Read, Show)
+
+instance ToJSON (Edit Char) where
+	toJSON (Edit e c) = object ["region" .= e, "contents" .= untext c]
+
+instance FromJSON (Edit Char) where
+	parseJSON = withObject "edit" $ \v -> Edit <$> v .:: "region" <*> (text <$> v .:: "contents")
+
+eraser :: Region -> Edit s
+eraser rgn = Edit rgn (Contents [[]])
+
+writer :: Point -> Contents s -> Edit s
+writer pt cts = Edit (region pt pt) cts
+
+replacer :: Region -> Contents s -> Edit s
+replacer = Edit
+
+apply :: [Edit s] -> EditM s ()
+apply = mapM_ (uncurry replace . (editErase &&& editWrite))
 
 text :: String -> Contents Char
 text = Contents . lines' where

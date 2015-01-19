@@ -17,14 +17,16 @@ main = toolMain "hsautofix" [
 	jsonCmd "show" [] [] "show what can be auto-fixed" show',
 	jsonCmd "fix" ["file"] [] "fix selected errors" fix']
 	where
-		show' :: Args -> ToolM [Mark Correction]
+		stdoutFlag = flag "stdout" `short` ['o'] `desc` "don't modify file, output new contents to stdout"
+
+		show' :: Args -> ToolM [Correction]
 		show' (Args [] _) = do
 			input <- liftE getContents
 			msgs <- maybe (toolError "Can't parse messages") return $ decode (toUtf8 input)
 			return $ corrections msgs
 
 		fix' :: Args -> ToolM ()
-		fix' (Args [file] _) = do
+		fix' (Args [file] opts) = do
 			input <- liftE getContents
 			corrs <- maybe (toolError "Can't parse messages") return $ decode (toUtf8 input)
 			f' <- liftE $ canonicalizePath file
@@ -33,8 +35,10 @@ main = toolMain "hsautofix" [
 				cts <- hGetContents h
 				length cts `seq` return cts
 			let
-				fileCts' = autoFix fileCts (mapM_ correct corrs)
-			liftE $ withFile f' WriteMode $ \h -> do
-				hSetEncoding h utf8
-				hPutStr h fileCts'
+				fileCts' = autoFix fileCts corrs
+			liftE $ if flagSet "stdout" opts
+				then putStr fileCts'
+				else withFile f' WriteMode $ \h -> do
+					hSetEncoding h utf8
+					hPutStr h fileCts'
 		fix' _ = toolError "Invalid arguments"

@@ -136,7 +136,8 @@ commands = [
 	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
 	cmdList' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
-	cmdList' "ghc-mod lint" ["file"] [hlintOpts] "lint source file" ghcmodLint',
+	cmdList' "ghc-mod lint" ["files..."] [hlintOpts] "lint source file" ghcmodLint',
+	cmdList' "ghc-mod check lint" ["files..."] [sandboxArg, ghcOpts, hlintOpts] "check & lint source files" ghcmodCheckLint',
 	-- Ghc commands
 	cmdList' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
 	-- Dump/load commands
@@ -552,7 +553,7 @@ commands = [
 		ghcmodCheck' [] _ _ = commandError "Specify at least one file" []
 		ghcmodCheck' files as copts = do
 			files' <- mapM (findPath copts) files
-			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM (locateProject) files')
+			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
 			cabal <- getCabal copts as
 			mapErrorStr $ liftM concat $ forM files' $ \file' ->
 				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
@@ -560,12 +561,25 @@ commands = [
 
 		-- | Ghc-mod lint
 		ghcmodLint' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
-		ghcmodLint' [] _ _ = commandError "Specify file to hlint" []
-		ghcmodLint' [file] as copts = do
-			file' <- findPath copts file
-			mapErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
-				GhcMod.lint (listArg "hlint" as) file'
-		ghcmodLint' _ _ _ = commandError "Too much files specified" []
+		ghcmodLint' [] _ _ = commandError "Specify at least one file to hlint" []
+		ghcmodLint' files as copts = do
+			files' <- mapM (findPath copts) files
+			mapErrorStr $ liftM concat $ forM files' $ \file' ->
+				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
+					GhcMod.lint (listArg "hlint" as) file'
+
+		-- | Ghc-mod check & lint
+		ghcmodCheckLint' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
+		ghcmodCheckLint' [] _ _ = commandError "Specify at least one file" []
+		ghcmodCheckLint' files as copts = do
+			files' <- mapM (findPath copts) files
+			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
+			cabal <- getCabal copts as
+			mapErrorStr $ liftM concat $ forM files' $ \file' ->
+				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $ do
+					check' <- GhcMod.check (listArg "ghc" as) cabal [file'] mproj
+					lint' <- GhcMod.lint (listArg "hlint" as) file'
+					return $ check' ++ lint'
 
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
