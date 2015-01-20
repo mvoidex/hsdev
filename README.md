@@ -3,10 +3,12 @@
 [![Hackage version](https://img.shields.io/hackage/v/hsdev.svg?style=flat)](http://hackage.haskell.org/package/hsdev) [![Build Status](https://travis-ci.org/mvoidex/hsdev.png)](https://travis-ci.org/mvoidex/hsdev)
 
 Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
+And several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofix`
 
 ## Usage
 
 Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will store information.
+Then you can connect to server and send requests (see [requests/responses](MESSAGES.ms)) or you can use `hsdev` itself. It will send command to server and outputs the response.
 
 ### Commands
 
@@ -25,6 +27,7 @@ Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will 
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
 * `ghc-mod type`, `ghc-mod check`, `ghc-mod lint`, `ghc-mod lang`, `ghc-mod flags` — run `ghc-mod` command in corresponding ghc-mod worker (separate workers per project and per sandbox)
+* `autofix show`, `autofix fix` — commands to fix some warnings and apply `hlint` suggestions
 * `dump` — dump modules or projects info
 * `load` — load data
 
@@ -56,94 +59,6 @@ PS> hsdev stop
 {}
 </pre>
 
-## Requests/responses
-
-Client sends request, server sends zero or more notifications and then response. All notification and response has same id as request.
-Requests ans responses can be in JSON or s-exp.
-
-Requests to `hsdev` have following structure (but must not be in pretty format):
-<pre>
-{
-    "id": &lt;message id&gt;
-    "command": &lt;commandname&gt;,
-    "args": &lt;positional arguments&gt;,
-    "opts": &lt;named arguments&gt;,
-}
-</pre>
-or as s-exp:
-<pre>
-(:id &lt;message id&gt; :command &lt;commandname&gt; :args &lt;positional arguments&gt; :opts &lt;named arguments&gt;)
-</pre>
-
-* `id` : string, optional — message id
-* `command` : string, required — name of command, for example "scan", "symbol" or "ghc-mod type"
-* `args` : list of strings, optional — positional arguments for command
-* `opts` : dictionary, optional — named arguments for command, simple rules:
-  `--port 1234` ⇒ `"port": "1234"` or `:port "1234"` for s-exp
-  `--quiet` ⇒ `"quiet": null` or `:quiet null` for s-exp
-  `--file f1 --file f2 --file f3` ⇒ `"file": ["f1", "f2", "f3"]` or `:file ("f1" "f2" "f3")` for s-exp
-
-Notification
-JSON:
-<pre>
-{
-    "id": &lt;notification id&gt;,
-    "notify": &lt;notification&gt;
-}
-</pre>
-s-exp:
-<pre>
-(:id &lt;notification id&gt; :notify &lt;notification&gt;)
-</pre>
-
-Response
-JSON:
-<pre>
-{
-    "id": &lt;notification id&gt;,
-    "result": &lt;response data&gt;
-}
-</pre>
-or
-<pre>
-{
-    "id": &lt;notification id&gt;,
-    "error": &lt;error message&gt;,
-    "details": &lt;error details&gt;
-}
-</pre>
-s-exp:
-<pre>
-(:id &lt;notification id&gt; :result &lt;response data&gt;)
-</pre> 
-or
-<pre>
-(:id &lt;notification id&gt; :error &lt;error message&gt; :details &lt;error details&gt;)
-</pre>
-
-If request has flag `--silent`, no notifications will be sent from server.
-
-### Examples
-
-JSON:
-<pre>
-⋙ {"id":"1",command":"scan","opts":{"cabal":null}}
-⋘ {"id":"1","notify":{...}}
-⋘ {"id":"1","notify":{...}}
-⋘ {"id":"1","result":[]}
-⋙ {"id":"2","command":"symbol","args":["either"]}
-⋘ {"id":"2","result":[{...},{...},{...},{...}]}
-</pre>
-s-exp:
-<pre>
-⋙ (:id "1" :command "scan" :opts (:cabal null))
-⋘ (:id "1" :notify (...))
-⋘ (:id "1" :notify (...))
-⋘ (:id "1" :result ())
-⋙ (:id "2" :command "symbol" :args ("either"))
-⋘ (:id "2" :result ((...) (...) (...) (...)))
-</pre>
-
 ## Tools
 
 ### HsInspect
@@ -151,13 +66,13 @@ s-exp:
 Tool to inspect source files, .cabal files and installed modules
 
 <pre>
-PS> hsinspect cabal .\hsdev.cabal | json | % { $_.description.library.modules[3] }
+PS> hsinspect .\hsdev.cabal | json | % { $_.description.library.modules[3] }
 HsDev.Cache
-PS> hsinspect file .\tools\hsdev.hs | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
+PS> hsinspect .\tools\hsdev.hs | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
 main :: IO ()
 printMainUsage :: IO ()
 printUsage :: IO ()
-PS> hsinspect module Data.Either | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
+PS> hsinspect Data.Either | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
 Either :: data Either a b
 Left :: a -> Either a b
 Right :: b -> Either a b
