@@ -5,12 +5,14 @@ module HsDev.Scan (
 
 	-- * Scan
 	scanProjectFile,
-	scanModule, upToDate, rescanModule, changedModule, changedModules
+	scanModule, scanModify, upToDate, rescanModule, changedModule, changedModules
 	) where
 
+import Control.Applicative ((<|>))
 import Control.Monad.Error
 import qualified Data.Map as M
 import Data.Maybe (catMaybes)
+import Data.Traversable (traverse)
 import System.Directory
 
 import HsDev.Scan.Browse (browsePackages)
@@ -90,6 +92,12 @@ scanModule opts (FileModule f _) = inspectFile opts f
 -- 			runGhcMod defaultOptions $ inferTypes opts Cabal m
 scanModule opts (CabalModule c p n) = browse opts c n p
 scanModule _ (ModuleSource _) = throwError "Can inspect only modules in file or cabal"
+
+-- | Scan additional info and modify scanned module. Dones't fail on error, just left module unchanged
+scanModify :: ([String] -> Cabal -> Module -> ErrorT String IO Module) -> InspectedModule -> ErrorT String IO InspectedModule
+scanModify f im = traverse f' im <|> return im where
+	-- TODO: Get actual sandbox
+	f' = f (inspectionOpts $ inspection im) Cabal
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> ErrorT String IO Bool

@@ -30,7 +30,6 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
 import qualified Data.Text as T (unpack)
-import Data.Traversable (traverse)
 import System.Directory (canonicalizePath)
 
 import qualified HsDev.Cache.Structured as Cache
@@ -136,12 +135,12 @@ updateDB sets act = do
 			getMods >>= waiter . runTask "inferring types" [] . runTasks . map inferModTypes
 		scanDocs :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
 		scanDocs im = runTask "scanning docs" (subject (inspectedId im) ["module" .= inspectedId im]) $ do
-			im' <- liftErrorT $ traverse (inspectDocs (inspectionOpts $ inspection im)) im <|> return im
+			im' <- liftErrorT $ S.scanModify (\opts _ -> inspectDocs opts) im
 			updater $ return $ fromModule im'
 		inferModTypes :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
 		inferModTypes im = runTask "inferring types" (subject (inspectedId im) ["module" .= inspectedId im]) $ do
 			-- TODO: locate sandbox
-			im' <- liftErrorT $ traverse (infer (inspectionOpts $ inspection im) Cabal) im <|> return im
+			im' <- liftErrorT $ S.scanModify (\opts cabal -> infer opts cabal) im
 			updater $ return $ fromModule im'
 
 
