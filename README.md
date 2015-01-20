@@ -8,7 +8,7 @@ And several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofi
 ## Usage
 
 Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will store information.
-Then you can connect to server and send requests (see [requests/responses](MESSAGES.ms)) or you can use `hsdev` itself. It will send command to server and outputs the response.
+Then you can connect to server and send requests (see [requests/responses](MESSAGES.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
 
 ### Commands
 
