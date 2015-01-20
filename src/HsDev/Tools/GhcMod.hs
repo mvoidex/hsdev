@@ -9,6 +9,7 @@ module HsDev.Tools.GhcMod (
 	TypedRegion(..),
 	typeOf,
 	OutputMessage(..),
+	parseOutputMessages, parseOutputMessage,
 	check,
 	lint,
 
@@ -220,6 +221,9 @@ instance FromJSON OutputMessage where
 		v .:: "level" <*>
 		v .:: "message"
 
+parseOutputMessages :: String -> [OutputMessage]
+parseOutputMessages = mapMaybe parseOutputMessage . lines
+
 parseOutputMessage :: String -> Maybe OutputMessage
 parseOutputMessage s = do
 	groups <- matchRx "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
@@ -251,15 +255,15 @@ check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [OutputM
 check opts cabal files _ = do
 	cts <- liftIO $ mapM readFileUtf8 files
 	withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
-		msgs <- lines <$> GhcMod.checkSyntax files
-		return $ map (recalcOutputMessageTabs (zip files cts)) $ mapMaybe parseOutputMessage msgs
+		res <- GhcMod.checkSyntax files
+		return $ map (recalcOutputMessageTabs (zip files cts)) $ parseOutputMessages res
 
 lint :: [String] -> FilePath -> GhcModT IO [OutputMessage]
 lint opts file = do
 	cts <- liftIO $ readFileUtf8 file
 	withOptions (\o -> o { GhcMod.hlintOpts = opts }) $ do
-		msgs <- lines <$> GhcMod.lint file
-		return $ map (recalcOutputMessageTabs [(file, cts)]) $ mapMaybe parseOutputMessage msgs
+		res <- GhcMod.lint file
+		return $ map (recalcOutputMessageTabs [(file, cts)]) $ parseOutputMessages res
 
 runGhcMod :: (GhcMod.IOish m, MonadCatch m) => GhcMod.Options -> GhcModT m a -> ErrorT String m a
 runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ runGhcModT opts act
