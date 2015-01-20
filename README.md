@@ -63,7 +63,7 @@ PS> hsdev stop
 
 ### HsInspect
 
-Tool to inspect source files, .cabal files and installed modules
+Tool to inspect source files, .cabal files and installed modules. For source files it also scan docs and try infer types.
 
 <pre>
 PS> hsinspect .\hsdev.cabal | json | % { $_.description.library.modules[3] }
@@ -105,6 +105,25 @@ map3 :: (a -> b) -> f (g (h a)) -> f (g (h b))
 map2 :: (a -> b) -> f (g a) -> f (g b)
 map' :: (a -> b) -> map a -> map b
 map :: (a -> b) -> map a -> map b
+</pre>
+
+### HsAutoFix
+
+Tool to fix some build warnings and to apply hlint suggestions
+
+* `hsautofix show` — read output messages and return suggestions
+* `hsautofix fix -n <i> -n ...` — fix selected suggestions (by index) and return updated rest suggestions, so this command can be chained. There are also flag `--pure`. If set, files will not be modified. Use it, if you don't want `hsautofix` to apply fixes itself.
+
+Here's how you can apply first three suggestions sequentically. On each step suggestion is removed, so we just apply first suggestion three times.
+We can do the same in reverse order, and in that case indices will be 3, 2, 1. And we can apply all three in one call.
+Three commands below have same effect
+<pre>
+PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 1 | hsautofix fix -n 1 | hsautofix fix -n 1
+...
+PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 3 | hsautofix fix -n 2 | hsautofix fix -n 1
+...
+PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 1 -n 2 -n 3
+...
 </pre>
 
 ### Hayoo in GHCi
