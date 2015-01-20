@@ -11,23 +11,27 @@ import System.Directory (canonicalizePath)
 import Text.Read (readMaybe)
 
 import HsDev.Tools.AutoFix
+import HsDev.Tools.GhcMod (parseOutputMessages)
 import HsDev.Util (toUtf8, liftE, readFileUtf8, writeFileUtf8)
 
 import Tool
 
 main :: IO ()
 main = toolMain "hsautofix" [
-	jsonCmd "show" [] [] "show what can be auto-fixed" show',
+	jsonCmd "show" [] [jsonArg] "show what can be auto-fixed" show',
 	jsonCmd "fix" [] [nList, pureArg] "fix selected errors" fix']
 	where
 		nList = list "num" "index" `short` ['n'] `desc` "corrrection indices to apply, if nothing specified - all corrections applies"
 		pureArg = flag "pure" `desc` "don't modify files, just return updated rest corrections"
+		jsonArg = flag "json" `desc` "output messages in JSON format"
 
 		show' :: Args -> ToolM [Correction]
-		show' (Args [] _) = do
+		show' (Args [] as) = do
 			input <- liftE getContents
-			msgs <- maybe (toolError "Can't parse messages") return $ decode (toUtf8 input)
-			return $ corrections msgs
+			msgs <- if flagSet "json" as
+				then maybe (toolError "Can't parse messages") return $ decode (toUtf8 input)
+				else return $ parseOutputMessages input
+			mapM (liftE . canonicalize) $ corrections msgs
 
 		fix' :: Args -> ToolM [Correction]
 		fix' (Args [] as) = do

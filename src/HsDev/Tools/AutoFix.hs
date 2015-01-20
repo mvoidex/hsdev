@@ -9,6 +9,8 @@ module HsDev.Tools.AutoFix (
 	match,
 	findCorrector,
 
+	Canonicalize(..),
+
 	module Data.Mark
 	) where
 
@@ -17,6 +19,7 @@ import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)
 
 import Data.Mark hiding (at, Editable(..))
+import HsDev.Symbols (Canonicalize(..))
 import HsDev.Symbols.Location (Location(..), Position(..), moduleSource)
 import HsDev.Tools.Base (matchRx, at)
 import HsDev.Tools.GhcMod
@@ -30,6 +33,11 @@ data Correction = Correction {
 	solution :: String,
 	corrector :: [Replace String] }
 		deriving (Eq, Read, Show)
+
+instance Canonicalize Correction where
+	canonicalize c = do
+		f' <- canonicalize (correctionFile c)
+		return c { correctionFile = f' }
 
 instance ToJSON Correction where
 	toJSON (Correction f t desc msg sol cor) = object [

@@ -547,6 +547,9 @@ qualifiedName m d = T.concat [moduleIdName m, ".", declarationName d]
 class Canonicalize a where
 	canonicalize :: a -> IO a
 
+instance Canonicalize FilePath where
+	canonicalize = canonicalizePath
+
 instance Canonicalize Cabal where
 	canonicalize Cabal = return Cabal
 	canonicalize (Sandbox p) = fmap Sandbox $ canonicalizePath p
