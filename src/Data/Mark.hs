@@ -1,30 +1,41 @@
-{-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances, RankNTypes #-}
 
 module Data.Mark (
 	Point(..), (.-.), (.+.), Size, linesSize, stringSize,
 	Region(..), regionLines, emptyRegion,
 	line,
 	region, regionSize, at,
-	insert, cut,
-
-	Mark(..), withMarkRegion, Marks, onMarks,
-	Edited(..), edited, EditM(..), edit, mapRegion, runEdit, editResult,
-	Contents, Prefix(..), prefix, Suffix(..), suffix,
-	concatCts, splitCts,
+	-- * Mappings
+	Map(..), apply, back,
+	cut, insert,
+	cutRegion, insertRegion,
+	-- * Edited data
+	Contents, Edit(..),
+	EditM(..), editRegion, mapRegion, runEdit, edit, editEval,
+	Prefix(..), prefix, Suffix(..), suffix, concatCts, splitCts,
+	-- * Editable class
+	Editable(..), measure,
+	-- * Actions
 	erase, write, replace,
-	Edit(..), eraser, writer, replacer, apply,
-	text, untext
+	Replace(..), eraser, writer, replacer, run
 	) where
+
+import Prelude hiding (splitAt, length, lines, unlines)
 
 import Control.Arrow ((&&&))
 import Control.Applicative
+import Control.Lens (view)
+import Control.Lens.Iso
 import Control.Monad.State
 import Data.Aeson
-import Data.List (unfoldr, intercalate)
+import qualified Data.List as List (splitAt, length, break, intercalate)
+import Data.Text (Text)
+import qualified Data.Text as T (splitAt, length, split, intercalate)
 import Data.Monoid
 
 import HsDev.Util ((.::))
 
+-- | Point at text: line and column
 data Point = Point {
 	pointLine :: Int,
 	pointColumn :: Int }
@@ -36,17 +47,25 @@ instance ToJSON Point where
 instance FromJSON Point where
 	parseJSON = withObject "point" $ \v -> Point <$> v .:: "line" <*> v .:: "column"
 
+-- | Distance between points is measured in lines and columns.
+-- And it is defined, that distance between point at l:c and point (l + 1):0 is one line no matter c is
+-- because we need to go to new line to reach destination point
+-- Columns are taken into account only if points are on the same line
+-- @pt .-. base@ is distance from @base@ to @pt@
+-- Distance can't be less then zero lines and columns
 (.-.) :: Point -> Point -> Point
 (Point l c) .-. (Point bl bc)
 	| bl < l = Point (l - bl) c
 	| bl == l = Point 0 (max 0 (c - bc))
 	| otherwise = Point 0 0
 
+-- | Opposite to ".-.", @(pt .-. base) .+. base = pt@
 (.+.) :: Point -> Point -> Point
 (Point l c) .+. (Point bl bc)
 	| l == 0 = Point bl (c + bc)
 	| otherwise = Point (l + bl) c
 
+-- | Region from "Point" to "Point"
 data Region = Region {
 	regionFrom :: Point,
 	regionTo :: Point }
@@ -58,9 +77,11 @@ instance Monoid Size where
 	mempty = Point 0 0
 	l `mappend` r = r .+. l
 
+-- | Distance in @n@ lines
 linesSize :: Int -> Point
 linesSize n = Point n 0
 
+-- | Distance in @n@ chars within one line
 stringSize :: Int -> Point
 stringSize n = Point 0 n
 
@@ -70,25 +91,31 @@ instance ToJSON Region where
 instance FromJSON Region where
 	parseJSON = withObject "region" $ \v -> Region <$> v .:: "from" <*> v .:: "to"
 
+-- | "Region" height in lines. Any "Region" at least of one line height
 regionLines :: Region -> Int
 regionLines r = succ $ pointLine (regionTo r) - pointLine (regionFrom r)
 
+-- | Is "Region" empty
 emptyRegion :: Region -> Bool
 emptyRegion r = regionTo r == regionFrom r
 
+-- | n'th line region, starts at the beginning of line and ends on the next line
 line :: Int -> Region
 line l = region (Point l 0) (Point (succ l) 0)
 
+-- | Make region
 region :: Point -> Point -> Region
-region from to = Region (min from to) (max from to)
+region f t = Region (min f t) (max f t)
 
+-- | Make region from starting point and its size
 regionSize :: Point -> Size -> Region
 regionSize pt sz = region pt (sz .+. pt)
 
-at :: Contents a -> Region -> Contents a
+-- | Get contents at specified region
+at :: Editable a => Contents a -> Region -> Contents a
 at cts r =
-	onHead (drop $ pointColumn $ regionFrom r) .
-	onLast (take $ pointColumn $ regionTo r) .
+	onHead (snd . splitAt (pointColumn $ regionFrom r)) .
+	onLast (fst . splitAt (pointColumn $ regionTo r)) .
 	take (regionLines r) .
 	drop (pointLine (regionFrom r)) $
 	cts
@@ -100,154 +127,185 @@ at cts r =
 		onLast _ [] = []
 		onLast f l@(last -> x) = init l ++ [f x]
 
--- | Update second region position as if it was data inserted at first region
-insert :: Region -> Region -> Region
-insert (Region is ie) (Region s e) = Region
-	(if is <= s then (s .-. is) .+. ie else s)
-	(if is < e then (e .-. is) .+. ie else e)
+-- | Main idea is that there are only two basic actions , that chances regions: inserting and cutting
+-- When something is cutted out or inserted in, region positions must be updated
+-- All editings can be represented as many cuts and inserts, so we can combine them to get function
+-- which maps source regions to regions on updated data
+-- Because insert is dual to cut (and therefore composes iso), we can also get function to map regions back
+-- Combining this functions while edit, we get function, that maps regions from source data to edited one
+-- To get back function, we must also combine opposite actions, or we can represent actions as isomorphisms
+-- Same idea goes for modifying contents, represent each action as isomorphism and combine them together
+newtype Map = Map { mapIso :: Iso' Region Region }
+
+instance Monoid Map where
+	mempty = Map $ iso id id
+	(Map l) `mappend` (Map r) = Map (r . l)
+
+-- | Apply mapping
+apply :: Map -> Region -> Region
+apply = view . mapIso
+
+-- | Back mapping
+back :: Map -> Map
+back (Map f) = Map (from f)
+
+-- | Cut region mapping
+cut :: Region -> Map
+cut rgn = Map $ iso (cutRegion rgn) (insertRegion rgn)
+
+-- | Opposite to "cut"
+insert :: Region -> Map
+insert = back . cut
 
 -- | Update second region position as if it was data cutted at first region
-cut :: Region -> Region -> Region
-cut (Region is ie) (Region s e) = Region
+cutRegion :: Region -> Region -> Region
+cutRegion (Region is ie) (Region s e) = Region
 	(if is < s then (s .-. ie) .+. is else s)
 	(if is < e then (e .-. ie) .+. is else e)
 
--- | Mark region with data
-data Mark a = Mark {
-	mark :: a,
-	markRegion :: Region }
-		deriving (Eq, Ord, Read, Show)
+-- | Update second region position as if it was data inserted at first region
+insertRegion :: Region -> Region -> Region
+insertRegion (Region is ie) (Region s e) = Region
+	(if is <= s then (s .-. is) .+. ie else s)
+	(if is < e then (e .-. is) .+. ie else e)
 
-instance Functor Mark where
-	fmap f (Mark v r) = Mark (f v) r
+-- | Contents is list of lines
+type Contents a = [a]
 
-instance ToJSON a => ToJSON (Mark a) where
-	toJSON (Mark m r) = object ["mark" .= m, "region" .= r]
+-- | Edit data
+data Edit a = Edit {
+	editCts :: Contents a -> Contents a, -- ^ Edit contents splitted by lines
+	editMap :: Map } -- ^ Map region from source contents to edited
 
-instance FromJSON a => FromJSON (Mark a) where
-	parseJSON = withObject "mark" $ \v -> Mark <$> v .:: "mark" <*> v .:: "region"
+instance Monoid (Edit a) where
+	mempty = Edit id mempty
+	(Edit fl ml) `mappend` (Edit fr mr) = Edit (fr . fl) (ml `mappend` mr)
 
-withMarkRegion :: (Region -> Region) -> Mark a -> Mark a
-withMarkRegion f (Mark v r) = Mark v (f r)
+-- | Edit monad is state on "Edit", it also collects region mappings
+newtype EditM s a = EditM { runEditM :: State (Edit s) a }
+	deriving (Functor, Applicative, Monad, MonadState (Edit s))
 
-type Marks a = [Mark a]
-
--- | Lift region function like `insert` or `cut`
-onMarks :: (Region -> Region) -> Marks a -> Marks a
-onMarks f = map (withMarkRegion f)
-
-data Edited a = Edited {
-	editedContents :: Contents a,
-	editedRegions :: Region -> Region }
-
-instance Functor Edited where
-	fmap f (Edited cts r) = Edited (fmap (fmap f) cts) r
-
-edited :: Contents a -> Edited a
-edited cts = Edited cts id
-
-newtype EditM s a = EditM { runEditM :: State (Edited s) a }
-	deriving (Functor, Applicative, Monad, MonadState (Edited s))
-
-edit :: Region -> (Region -> Region -> Region) -> (Region -> Contents a -> Contents a) -> EditM a ()
-edit rgn fr fc = do
+-- | Basic edit action in monad
+-- It takes region, region edit function and contents updater
+-- and passes mapped region to these functions to get new state
+editRegion :: Region -> (Region -> Edit a) -> EditM a ()
+editRegion rgn edit' = do
 	rgn' <- mapRegion rgn
-	modify (\(Edited cts r) -> Edited (fc rgn' cts) (fr rgn' . r))
+	modify (`mappend` (edit' rgn'))
 
+-- | Get mapped region
 mapRegion :: Region -> EditM a Region
-mapRegion rgn = gets (($ rgn) . editedRegions)
+mapRegion rgn = gets (($ rgn) . apply . editMap)
 
-runEdit :: Contents s -> EditM s a -> a
-runEdit cts act = evalState (runEditM act) (edited cts)
+-- | Run edit monad
+runEdit :: Editable s => EditM s a -> (a, Edit s)
+runEdit act = runState (runEditM act) mempty
 
-editResult :: EditM s (Contents s)
-editResult = gets editedContents
+-- | Edit contents
+edit :: Editable s => s -> EditM s a -> s
+edit cts = snd . editEval cts
 
-type Contents a = [[a]]
+-- | Eval edit
+editEval :: Editable s => s -> EditM s a -> (a, s)
+editEval cts act = (v, unlines . editCts st . lines $ cts) where
+	(v, st) = runEdit act
 
+-- | Prefix of contents cutted at some point
 data Prefix a = Prefix {
-	prefixLines :: [[a]],
-	prefixLine :: [a] }
+	prefixLines :: [a],
+	prefixLine :: a }
 		deriving (Eq, Ord, Read, Show)
 
 instance Functor Prefix where
-	fmap f (Prefix ls l) = Prefix (fmap (fmap f) ls) (fmap f l)
+	fmap f (Prefix ls l) = Prefix (fmap f ls) (f l)
 
+-- | Make prefix from full contents
 prefix :: Contents a -> Prefix a
 prefix cts = Prefix (init cts) (last cts)
 
+-- | Suffix of contents
 data Suffix a = Suffix {
-	suffixLine :: [a],
-	suffixLines :: [[a]] }
+	suffixLine :: a,
+	suffixLines :: [a] }
 		deriving (Eq, Ord, Read, Show)
 
 instance Functor Suffix where
-	fmap f (Suffix l ls) = Suffix (fmap f l) (fmap (fmap f) ls)
+	fmap f (Suffix l ls) = Suffix (f l) (fmap f ls)
 
 suffix :: Contents a -> Suffix a
 suffix cts = Suffix (head cts) (tail cts)
 
-concatCts :: Prefix a -> Suffix a -> Contents a
-concatCts (Prefix ps p) (Suffix s ss) = ps ++ [p ++ s] ++ ss
+-- | Concat prefix and suffix. First line of suffix is appended to last line of prefix
+concatCts :: Monoid a => Prefix a -> Suffix a -> Contents a
+concatCts (Prefix ps p) (Suffix s ss) = ps ++ [p `mappend` s] ++ ss
 
-splitCts :: Point -> Contents a -> (Prefix a, Suffix a)
-splitCts (Point l c) cts = (Prefix (take l cts) (take c (cts !! l)), Suffix (drop c (cts !! l)) (drop (succ l) cts))
+-- | Split contents at point. First argument is function to split one line at position.
+splitCts :: Editable a => Point -> Contents a -> (Prefix a, Suffix a)
+splitCts (Point l c) cts = (Prefix (take l cts) p, Suffix s (drop (succ l) cts)) where
+	(p, s) = splitAt c (cts !! l)
+
+class Monoid a => Editable a where
+	splitAt :: Int -> a -> (a, a)
+	length :: a -> Int
+	lines :: a -> [a]
+	unlines :: [a] -> a
+
+instance Editable String where
+	splitAt = List.splitAt
+	length = List.length
+	lines s = case List.break (== '\n') s of
+		(pre, "") -> [pre]
+		(pre, _:post) -> pre : lines post
+	unlines = List.intercalate "\n"
+
+instance Editable Text where
+	splitAt = T.splitAt
+	length = T.length
+	lines = T.split (== '\n')
+	unlines = T.intercalate "\n"
+
+-- | Contents size
+measure :: Editable s => Contents s -> Size
+measure [] = error "Invalid argument"
+measure cts = Point (pred $ List.length cts) (length $ last cts)
 
 -- | Erase data
-erase :: Region -> EditM s ()
-erase rgn = edit rgn cut erase' where
-	erase' :: Region -> Contents b -> Contents b
+erase :: Editable s => Region -> EditM s ()
+erase rgn = editRegion rgn (\r -> Edit (erase' r) (cut r)) where
+	erase' :: Editable a => Region -> Contents a -> Contents a
 	erase' rgn' cts = fst (splitCts (regionFrom rgn') cts) `concatCts` snd (splitCts (regionTo rgn') cts)
 
 -- | Paste data at position
-write :: Point -> Contents s -> EditM s ()
+write :: Editable s => Point -> Contents s -> EditM s ()
 write _ ([]) = error "Invalid argument"
-write pt cts = edit (region pt pt') insert write' where
-	pt' :: Point
-	pt' = case cts of
-		[] -> error "Impossible"
-		[line'] -> pt { pointColumn = pointColumn pt + length line' }
-		lines'@(last -> line') -> Point { pointLine = pointLine pt + pred (length lines'), pointColumn = length line' }
+write pt cts = editRegion (pt `regionSize` measure cts) (\r -> Edit (write' r) (insert r)) where
 	write' rgn' origin = prefix (before' `concatCts` suffix cts) `concatCts` after' where
 		(before', after') = splitCts (regionFrom rgn') origin
 
 -- | Replace data with
-replace :: Region -> Contents s -> EditM s ()
+replace :: Editable s => Region -> Contents s -> EditM s ()
 replace rgn cts = erase rgn >> write (regionFrom rgn) cts
 
--- | Edit action
-data Edit s = Edit {
-	editErase :: Region,
-	editWrite :: Contents s }
+-- | Replace action
+data Replace s = Replace {
+	replaceRegion :: Region,
+	replaceWith :: Contents s }
 		deriving (Eq, Read, Show)
 
-instance ToJSON (Edit Char) where
-	toJSON (Edit e c) = object ["region" .= e, "contents" .= untext c]
+instance (Editable s, ToJSON s) => ToJSON (Replace s) where
+	toJSON (Replace e c) = object ["region" .= e, "contents" .= unlines c]
 
-instance FromJSON (Edit Char) where
-	parseJSON = withObject "edit" $ \v -> Edit <$> v .:: "region" <*> (text <$> v .:: "contents")
+instance (Editable s, FromJSON s) => FromJSON (Replace s) where
+	parseJSON = withObject "edit" $ \v -> Replace <$> v .:: "region" <*> (lines <$> v .:: "contents")
 
-eraser :: Region -> Edit s
-eraser rgn = Edit rgn ([[]])
+eraser :: Monoid s => Region -> Replace s
+eraser rgn = Replace rgn [mempty]
 
-writer :: Point -> Contents s -> Edit s
-writer pt cts = Edit (region pt pt) cts
+writer :: Editable s => Point -> s -> Replace s
+writer pt cts = Replace (region pt pt) $ lines cts
 
-replacer :: Region -> Contents s -> Edit s
-replacer = Edit
+replacer :: Editable s => Region -> s -> Replace s
+replacer rgn cts = Replace rgn (lines cts)
 
-apply :: [Edit s] -> EditM s ()
-apply = mapM_ (uncurry replace . (editErase &&& editWrite))
-
-text :: String -> [String]
-text = lines' where
-	lines' :: String -> [String]
-	lines' = unfoldr breakLine . Just where
-		breakLine :: Maybe String -> Maybe (String, Maybe String)
-		breakLine (Just str) = case break (== '\n') str of
-			(pre, "") -> Just (pre, Nothing)
-			(pre, _:post) -> Just (pre, Just post)
-		breakLine Nothing = Nothing
-
-untext :: [String] -> String
-untext = intercalate "\n"
+run :: Editable s => [Replace s] -> EditM s ()
+run = mapM_ (uncurry replace . (replaceRegion &&& replaceWith))

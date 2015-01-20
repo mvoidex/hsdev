@@ -3,18 +3,20 @@
 module HsDev.Tools.AutoFix (
 	Correction(..),
 	correct, corrections,
-	applyFix, updateRegion, autoFix, fixUpdate,
+	autoFix_, autoFix, updateRegion,
 	CorrectorMatch,
 	correctors,
 	match,
-	findCorrector
+	findCorrector,
+
+	module Data.Mark
 	) where
 
 import Control.Applicative
 import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)
 
-import Data.Mark hiding (at)
+import Data.Mark hiding (at, Editable(..))
 import HsDev.Symbols.Location (Location(..), Position(..), moduleSource)
 import HsDev.Tools.Base (matchRx, at)
 import HsDev.Tools.GhcMod
@@ -26,7 +28,7 @@ data Correction = Correction {
 	description :: String,
 	message :: String,
 	solution :: String,
-	corrector :: [Edit Char] }
+	corrector :: [Replace String] }
 		deriving (Eq, Read, Show)
 
 instance ToJSON Correction where
@@ -47,8 +49,8 @@ instance FromJSON Correction where
 		v .:: "solution" <*>
 		v .:: "corrector"
 
-correct :: Correction -> EditM Char ()
-correct = apply . corrector
+correct :: Correction -> EditM String ()
+correct = run . corrector
 
 corrections :: [OutputMessage] -> [Correction]
 corrections = mapMaybe toCorrection where
@@ -60,19 +62,18 @@ corrections = mapMaybe toCorrection where
 			pt = Point (pred l) (pred c)
 		findCorrector file pt (errorMessage msg)
 
-applyFix :: [Correction] -> EditM Char [String]
-applyFix corrs = mapM_ correct corrs >> editResult
+-- | Apply corrections
+autoFix_ :: [Correction] -> EditM String ()
+autoFix_ = mapM_ correct
 
-updateRegion :: Correction -> EditM Char Correction
+-- | Apply corrections and update rest correction positions
+autoFix :: [Correction] -> [Correction] -> EditM String [Correction]
+autoFix fix' up' = autoFix_ fix' >> mapM updateRegion up'
+
+updateRegion :: Correction -> EditM String Correction
 updateRegion corr = do
-	c' <- sequence [Edit <$> mapRegion r <*> pure cts | Edit r cts <- corrector corr]
+	c' <- sequence [Replace <$> mapRegion r <*> pure cts | Replace r cts <- corrector corr]
 	return $ corr { corrector = c' }
-
-autoFix :: String -> [Correction] -> String
-autoFix cts corrs = untext $ runEdit (text cts) (applyFix corrs)
-
-fixUpdate :: String -> [Correction] -> [Correction] -> (String, [Correction])
-fixUpdate cts fix' up' = runEdit (text cts) $ (,) <$> (untext <$> applyFix fix') <*> mapM updateRegion up'
 
 type CorrectorMatch = FilePath -> Point -> String -> Maybe Correction
 
@@ -87,7 +88,7 @@ correctors = [
 		"Why not?"
 		("Replace '" ++ (g `at` 1) ++ "' with '" ++ (g `at` 2) ++ "'") ""
 		"Replace with suggestion"
-		[replacer (pt `regionSize` stringSize (length $ g `at` 1)) (text $ g `at` 2)]]
+		[replacer (pt `regionSize` stringSize (length $ g `at` 1)) (g `at` 2)]]
 
 match :: String -> ((Int -> Maybe String) -> FilePath -> Point -> Correction) -> CorrectorMatch
 match pat f file pt str = do
