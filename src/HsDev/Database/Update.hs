@@ -297,19 +297,18 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 		inDir = maybe False (dir `isParent`) . moduleSource . moduleIdLocation
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
-scan ::
-	(MonadIO m, MonadCatch m) =>
-	(FilePath -> ErrorT String IO Structured) ->
+scan :: (MonadIO m, MonadCatch m)
+	=> (FilePath -> ErrorT String IO Structured)
 	-- ^ Read data from cache
-	(Database -> Database) ->
+	-> (Database -> Database)
 	-- ^ Get data from database
-	[S.ModuleToScan] ->
+	-> [S.ModuleToScan]
 	-- ^ Actual modules. Other modules will be removed from database
-	[String] ->
+	-> [String]
 	-- ^ Extra scan options
-	([S.ModuleToScan] -> ErrorT String (UpdateDB m) ()) ->
+	-> ([S.ModuleToScan] -> ErrorT String (UpdateDB m) ())
 	-- ^ Function to update changed modules
-	ErrorT String (UpdateDB m) ()
+	-> ErrorT String (UpdateDB m) ()
 scan cache' part' mlocs opts act = do
 	dbval <- getCache cache' part'
 	let
