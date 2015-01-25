@@ -14,10 +14,11 @@ import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Monad
 import Control.Monad.Error
+import Data.Char (isSpace)
 import Data.Function (on)
 import Data.List
 import Data.Map (Map)
-import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
+import Data.Maybe (fromMaybe, mapMaybe, catMaybes, listToMaybe)
 import Data.Ord (comparing)
 import Data.String (IsString, fromString)
 import qualified Data.Text as T (unpack)
@@ -47,6 +48,52 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 			moduleImports = map getImport imports,
 			moduleDeclarations = sortDeclarations $ getDecls declarations }
 	where
+		pmode :: H.ParseMode
+		pmode = H.defaultParseMode {
+			H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
+			H.baseLanguage = H.Haskell2010,
+			H.extensions = H.glasgowExts ++ map H.parseExtension exts,
+			H.fixities = Just H.baseFixities }
+
+		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
+		source' = map untab source
+		untab '\t' = ' '
+		untab ch = ch
+
+-- | Analize source contents
+analyzeModule_ :: [String] -> Maybe FilePath -> String -> Either String Module
+analyzeModule_ exts file source = do
+	mname <- parseModuleName source'
+	return $ Module {
+		moduleName = fromString mname,
+		moduleDocs = Nothing,
+		moduleLocation = ModuleSource Nothing,
+		moduleExports = Nothing,
+		moduleImports = [],
+		moduleDeclarations = sortDeclarations $ getDecls $ mapMaybe (uncurry parseDecl') parts }
+	where
+		parts :: [(Int, String)]
+		parts = zip offsets (map unlines parts') where
+			parts' :: [[String]]
+			parts' = unfoldr break' $ lines source'
+			offsets = scanl (+) 0 $ map length parts'
+		break' :: [String] -> Maybe ([String], [String])
+		break' [] = Nothing
+		break' (l:ls) = Just $ first (l:) $ break (not . maybe True isSpace . listToMaybe) ls
+
+		parseModuleName :: String -> Either String String
+		parseModuleName cts = maybe (Left "match fail") Right $ do
+			g <- matchRx "^module\\s+([\\w\\.]+)" cts
+			g 1
+
+		parseDecl' :: Int -> String -> Maybe H.Decl
+		parseDecl' offset cts = fmap (transformBi addOffset) $ case H.parseDeclWithMode pmode cts of
+			H.ParseFailed _ _ -> Nothing
+			H.ParseOk decl' -> Just decl'
+			where
+				addOffset :: H.SrcLoc -> H.SrcLoc
+				addOffset src = src { H.srcLine = H.srcLine src + offset }
+
 		pmode :: H.ParseMode
 		pmode = H.defaultParseMode {
 			H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
@@ -236,7 +283,7 @@ inspectDocs opts m = do
 -- | Inspect contents
 inspectContents :: String -> [String] -> String -> ErrorT String IO InspectedModule
 inspectContents name opts cts = inspect (ModuleSource $ Just name) (contentsInspection cts opts) $ do
-	analyzed <- ErrorT $ return $ analyzeModule exts (Just name) cts
+	analyzed <- ErrorT $ return $ analyzeModule exts (Just name) cts <|> analyzeModule_ exts (Just name) cts
 	return $ setLoc analyzed
 	where
 		setLoc m = m { moduleLocation = ModuleSource (Just name) }
@@ -256,7 +303,8 @@ inspectFile opts file = do
 		-- 	then hdocsProcess absFilename opts
 		-- 	else liftM Just $ hdocs (FileModule absFilename Nothing) opts
 		forced <- ErrorT $ E.handle onError $ do
-			analyzed <- liftM (analyzeModule exts (Just absFilename)) $ readFileUtf8 absFilename
+			analyzed <- liftM (\s -> analyzeModule exts (Just absFilename) s <|> analyzeModule_ exts (Just absFilename) s) $
+				readFileUtf8 absFilename
 			force analyzed `deepseq` return analyzed
 		-- return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
 		return $ setLoc absFilename proj forced
