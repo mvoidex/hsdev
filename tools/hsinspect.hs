@@ -32,7 +32,7 @@ main = toolMain "hsinspect" [
 			im <- scanModule (ghcs opts) (FileModule fname' Nothing)
 			let
 				scanAdditional =
-					scanModify (\opts cabal -> inspectDocs opts) >=>
+					scanModify (\opts' _ -> inspectDocs opts') >=>
 					scanModify infer
 			toJSON <$> scanAdditional im
 		inspect' (Args [fcabal@(takeExtension -> ".cabal")] _) = do

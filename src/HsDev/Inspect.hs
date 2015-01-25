@@ -19,7 +19,7 @@ import Data.List
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes)
 import Data.Ord (comparing)
-import Data.String (fromString)
+import Data.String (IsString, fromString)
 import qualified Data.Text as T (unpack)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Traversable (traverse, sequenceA)
@@ -59,10 +59,12 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 		untab '\t' = ' '
 		untab ch = ch
 
+-- | Get exports
 getExports :: H.ExportSpec -> [Export]
 getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule $ fromString m]
 getExports e = map (uncurry ExportName . (fmap fromString *** fromString) . identOfQName) $ childrenBi e
 
+-- | Get import
 getImport :: H.ImportDecl -> Import
 getImport d = Import
 	(mname (H.importModule d))
@@ -74,6 +76,7 @@ getImport d = Import
 		mname (H.ModuleName n) = fromString n
 		importLst (hiding, specs) = ImportList hiding $ map (fromString . identOfName) (concatMap childrenBi specs :: [H.Name])
 
+-- | Decl declarations
 getDecls :: [H.Decl] -> [Declaration]
 getDecls decls =
 	map mergeDecls .
@@ -95,24 +98,23 @@ getDecls decls =
 		mergeInfos (Function ln ld) (Function rn rd) = Function (ln `mplus` rn) (ld ++ rd)
 		mergeInfos l _ = l
 
+-- | Get definitions
 getBinds :: H.Binds -> [Declaration]
 getBinds (H.BDecls decls) = getDecls decls
 getBinds _ = []
 
+-- | Get declaration and child declarations
 getDecl :: H.Decl -> [Declaration]
 getDecl decl' = case decl' of
-	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ fromString $ oneLinePrint typeSignature) []) | n <- names]
+	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ oneLinePrint typeSignature) []) | n <- names]
 	H.TypeDecl loc n args _ -> [mkType loc n Type args]
-	H.DataDecl loc dataOrNew ctx n args _ _ -> [mkType loc n (ctor dataOrNew `withCtx` ctx) args]
-	H.GDataDecl loc dataOrNew ctx n args _ _ _ -> [mkType loc n (ctor dataOrNew `withCtx` ctx) args]
+	H.DataDecl loc dataOrNew ctx n args cons _ -> mkType loc n (ctor dataOrNew `withCtx` ctx) args : concatMap (getConDecl n args) cons
+	H.GDataDecl loc dataOrNew ctx n args _ gcons _ -> mkType loc n (ctor dataOrNew `withCtx` ctx) args : concatMap getGConDecl gcons
 	H.ClassDecl loc ctx n args _ _ -> [mkType loc n (Class `withCtx` ctx) args]
 	_ -> []
 	where
-		mkFun :: H.SrcLoc -> H.Name -> DeclarationInfo -> Declaration
-		mkFun loc n = setPosition loc . decl (fromString $ identOfName n)
-
 		mkType :: H.SrcLoc -> H.Name -> (TypeInfo -> DeclarationInfo) -> [H.TyVarBind] -> Declaration
-		mkType loc n ctor' args = setPosition loc $ decl (fromString $ identOfName n) $ ctor' $ TypeInfo Nothing (map (fromString . oneLinePrint) args) Nothing
+		mkType loc n ctor' args = setPosition loc $ decl (fromString $ identOfName n) $ ctor' $ TypeInfo Nothing (map oneLinePrint args) Nothing
 
 		withCtx :: (TypeInfo -> DeclarationInfo) -> H.Context -> TypeInfo -> DeclarationInfo
 		withCtx ctor' ctx tinfo = ctor' (tinfo { typeInfoContext = makeCtx ctx })
@@ -124,9 +126,28 @@ getDecl decl' = case decl' of
 		makeCtx [] = Nothing
 		makeCtx ctx = Just $ fromString $ intercalate ", " $ map oneLinePrint ctx
 
-		oneLinePrint :: H.Pretty a => a -> String
-		oneLinePrint = H.prettyPrintStyleMode (H.style { H.mode = H.OneLineMode }) H.defaultMode
+-- | Get constructor and record fields declarations
+getConDecl :: H.Name -> [H.TyVarBind] -> H.QualConDecl -> [Declaration]
+getConDecl t as (H.QualConDecl loc _ _ cdecl) = case cdecl of
+	H.ConDecl n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ cts `tyFun` dataRes) [])]
+	H.InfixConDecl ct n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ (ct : [cts]) `tyFun` dataRes) [])]
+	H.RecDecl n fields -> mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` dataRes) []) : concatMap (uncurry (getRec loc dataRes)) fields
+	where
+		dataRes :: H.Type
+		dataRes = foldr H.TyApp (H.TyCon (H.UnQual t)) $ map (H.TyVar . nameOf) as where
+			nameOf :: H.TyVarBind -> H.Name
+			nameOf (H.KindedVar n' _) = n'
+			nameOf (H.UnkindedVar n') = n'
 
+-- | Get GADT constructor and record fields declarations
+getGConDecl :: H.GadtDecl -> [Declaration]
+getGConDecl (H.GadtDecl loc n fields r) = mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` r) []) : concatMap (uncurry (getRec loc r)) fields where
+
+-- | Get record field declaration
+getRec :: H.SrcLoc -> H.Type -> [H.Name] -> H.Type -> [Declaration]
+getRec loc t ns rt = [mkFun loc n (Function (Just $ oneLinePrint $ t `H.TyFun` rt) []) | n <- ns]
+
+-- | Get definitions
 getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []
 getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ decl (fromString $ identOfName n) fun] where
@@ -159,19 +180,37 @@ getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (decl (fromSt
 	fieldNames H.PFieldWildcard = []
 getDef _ = []
 
+-- | Make function declaration by location, name and function type
+mkFun :: H.SrcLoc -> H.Name -> DeclarationInfo -> Declaration
+mkFun loc n = setPosition loc . decl (fromString $ identOfName n)
+
+-- | Make function from arguments and result
+--
+-- @[a, b, c...] `tyFun` r == a `TyFun` b `TyFun` c ... `TyFun` r@
+tyFun :: [H.Type] -> H.Type -> H.Type
+tyFun as' r' = foldr H.TyFun r' as'
+
+-- | Get name of qualified name
 identOfQName :: H.QName -> (Maybe String, String)
 identOfQName (H.Qual (H.ModuleName mname) name) = (Just mname, identOfName name)
 identOfQName (H.UnQual name) = (Nothing, identOfName name)
 identOfQName (H.Special sname) = (Nothing, H.prettyPrint sname)
 
+-- | Get name of @H.Name@
 identOfName :: H.Name -> String
 identOfName name = case name of
 	H.Ident s -> s
 	H.Symbol s -> s
 
+-- | Print something in one line
+oneLinePrint :: (H.Pretty a, IsString s) => a -> s
+oneLinePrint = fromString . H.prettyPrintStyleMode (H.style { H.mode = H.OneLineMode }) H.defaultMode
+
+-- | Convert @H.SrcLoc@ to @Position
 toPosition :: H.SrcLoc -> Position
 toPosition (H.SrcLoc _ l c) = Position l c
 
+-- | Set @Declaration@ position
 setPosition :: H.SrcLoc -> Declaration -> Declaration
 setPosition loc d = d { declarationPosition = Just (toPosition loc) }
 
