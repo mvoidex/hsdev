@@ -31,7 +31,7 @@ data Correction = Correction {
 	description :: String,
 	message :: String,
 	solution :: String,
-	corrector :: [Replace String] }
+	corrector :: Replace String }
 		deriving (Eq, Read, Show)
 
 instance Canonicalize Correction where
@@ -58,7 +58,7 @@ instance FromJSON Correction where
 		v .:: "corrector"
 
 correct :: Correction -> EditM String ()
-correct = run . corrector
+correct c = run [corrector c]
 
 corrections :: [OutputMessage] -> [Correction]
 corrections = mapMaybe toCorrection where
@@ -80,8 +80,8 @@ autoFix fix' up' = autoFix_ fix' >> mapM updateRegion up'
 
 updateRegion :: Correction -> EditM String Correction
 updateRegion corr = do
-	c' <- sequence [Replace <$> mapRegion r <*> pure cts | Replace r cts <- corrector corr]
-	return $ corr { corrector = c' }
+	region' <- mapRegion $ replaceRegion (corrector corr)
+	return $ corr { corrector = (corrector corr) { replaceRegion = region' } }
 
 type CorrectorMatch = FilePath -> Point -> String -> Maybe Correction
 
@@ -91,12 +91,12 @@ correctors = [
 		"Redundant import"
 		("Redundant import: " ++ (g `at` 1)) ""
 		"Remove import"
-		[eraser (pt `regionSize` linesSize 1)],
+		(eraser (pt `regionSize` linesSize 1)),
 	match "Found:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g file pt -> Correction file
 		"Why not?"
 		("Replace '" ++ (g `at` 1) ++ "' with '" ++ (g `at` 2) ++ "'") ""
 		"Replace with suggestion"
-		[replacer (pt `regionSize` stringSize (length $ g `at` 1)) (g `at` 2)]]
+		(replacer (pt `regionSize` stringSize (length $ g `at` 1)) (g `at` 2))]
 
 match :: String -> ((Int -> Maybe String) -> FilePath -> Point -> Correction) -> CorrectorMatch
 match pat f file pt str = do
