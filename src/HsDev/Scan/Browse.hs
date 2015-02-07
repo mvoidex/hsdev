@@ -5,6 +5,7 @@ module HsDev.Scan.Browse (
 	listModules, browseModules, browse
 	) where
 
+import Control.Lens (view, preview, _Just)
 import Control.Monad.Error
 import Data.List (nub)
 import Data.Maybe
@@ -61,14 +62,14 @@ browseModule cabal m = do
 	let
 		thisModule = GHC.moduleNameString (GHC.moduleName m)
 	return Module {
-		moduleName = fromString thisModule,
-		moduleDocs = Nothing,
-		moduleLocation = thisLoc,
-		moduleExports = Just $ map (ExportName Nothing . declarationName) ds,
-		moduleImports = [import_ iname | iname <- nub (mapMaybe definedModule ds), iname /= fromString thisModule],
-		moduleDeclarations = sortDeclarations ds }
+		_moduleName = fromString thisModule,
+		_moduleDocs = Nothing,
+		_moduleLocation = thisLoc,
+		_moduleExports = Just [ExportName Nothing (view declarationName d) ExportNothing | d <- ds],
+		_moduleImports = [import_ iname | iname <- nub (mapMaybe (preview definedModule) ds), iname /= fromString thisModule],
+		_moduleDeclarations = sortDeclarations ds }
 	where
-		thisLoc = moduleIdLocation $ mloc m
+		thisLoc = view moduleIdLocation $ mloc m
 		mloc m' = ModuleId (fromString mname') $
 			CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m') mname'
 			where
@@ -79,16 +80,16 @@ browseModule cabal m = do
 			dflag <- lift GHC.getSessionDynFlags
 			let
 				decl' = decl (fromString $ GHC.getOccString n) $ fromMaybe
-					(Function Nothing [])
+					(Function Nothing [] Nothing)
 					(tyResult >>= showResult dflag)
 			return $ decl' `definedIn` mloc (GHC.nameModule n)
-		definedModule = fmap moduleIdName . declarationDefined
+		definedModule = declarationDefined . _Just . moduleIdName
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe DeclarationInfo
-		showResult dflags (GHC.AnId i) = Just $ Function (Just $ fromString $ formatType dflags GHC.varType i) []
+		showResult dflags (GHC.AnId i) = Just $ Function (Just $ fromString $ formatType dflags GHC.varType i) [] Nothing
 		showResult dflags (GHC.AConLike c) = case c of
-			GHC.RealDataCon d -> Just $ Function (Just $ fromString $ formatType dflags GHC.dataConRepType d) []
-			GHC.PatSynCon p -> Just $ Function (Just $ fromString $ formatType dflags GHC.patSynType p) []
-		showResult _ (GHC.ATyCon t) = Just $ tcon $ TypeInfo Nothing (map (fromString . GHC.getOccString) $ GHC.tyConTyVars t) Nothing where
+			GHC.RealDataCon d -> Just $ Function (Just $ fromString $ formatType dflags GHC.dataConRepType d) [] Nothing
+			GHC.PatSynCon p -> Just $ Function (Just $ fromString $ formatType dflags GHC.patSynType p) [] Nothing
+		showResult _ (GHC.ATyCon t) = Just $ tcon $ TypeInfo Nothing (map (fromString . GHC.getOccString) $ GHC.tyConTyVars t) Nothing [] where
 			tcon
 				| GHC.isAlgTyCon t && not (GHC.isNewTyCon t) && not (GHC.isClassTyCon t) = Data
 				| GHC.isNewTyCon t = NewType

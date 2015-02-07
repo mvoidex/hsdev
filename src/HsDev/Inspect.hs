@@ -12,6 +12,8 @@ import Control.Arrow
 import Control.Applicative
 import Control.DeepSeq
 import qualified Control.Exception as E
+import Control.Lens (view, preview, set, over)
+import Control.Lens.At (ix)
 import Control.Monad
 import Control.Monad.Error
 import Data.Char (isSpace)
@@ -21,6 +23,7 @@ import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, catMaybes, listToMaybe)
 import Data.Ord (comparing)
 import Data.String (IsString, fromString)
+import Data.Text (Text)
 import qualified Data.Text as T (unpack)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
 import Data.Traversable (traverse, sequenceA)
@@ -41,12 +44,12 @@ analyzeModule :: [String] -> Maybe FilePath -> String -> Either String Module
 analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' of
 		H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
 		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ mexports imports declarations) -> Right Module {
-			moduleName = fromString mname,
-			moduleDocs =  Nothing,
-			moduleLocation = ModuleSource Nothing,
-			moduleExports = fmap (concatMap getExports) mexports,
-			moduleImports = map getImport imports,
-			moduleDeclarations = sortDeclarations $ getDecls declarations }
+			_moduleName = fromString mname,
+			_moduleDocs =  Nothing,
+			_moduleLocation = ModuleSource Nothing,
+			_moduleExports = fmap (concatMap getExports) mexports,
+			_moduleImports = map getImport imports,
+			_moduleDeclarations = sortDeclarations $ getDecls declarations }
 	where
 		pmode :: H.ParseMode
 		pmode = H.defaultParseMode {
@@ -65,12 +68,12 @@ analyzeModule_ :: [String] -> Maybe FilePath -> String -> Either String Module
 analyzeModule_ exts file source = do
 	mname <- parseModuleName source'
 	return $ Module {
-		moduleName = fromString mname,
-		moduleDocs = Nothing,
-		moduleLocation = ModuleSource Nothing,
-		moduleExports = Nothing,
-		moduleImports = [],
-		moduleDeclarations = sortDeclarations $ getDecls $ mapMaybe (uncurry parseDecl') parts }
+		_moduleName = fromString mname,
+		_moduleDocs = Nothing,
+		_moduleLocation = ModuleSource Nothing,
+		_moduleExports = Nothing,
+		_moduleImports = [],
+		_moduleDeclarations = sortDeclarations $ getDecls $ mapMaybe (uncurry parseDecl') parts }
 	where
 		parts :: [(Int, String)]
 		parts = zip offsets (map unlines parts') where
@@ -109,7 +112,13 @@ analyzeModule_ exts file source = do
 -- | Get exports
 getExports :: H.ExportSpec -> [Export]
 getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule $ fromString m]
-getExports e = map (uncurry ExportName . (fmap fromString *** fromString) . identOfQName) $ childrenBi e
+getExports (H.EVar _ n) = [uncurry ExportName (identOfQName n) ExportNothing]
+getExports (H.EAbs n) = [uncurry ExportName (identOfQName n) ExportNothing]
+getExports (H.EThingAll n) = [uncurry ExportName (identOfQName n) ExportAll]
+getExports (H.EThingWith n ns) = [uncurry ExportName (identOfQName n) $ ExportWith (map toStr ns)] where
+	toStr :: H.CName -> Text
+	toStr (H.VarName cn) = identOfName cn
+	toStr (H.ConName cn) = identOfName cn
 
 -- | Get import
 getImport :: H.ImportDecl -> Import
@@ -121,28 +130,28 @@ getImport d = Import
 	(Just $ toPosition $ H.importLoc d)
 	where
 		mname (H.ModuleName n) = fromString n
-		importLst (hiding, specs) = ImportList hiding $ map (fromString . identOfName) (concatMap childrenBi specs :: [H.Name])
+		importLst (hiding, specs) = ImportList hiding $ map identOfName (concatMap childrenBi specs :: [H.Name])
 
 -- | Decl declarations
 getDecls :: [H.Decl] -> [Declaration]
 getDecls decls =
 	map mergeDecls .
-	groupBy ((==) `on` declarationName) .
-	sortBy (comparing declarationName) $
+	groupBy ((==) `on` view declarationName) .
+	sortBy (comparing (view declarationName)) $
 	concatMap getDecl decls ++ concatMap getDef decls
 	where
 		mergeDecls :: [Declaration] -> Declaration
 		mergeDecls [] = error "Impossible"
 		mergeDecls ds = Declaration
-			(declarationName $ head ds)
+			(view declarationName $ head ds)
 			Nothing
 			Nothing
-			(msum $ map declarationDocs ds)
-			(minimum <$> mapM declarationPosition ds)
-			(foldr1 mergeInfos $ map declaration ds)
+			(msum $ map (view declarationDocs) ds)
+			(minimum <$> mapM (view declarationPosition) ds)
+			(foldr1 mergeInfos $ map (view declaration) ds)
 
 		mergeInfos :: DeclarationInfo -> DeclarationInfo -> DeclarationInfo
-		mergeInfos (Function ln ld) (Function rn rd) = Function (ln `mplus` rn) (ld ++ rd)
+		mergeInfos (Function ln ld lr) (Function rn rd rr) = Function (ln `mplus` rn) (ld ++ rd) (lr `mplus` rr)
 		mergeInfos l _ = l
 
 -- | Get definitions
@@ -153,18 +162,18 @@ getBinds _ = []
 -- | Get declaration and child declarations
 getDecl :: H.Decl -> [Declaration]
 getDecl decl' = case decl' of
-	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ oneLinePrint typeSignature) []) | n <- names]
+	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ oneLinePrint typeSignature) [] Nothing) | n <- names]
 	H.TypeDecl loc n args _ -> [mkType loc n Type args]
-	H.DataDecl loc dataOrNew ctx n args cons _ -> mkType loc n (ctor dataOrNew `withCtx` ctx) args : concatMap (getConDecl n args) cons
-	H.GDataDecl loc dataOrNew ctx n args _ gcons _ -> mkType loc n (ctor dataOrNew `withCtx` ctx) args : concatMap getGConDecl gcons
+	H.DataDecl loc dataOrNew ctx n args cons _ -> mkType loc n (ctor dataOrNew `withCtx` ctx) args : concatMap (map (addRel n) . getConDecl n args) cons
+	H.GDataDecl loc dataOrNew ctx n args _ gcons _ -> mkType loc n (ctor dataOrNew `withCtx` ctx) args : concatMap (map (addRel n) . getGConDecl) gcons
 	H.ClassDecl loc ctx n args _ _ -> [mkType loc n (Class `withCtx` ctx) args]
 	_ -> []
 	where
 		mkType :: H.SrcLoc -> H.Name -> (TypeInfo -> DeclarationInfo) -> [H.TyVarBind] -> Declaration
-		mkType loc n ctor' args = setPosition loc $ decl (fromString $ identOfName n) $ ctor' $ TypeInfo Nothing (map oneLinePrint args) Nothing
+		mkType loc n ctor' args = setPosition loc $ decl (identOfName n) $ ctor' $ TypeInfo Nothing (map oneLinePrint args) Nothing []
 
 		withCtx :: (TypeInfo -> DeclarationInfo) -> H.Context -> TypeInfo -> DeclarationInfo
-		withCtx ctor' ctx tinfo = ctor' (tinfo { typeInfoContext = makeCtx ctx })
+		withCtx ctor' ctx = ctor' . set typeInfoContext (makeCtx ctx)
 
 		ctor :: H.DataOrNew -> TypeInfo -> DeclarationInfo
 		ctor H.DataType = Data
@@ -173,12 +182,15 @@ getDecl decl' = case decl' of
 		makeCtx [] = Nothing
 		makeCtx ctx = Just $ fromString $ intercalate ", " $ map oneLinePrint ctx
 
+		addRel :: H.Name -> Declaration -> Declaration
+		addRel n = set (declaration . related) (Just $ identOfName n)
+
 -- | Get constructor and record fields declarations
 getConDecl :: H.Name -> [H.TyVarBind] -> H.QualConDecl -> [Declaration]
 getConDecl t as (H.QualConDecl loc _ _ cdecl) = case cdecl of
-	H.ConDecl n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ cts `tyFun` dataRes) [])]
-	H.InfixConDecl ct n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ (ct : [cts]) `tyFun` dataRes) [])]
-	H.RecDecl n fields -> mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` dataRes) []) : concatMap (uncurry (getRec loc dataRes)) fields
+	H.ConDecl n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ cts `tyFun` dataRes) [] Nothing)]
+	H.InfixConDecl ct n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ (ct : [cts]) `tyFun` dataRes) [] Nothing)]
+	H.RecDecl n fields -> mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` dataRes) [] Nothing) : concatMap (uncurry (getRec loc dataRes)) fields
 	where
 		dataRes :: H.Type
 		dataRes = foldr H.TyApp (H.TyCon (H.UnQual t)) $ map (H.TyVar . nameOf) as where
@@ -188,19 +200,19 @@ getConDecl t as (H.QualConDecl loc _ _ cdecl) = case cdecl of
 
 -- | Get GADT constructor and record fields declarations
 getGConDecl :: H.GadtDecl -> [Declaration]
-getGConDecl (H.GadtDecl loc n fields r) = mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` r) []) : concatMap (uncurry (getRec loc r)) fields where
+getGConDecl (H.GadtDecl loc n fields r) = mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` r) [] Nothing) : concatMap (uncurry (getRec loc r)) fields where
 
 -- | Get record field declaration
 getRec :: H.SrcLoc -> H.Type -> [H.Name] -> H.Type -> [Declaration]
-getRec loc t ns rt = [mkFun loc n (Function (Just $ oneLinePrint $ t `H.TyFun` rt) []) | n <- ns]
+getRec loc t ns rt = [mkFun loc n (Function (Just $ oneLinePrint $ t `H.TyFun` rt) [] Nothing) | n <- ns]
 
 -- | Get definitions
 getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []
-getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ decl (fromString $ identOfName n) fun] where
-	fun = Function Nothing $ concatMap (getBinds . matchBinds) matches
+getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ decl (identOfName n) fun] where
+	fun = Function Nothing (concatMap (getBinds . matchBinds) matches) Nothing
 	matchBinds (H.Match _ _ _ _ _ binds) = binds
-getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (decl (fromString $ identOfName name) (Function Nothing $ getBinds binds))) (names pat) where
+getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (decl (identOfName name) (Function Nothing (getBinds binds) Nothing))) (names pat) where
 	names :: H.Pat -> [H.Name]
 	names (H.PVar n) = [n]
 	names (H.PNPlusK n _) = [n]
@@ -229,7 +241,7 @@ getDef _ = []
 
 -- | Make function declaration by location, name and function type
 mkFun :: H.SrcLoc -> H.Name -> DeclarationInfo -> Declaration
-mkFun loc n = setPosition loc . decl (fromString $ identOfName n)
+mkFun loc n = setPosition loc . decl (identOfName n)
 
 -- | Make function from arguments and result
 --
@@ -238,14 +250,14 @@ tyFun :: [H.Type] -> H.Type -> H.Type
 tyFun as' r' = foldr H.TyFun r' as'
 
 -- | Get name of qualified name
-identOfQName :: H.QName -> (Maybe String, String)
-identOfQName (H.Qual (H.ModuleName mname) name) = (Just mname, identOfName name)
+identOfQName :: H.QName -> (Maybe Text, Text)
+identOfQName (H.Qual (H.ModuleName mname) name) = (Just $ fromString mname, identOfName name)
 identOfQName (H.UnQual name) = (Nothing, identOfName name)
-identOfQName (H.Special sname) = (Nothing, H.prettyPrint sname)
+identOfQName (H.Special sname) = (Nothing, fromString $ H.prettyPrint sname)
 
 -- | Get name of @H.Name@
-identOfName :: H.Name -> String
-identOfName name = case name of
+identOfName :: H.Name -> Text
+identOfName name = fromString $ case name of
 	H.Ident s -> s
 	H.Symbol s -> s
 
@@ -259,16 +271,16 @@ toPosition (H.SrcLoc _ l c) = Position l c
 
 -- | Set @Declaration@ position
 setPosition :: H.SrcLoc -> Declaration -> Declaration
-setPosition loc d = d { declarationPosition = Just (toPosition loc) }
+setPosition loc = set declarationPosition (Just $ toPosition loc)
 
 -- | Adds documentation to declaration
 addDoc :: Map String String -> Declaration -> Declaration
-addDoc docsMap decl' = decl' { declarationDocs = M.lookup (declarationName decl') docsMap' } where
+addDoc docsMap decl' = set declarationDocs (preview (ix (view declarationName decl')) docsMap') decl' where
 	docsMap' = M.mapKeys fromString . M.map fromString $ docsMap
 
 -- | Adds documentation to all declarations in module
 addDocs :: Map String String -> Module -> Module
-addDocs docsMap m = m { moduleDeclarations = map (addDoc docsMap) (moduleDeclarations m) }
+addDocs docsMap = over moduleDeclarations (map $ addDoc docsMap)
 
 -- | Extract file docs and set them to module declarations
 inspectDocs :: [String] -> Module -> ErrorT String IO Module
@@ -276,18 +288,16 @@ inspectDocs opts m = do
 	let
 		hdocsWorkaround = True
 	docsMap <- liftE $ if hdocsWorkaround
-		then hdocsProcess (fromMaybe (T.unpack $ moduleName m) $ moduleSource $ moduleLocation m) opts
-		else liftM Just $ hdocs (moduleLocation m) opts
+		then hdocsProcess (fromMaybe (T.unpack $ view moduleName m) (preview (moduleLocation . moduleFile) m)) opts
+		else liftM Just $ hdocs (view moduleLocation m) opts
 	return $ maybe id addDocs docsMap $ m
 
 -- | Inspect contents
 inspectContents :: String -> [String] -> String -> ErrorT String IO InspectedModule
 inspectContents name opts cts = inspect (ModuleSource $ Just name) (contentsInspection cts opts) $ do
 	analyzed <- ErrorT $ return $ analyzeModule exts (Just name) cts <|> analyzeModule_ exts (Just name) cts
-	return $ setLoc analyzed
+	return $ set moduleLocation (ModuleSource $ Just name) analyzed
 	where
-		setLoc m = m { moduleLocation = ModuleSource (Just name) }
-
 		exts = mapMaybe flagExtension opts
 
 contentsInspection :: String -> [String] -> ErrorT String IO Inspection
@@ -307,9 +317,8 @@ inspectFile opts file = do
 				readFileUtf8 absFilename
 			force analyzed `deepseq` return analyzed
 		-- return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
-		return $ setLoc absFilename proj forced
+		return $ set moduleLocation (FileModule absFilename proj) forced
 	where
-		setLoc f p m = m { moduleLocation = FileModule f p }
 		onError :: E.ErrorCall -> IO (Either String Module)
 		onError = return . Left . show
 
@@ -325,7 +334,7 @@ fileInspection f opts = do
 projectDirs :: Project -> ErrorT String IO [Extensions FilePath]
 projectDirs p = do
 	p' <- loadProject p
-	return $ nub $ map (fmap (normalise . (projectPath p' </>))) $ maybe [] sourceDirs $ projectDescription p'
+	return $ nub $ map (fmap (normalise . (view projectPath p' </>))) $ maybe [] sourceDirs $ view projectDescription p'
 
 -- | Enumerate project source files
 projectSources :: Project -> ErrorT String IO [Extensions FilePath]
@@ -333,9 +342,9 @@ projectSources p = do
 	dirs <- projectDirs p
 	let
 		enumCabals = liftM (map takeDirectory . filter cabalFile) . traverseDirectory
-		dirs' = map entity dirs
+		dirs' = map (view entity) dirs
 	-- enum inner projects and dont consider them as part of this project
-	subProjs <- liftM (delete (projectPath p) . nub . concat) $ triesMap (liftE . enumCabals) dirs'
+	subProjs <- liftM (delete (view projectPath p) . nub . concat) $ triesMap (liftE . enumCabals) dirs'
 	let
 		enumHs = liftM (filter thisProjectSource) . traverseDirectory
 		thisProjectSource h = haskellSource h && not (any (`isParent` h) subProjs)
@@ -349,4 +358,4 @@ inspectProject opts p = do
 	modules <- mapM inspectFile' srcs
 	return (p', catMaybes modules)
 	where
-		inspectFile' exts = liftM return (inspectFile (opts ++ extensionsOpts (extensions exts)) (entity exts)) <|> return Nothing
+		inspectFile' exts = liftM return (inspectFile (opts ++ extensionsOpts (view extensions exts)) (view entity exts)) <|> return Nothing

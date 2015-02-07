@@ -94,16 +94,16 @@ instance FromJSON HayooValue where
 hayooAsDeclaration :: HayooSymbol -> Maybe ModuleDeclaration
 hayooAsDeclaration f
 	| hayooType f `elem` ["function", "type", "newtype", "data", "class"] = Just ModuleDeclaration {
-		declarationModuleId = ModuleId {
-			moduleIdName = fromString $ head $ hayooModules f,
-			moduleIdLocation = ModuleSource (Just $ resultUri f) },
-		moduleDeclaration = Declaration {
-			declarationName = fromString $ hayooName f,
-			declarationDefined = Nothing,
-			declarationImported = Nothing,
-			declarationDocs = Just (fromString $ addOnline $ untagDescription $ hayooDescription f),
-			declarationPosition = Nothing,
-			declaration = declInfo } }
+		_declarationModuleId = ModuleId {
+			_moduleIdName = fromString $ head $ hayooModules f,
+			_moduleIdLocation = ModuleSource (Just $ resultUri f) },
+		_moduleDeclaration = Declaration {
+			_declarationName = fromString $ hayooName f,
+			_declarationDefined = Nothing,
+			_declarationImported = Nothing,
+			_declarationDocs = Just (fromString $ addOnline $ untagDescription $ hayooDescription f),
+			_declarationPosition = Nothing,
+			_declaration = declInfo } }
 	| otherwise = Nothing
 	where
 		-- Add other info
@@ -115,8 +115,8 @@ hayooAsDeclaration f
 			"Hackage URL: " ++ resultUri f]
 
 		declInfo
-			| hayooType f == "function" = Function (Just $ fromString $ hayooSignature f) []
-			| hayooType f `elem` ["type", "newtype", "data", "class"] = declarationTypeCtor (hayooType f) $ TypeInfo Nothing [] Nothing
+			| hayooType f == "function" = Function (Just $ fromString $ hayooSignature f) [] Nothing
+			| hayooType f `elem` ["type", "newtype", "data", "class"] = declarationTypeCtor (hayooType f) $ TypeInfo Nothing [] Nothing []
 			| otherwise = error "Impossible"
 
 -- | Search hayoo

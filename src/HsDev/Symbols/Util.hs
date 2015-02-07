@@ -8,6 +8,7 @@ module HsDev.Symbols.Util (
 	) where
 
 import Control.Arrow ((***), (&&&), first)
+import Control.Lens (view)
 import Control.Monad (liftM)
 import Data.Function (on)
 import Data.Maybe
@@ -21,19 +22,19 @@ import HsDev.Project
 
 -- | Get module project
 projectOf :: ModuleId -> Maybe Project
-projectOf m = case moduleIdLocation m of
+projectOf m = case view moduleIdLocation m of
 	FileModule _ proj -> proj
 	_ -> Nothing
 
 -- | Get module cabal
 cabalOf :: ModuleId -> Maybe Cabal
-cabalOf m = case moduleIdLocation m of
+cabalOf m = case view moduleIdLocation m of
 	CabalModule c _ _ -> Just c
 	_ -> Nothing
 
 -- | Get module package
 packageOf :: ModuleId -> Maybe ModulePackage
-packageOf m = case moduleIdLocation m of
+packageOf m = case view moduleIdLocation m of
 	CabalModule _ package _ -> package
 	_ -> Nothing
 
@@ -43,7 +44,7 @@ inProject p m = projectOf m == Just p
 
 -- | Check if module in deps of project target
 inDepsOfTarget :: Info -> ModuleId -> Bool
-inDepsOfTarget i m = any (`inPackage` m) $ infoDepends i
+inDepsOfTarget i m = any (`inPackage` m) $ view infoDepends i
 
 -- | Check if module in deps of source
 inDepsOfFile :: Project -> FilePath -> ModuleId -> Bool
@@ -51,82 +52,82 @@ inDepsOfFile p f = maybe (const False) inDepsOfTarget $ fileTarget p f
 
 -- | Check if module in deps of project
 inDepsOfProject :: Project -> ModuleId -> Bool
-inDepsOfProject = maybe (const False) (anyPackage . nub . concatMap infoDepends . infos) . projectDescription where
+inDepsOfProject = maybe (const False) (anyPackage . nub . concatMap (view infoDepends) . infos) . view projectDescription where
 	anyPackage :: [String] -> ModuleId -> Bool
 	anyPackage = liftM or . mapM inPackage
 
 -- | Check if module in cabal
 inCabal :: Cabal -> ModuleId -> Bool
-inCabal c m = case moduleIdLocation m of
+inCabal c m = case view moduleIdLocation m of
 	CabalModule cabal _ _ -> cabal == c
 	_ -> False
 
 -- | Check if module in package
 inPackage :: String -> ModuleId -> Bool
-inPackage p m = case moduleIdLocation m of
-	CabalModule _ package _ -> Just p == fmap packageName package
+inPackage p m = case view moduleIdLocation m of
+	CabalModule _ package _ -> Just p == fmap (view packageName) package
 	_ -> False
 
 inVersion :: String -> ModuleId -> Bool
-inVersion v m = case moduleIdLocation m of
-	CabalModule _ package _ -> Just v == fmap packageVersion package
+inVersion v m = case view moduleIdLocation m of
+	CabalModule _ package _ -> Just v == fmap (view packageVersion) package
 	_ -> False
 
 -- | Check if module in file
 inFile :: FilePath -> ModuleId -> Bool
-inFile fpath m = case moduleIdLocation m of
+inFile fpath m = case view moduleIdLocation m of
 	FileModule f _ -> f == normalise fpath
 	_ -> False
 
 -- | Check if module in source
 inModuleSource :: Maybe String -> ModuleId -> Bool
-inModuleSource src m = case moduleIdLocation m of
+inModuleSource src m = case view moduleIdLocation m of
 	ModuleSource src' -> src' == src
 	_ -> False
 
 -- | Check if declaration is in module
 inModule :: String -> ModuleId -> Bool
-inModule mname m = fromString mname == moduleIdName m
+inModule mname m = fromString mname == view moduleIdName m
 
 -- | Check if module defined in file
 byFile :: ModuleId -> Bool
-byFile m = case moduleIdLocation m of
+byFile m = case view moduleIdLocation m of
 	FileModule _ _ -> True
 	_ -> False
 
 -- | Check if module got from cabal database
 byCabal :: ModuleId -> Bool
-byCabal m = case moduleIdLocation m of
+byCabal m = case view moduleIdLocation m of
 	CabalModule _ _ _ -> True
 	_ -> False
 
 -- | Check if module is standalone
 standalone :: ModuleId -> Bool
-standalone m = case moduleIdLocation m of
+standalone m = case view moduleIdLocation m of
 	FileModule _ Nothing -> True
 	_ -> False
 
 -- | Get list of imports
 imports :: Module -> [Import]
-imports = moduleImports
+imports = view moduleImports
 
 -- | Get list of imports, which can be accessed with specified qualifier or unqualified
 qualifier :: Module -> Maybe String -> [Import]
 qualifier m q = filter (importQualifier (fmap fromString q)) $
 	import_ (fromString "Prelude") :
-	import_ (moduleName m) :
+	import_ (view moduleName m) :
 	imports m
 
 -- | Check if module imported via imports specified
 imported :: ModuleId -> [Import] -> Bool
-imported m = any (\i -> moduleIdName m == importModuleName i)
+imported m = any (\i -> view moduleIdName m == view importModuleName i)
 
 -- | Check if module visible from this module within this project
 visible :: Project -> ModuleId -> ModuleId -> Bool
 visible p (ModuleId _ (FileModule src _)) m =
-	inProject p m || any (`inPackage` m) deps || maybe False ((`elem` deps) . projectName) (projectOf m)
+	inProject p m || any (`inPackage` m) deps || maybe False ((`elem` deps) . view projectName) (projectOf m)
 	where
-		deps = maybe [] infoDepends $ fileTarget p src
+		deps = maybe [] (view infoDepends) $ fileTarget p src
 visible _ _ _ = False
 
 -- | Check if module is in scope with qualifier
@@ -143,8 +144,8 @@ newestPackage =
 	where
 		mpackage (CabalModule _ (Just p) _) = Just p
 		mpackage _ = Nothing
-		pname = fmap packageName . fst
-		pver = fmap packageVersion . fst
+		pname = fmap (view packageName) . fst
+		pver = fmap (view packageVersion) . fst
 		groupPackages :: Symbol a => [(Maybe ModulePackage, a)] -> [(Maybe ModulePackage, [a])]
 		groupPackages = map (first head . unzip) . groupBy ((==) `on` fst) . sortBy (comparing fst)
 		selectNewest :: [(Maybe ModulePackage, [a])] -> [a]
@@ -155,11 +156,11 @@ newestPackage =
 
 -- | Select module, defined by sources
 sourceModule :: Maybe Project -> [Module] -> Maybe Module
-sourceModule proj ms = listToMaybe $ maybe (const []) (filter . (. moduleId) . inProject) proj ms ++ filter (byFile . moduleId) ms
+sourceModule proj ms = listToMaybe $ maybe (const []) (filter . (. view moduleId) . inProject) proj ms ++ filter (byFile . view moduleId) ms
 
 -- | Select module, visible in project or cabal
 visibleModule :: Cabal -> Maybe Project -> [Module] -> Maybe Module
-visibleModule cabal proj ms = listToMaybe $ maybe (const []) (filter . (. moduleId) . inProject) proj ms ++ filter (inCabal cabal . moduleId) ms
+visibleModule cabal proj ms = listToMaybe $ maybe (const []) (filter . (. view moduleId) . inProject) proj ms ++ filter (inCabal cabal . view moduleId) ms
 
 -- | Select preferred visible module
 preferredModule :: Cabal -> Maybe Project -> [ModuleId] -> Maybe ModuleId
@@ -175,8 +176,8 @@ uniqueModules :: Cabal -> Maybe Project -> [ModuleId] -> [ModuleId]
 uniqueModules cabal proj =
 	catMaybes .
 	map (preferredModule cabal proj) .
-	groupBy ((==) `on` moduleIdName) .
-	sortBy (comparing moduleIdName)
+	groupBy ((==) `on` view moduleIdName) .
+	sortBy (comparing (view moduleIdName))
 
 -- | Select value, satisfying to all predicates
 allOf :: [a -> Bool] -> a -> Bool

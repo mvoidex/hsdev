@@ -9,9 +9,10 @@ module HsDev.Scan (
 	) where
 
 import Control.Applicative ((<|>))
+import Control.Lens (view, preview)
 import Control.Monad.Error
 import qualified Data.Map as M
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Traversable (traverse)
 import System.Directory
 
@@ -46,18 +47,18 @@ data ScanContents = ScanContents {
 enumProject :: Project -> ErrorT String IO ProjectToScan
 enumProject p = do
 	p' <- loadProject p
-	cabal <- liftE $ searchSandbox (projectPath p')
-	pkgs <- liftM (map packageName) $ browsePackages [] cabal
+	cabal <- liftE $ searchSandbox (view projectPath p')
+	pkgs <- liftM (map $ view packageName) $ browsePackages [] cabal
 	let
 		projOpts :: FilePath -> [String]
 		projOpts f = maybe [] makeOpts $ fileTarget p' f where
 			makeOpts :: Info -> [String]
 			makeOpts i = concat [
 				["-hide-all-packages"],
-				["-package " ++ projectName p'],
-				["-package " ++ dep | dep <- infoDepends i, dep `elem` pkgs]]
+				["-package " ++ view projectName p'],
+				["-package " ++ dep | dep <- view infoDepends i, dep `elem` pkgs]]
 	srcs <- projectSources p'
-	return (p', [(FileModule (entity src) (Just p'), extensionsOpts (extensions src) ++ projOpts (entity src)) | src <- srcs])
+	return (p', [(FileModule (view entity src) (Just p'), extensionsOpts (view extensions src) ++ projOpts (view entity src)) | src <- srcs])
 
 -- | Enum directory modules
 enumDirectory :: FilePath -> ErrorT String IO ScanContents
@@ -70,7 +71,7 @@ enumDirectory dir = do
 	sboxes <- liftM catMaybes $ triesMap (liftE . findPackageDb) dirs
 	projs <- triesMap (enumProject . project) projects
 	let
-		projPaths = map (projectPath . fst) projs
+		projPaths = map (view projectPath . fst) projs
 		standalone = map (\f -> FileModule f Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
 	return $ ScanContents {
 		modulesToScan = [(s, []) | s <- standalone],
@@ -97,7 +98,7 @@ scanModule _ (ModuleSource _) = throwError "Can inspect only modules in file or 
 scanModify :: ([String] -> Cabal -> Module -> ErrorT String IO Module) -> InspectedModule -> ErrorT String IO InspectedModule
 scanModify f im = traverse f' im <|> return im where
 	-- TODO: Get actual sandbox
-	f' = f (inspectionOpts $ inspection im) Cabal
+	f' = f (fromMaybe [] $ preview (inspection . inspectionOpts) im) Cabal
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> ErrorT String IO Bool
@@ -112,7 +113,7 @@ rescanModule opts im = do
 	up <- upToDate opts im
 	if up
 		then return Nothing
-		else fmap Just $ scanModule opts (inspectedId im)
+		else fmap Just $ scanModule opts (view inspectedId im)
 
 -- | Is module new or recently changed
 changedModule :: Database -> [String] -> ModuleLocation -> ErrorT String IO Bool

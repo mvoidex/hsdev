@@ -1,9 +1,15 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), ModuleLocation(..), moduleSource, moduleProject_, moduleStandalone, moduleCabal_, moduleCabalPackage,
+	ModulePackage(..), ModuleLocation(..), moduleStandalone,
 	Position(..), Region(..), region, regionLines, regionStr,
 	Location(..),
+
+	packageName, packageVersion,
+	moduleFile, moduleProject, moduleCabal, modulePackage, cabalModuleName, moduleSourceName,
+	positionLine, positionColumn,
+	regionFrom, regionTo,
+	locationModule, locationPosition,
 
 	packageOpt,
 	recalcTabs,
@@ -13,6 +19,7 @@ module HsDev.Symbols.Location (
 
 import Control.Applicative
 import Control.DeepSeq (NFData(..))
+import Control.Lens (makeLenses, preview, view)
 import Control.Monad (join)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
@@ -25,9 +32,11 @@ import HsDev.Project
 import HsDev.Util ((.::))
 
 data ModulePackage = ModulePackage {
-	packageName :: String,
-	packageVersion :: String }
+	_packageName :: String,
+	_packageVersion :: String }
 		deriving (Eq, Ord)
+
+makeLenses ''ModulePackage
 
 instance NFData ModulePackage where
 	rnf (ModulePackage n v) = rnf n `seq` rnf v
@@ -59,30 +68,15 @@ instance FromJSON ModulePackage where
 
 -- | Location of module
 data ModuleLocation =
-	FileModule { moduleFile :: FilePath, moduleProject :: Maybe Project } |
-	CabalModule { moduleCabal :: Cabal, modulePackage :: Maybe ModulePackage, cabalModuleName :: String } |
-	ModuleSource { moduleSourceName :: Maybe String }
+	FileModule { _moduleFile :: FilePath, _moduleProject :: Maybe Project } |
+	CabalModule { _moduleCabal :: Cabal, _modulePackage :: Maybe ModulePackage, _cabalModuleName :: String } |
+	ModuleSource { _moduleSourceName :: Maybe String }
 		deriving (Eq, Ord)
 
-moduleSource :: ModuleLocation -> Maybe FilePath
-moduleSource (FileModule f _) = Just f
-moduleSource _ = Nothing
-
-moduleProject_ :: ModuleLocation -> Maybe Project
-moduleProject_ (FileModule _ p) = p
-moduleProject_ _ = Nothing
+makeLenses ''ModuleLocation
 
 moduleStandalone :: ModuleLocation -> Bool
-moduleStandalone (FileModule _ Nothing) = True
-moduleStandalone _ = False
-
-moduleCabal_ :: ModuleLocation -> Maybe Cabal
-moduleCabal_ (CabalModule c _ _) = Just c
-moduleCabal_ _ = Nothing
-
-moduleCabalPackage :: ModuleLocation -> Maybe ModulePackage
-moduleCabalPackage (CabalModule _ p _) = p
-moduleCabalPackage _ = Nothing
+moduleStandalone = (== Just Nothing) . preview moduleProject
 
 instance NFData ModuleLocation where
 	rnf (FileModule f p) = rnf f `seq` rnf p
@@ -90,12 +84,12 @@ instance NFData ModuleLocation where
 	rnf (ModuleSource m) = rnf m
 
 instance Show ModuleLocation where
-	show (FileModule f p) = f ++ maybe "" (" in " ++) (fmap projectPath p)
+	show (FileModule f p) = f ++ maybe "" (" in " ++) (fmap (view projectPath) p)
 	show (CabalModule _ p n) = n ++ maybe "" (" in package " ++) (fmap show p)
 	show (ModuleSource m) = fromMaybe "" m
 
 instance ToJSON ModuleLocation where
-	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap projectCabal p]
+	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap (view projectCabal) p]
 	toJSON (CabalModule c p n) = object ["cabal" .= c, "package" .= fmap show p, "name" .= n]
 	toJSON (ModuleSource s) = object ["source" .= s]
 
@@ -106,9 +100,11 @@ instance FromJSON ModuleLocation where
 		(ModuleSource <$> v .:: "source")
 
 data Position = Position {
-	positionLine :: Int,
-	positionColumn :: Int }
+	_positionLine :: Int,
+	_positionColumn :: Int }
 		deriving (Eq, Ord, Read)
+
+makeLenses ''Position
 
 instance NFData Position where
 	rnf (Position l c) = rnf l `seq` rnf c
@@ -127,21 +123,23 @@ instance FromJSON Position where
 		v .:: "column"
 
 data Region = Region {
-	regionFrom :: Position,
-	regionTo :: Position }
+	_regionFrom :: Position,
+	_regionTo :: Position }
 		deriving (Eq, Ord, Read)
+
+makeLenses ''Region
 
 region :: Position -> Position -> Region
 region f t = Region (min f t) (max f t)
 
 regionLines :: Region -> Int
-regionLines (Region f t) = succ $ positionLine t - positionLine f
+regionLines (Region f t) = succ (view positionLine t - view positionLine f)
 
 -- | Get string at region
 regionStr :: Region -> String -> String
-regionStr r@(Region f t) s = intercalate "\n" $ drop (pred $ positionColumn f) fline' : tl where
-	s' = take (regionLines r) $ drop (pred (positionLine f)) $ lines s
-	(fline:tl) = init s' ++ [take (pred $ positionColumn t) (last s')]
+regionStr r@(Region f t) s = intercalate "\n" $ drop (pred $ view positionColumn f) fline' : tl where
+	s' = take (regionLines r) $ drop (pred (view positionLine f)) $ lines s
+	(fline:tl) = init s' ++ [take (pred $ view positionColumn t) (last s')]
 	fline' = concatMap untab fline where
 		untab :: Char -> String
 		untab '\t' = replicate 8 ' '
@@ -165,9 +163,11 @@ instance FromJSON Region where
 
 -- | Location of symbol
 data Location = Location {
-	locationModule :: ModuleLocation,
-	locationPosition :: Maybe Position }
+	_locationModule :: ModuleLocation,
+	_locationPosition :: Maybe Position }
 		deriving (Eq, Ord)
+
+makeLenses ''Location
 
 instance NFData Location where
 	rnf (Location m p) = rnf m `seq` rnf p
@@ -186,7 +186,7 @@ instance FromJSON Location where
 		v .:: "pos"
 
 packageOpt :: Maybe ModulePackage -> [String]
-packageOpt = maybeToList . fmap (("-package " ++) . packageName)
+packageOpt = maybeToList . fmap (("-package " ++) . view packageName)
 
 -- | Recalc position to interpret '\t' as one symbol instead of 8
 recalcTabs :: String -> Position -> Position

@@ -6,6 +6,7 @@ module HsDev.Cache.Structured (
 import Control.Applicative
 import Control.DeepSeq
 import Control.Exception
+import Control.Lens (preview)
 import Control.Monad.Error
 import qualified Data.Map as M (assocs)
 import Data.Monoid
@@ -71,4 +72,4 @@ loadFiles f dir = do
 	dat <- loadData (dir </> Cache.standaloneCache)
 	ErrorT $ return $ structured [] [] $ filterDB f' (const False) dat
 	where
-		f' = maybe False f . moduleSource . moduleIdLocation
+		f' = maybe False f . preview (moduleIdLocation . moduleFile)

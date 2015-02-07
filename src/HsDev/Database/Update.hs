@@ -18,6 +18,7 @@ module HsDev.Database.Update (
 	) where
 
 import Control.Applicative
+import Control.Lens (preview, _Just, view)
 import Control.Monad.Catch
 import Control.Monad.Error
 import Control.Monad.Reader
@@ -114,8 +115,8 @@ updateDB sets act = do
 	wait $ database sets
 	dbval <- liftIO $ readAsync $ database sets
 	let
-		cabals = nub $ mapMaybe moduleCabal_ updatedMods
-		projs = nub $ mapMaybe moduleProject_ updatedMods
+		cabals = nub $ mapMaybe (preview moduleCabal) updatedMods
+		projs = nub $ mapMaybe (preview $ moduleProject . _Just) updatedMods
 		stand = any moduleStandalone updatedMods
 
 		modifiedDb = mconcat $ concat [
@@ -125,7 +126,7 @@ updateDB sets act = do
 	liftIO $ databaseCacheWriter sets modifiedDb
 	where
 		act' = do
-			mlocs' <- liftM (filter (isJust . moduleSource) . snd) $ listen act
+			mlocs' <- liftM (filter (isJust . preview moduleFile) . snd) $ listen act
 			wait $ database sets
 			let
 				getMods = do
@@ -134,11 +135,11 @@ updateDB sets act = do
 			getMods >>= waiter . runTask "inspecting source docs" [] . runTasks . map scanDocs
 			getMods >>= waiter . runTask "inferring types" [] . runTasks . map inferModTypes
 		scanDocs :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
-		scanDocs im = runTask "scanning docs" (subject (inspectedId im) ["module" .= inspectedId im]) $ do
+		scanDocs im = runTask "scanning docs" (subject (view inspectedId im) ["module" .= view inspectedId im]) $ do
 			im' <- liftErrorT $ S.scanModify (\opts _ -> inspectDocs opts) im
 			updater $ return $ fromModule im'
 		inferModTypes :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
-		inferModTypes im = runTask "inferring types" (subject (inspectedId im) ["module" .= inspectedId im]) $ do
+		inferModTypes im = runTask "inferring types" (subject (view inspectedId im) ["module" .= view inspectedId im]) $ do
 			-- TODO: locate sandbox
 			im' <- liftErrorT $ S.scanModify (\opts cabal -> infer opts cabal) im
 			updater $ return $ fromModule im'
@@ -163,7 +164,7 @@ updater act = do
 	db <- asks database
 	db' <- act
 	update db $ return db'
-	tell $ map moduleLocation $ allModules db'
+	tell $ map (view moduleLocation) $ allModules db'
 
 -- | Clear obsolete data from database
 cleaner :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => m Database -> m ()
@@ -228,7 +229,7 @@ scanModule :: (MonadIO m, MonadCatch m) => [String] -> ModuleLocation -> ErrorT 
 scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
 	im <- liftErrorT $ S.scanModule opts mloc
 	updater $ return $ fromModule im
-	_ <- ErrorT $ return $ inspectionResult im
+	_ <- ErrorT $ return $ view inspectionResult im
 	return ()
 
 -- | Scan modules
@@ -238,7 +239,7 @@ scanModules opts ms = runTasks $
 	[scanModule (opts ++ snd m) (fst m) | m <- ms]
 	where
 		ps = nub $ mapMaybe (toProj . fst) ms
-		toProj (FileModule _ p) = fmap projectCabal p
+		toProj (FileModule _ p) = fmap (view projectCabal) p
 		toProj _ = Nothing
 
 -- | Scan source file
@@ -247,14 +248,14 @@ scanFile opts fpath = do
 	dbval <- readDB
 	fpath' <- liftEIO $ canonicalizePath fpath
 	mloc <- case lookupFile fpath' dbval of
-		Just m -> return $ moduleLocation m
+		Just m -> return $ view moduleLocation m
 		Nothing -> do
 			mproj <- liftEIO $ locateProject fpath'
 			return $ FileModule fpath' mproj
 	dirty <- liftErrorT $ S.changedModule dbval opts mloc
 	let
-		mtarget = moduleProject_ mloc >>= (`fileTarget` fpath')
-		fileExts = maybe [] (extensionsOpts . infoExtensions) mtarget
+		mtarget = preview (moduleProject . _Just) mloc >>= (`fileTarget` fpath')
+		fileExts = maybe [] (extensionsOpts . view infoExtensions) mtarget
 	when dirty $ scanModule (opts ++ fileExts) mloc
 
 -- | Scan cabal modules
@@ -270,7 +271,7 @@ scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox
 		updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
-		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ moduleName m) docs
+		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view moduleName m) docs
 
 -- | Scan project file
 scanProjectFile :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT String (UpdateDB m) Project
@@ -281,7 +282,7 @@ scanProject :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT Strin
 scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" .= cabal]) $ do
 	proj <- scanProjectFile opts cabal
 	(_, sources) <- liftErrorT $ S.enumProject proj
-	scan (Cache.loadProject $ projectCabal proj) (projectDB proj) sources opts $ \ms -> do
+	scan (Cache.loadProject $ view projectCabal proj) (projectDB proj) sources opts $ \ms -> do
 		scanModules opts ms
 		updater $ return $ fromProject proj
 
@@ -290,11 +291,11 @@ scanDirectory :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ErrorT Str
 scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 	S.ScanContents standSrcs projSrcs sboxes <- runTask "getting list of sources" [] $
 		liftErrorT $ S.enumDirectory dir
-	runTasks [scanProject opts (projectCabal p) | (p, _) <- projSrcs]
+	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks $ map (scanCabal opts) sboxes
 	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
 	where
-		inDir = maybe False (dir `isParent`) . moduleSource . moduleIdLocation
+		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
 scan :: (MonadIO m, MonadCatch m)
@@ -312,9 +313,9 @@ scan :: (MonadIO m, MonadCatch m)
 scan cache' part' mlocs opts act = do
 	dbval <- getCache cache' part'
 	let
-		obsolete = filterDB (\m -> moduleIdLocation m `notElem` map fst mlocs) (const False) dbval
+		obsolete = filterDB (\m -> view moduleIdLocation m `notElem` map fst mlocs) (const False) dbval
 	changed <- runTask "getting list of changed modules" [] $ liftErrorT $ S.changedModules dbval opts mlocs
-	runTask "removing obsolete modules" ["modules" .= map moduleLocation (allModules obsolete)] $ cleaner $ return obsolete
+	runTask "removing obsolete modules" ["modules" .= map (view moduleLocation) (allModules obsolete)] $ cleaner $ return obsolete
 	act changed
 
 -- | Lift errors

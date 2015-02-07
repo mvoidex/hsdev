@@ -4,6 +4,7 @@ module HsDev.Display (
 	Display(..)
 	) where
 
+import Control.Lens (view)
 import Data.Maybe (fromMaybe)
 
 import HsDev.Cabal
@@ -26,7 +27,7 @@ instance Display ModuleLocation where
 	displayType _ = "module"
 
 instance Display Project where
-	display = projectName
+	display = view projectName
 	displayType _ = "project"
 
 instance Display FilePath where

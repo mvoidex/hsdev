@@ -10,6 +10,7 @@ module HsDev.Tools.Base (
 	readParse, parseReads, parseRead
 	) where
 
+import Control.Lens (set)
 import Control.Monad.Error
 import Control.Monad.State
 import Data.Array (assocs)
@@ -69,11 +70,11 @@ inspect :: Monad m => ModuleLocation -> ErrorT String m Inspection -> ErrorT Str
 inspect mloc insp act = lift $ execStateT inspect' (Inspected InspectionNone mloc (Left "not inspected")) where
 	inspect' = runErrorT $ do
 		i <- mapErrorT lift insp
-		modify (\im -> im { inspection = i })
+		modify (set inspection i)
 		v <- mapErrorT lift act
-		modify (\im -> im { inspectionResult = Right v })
+		modify (set inspectionResult (Right v))
 		`catchError`
-		\e -> modify (\im -> im { inspectionResult = Left e })
+		\e -> modify (set inspectionResult (Left e))
 
 type ReadM a = StateT String [] a
 

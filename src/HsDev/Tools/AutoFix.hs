@@ -15,12 +15,13 @@ module HsDev.Tools.AutoFix (
 	) where
 
 import Control.Applicative
+import Control.Lens (view, preview)
 import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)
 
 import Data.Mark hiding (at, Editable(..))
 import HsDev.Symbols (Canonicalize(..))
-import HsDev.Symbols.Location (Location(..), Position(..), moduleSource)
+import HsDev.Symbols.Location
 import HsDev.Tools.Base (matchRx, at)
 import HsDev.Tools.GhcMod
 import HsDev.Util ((.::))
@@ -64,8 +65,8 @@ corrections :: [OutputMessage] -> [Correction]
 corrections = mapMaybe toCorrection where
 	toCorrection :: OutputMessage -> Maybe Correction
 	toCorrection msg = do
-		file <- moduleSource $ locationModule (errorLocation msg)
-		Position l c <- locationPosition (errorLocation msg)
+		file <- preview (locationModule . moduleFile) (errorLocation msg)
+		Position l c <- view locationPosition (errorLocation msg)
 		let
 			pt = Point (pred l) (pred c)
 		findCorrector file pt (errorMessage msg)

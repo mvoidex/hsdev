@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Project (
 	Project(..),
@@ -8,6 +8,13 @@ module HsDev.Project (
 	Extensions(..), withExtensions,
 	infos, inTarget, fileTarget, findSourceDir, sourceDirs,
 
+	projectName, projectPath, projectCabal, projectDescription, projectLibrary, projectExecutables, projectTests,
+	libraryModules, libraryBuildInfo,
+	executableName, executablePath, executableBuildInfo,
+	testName, testEnabled, testBuildInfo,
+	infoDepends, infoLanguage, infoExtensions, infoSourceDirs,
+	extensions, entity,
+
 	-- * Helpers
 	showExtension, flagExtension, extensionFlag,
 	extensionsOpts
@@ -16,6 +23,7 @@ module HsDev.Project (
 import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
+import Control.Lens (makeLenses)
 import Control.Exception
 import Control.Monad.Error
 import Data.Aeson
@@ -39,33 +47,33 @@ import HsDev.Util
 
 -- | Cabal project
 data Project = Project {
-	projectName :: String,
-	projectPath :: FilePath,
-	projectCabal :: FilePath,
-	projectDescription :: Maybe ProjectDescription }
+	_projectName :: String,
+	_projectPath :: FilePath,
+	_projectCabal :: FilePath,
+	_projectDescription :: Maybe ProjectDescription }
 		deriving (Read)
 
 instance NFData Project where
 	rnf (Project n p c _) = rnf n `seq` rnf p `seq` rnf c
 
 instance Eq Project where
-	l == r = projectCabal l == projectCabal r
+	l == r = _projectCabal l == _projectCabal r
 
 instance Ord Project where
-	compare l r = compare (projectName l, projectCabal l) (projectName r, projectCabal r)
+	compare l r = compare (_projectName l, _projectCabal l) (_projectName r, _projectCabal r)
 
 instance Show Project where
 	show p = unlines $ [
-		"project " ++ projectName p,
-		"\tcabal: " ++ projectCabal p,
-		"\tdescription:"] ++ concatMap (map (tab 2) . lines . show) (maybeToList $ projectDescription p)
+		"project " ++ _projectName p,
+		"\tcabal: " ++ _projectCabal p,
+		"\tdescription:"] ++ concatMap (map (tab 2) . lines . show) (maybeToList $ _projectDescription p)
 
 instance ToJSON Project where
 	toJSON p = object [
-		"name" .= projectName p,
-		"path" .= projectPath p,
-		"cabal" .= projectCabal p,
-		"description" .= projectDescription p]
+		"name" .= _projectName p,
+		"path" .= _projectPath p,
+		"cabal" .= _projectCabal p,
+		"description" .= _projectDescription p]
 
 instance FromJSON Project where
 	parseJSON = withObject "project" $ \v -> Project <$>
@@ -75,22 +83,22 @@ instance FromJSON Project where
 		v .:: "description"
 
 data ProjectDescription = ProjectDescription {
-	projectLibrary :: Maybe Library,
-	projectExecutables :: [Executable],
-	projectTests :: [Test] }
+	_projectLibrary :: Maybe Library,
+	_projectExecutables :: [Executable],
+	_projectTests :: [Test] }
 		deriving (Eq, Read)
 
 instance Show ProjectDescription where
 	show pd = unlines $
-		concatMap (lines . show) (maybeToList (projectLibrary pd)) ++
-		concatMap (lines . show) (projectExecutables pd) ++
-		concatMap (lines . show) (projectTests pd)
+		concatMap (lines . show) (maybeToList (_projectLibrary pd)) ++
+		concatMap (lines . show) (_projectExecutables pd) ++
+		concatMap (lines . show) (_projectTests pd)
 
 instance ToJSON ProjectDescription where
 	toJSON d = object [
-		"library" .= projectLibrary d,
-		"executables" .= projectExecutables d,
-		"tests" .= projectTests d]
+		"library" .= _projectLibrary d,
+		"executables" .= _projectExecutables d,
+		"tests" .= _projectTests d]
 
 instance FromJSON ProjectDescription where
 	parseJSON = withObject "project description" $ \v -> ProjectDescription <$>
@@ -103,23 +111,23 @@ class Target a where
 
 -- | Library in project
 data Library = Library {
-	libraryModules :: [[String]],
-	libraryBuildInfo :: Info }
+	_libraryModules :: [[String]],
+	_libraryBuildInfo :: Info }
 		deriving (Eq, Read)
 
 instance Target Library where
-	buildInfo = libraryBuildInfo
+	buildInfo = _libraryBuildInfo
 
 instance Show Library where
 	show l = unlines $
 		["library", "\tmodules:"] ++
-		(map (tab 2 . intercalate ".") $ libraryModules l) ++
-		(map (tab 1) . lines . show $ libraryBuildInfo l)
+		(map (tab 2 . intercalate ".") $ _libraryModules l) ++
+		(map (tab 1) . lines . show $ _libraryBuildInfo l)
 
 instance ToJSON Library where
 	toJSON l = object [
-		"modules" .= fmap (intercalate ".") (libraryModules l),
-		"info" .= libraryBuildInfo l]
+		"modules" .= fmap (intercalate ".") (_libraryModules l),
+		"info" .= _libraryBuildInfo l]
 
 instance FromJSON Library where
 	parseJSON = withObject "library" $ \v -> Library <$> (fmap splitModule <$> v .:: "modules") <*> v .:: "info" where
@@ -128,24 +136,24 @@ instance FromJSON Library where
 
 -- | Executable
 data Executable = Executable {
-	executableName :: String,
-	executablePath :: FilePath,
-	executableBuildInfo :: Info }
+	_executableName :: String,
+	_executablePath :: FilePath,
+	_executableBuildInfo :: Info }
 		deriving (Eq, Read)
 
 instance Target Executable where
-	buildInfo = executableBuildInfo
+	buildInfo = _executableBuildInfo
 
 instance Show Executable where
 	show e = unlines $
-		["executable " ++ executableName e, "\tpath: " ++ executablePath e] ++
-		(map (tab 1) . lines . show $ executableBuildInfo e)
+		["executable " ++ _executableName e, "\tpath: " ++ _executablePath e] ++
+		(map (tab 1) . lines . show $ _executableBuildInfo e)
 
 instance ToJSON Executable where
 	toJSON e = object [
-		"name" .= executableName e,
-		"path" .= executablePath e,
-		"info" .= executableBuildInfo e]
+		"name" .= _executableName e,
+		"path" .= _executablePath e,
+		"info" .= _executableBuildInfo e]
 
 instance FromJSON Executable where
 	parseJSON = withObject "executable" $ \v -> Executable <$>
@@ -155,24 +163,24 @@ instance FromJSON Executable where
 
 -- | Test
 data Test = Test {
-	testName :: String,
-	testEnabled :: Bool,
-	testBuildInfo :: Info }
+	_testName :: String,
+	_testEnabled :: Bool,
+	_testBuildInfo :: Info }
 		deriving (Eq, Read)
 
 instance Target Test where
-	buildInfo = testBuildInfo
+	buildInfo = _testBuildInfo
 
 instance Show Test where
 	show t = unlines $
-		["test " ++ testName t, "\tenabled: " ++ show (testEnabled t)] ++
-		(map (tab 1) . lines . show $ testBuildInfo t)
+		["test " ++ _testName t, "\tenabled: " ++ show (_testEnabled t)] ++
+		(map (tab 1) . lines . show $ _testBuildInfo t)
 
 instance ToJSON Test where
 	toJSON t = object [
-		"name" .= testName t,
-		"enabled" .= testEnabled t,
-		"info" .= testBuildInfo t]
+		"name" .= _testName t,
+		"enabled" .= _testEnabled t,
+		"info" .= _testBuildInfo t]
 
 instance FromJSON Test where
 	parseJSON = withObject "test" $ \v -> Test <$>
@@ -182,52 +190,52 @@ instance FromJSON Test where
 
 -- | Build info
 data Info = Info {
-	infoDepends :: [String],
-	infoLanguage :: Maybe Language,
-	infoExtensions :: [Extension],
-	infoSourceDirs :: [FilePath] }
+	_infoDepends :: [String],
+	_infoLanguage :: Maybe Language,
+	_infoExtensions :: [Extension],
+	_infoSourceDirs :: [FilePath] }
 		deriving (Eq, Read)
 
 instance Show Info where
 	show i = unlines $ lang ++ exts ++ sources where
-		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ infoLanguage i
+		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ _infoLanguage i
 		exts
-			| null (infoExtensions i) = []
-			| otherwise = ["extensions:"] ++ map (tab 1) (map display (infoExtensions i))
+			| null (_infoExtensions i) = []
+			| otherwise = ["_extensions:"] ++ map (tab 1) (map display (_infoExtensions i))
 		sources = ["source-dirs:"] ++
-			(map (tab 1) $ infoSourceDirs i)
+			(map (tab 1) $ _infoSourceDirs i)
 
 instance ToJSON Info where
 	toJSON i = object [
-		"build-depends" .= infoDepends i,
-		"language" .= fmap display (infoLanguage i),
-		"extensions" .= map display (infoExtensions i),
-		"source-dirs" .= infoSourceDirs i]
+		"build-depends" .= _infoDepends i,
+		"language" .= fmap display (_infoLanguage i),
+		"_extensions" .= map display (_infoExtensions i),
+		"source-dirs" .= _infoSourceDirs i]
 
 instance FromJSON Info where
 	parseJSON = withObject "info" $ \v -> Info <$>
 		v .: "build-depends" <*>
 		((v .:: "language") >>= traverse (parseDT "Language")) <*>
-		((v .:: "extensions") >>= traverse (parseDT "Extension")) <*>
+		((v .:: "_extensions") >>= traverse (parseDT "Extension")) <*>
 		v .:: "source-dirs"
 
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
 analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source of
 	ParseOk _ r -> Right ProjectDescription {
-		projectLibrary = fmap toLibrary $ PD.library r,
-		projectExecutables = fmap toExecutable $ PD.executables r,
-		projectTests = fmap toTest $ PD.testSuites r }
+		_projectLibrary = fmap toLibrary $ PD.library r,
+		_projectExecutables = fmap toExecutable $ PD.executables r,
+		_projectTests = fmap toTest $ PD.testSuites r }
 	ParseFailed e -> Left $ "Parse failed: " ++ show e
 	where
 		toLibrary (PD.Library exposeds _ info) = Library (map components exposeds) (toInfo info)
 		toExecutable (PD.Executable name path info) = Executable name path (toInfo info)
 		toTest (PD.TestSuite name _ info enabled) = Test name enabled (toInfo info)
 		toInfo info = Info {
-			infoDepends = map pkgName (PD.targetBuildDepends info),
-			infoLanguage = PD.defaultLanguage info,
-			infoExtensions = PD.defaultExtensions info,
-			infoSourceDirs = PD.hsSourceDirs info }
+			_infoDepends = map pkgName (PD.targetBuildDepends info),
+			_infoLanguage = PD.defaultLanguage info,
+			_infoExtensions = PD.defaultExtensions info,
+			_infoSourceDirs = PD.hsSourceDirs info }
 
 		pkgName :: P.Dependency -> String
 		pkgName (P.Dependency (P.PackageName s) _) = s
@@ -257,36 +265,36 @@ readProject file = do
 	length source `seq` either throwError (return . mkProject) $ analyzeCabal source
 	where
 		mkProject desc = (project file) {
-			projectDescription = Just desc }
+			_projectDescription = Just desc }
 
 -- | Load project description
 loadProject :: Project -> ErrorT String IO Project
 loadProject p
-	| isJust (projectDescription p) = return p
-	| otherwise = readProject (projectCabal p)
+	| isJust (_projectDescription p) = return p
+	| otherwise = readProject (_projectCabal p)
 
 -- | Find project sandbox
 getProjectSandbox :: Project -> IO Cabal
-getProjectSandbox = getSandbox . projectPath
+getProjectSandbox = getSandbox . _projectPath
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
 project file
 	| takeExtension file == ".cabal" = Project {
-		projectName = takeBaseName (takeDirectory file),
-		projectPath = takeDirectory file,
-		projectCabal = file,
-		projectDescription = Nothing }
+		_projectName = takeBaseName (takeDirectory file),
+		_projectPath = takeDirectory file,
+		_projectCabal = file,
+		_projectDescription = Nothing }
 	| otherwise = Project {
-		projectName = takeBaseName file,
-		projectPath = file,
-		projectCabal = file </> (takeBaseName file <.> "cabal"),
-		projectDescription = Nothing }
+		_projectName = takeBaseName file,
+		_projectPath = file,
+		_projectCabal = file </> (takeBaseName file <.> "cabal"),
+		_projectDescription = Nothing }
 
 -- | Entity with project extensions
 data Extensions a = Extensions {
-	extensions :: [Extension],
-	entity :: a }
+	_extensions :: [Extension],
+	_entity :: a }
 		deriving (Eq, Read, Show)
 
 instance Functor Extensions where
@@ -305,35 +313,35 @@ instance Traversable Extensions where
 -- | Extensions for target
 withExtensions :: a -> Info -> Extensions a
 withExtensions x i = Extensions {
-	extensions = infoExtensions i,
-	entity = x }
+	_extensions = _infoExtensions i,
+	_entity = x }
 
 -- | Returns build targets infos
 infos :: ProjectDescription -> [Info]
 infos p =
-	maybe [] (return . libraryBuildInfo) (projectLibrary p) ++
-	map executableBuildInfo (projectExecutables p) ++
-	map testBuildInfo (projectTests p)
+	maybe [] (return . _libraryBuildInfo) (_projectLibrary p) ++
+	map _executableBuildInfo (_projectExecutables p) ++
+	map _testBuildInfo (_projectTests p)
 
 -- | Check if source related to target, source must be relative to project directory
 inTarget :: FilePath -> Info -> Bool
-inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ infoSourceDirs info
+inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ _infoSourceDirs info
 
 -- | Get target for source file
 fileTarget :: Project -> FilePath -> Maybe Info
-fileTarget p f = find (makeRelative (projectPath p) f `inTarget`) $
-	maybe [] infos $ projectDescription p
+fileTarget p f = find (makeRelative (_projectPath p) f `inTarget`) $
+	maybe [] infos $ _projectDescription p
 
 -- | Finds source dir file belongs to
 findSourceDir :: Project -> FilePath -> Maybe FilePath
 findSourceDir p f = do
 	info <- fileTarget p f
-	listToMaybe $ filter (`isParent` f) $ map (projectPath p </>) $ infoSourceDirs info
+	listToMaybe $ filter (`isParent` f) $ map (_projectPath p </>) $ _infoSourceDirs info
 
 -- | Returns source dirs for library, executables and tests
 sourceDirs :: ProjectDescription -> [Extensions FilePath]
 sourceDirs = nub . concatMap dirs . infos where
-	dirs i = map (`withExtensions` i) $ infoSourceDirs i
+	dirs i = map (`withExtensions` i) $ _infoSourceDirs i
 
 parseDT :: Distribution.Text.Text a => String -> String -> Parser a
 parseDT typeName v = maybe err return (simpleParse v) where
@@ -354,3 +362,11 @@ extensionFlag = ("-X" ++)
 -- | Extensions as opts to GHC
 extensionsOpts :: [Extension] -> [String]
 extensionsOpts = map (extensionFlag . showExtension)
+
+makeLenses ''Project
+makeLenses ''ProjectDescription
+makeLenses ''Library
+makeLenses ''Executable
+makeLenses ''Test
+makeLenses ''Info
+makeLenses ''Extensions

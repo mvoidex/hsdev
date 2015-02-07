@@ -5,6 +5,7 @@ module HsDev.Symbols.Class (
 	module HsDev.Symbols.Location
 	) where
 
+import Control.Lens (view)
 import Data.Text (Text)
 
 import HsDev.Symbols.Location
@@ -16,4 +17,4 @@ class Symbol a where
 	symbolLocation :: a -> Location
 
 symbolModuleLocation :: Symbol a => a -> ModuleLocation
-symbolModuleLocation = locationModule . symbolLocation
+symbolModuleLocation = view locationModule . symbolLocation

@@ -52,6 +52,7 @@ library
     HsDev.Symbols.Location
     HsDev.Symbols.Documented
     HsDev.Symbols.Resolve
+    HsDev.Symbols.Types
     HsDev.Symbols.Util
     HsDev.Tools.AutoFix
     HsDev.Tools.Base

@@ -6,6 +6,7 @@ module HsDev.Client.Commands (
 
 import Control.Applicative
 import Control.Arrow
+import Control.Lens (view, over, preview, _Just)
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Catch (try, SomeException(..))
@@ -242,19 +243,18 @@ commands = [
 				updateData (ResultDeclaration d) = commandError "Can't insert declaration" ["declaration" .= d]
 				updateData (ResultModuleDeclaration md) = do
 					let
-						ModuleId mname mloc = declarationModuleId md
+						ModuleId mname mloc = view declarationModuleId md
 						defMod = Module mname Nothing mloc mempty mempty mempty
 						defInspMod = Inspected InspectionNone mloc (Right defMod)
 						dbmod = maybe
 							defInspMod
-							(\i -> i { inspectionResult = inspectionResult i <|> (Right defMod) }) $
+							(over inspectionResult (<|> Right defMod)) $
 							M.lookup mloc (databaseModules dbval)
-						updatedMod = dbmod {
-							inspectionResult = fmap (addDeclaration $ moduleDeclaration md) (inspectionResult dbmod) }
+						updatedMod = over inspectionResult (fmap $ addDeclaration (view moduleDeclaration md)) dbmod
 					DB.update (dbVar copts) $ return $ fromModule updatedMod
 				updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
 					DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone mloc (Right $ Module mname Nothing mloc mempty mempty mempty)
-				updateData (ResultModule m) = DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone (moduleLocation m) (Right m)
+				updateData (ResultModule m) = DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone (view moduleLocation m) (Right m)
 				updateData (ResultInspectedModule m) = DB.update (dbVar copts) $ return $ fromModule m
 				updateData (ResultProject p) = DB.update (dbVar copts) $ return $ fromProject p
 				updateData (ResultList l) = mapM_ updateData l
@@ -283,13 +283,13 @@ commands = [
 			dbval <- getDb copts
 			let
 				fileMap = M.fromList $ mapMaybe toPair $
-					selectModules (byFile . moduleId) dbval
+					selectModules (byFile . view moduleId) dbval
 
 			(errors, filteredMods) <- liftM partitionEithers $ mapM runErrorT $ concat [
 				[do
 					p' <- findProject copts p
 					return $ M.fromList $ mapMaybe toPair $
-						selectModules (inProject p' . moduleId) dbval |
+						selectModules (inProject p' . view moduleId) dbval |
 					p <- listArg "project" as],
 				[do
 					f' <- findPath copts f
@@ -309,8 +309,9 @@ commands = [
 			if not (null errors)
 				then commandError (intercalate ", " errors) []
 				else updateProcess copts as [Update.runTask "rescanning modules" [] $ do
-					needRescan <- Update.liftErrorT $ filterM (changedModule dbval (listArg "ghc" as) . inspectedId) rescanMods
-					Update.scanModules (listArg "ghc" as) (map (inspectedId &&& inspectionOpts . inspection) needRescan)]
+					needRescan <- Update.liftErrorT $ filterM (changedModule dbval (listArg "ghc" as) . view inspectedId) rescanMods
+					Update.scanModules (listArg "ghc" as)
+						(map (view inspectedId &&& fromMaybe [] . preview (inspection . inspectionOpts)) needRescan)]
 
 		-- | Remove data
 		remove' :: [String] -> Opts String -> CommandActionT [ModuleId]
@@ -328,7 +329,7 @@ commands = [
 					fmap inPackage (arg "package" as),
 					fmap inVersion (arg "version" as),
 					fmap inCabal cabal]
-				toClean = newest as $ filter (allOf filters . moduleId) (allModules dbval)
+				toClean = newest as $ filter (allOf filters . view moduleId) (allModules dbval)
 				action
 					| null filters && cleanAll = liftIO $ do
 						DB.modifyAsync (dbVar copts) DB.Clear
@@ -337,7 +338,7 @@ commands = [
 					| cleanAll = commandError "--all flag can't be set with filters" []
 					| otherwise = liftIO $ do
 						DB.modifyAsync (dbVar copts) $ DB.Remove $ mconcat $ map (fromModule . getInspected dbval) toClean
-						return $ map moduleId toClean
+						return $ map (view moduleId) toClean
 			action
 
 		-- | List modules
@@ -358,17 +359,17 @@ commands = [
 							if null packages && null cabals then Nothing
 								else Just (\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals))]
 						else Nothing,
-					fmap (\n m -> fromString n == moduleIdName m) $ arg "module" as,
+					fmap (\n m -> fromString n == view moduleIdName m) $ arg "module" as,
 					if flagSet "src" as then Just byFile else Nothing,
 					if flagSet "stand" as then Just standalone else Nothing]
-			return $ map moduleId $ newest as $ selectModules (filters . moduleId) dbval
+			return $ map (view moduleId) $ newest as $ selectModules (filters . view moduleId) dbval
 
 		-- | List packages
 		listPackages' :: [String] -> Opts String -> CommandActionT [ModulePackage]
 		listPackages' _ _ copts = do
 			dbval <- getDb copts
 			return $ nub $ sort $
-				mapMaybe (moduleCabalPackage . moduleLocation) $
+				mapMaybe (preview (moduleLocation . modulePackage . _Just)) $
 				allModules dbval
 
 		-- | List projects
@@ -379,7 +380,7 @@ commands = [
 
 		-- | List sandboxes
 		listSandboxes' :: [String] -> Opts String -> CommandActionT [Cabal]
-		listSandboxes' _ _ copts = (nub . sort . mapMaybe (cabalOf . moduleId) . allModules) <$> getDb copts
+		listSandboxes' _ _ copts = (nub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
 
 		-- | Get symbol info
 		symbol' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
@@ -427,14 +428,14 @@ commands = [
 					fmap inVersion (arg "version" as),
 					if flagSet "src" as then Just byFile else Nothing]
 			rs <- mapErrorT (fmap $ strMsg +++ id) $
-				(newest as . filter (filters . moduleId)) <$> maybe
+				(newest as . filter (filters . view moduleId)) <$> maybe
 					(return $ allModules dbval)
 					(mapErrorStr . findModule dbval)
 					(arg "module" as)
 			case rs of
 				[] -> commandError "Module not found" []
 				[m] -> return m
-				ms' -> commandError "Ambiguous modules" ["modules" .= (map moduleId ms')]
+				ms' -> commandError "Ambiguous modules" ["modules" .= (map (view moduleId) ms')]
 
 		-- | Resolve module scope
 		resolve' :: [String] -> Opts String -> CommandActionT Module
@@ -450,7 +451,7 @@ commands = [
 					fmap inModule (arg "module" as),
 					Just byFile]
 			rs <- mapErrorT (fmap $ strMsg +++ id) $
-				(newest as . filter (filters . moduleId)) <$> maybe
+				(newest as . filter (filters . view moduleId)) <$> maybe
 					(return $ allModules dbval)
 					(mapErrorStr . findModule dbval)
 					(arg "module" as)
@@ -460,7 +461,7 @@ commands = [
 			case rs of
 				[] -> commandError "Module not found" []
 				[m] -> return $ getScope $ resolveOne cabaldb m
-				ms' -> commandError "Ambiguous modules" ["modules" .= (map moduleId ms')]
+				ms' -> commandError "Ambiguous modules" ["modules" .= (map (view moduleId) ms')]
 
 		-- | Get project info
 		project' :: [String] -> Opts String -> CommandActionT Project
@@ -497,7 +498,7 @@ commands = [
 		scopeModules' [] as copts = do
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			liftM (map moduleId) $ mapErrorStr $ scopeModules dbval cabal srcFile
+			liftM (map (view moduleId)) $ mapErrorStr $ scopeModules dbval cabal srcFile
 		scopeModules' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Get declarations accessible from module
@@ -748,7 +749,7 @@ findProject copts proj = do
 	let
 		resultProj =
 			M.lookup proj' (databaseProjects db') <|>
-			find ((== proj) . projectName) (M.elems $ databaseProjects db')
+			find ((== proj) . view projectName) (M.elems $ databaseProjects db')
 	maybe (throwError $ strMsg $ "Projects " ++ proj ++ " not found") return resultProj
 	where
 		addCabal p
@@ -766,7 +767,7 @@ findDep copts depName = do
 	src <- if takeExtension depName == ".hs"
 		then liftM Just (findPath copts depName)
 		else return Nothing
-	sbox <- liftIO $ searchSandbox $ projectPath proj
+	sbox <- liftIO $ searchSandbox $ view projectPath proj
 	return (proj, src, sbox)
 
 -- | Check if project or source depends from this module
@@ -778,7 +779,7 @@ inDeps (proj, src, cabal) = liftM2 (&&) (restrictCabal cabal) deps' where
 
 -- | Supply module with its source file path if any
 toPair :: Module -> Maybe (FilePath, Module)
-toPair m = case moduleLocation m of
+toPair m = case view moduleLocation m of
 	FileModule f _ -> Just (f, m)
 	_ -> Nothing
 
@@ -845,7 +846,7 @@ findMatch as = case arg "find" as of
 	Nothing -> id
 	Just str -> filter (match' str)
 	where
-		match' str m = fromString str `T.isInfixOf` declarationName (moduleDeclaration m)
+		match' str m = fromString str `T.isInfixOf` view (moduleDeclaration . declarationName) m
 
 -- | Filter declarations with prefix match
 prefMatch :: Opts String -> [ModuleDeclaration] -> [ModuleDeclaration]
@@ -854,5 +855,5 @@ prefMatch as = case fmap splitIdentifier (arg "prefix" as) of
 	Just (qname, pref) -> filter (match' qname pref)
 	where
 		match' qname pref m =
-			fromString pref `T.isPrefixOf` declarationName (moduleDeclaration m) &&
-			maybe True (== moduleIdName (declarationModuleId m)) (fmap fromString qname)
+			fromString pref `T.isPrefixOf` view (moduleDeclaration . declarationName) m &&
+			maybe True (view (declarationModuleId . moduleIdName) m ==) (fmap fromString qname)

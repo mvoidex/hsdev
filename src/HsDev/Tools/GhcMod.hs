@@ -30,6 +30,7 @@ import Control.Arrow
 import Control.Concurrent
 import Control.DeepSeq
 import Control.Exception (SomeException(..))
+import Control.Lens (view, preview, set, _Just, over)
 import Control.Monad.Error
 import Control.Monad.Catch (MonadThrow(..), MonadCatch(..))
 import Control.Monad.Reader
@@ -69,27 +70,27 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 	(GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.qualified = True, GhcMod.ghcUserOptions = packageOpt mpackage ++ opts }) $ do
 		ds <- (mapMaybe parseDecl . lines) <$> GhcMod.browse mpkgname
 		return Module {
-			moduleName = fromString mname,
-			moduleDocs = Nothing,
-			moduleLocation = thisLoc,
-			moduleExports = Just $ map (ExportName Nothing . declarationName) ds,
-			moduleImports = [import_ iname |
-				iname <- nub (mapMaybe definedModule ds),
+			_moduleName = fromString mname,
+			_moduleDocs = Nothing,
+			_moduleLocation = thisLoc,
+			_moduleExports = Just [ExportName Nothing (view declarationName d) ExportNothing | d <- ds],
+			_moduleImports = [import_ iname |
+				iname <- nub (mapMaybe (preview definedModule) ds),
 				iname /= fromString mname],
-			moduleDeclarations = sortDeclarations ds }
+			_moduleDeclarations = sortDeclarations ds }
 	where
-		mpkgname = maybe mname (\p -> packageName p ++ ":" ++ mname) mpackage
-		thisLoc = moduleIdLocation $ mloc mname
+		mpkgname = maybe mname (\p -> view packageName p ++ ":" ++ mname) mpackage
+		thisLoc = view moduleIdLocation $ mloc mname
 		mloc mname' = ModuleId (fromString mname') $ CabalModule cabal Nothing mname'
 		parseDecl s = do
 			groups <- matchRx rx s
 			let
 				rdecl = decl (fromString $ groups `at` 3) $ case groups 5 of
-					Nothing -> Function (Just $ fromString $ groups `at` 4) []
+					Nothing -> Function (Just $ fromString $ groups `at` 4) [] Nothing
 					Just k -> declarationTypeCtor k $
-						TypeInfo Nothing (maybe [] (map fromString . words) $ groups 7) Nothing
+						TypeInfo Nothing (maybe [] (map fromString . words) $ groups 7) Nothing []
 			return $ rdecl `definedIn` mloc (init $ groups `at` 1)
-		definedModule = fmap moduleIdName . declarationDefined
+		definedModule = declarationDefined . _Just . moduleIdName
 		-- groups:
 		-- 1: "<module>."
 		-- 3: "<name>"
@@ -120,23 +121,23 @@ info opts cabal file sname = do
 			maybe (throwError $ strMsg $ "Can't parse info: '" ++ sname ++ "'") return $
 			parseData s `mplus` parseFunction s
 		recalcDeclTabs :: String -> Declaration -> Declaration
-		recalcDeclTabs fstr d = d { declarationPosition = fmap (recalcTabs fstr) (declarationPosition d) }
+		recalcDeclTabs fstr = over (declarationPosition . _Just) (recalcTabs fstr)
 		parseFunction s = do
 			groups <- matchRx (sname ++ "\\s+::\\s+(.*?)(\\s+-- Defined (at (.*)|in `(.*)'))?$") s
-			return (decl (fromString sname) (Function (Just $ fromString $ groups `at` 1) [])) {
-				declarationDefined = unnamedModuleId <$>
+			return (decl (fromString sname) (Function (Just $ fromString $ groups `at` 1) [] Nothing)) {
+				_declarationDefined = unnamedModuleId <$>
 					((groups 4 >>= parseSrc) <|> (mkMod <$> groups 5)),
-				declarationPosition = groups 4 >>= parsePos }
+				_declarationPosition = groups 4 >>= parsePos }
 		parseData s = do
 			groups <- matchRx "(newtype|type|data)\\s+((.*)=>\\s+)?(\\S+)\\s+((\\w+\\s+)*)=(\\s*(.*)\\s+-- Defined (at (.*)|in `(.*)'))?" s
 			let
 				args = maybe [] (map fromString . words) $ groups 5
 				ctx = fmap (fromString . trim) $ groups 3
 				def = fmap fromString $ groups 8
-			return (decl (fromString sname) (declarationTypeCtor (groups `at` 1) $ TypeInfo ctx args def)) {
-				declarationDefined = unnamedModuleId <$>
+			return (decl (fromString sname) (declarationTypeCtor (groups `at` 1) $ TypeInfo ctx args def [])) {
+				_declarationDefined = unnamedModuleId <$>
 					((groups 10 >>= parseSrc) <|> (mkMod <$> groups 11)),
-				declarationPosition = groups 10 >>= parsePos }
+				_declarationPosition = groups 10 >>= parsePos }
 		parseSrc src = case splitRx ":(?=\\d)" src of
 			[srcFile, _, _] -> Just $ FileModule srcFile Nothing
 			_ -> Nothing
@@ -229,8 +230,8 @@ parseOutputMessage s = do
 	groups <- matchRx "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
 	return OutputMessage {
 		errorLocation = Location {
-			locationModule = FileModule (normalise (groups `at` 1)) Nothing,
-			locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
+			_locationModule = FileModule (normalise (groups `at` 1)) Nothing,
+			_locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
 		errorLevel = if groups 5 == Just "Warning" then WarningMessage else ErrorMessage,
 		errorMessage = nullToNL (groups `at` 6) }
 
@@ -240,10 +241,10 @@ recalcOutputMessageTabs fileCts msg = msg {
 	where
 		recalc' :: Location -> Location
 		recalc' loc = fromMaybe loc $ do
-			pos <- locationPosition loc
-			src <- moduleSource (locationModule loc)
+			pos <- view locationPosition loc
+			src <- preview (locationModule . moduleFile) loc
 			cts <- lookup src fileCts
-			return loc { locationPosition = Just (recalcTabs cts pos) }
+			return $ set locationPosition (Just $ recalcTabs cts pos) loc
 
 -- | Replace NULL with newline
 nullToNL :: String -> String
@@ -274,7 +275,7 @@ locateGhcModEnv f = do
 	maybe (liftM Right $ getSandbox f) (return . Left) mproj
 
 ghcModEnvPath :: FilePath -> Either Project Cabal -> FilePath
-ghcModEnvPath defaultPath = either projectPath (fromMaybe defaultPath . sandbox)
+ghcModEnvPath defaultPath = either (view projectPath) (fromMaybe defaultPath . sandbox)
 
 -- | Create ghc-mod worker for project or for sandbox
 ghcModWorker :: Either Project Cabal -> IO (Worker (GhcModT IO))

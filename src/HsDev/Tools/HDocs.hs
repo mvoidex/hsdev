@@ -7,6 +7,7 @@ module HsDev.Tools.HDocs (
 	) where
 
 import Control.Exception
+import Control.Lens (set, view, over)
 import Control.Monad ()
 import Control.Monad.Error
 
@@ -36,14 +37,14 @@ hdocsCabal cabal opts = liftM (M.map HDocs.formatDocs) $ HDocs.installedDocs (ca
 
 -- | Set docs for module
 setDocs :: Map String String -> Module -> Module
-setDocs d m = m { moduleDeclarations = map setDoc $ moduleDeclarations m } where
-	setDoc decl' = decl' { declarationDocs = M.lookup (declarationName decl') d' }
+setDocs d = over moduleDeclarations (map setDoc) where
+	setDoc decl' = set declarationDocs (M.lookup (view declarationName decl') d') decl'
 	d' = M.mapKeys fromString . M.map fromString $ d
 
 -- | Load docs for module
 loadDocs :: [String] -> Module -> IO Module
 loadDocs opts m = do
-	d <- hdocs (moduleLocation m) opts
+	d <- hdocs (view moduleLocation m) opts
 	return $ setDocs d m
 
 hdocsProcess :: String -> [String] -> IO (Maybe (Map String String))

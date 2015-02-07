@@ -10,6 +10,7 @@ module HsDev.Cache (
 	) where
 
 import Control.DeepSeq (force)
+import Control.Lens (view)
 import Data.Aeson (eitherDecode)
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BS
@@ -32,7 +33,7 @@ cabalCache (Sandbox p) = escapePath p <.> "json"
 
 -- | Name of cache for projects
 projectCache :: Project -> FilePath
-projectCache p = (escapePath . projectPath $ p) <.> "json"
+projectCache p = (escapePath . view projectPath $ p) <.> "json"
 
 -- | Name of cache for standalone files
 standaloneCache :: FilePath

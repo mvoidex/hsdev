@@ -16,6 +16,7 @@ module HsDev.Database (
 	) where
 
 import Control.Applicative
+import Control.Lens (set, view)
 import Control.Monad (msum, join)
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
@@ -47,8 +48,7 @@ instance Group Database where
 		databaseModules = databaseModules new `M.union` databaseModules old,
 		databaseProjects = M.unionWith mergeProject (databaseProjects new) (databaseProjects old) }
 		where
-			mergeProject pl pr = pl {
-				projectDescription = msum [projectDescription pl, projectDescription pr] }
+			mergeProject pl pr = set projectDescription (msum [view projectDescription pl, view projectDescription pr]) pl
 	sub old new = Database {
 		databaseModules = databaseModules old `M.difference` databaseModules new,
 		databaseProjects = databaseProjects old `M.difference` databaseProjects new }
@@ -68,8 +68,8 @@ instance FromJSON Database where
 		((M.unions . map mkModule) <$> v .:: "modules") <*>
 		((M.unions . map mkProject) <$> v .:: "projects")
 		where
-			mkModule m = M.singleton (inspectedId m) m
-			mkProject p = M.singleton (projectCabal p) p
+			mkModule m = M.singleton (view inspectedId m) m
+			mkProject p = M.singleton (view projectCabal p) p
 
 -- | Database intersection, prefers first database data
 databaseIntersection :: Database -> Database -> Database
@@ -88,7 +88,7 @@ databaseLocals db = db {
 
 -- | All modules
 allModules :: Database -> [Module]
-allModules = rights . map inspectionResult . M.elems . databaseModules
+allModules = rights . map (view inspectionResult) . M.elems . databaseModules
 
 -- | All declarations
 allDeclarations :: Database -> [ModuleDeclaration]
@@ -99,22 +99,22 @@ allDeclarations db = do
 -- | Make database from module
 fromModule :: InspectedModule -> Database
 fromModule m = zero {
-	databaseModules = M.singleton (inspectedId m) m }
+	databaseModules = M.singleton (view inspectedId m) m }
 
 -- | Make database from project
 fromProject :: Project -> Database
 fromProject p = zero {
-	databaseProjects = M.singleton (projectCabal p) p }
+	databaseProjects = M.singleton (view projectCabal p) p }
 
 -- | Filter database by predicate
 filterDB :: (ModuleId -> Bool) -> (Project -> Bool) -> Database -> Database
 filterDB m p db = mempty {
-	databaseModules = M.filter (either (const False) (m . moduleId) . inspectionResult) (databaseModules db),
+	databaseModules = M.filter (either (const False) (m . view moduleId) . view inspectionResult) (databaseModules db),
 	databaseProjects = M.filter p (databaseProjects db) }
 
 -- | Project database
 projectDB :: Project -> Database -> Database
-projectDB proj = filterDB (inProject proj) (((==) `on` projectCabal) proj)
+projectDB proj = filterDB (inProject proj) (((==) `on` view projectCabal) proj)
 
 -- | Cabal database
 cabalDB :: Cabal -> Database -> Database
@@ -137,19 +137,19 @@ selectDeclarations p = filter p . allDeclarations
 lookupModule :: ModuleLocation -> Database -> Maybe Module
 lookupModule mloc db = do
 	m <- M.lookup mloc $ databaseModules db
-	either (const Nothing) Just $ inspectionResult m
+	either (const Nothing) Just $ view inspectionResult m
 
 -- | Lookup module by its source file
 lookupFile :: FilePath -> Database -> Maybe Module
-lookupFile f = listToMaybe . selectModules (inFile f . moduleId)
+lookupFile f = listToMaybe . selectModules (inFile f . view moduleId)
 
 -- | Refine project
 refineProject :: Database -> Project -> Maybe Project
-refineProject db proj = M.lookup (projectCabal proj) $ databaseProjects db
+refineProject db proj = M.lookup (view projectCabal proj) $ databaseProjects db
 
 -- | Get inspected module
 getInspected :: Database -> Module -> InspectedModule
-getInspected db m = fromMaybe err $ M.lookup (moduleLocation m) $ databaseModules db where
+getInspected db m = fromMaybe err $ M.lookup (view moduleLocation m) $ databaseModules db where
 	err = error "Impossible happened: getInspected"
 
 -- | Append database
@@ -210,7 +210,7 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 		"Different module cabals"
 		(nub <$> mapM getCabal (allModules db))
 		where
-			getCabal m = case moduleLocation m of
+			getCabal m = case view moduleLocation m of
 				CabalModule c _ _ -> Right c
 				_ -> Left "Module have no cabal"
 	keyProj :: Database -> Either String FilePath
@@ -235,6 +235,6 @@ merge :: Structured -> Database
 merge (Structured cs ps fs) = mconcat $ M.elems cs ++ M.elems ps ++ [fs]
 
 modCabal :: Module -> Maybe Cabal
-modCabal m = case moduleLocation m of
+modCabal m = case view moduleLocation m of
 	CabalModule c _ _ -> Just c
 	_ -> Nothing

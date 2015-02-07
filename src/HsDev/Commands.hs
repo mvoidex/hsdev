@@ -19,6 +19,7 @@ module HsDev.Commands (
 	) where
 
 import Control.Applicative
+import Control.Lens (view, set, each)
 import Control.Monad.Error
 import Data.List
 import Data.Maybe
@@ -41,14 +42,14 @@ findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
 findDeclaration db ident = return $ selectDeclarations checkName db where
 	checkName :: ModuleDeclaration -> Bool
 	checkName m =
-		(declarationName (moduleDeclaration m) == fromString iname) &&
-		(maybe True ((moduleIdName (declarationModuleId m) ==) . fromString) qname)
+		(view (moduleDeclaration . declarationName) m == fromString iname) &&
+		(maybe True ((view (declarationModuleId . moduleIdName) m ==) . fromString) qname)
 
 	(qname, iname) = splitIdentifier ident
 
 -- | Find module by name
 findModule :: Database -> String -> ErrorT String IO [Module]
-findModule db mname = return $ selectModules ((== fromString mname) . moduleName) db
+findModule db mname = return $ selectModules ((== fromString mname) . view moduleName) db
 
 -- | Find module in file
 fileModule :: Database -> FilePath -> ErrorT String IO Module
@@ -59,7 +60,7 @@ fileModule db src = do
 -- | Find project of module
 getProject :: Database -> Project -> ErrorT String IO Project
 getProject db p = do
-	p' <- liftE $ canonicalizePath $ projectCabal p
+	p' <- liftE $ canonicalizePath $ view projectCabal p
 	maybe (throwError $ "Project " ++ p' ++ " not found") return $
 		M.lookup p' $ databaseProjects db
 
@@ -81,26 +82,26 @@ whois :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDecl
 whois db cabal file ident = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
-		newestPackage $ filter (checkDecl . moduleDeclaration) $
+		newestPackage $ filter (checkDecl . view moduleDeclaration) $
 		moduleModuleDeclarations $ scopeModule $
 		resolveOne (fileDeps file cabal mproj db) $
 		moduleLocals mthis
 	where
 		(qname, iname) = splitIdentifier ident
-		checkDecl d = fmap fromString qname `elem` scopes d && declarationName d == fromString iname
+		checkDecl d = fmap fromString qname `elem` scopes d && view declarationName d == fromString iname
 
 -- | Accessible modules
 scopeModules :: Database -> Cabal -> FilePath -> ErrorT String IO [Module]
 scopeModules db cabal file = do
 	(file', mthis, mproj) <- fileCtxMaybe db file
 	newestPackage <$> case mproj of
-		Nothing -> return $ maybe id (:) mthis $ selectModules (inCabal cabal . moduleId) db
+		Nothing -> return $ maybe id (:) mthis $ selectModules (inCabal cabal . view moduleId) db
 		Just proj -> let deps' = deps file' proj in
-			return $ concatMap (\p -> selectModules (p . moduleId) db) [
+			return $ concatMap (\p -> selectModules (p . view moduleId) db) [
 				inProject proj,
 				\m -> any (`inPackage` m) deps']
 	where
-		deps f p = maybe [] infoDepends $ fileTarget p f
+		deps f p = maybe [] (view infoDepends) $ fileTarget p f
 
 -- | Symbols in scope
 scope :: Database -> Cabal -> FilePath -> Bool -> ErrorT String IO [ModuleDeclaration]
@@ -114,21 +115,20 @@ completions :: Database -> Cabal -> FilePath -> String -> Bool -> ErrorT String 
 completions db cabal file prefix wide = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
-		newestPackage $ filter (checkDecl . moduleDeclaration) $
+		newestPackage $ filter (checkDecl . view moduleDeclaration) $
 		moduleModuleDeclarations $ scopeModule $
 		resolveOne (fileDeps file cabal mproj db) $
 		dropImportLists mthis
 	where
 		(qname, iname) = splitIdentifier prefix
-		checkDecl d = fmap fromString qname `elem` scopes d && fromString iname `T.isPrefixOf` declarationName d
+		checkDecl d = fmap fromString qname `elem` scopes d && fromString iname `T.isPrefixOf` view declarationName d
 		dropImportLists m
-			| wide = m { moduleImports = map dropList (moduleImports m) }
+			| wide = set (moduleImports . each . importList) Nothing m
 			| otherwise = m
-		dropList i = i { importList = Nothing }
 
 -- | Module completions
 moduleCompletions :: Database -> [Module] -> String -> ErrorT String IO [String]
-moduleCompletions _ ms prefix = return $ map T.unpack $ nub $ completions' $ map moduleName ms where
+moduleCompletions _ ms prefix = return $ map T.unpack $ nub $ completions' $ map (view moduleName) ms where
 	completions' = mapMaybe getNext where
 		getNext m
 			| fromString prefix `T.isPrefixOf` m = listToMaybe $ map snd $ dropWhile (uncurry (==)) $ zip (T.split (== '.') $ fromString prefix) (T.split (== '.') m)
@@ -136,11 +136,11 @@ moduleCompletions _ ms prefix = return $ map T.unpack $ nub $ completions' $ map
 
 -- | Check module
 checkModule :: (ModuleId -> Bool) -> (ModuleDeclaration -> Bool)
-checkModule = (. declarationModuleId)
+checkModule = (. view declarationModuleId)
 
 -- | Check declaration
 checkDeclaration :: (Declaration -> Bool) -> (ModuleDeclaration -> Bool)
-checkDeclaration = (. moduleDeclaration)
+checkDeclaration = (. view moduleDeclaration)
 
 -- | Allow only selected cabal sandbox
 restrictCabal :: Cabal -> ModuleId -> Bool
@@ -148,8 +148,8 @@ restrictCabal cabal m = inCabal cabal m || not (byCabal m)
 
 -- | Check whether module is visible from source file
 visibleFrom :: Maybe Project -> Module -> ModuleId -> Bool
-visibleFrom (Just p) this m = visible p (moduleId this) m
-visibleFrom Nothing this m = (moduleId this) == m || byCabal m
+visibleFrom (Just p) this m = visible p (view moduleId this) m
+visibleFrom Nothing this m = (view moduleId this) == m || byCabal m
 
 -- | Split identifier into module name and identifier itself
 splitIdentifier :: String -> (Maybe String, String)
@@ -166,7 +166,7 @@ fileCtx :: Database -> FilePath -> ErrorT String IO (FilePath, Module, Maybe Pro
 fileCtx db file = do
 	file' <- liftE $ canonicalizePath file
 	mthis <- fileModule db file'
-	mproj <- traverse (getProject db) $ projectOf $ moduleId mthis
+	mproj <- traverse (getProject db) $ projectOf $ view moduleId mthis
 	return (file', mthis, mproj)
 
 -- | Try get context file
