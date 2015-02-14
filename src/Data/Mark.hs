@@ -1,7 +1,7 @@
-{-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances, RankNTypes #-}
+{-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances, RankNTypes, MultiParamTypeClasses, FunctionalDependencies #-}
 
 module Data.Mark (
-	Point(..), (.-.), (.+.), Size, linesSize, stringSize,
+	Point(..), point, (.-.), (.+.), till, Size, linesSize, stringSize,
 	Region(..), regionLines, emptyRegion,
 	line,
 	region, regionSize, at,
@@ -16,8 +16,8 @@ module Data.Mark (
 	-- * Editable class
 	Editable(..), measure,
 	-- * Actions
-	erase, write, replace,
-	Replace(..), eraser, writer, replacer, run
+	EditAction(..),
+	Replace(..), run
 	) where
 
 import Prelude hiding (splitAt, length, lines, unlines)
@@ -65,6 +65,12 @@ instance FromJSON Point where
 	| l == 0 = Point bl (c + bc)
 	| otherwise = Point (l + bl) c
 
+point :: Int -> Int -> Point
+point l c
+	| l < 0 = error "Line can't be less then zero"
+	| c < 0 = error "Column can't be less then zero"
+	| otherwise = Point l c
+
 -- | Region from "Point" to "Point"
 data Region = Region {
 	regionFrom :: Point,
@@ -76,6 +82,10 @@ type Size = Point
 instance Monoid Size where
 	mempty = Point 0 0
 	l `mappend` r = r .+. l
+
+-- | Region from one @Point@ to another
+till :: Point -> Point -> Region
+l `till` r = Region (min l r) (max l r)
 
 -- | Distance in @n@ lines
 linesSize :: Int -> Point
@@ -269,43 +279,40 @@ measure :: Editable s => Contents s -> Size
 measure [] = error "Invalid argument"
 measure cts = Point (pred $ List.length cts) (length $ last cts)
 
--- | Erase data
-erase :: Editable s => Region -> EditM s ()
-erase rgn = editRegion rgn (\r -> Edit (erase' r) (cut r)) where
-	erase' :: Editable a => Region -> Contents a -> Contents a
-	erase' rgn' cts = fst (splitCts (regionFrom rgn') cts) `concatCts` snd (splitCts (regionTo rgn') cts)
+class EditAction e where
+	erase :: Editable s => Region -> e s ()
+	write :: Editable s => Point -> s -> e s ()
+	replace :: Editable s => Region -> s -> e s ()
 
--- | Paste data at position
-write :: Editable s => Point -> Contents s -> EditM s ()
-write _ ([]) = error "Invalid argument"
-write pt cts = editRegion (pt `regionSize` measure cts) (\r -> Edit (write' r) (insert r)) where
-	write' rgn' origin = prefix (before' `concatCts` suffix cts) `concatCts` after' where
-		(before', after') = splitCts (regionFrom rgn') origin
+instance EditAction EditM where
+	erase rgn = editRegion rgn (\r -> Edit (erase' r) (cut r)) where
+		erase' :: Editable a => Region -> Contents a -> Contents a
+		erase' rgn' cts = fst (splitCts (regionFrom rgn') cts) `concatCts` snd (splitCts (regionTo rgn') cts)
 
--- | Replace data with
-replace :: Editable s => Region -> Contents s -> EditM s ()
-replace rgn cts = erase rgn >> write (regionFrom rgn) cts
+	write pt cts = editRegion (pt `regionSize` measure cts') (\r -> Edit (write' r) (insert r)) where
+		cts' = lines cts
+		write' rgn' origin = prefix (before' `concatCts` suffix cts') `concatCts` after' where
+			(before', after') = splitCts (regionFrom rgn') origin
 
--- | Replace action
-data Replace s = Replace {
+	replace rgn cts = erase rgn >> write (regionFrom rgn) cts
+
+-- | Serializable replace action
+data Replace s a = Replace {
 	replaceRegion :: Region,
-	replaceWith :: Contents s }
+	replaceWith :: s }
 		deriving (Eq, Read, Show)
 
-instance (Editable s, ToJSON s) => ToJSON (Replace s) where
-	toJSON (Replace e c) = object ["region" .= e, "contents" .= unlines c]
+instance (Editable s, ToJSON s) => ToJSON (Replace s a) where
+	toJSON (Replace e c) = object ["region" .= e, "contents" .= c]
 
-instance (Editable s, FromJSON s) => FromJSON (Replace s) where
-	parseJSON = withObject "edit" $ \v -> Replace <$> v .:: "region" <*> (lines <$> v .:: "contents")
+instance (Editable s, FromJSON s) => FromJSON (Replace s a) where
+	parseJSON = withObject "edit" $ \v -> Replace <$> v .:: "region" <*> v .:: "contents"
 
-eraser :: Monoid s => Region -> Replace s
-eraser rgn = Replace rgn [mempty]
+instance EditAction Replace where
+	erase rgn = Replace rgn mempty
+	write pt cts = Replace (region pt pt) cts
+	replace rgn cts = Replace rgn cts
 
-writer :: Editable s => Point -> s -> Replace s
-writer pt cts = Replace (region pt pt) $ lines cts
-
-replacer :: Editable s => Region -> s -> Replace s
-replacer rgn cts = Replace rgn (lines cts)
-
-run :: Editable s => [Replace s] -> EditM s ()
+-- | Run replace actions to get monadic action
+run :: Editable s => [Replace s ()] -> EditM s ()
 run = mapM_ (uncurry replace . (replaceRegion &&& replaceWith))

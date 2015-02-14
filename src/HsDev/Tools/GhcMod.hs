@@ -141,7 +141,6 @@ info opts cabal file sname = do
 		parseSrc src = case splitRx ":(?=\\d)" src of
 			[srcFile, _, _] -> Just $ FileModule srcFile Nothing
 			_ -> Nothing
-		-- FIXME: Position is returned by ghc-mod and it interprets tab as several spaces instead of one symbol
 		parsePos src = case splitRx ":(?=\\d)" src of
 			[_, line, column] ->  Position <$> readMaybe line <*> readMaybe column
 			_ -> Nothing

@@ -32,7 +32,7 @@ data Correction = Correction {
 	description :: String,
 	message :: String,
 	solution :: String,
-	corrector :: Replace String }
+	corrector :: Replace String () }
 		deriving (Eq, Read, Show)
 
 instance Canonicalize Correction where
@@ -92,12 +92,12 @@ correctors = [
 		"Redundant import"
 		("Redundant import: " ++ (g `at` 1)) ""
 		"Remove import"
-		(eraser (pt `regionSize` linesSize 1)),
+		(erase (pt `regionSize` linesSize 1)),
 	match "Found:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g file pt -> Correction file
 		"Why not?"
 		("Replace '" ++ (g `at` 1) ++ "' with '" ++ (g `at` 2) ++ "'") ""
 		"Replace with suggestion"
-		(replacer (pt `regionSize` stringSize (length $ g `at` 1)) (g `at` 2))]
+		(replace (pt `regionSize` stringSize (length $ g `at` 1)) (g `at` 2))]
 
 match :: String -> ((Int -> Maybe String) -> FilePath -> Point -> Correction) -> CorrectorMatch
 match pat f file pt str = do

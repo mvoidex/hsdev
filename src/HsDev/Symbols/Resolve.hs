@@ -9,7 +9,7 @@ module HsDev.Symbols.Resolve (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (makeLenses, view, set, over)
+import Control.Lens (makeLenses, view, preview, set, over, _Just)
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.Foldable (Foldable)
@@ -17,7 +17,8 @@ import Data.Function (on)
 import Data.List (sortBy, groupBy, find)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, maybeToList, listToMaybe)
+import Data.Maybe (fromMaybe, maybeToList, listToMaybe, catMaybes)
+import Data.Maybe.JustIf
 import Data.Monoid (mconcat, mappend)
 import Data.Ord (comparing)
 import Data.String (fromString)
@@ -81,11 +82,9 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 				(import_ (fromString "Prelude") :) .
 				view moduleImports $ m
 			let
-				exports' =
-					concatMap (exported scope') .
-					fromMaybe [] .
-					view moduleExports $ m
-			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exports')
+				exports' = fromMaybe [] $ view moduleExports m
+				exported' = catMaybes $ exported <$> scope' <*> exports'
+			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exported')
 	thisDecls :: [Declaration]
 	thisDecls = map (selfDefined . selfImport) $ view moduleDeclarations m
 	selfDefined :: Declaration -> Declaration
@@ -98,18 +97,21 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 		modify $ M.insert (view (resolvedModule . moduleId) rm) rm
 		return rm
 
--- | Select declarations exported with @Export@
-exported :: [Declaration] -> Export -> [Declaration]
-exported ds (ExportName q n _) = maybeToList $ find isExported ds where
-	isExported :: Declaration -> Bool
-	isExported decl' = view declarationName decl' == n && case q of
-		Nothing -> any (not . view importIsQualified) $ fromMaybe [] $ view declarationImported decl'
-		Just q' -> any ((== q') . importName) $ fromMaybe [] $ view declarationImported decl'
-exported ds (ExportModule m) =
-	filter (any (unqualBy m) . fromMaybe [] . view declarationImported) ds
+exported :: Declaration -> Export -> Maybe Declaration
+exported decl' (ExportName q n p)
+	| view declarationName decl' == n = decl' `justIf` checkImport
+	| preview (declaration . related . _Just) decl' == Just n = case p of
+		ExportNothing -> Nothing
+		ExportAll -> Just decl'
+		ExportWith ns -> decl' `justIf` (view declarationName decl' `elem` ns)
+	| otherwise = Nothing
 	where
-		unqualBy :: Text -> Import -> Bool
-		unqualBy m' i = importName i == m' && not (view importIsQualified i)
+		checkImport = case q of
+			Nothing -> any (not . view importIsQualified) $ fromMaybe [] $ view declarationImported decl'
+			Just q' -> any ((== q') . importName) $ fromMaybe [] $ view declarationImported decl'
+exported decl' (ExportModule m) = decl' `justWhen` (any (unqualBy m) . fromMaybe [] . view declarationImported) where
+	unqualBy :: Text -> Import -> Bool
+	unqualBy m' i = importName i == m' && not (view importIsQualified i)
 
 -- | Bring declarations into scope
 resolveImport :: Module -> Import -> ResolveM [Declaration]

@@ -30,6 +30,7 @@ library
     Data.Help
     Data.Lisp
     Data.Mark
+    Data.Maybe.JustIf
     HsDev
     HsDev.Cabal
     HsDev.Cache
