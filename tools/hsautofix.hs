@@ -26,7 +26,7 @@ main = toolMain "hsautofix" [
 		jsonArg = flag "json" `desc` "output messages in JSON format"
 
 		show' :: Args -> ToolM [Correction]
-		show' (Args [] as) = do
+		show' (Args _ as) = do
 			input <- liftE getContents
 			msgs <- if flagSet "json" as
 				then maybe (toolError "Can't parse messages") return $ decode (toUtf8 input)
