@@ -24,6 +24,7 @@ import qualified Data.Text as T (isInfixOf, isPrefixOf)
 import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
+import qualified System.Log.Simple as Log
 import Text.Read (readMaybe)
 
 import qualified HsDev.Database.Async as DB
@@ -788,15 +789,15 @@ toPair m = case view moduleLocation m of
 -- | Wait for DB to complete update
 waitDb :: CommandOptions -> Opts String -> CommandM ()
 waitDb copts as = when (flagSet "wait" as) $ liftIO $ do
-	commandLog copts "wait for db"
+	commandLog copts Log.Trace "wait for db"
 	DB.wait (dbVar copts)
-	commandLog copts "db done"
+	commandLog copts Log.Trace "db done"
 
 cacheLoad :: CommandOptions -> IO (Either String Database) -> CommandM ()
 cacheLoad copts act = liftIO $ do
 	db' <- act
 	case db' of
-		Left e -> commandLog copts e
+		Left e -> commandLog copts Log.Error e
 		Right database -> DB.update (dbVar copts) (return database)
 
 -- | Bring locals to top scope to search within them if 'locals' flag set
@@ -839,7 +840,7 @@ updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `
 		(not $ flagSet "no-infer" as)
 		(commandGhcMod copts)
 	logErr :: String -> ErrorT String (Update.UpdateDB IO) ()
-	logErr e = liftIO $ commandLog copts e
+	logErr e = liftIO $ commandLog copts Log.Error e
 
 -- | Filter declarations with prefix and infix
 filterMatch :: Opts String -> [ModuleDeclaration] -> [ModuleDeclaration]

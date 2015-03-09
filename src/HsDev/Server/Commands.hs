@@ -29,6 +29,8 @@ import qualified Data.Map as M
 import Data.Maybe
 import Data.Monoid
 import Data.Traversable (traverse)
+import Data.Text (Text)
+import qualified Data.Text as T (pack, unpack)
 import Network.Socket hiding (connect)
 import qualified Network.Socket as Net hiding (send)
 import qualified Network.Socket.ByteString as Net (send)
@@ -36,6 +38,9 @@ import qualified Network.Socket.ByteString.Lazy as Net (getContents)
 import System.Directory
 import System.Exit
 import System.IO
+import System.Log.Simple hiding (Level(..), Message(..))
+import System.Log.Simple.Base (writeLog)
+import qualified System.Log.Simple as Log
 import Text.Read (readMaybe)
 
 import Control.Apply.Util
@@ -139,7 +144,7 @@ commands = [
 		run' :: Args -> IO ()
 		run' (Args _ sopts)
 			| flagSet "as-client" sopts = runServer sopts $ \copts -> do
-				commandLog copts $ "Server started as client connecting at port " ++ fromJust (arg "port" sopts)
+				commandLog copts Log.Info $ "Server started as client connecting at port " ++ fromJust (arg "port" sopts)
 				me <- myThreadId
 				s <- socket AF_INET Stream defaultProtocol
 				addr' <- inet_addr "127.0.0.1"
@@ -147,7 +152,7 @@ commands = [
 				flip finally (close s) $ processClientSocket s (copts {
 					commandExit = killThread me })
 			| otherwise = runServer sopts $ \copts -> do
-				commandLog copts $ "Server started at port " ++ fromJust (arg "port" sopts)
+				commandLog copts Log.Info $ "Server started at port " ++ fromJust (arg "port" sopts)
 
 				waitListen <- newEmptyMVar
 				clientChan <- F.newChan
@@ -164,9 +169,9 @@ commands = [
 					s <- socket AF_INET Stream defaultProtocol
 					bind s $ SockAddrInet (fromIntegral $ fromJust $ iarg "port" sopts) iNADDR_ANY
 					listen s maxListenQueue
-					forever $ logIO "accept client exception: " (commandLog copts) $ do
+					forever $ logIO "accept client exception: " (commandLog copts Log.Error) $ do
 						s' <- fst <$> accept s
-						void $ forkIO $ logIO (show s' ++ " exception: ") (commandLog copts) $
+						void $ forkIO $ logIO (show s' ++ " exception: ") (commandLog copts Log.Error) $
 							flip finally (close s') $
 								bracket newEmptyMVar (`putMVar` ()) $ \done -> do
 									me <- myThreadId
@@ -188,7 +193,7 @@ commands = [
 				takeMVar waitListen
 				DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
 				F.stopChan clientChan >>= sequence_
-				commandLog copts "server stopped"
+				commandLog copts Log.Info "server stopped"
 
 		-- | Stop remote server
 		stop' :: Args -> IO ()
@@ -239,6 +244,7 @@ serverOpts = [
 	req "port" "number" `desc` "listen port",
 	req "timeout" "msec" `desc` "query timeout",
 	req "log" "file" `short` ['l'] `desc` "log file",
+	req "log-config" "config" `desc` "config log",
 	req "cache" "path" `desc` "cache directory",
 	flag "load" `desc` "force load all data from cache on startup"]
 
@@ -318,29 +324,40 @@ sendCmd name (Args args opts) = do
 					Right e -> encodeValue e
 				when (isLeft r') $ peekResponse h
 
+chaner :: F.Chan String -> Consumer Text
+chaner ch = Consumer withChan where
+	withChan f = f (F.putChan ch . T.unpack)
+
 -- | Inits log chan and returns functions (print message, wait channel)
-initLog :: Opts String -> IO (String -> IO (), ([String] -> IO ()) -> IO (), IO ())
+initLog :: Opts String -> IO (Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
 initLog sopts = do
 	msgs <- F.newChan
 	outputDone <- newEmptyMVar
 	void $ forkIO $ finally
-		(F.readChan msgs >>= mapM_ (logMsg sopts))
+		(F.readChan msgs >>= mapM_ (const $ return ()))
 		(putMVar outputDone ())
+	l <- newLog (constant rules) $ concat [
+		[logger text console],
+		[logger text (chaner msgs)],
+		maybeToList $ (logger text . file) <$> arg "log" sopts]
 	let
 		listenLog f = logException "listen log" (F.putChan msgs) $ do
 			msgs' <- F.dupChan msgs
 			F.readChan msgs' >>= f
-	return (F.putChan msgs, listenLog, F.closeChan msgs >> takeMVar outputDone)
+	return (\lev -> writeLog l lev . T.pack, listenLog, F.closeChan msgs >> takeMVar outputDone)
+	where
+		rules :: Rules
+		rules = maybeToList $ (parseRule_ . T.pack) <$> arg "log-config" sopts
 
 -- | Run server
 runServer :: Opts String -> (CommandOptions -> IO ()) -> IO ()
 runServer sopts act = bracket (initLog sopts) (\(_, _, x) -> x) $ \(outputStr, listenLog, waitOutput) -> do
 	db <- DB.newAsync
 	when (flagSet "load" sopts) $ withCache sopts () $ \cdir -> do
-		outputStr $ "Loading cache from " ++ cdir
+		outputStr Log.Info $ "Loading cache from " ++ cdir
 		dbCache <- liftA merge <$> SC.load cdir
 		case dbCache of
-			Left err -> outputStr $ "Failed to load cache: " ++ err
+			Left err -> outputStr Log.Error $ "Failed to load cache: " ++ err
 			Right dbCache' -> DB.update db (return dbCache')
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"
@@ -394,7 +411,7 @@ processRequest copts onNotify req' =
 -- | Process client, listen for requests and process them
 processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> CommandOptions -> IO ()
 processClient name receive send' copts = do
-	commandLog copts $ name ++ " connected"
+	commandLog copts Log.Info $ name ++ " connected"
 	respChan <- newChan
 	void $ forkIO $ getChanContents respChan >>= mapM_ (send' . uncurry encodeLispOrJSON)
 	linkVar <- newMVar $ return ()
@@ -402,13 +419,13 @@ processClient name receive send' copts = do
 		answer :: Bool -> Message Response -> IO ()
 		answer isLisp m@(Message i r) = do
 			when (not $ isNotification r) $
-				commandLog copts $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ fromUtf8 (encode r)
+				commandLog copts Log.Trace $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ fromUtf8 (encode r)
 			writeChan respChan (isLisp, m)
 	flip finally (disconnected linkVar) $ forever $ do
 		req' <- receive
 		case second (fmap extractMeta) <$> decodeLispOrJSON req' of
 			Left _ -> do
-				commandLog copts $ name ++ " >> #: " ++ fromUtf8 req'
+				commandLog copts Log.Trace $ name ++ " >> #: " ++ fromUtf8 req'
 				answer False $ Message Nothing $ responseError "Invalid request" [
 					"request" .= fromUtf8 req']
 			Right (isLisp, m) -> do
@@ -417,7 +434,7 @@ processClient name receive send' copts = do
 						onNotify n
 							| silent = return ()
 							| otherwise = traverse (const $ mmap' noFile (Left n)) m >>= answer isLisp
-					commandLog copts $ name ++ " >> " ++ fromMaybe "_" (messageId m) ++ ":" ++ fromUtf8 (encode reqArgs)
+					commandLog copts Log.Trace $ name ++ " >> " ++ fromMaybe "_" (messageId m) ++ ":" ++ fromUtf8 (encode reqArgs)
 					resp <- fmap Right $ handleTimeout tm $ handleError $
 						processRequest
 							(copts {
@@ -459,7 +476,7 @@ processClient name receive send' copts = do
 
 		disconnected :: MVar (IO ()) -> IO ()
 		disconnected var = do
-			commandLog copts $ name ++ " disconnected"
+			commandLog copts Log.Info $ name ++ " disconnected"
 			join $ takeMVar var
 
 {-
@@ -500,29 +517,29 @@ withCache sopts v onCache = case arg "cache" sopts of
 	Nothing -> return v
 	Just cdir -> onCache cdir
 
-writeCache :: Opts String -> (String -> IO ()) -> Database -> IO ()
+writeCache :: Opts String -> (Log.Level -> String -> IO ()) -> Database -> IO ()
 writeCache sopts logMsg' d = withCache sopts () $ \cdir -> do
-	logMsg' $ "writing cache to " ++ cdir
-	logIO "cache writing exception: " logMsg' $ do
+	logMsg' Log.Info $ "writing cache to " ++ cdir
+	logIO "cache writing exception: " (logMsg' Log.Error) $ do
 		let
 			sd = structurize d
 		SC.dump cdir sd
-		forM_ (M.keys (structuredCabals sd)) $ \c -> logMsg' ("cache write: cabal " ++ show c)
-		forM_ (M.keys (structuredProjects sd)) $ \p -> logMsg' ("cache write: project " ++ p)
+		forM_ (M.keys (structuredCabals sd)) $ \c -> logMsg' Log.Debug ("cache write: cabal " ++ show c)
+		forM_ (M.keys (structuredProjects sd)) $ \p -> logMsg' Log.Debug ("cache write: project " ++ p)
 		case allModules (structuredFiles sd) of
 			[] -> return ()
-			ms -> logMsg' $ "cache write: " ++ show (length ms) ++ " files"
-	logMsg' $ "cache saved to " ++ cdir
+			ms -> logMsg' Log.Debug $ "cache write: " ++ show (length ms) ++ " files"
+	logMsg' Log.Info $ "cache saved to " ++ cdir
 
-readCache :: Opts String -> (String -> IO ()) -> (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
+readCache :: Opts String -> (Log.Level -> String -> IO ()) -> (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
 readCache sopts logMsg' act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runErrorT . act where
-	cacheErr e = logMsg' ("Error reading cache: " ++ e) >> return Nothing
+	cacheErr e = logMsg' Log.Error ("Error reading cache: " ++ e) >> return Nothing
 	cacheOk s = do
-		forM_ (M.keys (structuredCabals s)) $ \c -> logMsg' ("cache read: cabal " ++ show c)
-		forM_ (M.keys (structuredProjects s)) $ \p -> logMsg' ("cache read: project " ++ p)
+		forM_ (M.keys (structuredCabals s)) $ \c -> logMsg' Log.Debug ("cache read: cabal " ++ show c)
+		forM_ (M.keys (structuredProjects s)) $ \p -> logMsg' Log.Debug ("cache read: project " ++ p)
 		case allModules (structuredFiles s) of
 			[] -> return ()
-			ms -> logMsg' $ "cache read: " ++ show (length ms) ++ " files"
+			ms -> logMsg' Log.Debug $ "cache read: " ++ show (length ms) ++ " files"
 		return $ Just $ merge s
 
 #if mingw32_HOST_OS
@@ -563,11 +580,3 @@ unMmap (Right (Result v))
 				Right r'' -> return r''
 #endif
 unMmap r = return r
-
--- | Log message
-logMsg :: Opts String -> String -> IO ()
-logMsg sopts s = ignoreIO $ do
-	putStrLn s
-	case arg "log" sopts of
-		Nothing -> return ()
-		Just f -> withFile f AppendMode (`hPutStrLn` s)

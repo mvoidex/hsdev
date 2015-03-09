@@ -13,6 +13,7 @@ import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Types (Pair)
 import qualified Data.HashMap.Strict as HM (null)
 import Data.Map (Map)
+import System.Log.Simple
 
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
@@ -31,7 +32,7 @@ data CommandOptions = CommandOptions {
 	commandWriteCache :: Database -> IO (),
 	commandReadCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
 	commandRoot :: FilePath,
-	commandLog :: String -> IO (),
+	commandLog :: Level -> String -> IO (),
 	commandListenLog :: ([String] -> IO ()) -> IO (),
 	commandLogWait :: IO (),
 #if mingw32_HOST_OS

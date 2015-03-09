@@ -110,6 +110,7 @@ library
     process >= 1.2.0,
     regex-pcre-builtin >= 0.94,
     scientific >= 0.3,
+    simple-log >= 0.3.0,
     template-haskell,
     text >= 1.1.0,
     time >= 1.4.0,
