@@ -103,7 +103,9 @@ data Settings = Settings {
 	databaseCacheReader :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
 	databaseCacheWriter :: Database -> IO (),
 	onStatus :: Task -> IO (),
-	ghcOptions :: [String] }
+	ghcOptions :: [String],
+	updateDocs :: Bool,
+	runInferTypes :: Bool }
 
 newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [ModuleLocation] m) a }
 	deriving (Applicative, Monad, MonadIO, MonadThrow, MonadCatch, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
@@ -132,8 +134,10 @@ updateDB sets act = do
 				getMods = do
 					db' <- liftIO $ readAsync $ database sets
 					return $ catMaybes [M.lookup mloc' (databaseModules db') | mloc' <- mlocs']
-			getMods >>= waiter . runTask "inspecting source docs" [] . runTasks . map scanDocs
-			getMods >>= waiter . runTask "inferring types" [] . runTasks . map inferModTypes
+			when (updateDocs sets)
+				(getMods >>= waiter . runTask "inspecting source docs" [] . runTasks . map scanDocs)
+			when (runInferTypes sets)
+				(getMods >>= waiter . runTask "inferring types" [] . runTasks . map inferModTypes)
 		scanDocs :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
 		scanDocs im = runTask "scanning docs" (subject (view inspectedId im) ["module" .= view inspectedId im]) $ do
 			im' <- liftErrorT $ S.scanModify (\opts _ -> inspectDocs opts) im

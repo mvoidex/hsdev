@@ -62,14 +62,14 @@ commands = [
 		manyReq $ projectArg `desc` "project path or .cabal",
 		manyReq $ fileArg `desc` "source file",
 		manyReq $ pathArg `desc` "directory to scan for files and projects",
-		ghcOpts])
+		ghcOpts, nodocsFlag, noinferFlag])
 		"scan sources"
 		scan',
 	cmd' "rescan" [] (sandboxes ++ [
 		manyReq $ projectArg `desc` "project path or .cabal",
 		manyReq $ fileArg `desc` "source file",
 		manyReq $ pathArg `desc` "path to rescan",
-		ghcOpts])
+		ghcOpts, nodocsFlag, noinferFlag])
 		"rescan sources"
 		rescan',
 	cmdList' "remove" [] (sandboxes ++ [
@@ -198,9 +198,11 @@ commands = [
 		hlintOpts = list "hlint" "option" `short` ['h'] `desc` "options to pass to hlint"
 		holdArg = flag "hold" `short` ['h'] `desc` "don't return any response"
 		localsArg = flag "locals" `short` ['l'] `desc` "look in local declarations"
-		noLastArg = flag "no-last" `desc` "select not only last version packages"
 		matches = [prefixArg, findArg]
 		moduleArg = req "module" "name" `short` ['m'] `desc` "module name"
+		nodocsFlag = flag "no-docs" `desc` "don't scan source file docs"
+		noinferFlag = flag "no-infer" `desc` "don't infer types"
+		noLastArg = flag "no-last" `desc` "select not only last version packages"
 		packageArg = req "package" "name" `desc` "module package"
 		pathArg = req "path" "path" `short` ['p']
 		prefixArg = req "prefix" "prefix" `desc` "prefix match"
@@ -833,6 +835,8 @@ updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `
 		(commandWriteCache copts)
 		(commandNotify copts . Notification . toJSON)
 		(listArg "ghc" as)
+		(not $ flagSet "no-docs" as)
+		(not $ flagSet "no-infer" as)
 	logErr :: String -> ErrorT String (Update.UpdateDB IO) ()
 	logErr e = liftIO $ commandLog copts e
 
