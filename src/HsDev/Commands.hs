@@ -21,7 +21,6 @@ module HsDev.Commands (
 import Control.Applicative
 import Control.Lens (view, set, each)
 import Control.Monad.Error
-import Data.List
 import Data.Maybe
 import qualified Data.Map as M (lookup)
 import Data.String (fromString)
@@ -35,7 +34,7 @@ import HsDev.Symbols
 import HsDev.Symbols.Resolve
 import HsDev.Symbols.Util
 import HsDev.Tools.Base (matchRx, at)
-import HsDev.Util (liftE)
+import HsDev.Util (liftE, ordNub)
 
 -- | Find declaration by name
 findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
@@ -128,7 +127,7 @@ completions db cabal file prefix wide = do
 
 -- | Module completions
 moduleCompletions :: Database -> [Module] -> String -> ErrorT String IO [String]
-moduleCompletions _ ms prefix = return $ map T.unpack $ nub $ completions' $ map (view moduleName) ms where
+moduleCompletions _ ms prefix = return $ map T.unpack $ ordNub $ completions' $ map (view moduleName) ms where
 	completions' = mapMaybe getNext where
 		getNext m
 			| fromString prefix `T.isPrefixOf` m = listToMaybe $ map snd $ dropWhile (uncurry (==)) $ zip (T.split (== '.') $ fromString prefix) (T.split (== '.') m)

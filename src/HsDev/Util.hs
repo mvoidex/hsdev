@@ -7,6 +7,8 @@ module HsDev.Util (
 	cabalFile,
 	-- * String utils
 	tab, tabs, trim, split,
+	-- * Other utils
+	ordNub,
 	-- * Helper
 	(.::), (.::?), objectUnion,
 	-- * Exceptions
@@ -32,6 +34,7 @@ import Data.Aeson.Types (Parser)
 import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr)
 import Data.Maybe (catMaybes)
+import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as HM (HashMap, toList, union)
 import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lazy (ByteString)
@@ -115,6 +118,14 @@ trim = p . p where
 -- | Split list
 split :: (a -> Bool) -> [a] -> [[a]]
 split p = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break p)
+
+-- | ordNub is quadratic, https://github.com/nh2/haskell-ordnub/#ordnub
+ordNub :: Ord a => [a] -> [a]
+ordNub l = go Set.empty l where
+	go _ [] = []
+	go s (x:xs)
+		| x `Set.member` s = go s xs
+		| otherwise = x : go (Set.insert x s) xs
 
 -- | Workaround, sometimes we get HM.lookup "foo" v == Nothing, but lookup "foo" (HM.toList v) == Just smth
 (.::) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser a

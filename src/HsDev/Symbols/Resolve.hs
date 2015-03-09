@@ -14,10 +14,10 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Data.Foldable (Foldable)
 import Data.Function (on)
-import Data.List (sortBy, groupBy, find)
+import Data.List (sortBy, groupBy)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, maybeToList, listToMaybe, catMaybes)
+import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import Data.Maybe.JustIf
 import Data.Monoid (mconcat, mappend)
 import Data.Ord (comparing)

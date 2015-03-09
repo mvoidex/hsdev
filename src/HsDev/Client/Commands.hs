@@ -370,7 +370,7 @@ commands = [
 		listPackages' :: [String] -> Opts String -> CommandActionT [ModulePackage]
 		listPackages' _ _ copts = do
 			dbval <- getDb copts
-			return $ nub $ sort $
+			return $ ordNub $ sort $
 				mapMaybe (preview (moduleLocation . modulePackage . _Just)) $
 				allModules dbval
 
@@ -382,7 +382,7 @@ commands = [
 
 		-- | List sandboxes
 		listSandboxes' :: [String] -> Opts String -> CommandActionT [Cabal]
-		listSandboxes' _ _ copts = (nub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
+		listSandboxes' _ _ copts = (ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
 
 		-- | Get symbol info
 		symbol' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
@@ -615,7 +615,7 @@ commands = [
 			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
 			corrs <- readCorrs jsonData
 			upCorrs <- liftM (fromMaybe []) $ traverse readCorrs $ arg "rest" as
-			files <- liftM (nub . sort) $ mapM (findPath copts) $ map AutoFix.correctionFile corrs
+			files <- liftM (ordNub . sort) $ mapM (findPath copts) $ map AutoFix.correctionFile corrs
 			let
 				doFix file = AutoFix.autoFix
 					(filter ((== file) . AutoFix.correctionFile) corrs)

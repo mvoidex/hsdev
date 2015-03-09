@@ -32,6 +32,7 @@ import Data.List
 import Data.Maybe
 import Data.Monoid
 import Data.Foldable (Foldable(..))
+import Data.Ord
 import Data.Traversable
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
@@ -297,6 +298,9 @@ data Extensions a = Extensions {
 	_entity :: a }
 		deriving (Eq, Read, Show)
 
+instance Ord a => Ord (Extensions a) where
+	compare = comparing _entity
+
 instance Functor Extensions where
 	fmap f (Extensions e x) = Extensions e (f x)
 
@@ -340,7 +344,7 @@ findSourceDir p f = do
 
 -- | Returns source dirs for library, executables and tests
 sourceDirs :: ProjectDescription -> [Extensions FilePath]
-sourceDirs = nub . concatMap dirs . infos where
+sourceDirs = ordNub . concatMap dirs . infos where
 	dirs i = map (`withExtensions` i) $ _infoSourceDirs i
 
 parseDT :: Distribution.Text.Text a => String -> String -> Parser a

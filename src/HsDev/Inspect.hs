@@ -328,13 +328,13 @@ inspectFile opts file = do
 fileInspection :: FilePath -> [String] -> ErrorT String IO Inspection
 fileInspection f opts = do
 	tm <- liftE $ Dir.getModificationTime f
-	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ sort $ nub opts
+	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ sort $ ordNub opts
 
 -- | Enumerate project dirs
 projectDirs :: Project -> ErrorT String IO [Extensions FilePath]
 projectDirs p = do
 	p' <- loadProject p
-	return $ nub $ map (fmap (normalise . (view projectPath p' </>))) $ maybe [] sourceDirs $ view projectDescription p'
+	return $ ordNub $ map (fmap (normalise . (view projectPath p' </>))) $ maybe [] sourceDirs $ view projectDescription p'
 
 -- | Enumerate project source files
 projectSources :: Project -> ErrorT String IO [Extensions FilePath]
@@ -344,11 +344,11 @@ projectSources p = do
 		enumCabals = liftM (map takeDirectory . filter cabalFile) . traverseDirectory
 		dirs' = map (view entity) dirs
 	-- enum inner projects and dont consider them as part of this project
-	subProjs <- liftM (delete (view projectPath p) . nub . concat) $ triesMap (liftE . enumCabals) dirs'
+	subProjs <- liftM (delete (view projectPath p) . ordNub . concat) $ triesMap (liftE . enumCabals) dirs'
 	let
 		enumHs = liftM (filter thisProjectSource) . traverseDirectory
 		thisProjectSource h = haskellSource h && not (any (`isParent` h) subProjs)
-	liftM (nub . concat) $ triesMap (liftM sequenceA . traverse (liftE . enumHs)) dirs
+	liftM (ordNub . concat) $ triesMap (liftM sequenceA . traverse (liftE . enumHs)) dirs
 
 -- | Inspect project
 inspectProject :: [String] -> Project -> ErrorT String IO (Project, [InspectedModule])

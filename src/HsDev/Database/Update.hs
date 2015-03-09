@@ -26,7 +26,6 @@ import Control.Monad.Writer
 import Data.Aeson
 import Data.Aeson.Types
 import qualified Data.HashMap.Strict as HM
-import Data.List (nub)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
@@ -47,7 +46,7 @@ import HsDev.Tools.GhcMod (WorkerMap)
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
-import HsDev.Util ((.::), liftEIO, isParent)
+import HsDev.Util ((.::), liftEIO, isParent, ordNub)
 
 data Status = StatusWorking | StatusOk | StatusError String
 
@@ -121,8 +120,8 @@ updateDB sets act = do
 	wait $ database sets
 	dbval <- liftIO $ readAsync $ database sets
 	let
-		cabals = nub $ mapMaybe (preview moduleCabal) updatedMods
-		projs = nub $ mapMaybe (preview $ moduleProject . _Just) updatedMods
+		cabals = ordNub $ mapMaybe (preview moduleCabal) updatedMods
+		projs = ordNub $ mapMaybe (preview $ moduleProject . _Just) updatedMods
 		stand = any moduleStandalone updatedMods
 
 		modifiedDb = mconcat $ concat [
@@ -250,7 +249,7 @@ scanModules opts ms = runTasks $
 	[scanProjectFile opts p >> return () | p <- ps] ++
 	[scanModule (opts ++ snd m) (fst m) | m <- ms]
 	where
-		ps = nub $ mapMaybe (toProj . fst) ms
+		ps = ordNub $ mapMaybe (toProj . fst) ms
 		toProj (FileModule _ p) = fmap (view projectCabal) p
 		toProj _ = Nothing
 

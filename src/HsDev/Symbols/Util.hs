@@ -12,13 +12,14 @@ import Control.Lens (view)
 import Control.Monad (liftM)
 import Data.Function (on)
 import Data.Maybe
-import Data.List (maximumBy, groupBy, sortBy, partition, nub)
+import Data.List (maximumBy, groupBy, sortBy, partition)
 import Data.Ord (comparing)
 import Data.String (fromString)
 import System.FilePath (normalise)
 
 import HsDev.Symbols
 import HsDev.Project
+import HsDev.Util (ordNub)
 
 -- | Get module project
 projectOf :: ModuleId -> Maybe Project
@@ -52,7 +53,7 @@ inDepsOfFile p f = maybe (const False) inDepsOfTarget $ fileTarget p f
 
 -- | Check if module in deps of project
 inDepsOfProject :: Project -> ModuleId -> Bool
-inDepsOfProject = maybe (const False) (anyPackage . nub . concatMap (view infoDepends) . infos) . view projectDescription where
+inDepsOfProject = maybe (const False) (anyPackage . ordNub . concatMap (view infoDepends) . infos) . view projectDescription where
 	anyPackage :: [String] -> ModuleId -> Bool
 	anyPackage = liftM or . mapM inPackage
 

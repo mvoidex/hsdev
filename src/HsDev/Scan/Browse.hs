@@ -7,7 +7,6 @@ module HsDev.Scan.Browse (
 
 import Control.Lens (view, preview, _Just)
 import Control.Monad.Error
-import Data.List (nub)
 import Data.Maybe
 import Data.String (fromString)
 import Text.Read (readMaybe)
@@ -15,7 +14,7 @@ import Text.Read (readMaybe)
 import HsDev.Cabal
 import HsDev.Symbols
 import HsDev.Tools.Base (inspect)
-import HsDev.Util (liftIOErrors)
+import HsDev.Util (liftIOErrors, ordNub)
 
 import qualified ConLike as GHC
 import qualified DataCon as GHC
@@ -66,7 +65,7 @@ browseModule cabal m = do
 		_moduleDocs = Nothing,
 		_moduleLocation = thisLoc,
 		_moduleExports = Just [ExportName Nothing (view declarationName d) ExportNothing | d <- ds],
-		_moduleImports = [import_ iname | iname <- nub (mapMaybe (preview definedModule) ds), iname /= fromString thisModule],
+		_moduleImports = [import_ iname | iname <- ordNub (mapMaybe (preview definedModule) ds), iname /= fromString thisModule],
 		_moduleDeclarations = sortDeclarations ds }
 	where
 		thisLoc = view moduleIdLocation $ mloc m

@@ -23,7 +23,6 @@ import Data.Aeson
 import Data.Either (rights)
 import Data.Function (on)
 import Data.Group (Group(..))
-import Data.List (nub)
 import Data.Map (Map)
 import Data.Maybe
 import Data.Monoid (Monoid(..))
@@ -32,7 +31,7 @@ import qualified Data.Map as M
 import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Project
-import HsDev.Util ((.::))
+import HsDev.Util ((.::), ordNub)
 
 -- | HsDev database
 data Database = Database {
@@ -208,7 +207,7 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 	keyCabal db = unique
 		"No cabal"
 		"Different module cabals"
-		(nub <$> mapM getCabal (allModules db))
+		(ordNub <$> mapM getCabal (allModules db))
 		where
 			getCabal m = case view moduleLocation m of
 				CabalModule c _ _ -> Right c
@@ -227,7 +226,7 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 
 structurize :: Database -> Structured
 structurize db = Structured cs ps fs where
-	cs = M.fromList [(c, cabalDB c db) | c <- nub (mapMaybe modCabal (allModules db))]
+	cs = M.fromList [(c, cabalDB c db) | c <- ordNub (mapMaybe modCabal (allModules db))]
 	ps = M.fromList [(pname, projectDB (project pname) db) | pname <- M.keys (databaseProjects db)]
 	fs = standaloneDB db
 

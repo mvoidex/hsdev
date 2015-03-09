@@ -36,7 +36,7 @@ import Control.Monad.Catch (MonadThrow(..), MonadCatch(..))
 import Control.Monad.Reader
 import Data.Aeson
 import Data.Char
-import Data.List (nub, sort)
+import Data.List (sort)
 import Data.Maybe
 import qualified Data.Map as M
 import Data.String (fromString)
@@ -55,7 +55,7 @@ import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Base
-import HsDev.Util ((.::), liftIOErrors, liftThrow, withCurrentDirectory, readFileUtf8)
+import HsDev.Util ((.::), liftIOErrors, liftThrow, withCurrentDirectory, readFileUtf8, ordNub)
 
 list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
 list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opts }) $ do
@@ -75,7 +75,7 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 			_moduleLocation = thisLoc,
 			_moduleExports = Just [ExportName Nothing (view declarationName d) ExportNothing | d <- ds],
 			_moduleImports = [import_ iname |
-				iname <- nub (mapMaybe (preview definedModule) ds),
+				iname <- ordNub (mapMaybe (preview definedModule) ds),
 				iname /= fromString mname],
 			_moduleDeclarations = sortDeclarations ds }
 	where
@@ -101,7 +101,7 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 		rx = "^((\\w+\\.)*)(\\w+)\\s+::\\s+((class|type|data|newtype)\\s+(\\w+)((\\s+\\w+)*)?|.*)$"
 
 browseInspection :: [String] -> Inspection
-browseInspection = InspectionAt 0 . sort . nub
+browseInspection = InspectionAt 0 . sort . ordNub
 
 langs :: ErrorT String IO [String]
 langs = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.languages
