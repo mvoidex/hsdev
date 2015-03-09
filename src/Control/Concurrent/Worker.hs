@@ -4,7 +4,7 @@ module Control.Concurrent.Worker (
 	Worker(..),
 	startWorker,
 	sendTask, pushTask,
-	stopWorker,
+	stopWorker, syncTask,
 
 	module Control.Concurrent.Task
 	) where
@@ -53,3 +53,7 @@ pushTask w act = workerRestart w >> sendTask w act
 
 stopWorker :: Worker m -> IO ()
 stopWorker = closeChan . workerChan
+
+-- | Send empty task and wait until worker run it
+syncTask :: (MonadCatch m, MonadIO m) => Worker m -> IO ()
+syncTask w = pushTask w (return ()) >>= void . taskWait

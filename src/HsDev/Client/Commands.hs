@@ -837,6 +837,7 @@ updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `
 		(listArg "ghc" as)
 		(not $ flagSet "no-docs" as)
 		(not $ flagSet "no-infer" as)
+		(commandGhcMod copts)
 	logErr :: String -> ErrorT String (Update.UpdateDB IO) ()
 	logErr e = liftIO $ commandLog copts e
 

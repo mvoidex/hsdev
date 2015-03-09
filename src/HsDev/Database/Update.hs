@@ -33,6 +33,7 @@ import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath)
 
+import Control.Concurrent.Worker (Worker)
 import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async
@@ -41,7 +42,9 @@ import HsDev.Inspect (inspectDocs)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.HDocs
-import HsDev.Tools.GhcMod.InferType (infer)
+import HsDev.Tools.GhcMod.InferType (inferTypes)
+import HsDev.Tools.GhcMod (WorkerMap)
+import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util ((.::), liftEIO, isParent)
@@ -105,7 +108,8 @@ data Settings = Settings {
 	onStatus :: Task -> IO (),
 	ghcOptions :: [String],
 	updateDocs :: Bool,
-	runInferTypes :: Bool }
+	runInferTypes :: Bool,
+	settingsGhcModWorker :: Worker (ReaderT WorkerMap IO) }
 
 newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [ModuleLocation] m) a }
 	deriving (Applicative, Monad, MonadIO, MonadThrow, MonadCatch, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
@@ -145,9 +149,13 @@ updateDB sets act = do
 		inferModTypes :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
 		inferModTypes im = runTask "inferring types" (subject (view inspectedId im) ["module" .= view inspectedId im]) $ do
 			-- TODO: locate sandbox
-			im' <- liftErrorT $ S.scanModify (\opts cabal -> infer opts cabal) im
+			im' <- liftErrorT $ S.scanModify infer' im
 			updater $ return $ fromModule im'
-
+		infer' :: [String] -> Cabal -> Module -> ErrorT String IO Module
+		infer' opts cabal m = case preview (moduleLocation . moduleFile) m of
+			Nothing -> return m
+			Just f -> GhcMod.waitMultiGhcMod (settingsGhcModWorker sets) f $
+				inferTypes opts cabal m
 
 -- | Post status
 postStatus :: (MonadIO m, MonadReader Settings m) => Task -> m ()
