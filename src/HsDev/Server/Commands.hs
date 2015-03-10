@@ -261,7 +261,8 @@ clientOpts = [
 serverDefCfg :: Opts String
 serverDefCfg = mconcat [
 	"port" %-- (4567 :: Int),
-	"timeout" %-- (1000 :: Int)]
+	"timeout" %-- (1000 :: Int),
+	"log-config" %-- ("use trace" :: String)]
 
 -- | Client default options
 clientDefCfg :: Opts String
@@ -420,8 +421,13 @@ processClient name receive send' copts = do
 		answer :: Bool -> Message Response -> IO ()
 		answer isLisp m@(Message i r) = do
 			when (not $ isNotification r) $
-				commandLog copts Log.Trace $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ fromUtf8 (encode r)
+				commandLog copts Log.Trace $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ ellipsis (fromUtf8 (encode r))
 			writeChan respChan (isLisp, m)
+			where
+				ellipsis :: String -> String
+				ellipsis s
+					| length s < 100 = s
+					| otherwise = take 100 s ++ "..."
 	flip finally (disconnected linkVar) $ forever $ do
 		req' <- receive
 		case second (fmap extractMeta) <$> decodeLispOrJSON req' of
