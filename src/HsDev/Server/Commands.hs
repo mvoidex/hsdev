@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, CPP, PatternGuards, LambdaCase #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Commands (
 	commands,
@@ -40,7 +41,7 @@ import System.Exit
 import System.IO
 import System.Log.Simple hiding (Level(..), Message(..))
 import System.Log.Simple.Base (writeLog)
-import qualified System.Log.Simple as Log
+import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
 
 import Control.Apply.Util
@@ -48,7 +49,7 @@ import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
 import System.Console.Cmd hiding (run)
-import Text.Format ((~~), (%))
+import Text.Format ((~~), (%), Format(..))
 
 import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
@@ -261,8 +262,7 @@ clientOpts = [
 serverDefCfg :: Opts String
 serverDefCfg = mconcat [
 	"port" %-- (4567 :: Int),
-	"timeout" %-- (1000 :: Int),
-	"log-config" %-- ("use trace" :: String)]
+	"timeout" %-- (1000 :: Int)]
 
 -- | Client default options
 clientDefCfg :: Opts String
@@ -329,6 +329,8 @@ chaner :: F.Chan String -> Consumer Text
 chaner ch = Consumer withChan where
 	withChan f = f (F.putChan ch . T.unpack)
 
+instance Format Log.Level where
+
 -- | Inits log chan and returns functions (print message, wait channel)
 initLog :: Opts String -> IO (Log, Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
 initLog sopts = do
@@ -337,22 +339,26 @@ initLog sopts = do
 	void $ forkIO $ finally
 		(F.readChan msgs >>= mapM_ (const $ return ()))
 		(putMVar outputDone ())
-	l <- newLog (constant rules) $ concat [
+	l <- newLog (constant [rule']) $ concat [
 		[logger text console],
 		[logger text (chaner msgs)],
 		maybeToList $ (logger text . file) <$> arg "log" sopts]
+	Log.writeLog l Log.Info ("Log politics: low = $, high = $" ~~ (logLow % logHigh))
 	let
 		listenLog f = logException "listen log" (F.putChan msgs) $ do
 			msgs' <- F.dupChan msgs
 			F.readChan msgs' >>= f
 	return (l, \lev -> writeLog l lev . T.pack, listenLog, F.closeChan msgs >> takeMVar outputDone)
 	where
-		rules :: Rules
-		rules = maybeToList $ (parseRule_ . T.pack) <$> arg "log-config" sopts
+		rule' :: Log.Rule
+		rule' = fromMaybe (Log.Rule null $ const Log.tracePolitics) $
+			(parseRule_ . T.pack . ("/: " ++)) <$>
+			arg "log-config" sopts
+		(Log.Politics logLow logHigh) = Log.rulePolitics rule' Log.defaultPolitics
 
 -- | Run server
 runServer :: Opts String -> (CommandOptions -> IO ()) -> IO ()
-runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> do
+runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> Log.scopeLog logger' (T.pack "hsdev") $ do
 	db <- DB.newAsync
 	when (flagSet "load" sopts) $ withCache sopts () $ \cdir -> do
 		outputStr Log.Info $ "Loading cache from " ++ cdir
@@ -419,29 +425,30 @@ processClient name receive send' copts = do
 	linkVar <- newMVar $ return ()
 	let
 		answer :: Bool -> Message Response -> IO ()
-		answer isLisp m@(Message i r) = do
+		answer isLisp m@(Message _ r) = do
 			when (not $ isNotification r) $
-				commandLog copts Log.Trace $ name ++ " << " ++ fromMaybe "_" i ++ ":" ++ ellipsis (fromUtf8 (encode r))
+				commandLog copts Log.Trace $ " << " ++ ellipsis (fromUtf8 (encode r))
 			writeChan respChan (isLisp, m)
 			where
 				ellipsis :: String -> String
 				ellipsis s
 					| length s < 100 = s
 					| otherwise = take 100 s ++ "..."
-	flip finally (disconnected linkVar) $ forever $ do
+	flip finally (disconnected linkVar) $ forever $ Log.scopeLog (commandLogger copts) (T.pack name) $ do
 		req' <- receive
+		commandLog copts Log.Trace $ " => " ++ fromUtf8 req'
 		case second (fmap extractMeta) <$> decodeLispOrJSON req' of
 			Left _ -> do
-				commandLog copts Log.Trace $ name ++ " >> #: " ++ fromUtf8 req'
+				commandLog copts Log.Warning $ "Invalid request: " ++ fromUtf8 req'
 				answer False $ Message Nothing $ responseError "Invalid request" [
 					"request" .= fromUtf8 req']
-			Right (isLisp, m) -> do
+			Right (isLisp, m) -> Log.scopeLog (commandLogger copts) (T.pack $ fromMaybe "_" (messageId m)) $ do
 				resp' <- flip traverse m $ \(cdir, noFile, silent, tm, reqArgs) -> do
 					let
 						onNotify n
 							| silent = return ()
 							| otherwise = traverse (const $ mmap' noFile (Left n)) m >>= answer isLisp
-					commandLog copts Log.Trace $ name ++ " >> " ++ fromMaybe "_" (messageId m) ++ ":" ++ fromUtf8 (encode reqArgs)
+					commandLog copts Log.Trace $ name ++ " >> " ++ fromUtf8 (encode reqArgs)
 					resp <- fmap Right $ handleTimeout tm $ handleError $
 						processRequest
 							(copts {

@@ -82,8 +82,9 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 				(import_ (fromString "Prelude") :) .
 				view moduleImports $ m
 			let
-				exports' = fromMaybe [] $ view moduleExports m
-				exported' = catMaybes $ exported <$> scope' <*> exports'
+				exported' = case view moduleExports m of
+					Nothing -> thisDecls
+					Just exports' -> catMaybes $ exported <$> scope' <*> exports'
 			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exported')
 	thisDecls :: [Declaration]
 	thisDecls = map (selfDefined . selfImport) $ view moduleDeclarations m

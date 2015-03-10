@@ -72,6 +72,7 @@ instance FromJSON a => FromJSON (Opts a) where
 	parseJSON = withObject "options" $ fmap (Opts . M.fromList) . mapM fromPair . HM.toList where
 		fromPair (n, v) = (T.unpack n,) <$> case v of
 			Null -> return []
+			Number n' -> return <$> parseJSON (toJSON $ show n')
 			_ -> (return <$> parseJSON v) <|> parseJSON v
 
 data Arg = Flag | Required String | List String deriving (Eq, Ord, Show)

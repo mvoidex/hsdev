@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, UndecidableInstances, OverlappingInstances #-}
+{-# LANGUAGE FlexibleInstances, UndecidableInstances, OverlappingInstances, DefaultSignatures #-}
 
 -- | Format module
 --
@@ -11,10 +11,13 @@ module Text.Format (
 
 import Control.Arrow (first)
 import Data.List (delete, isPrefixOf)
+import Data.String
 import Text.Regex.PCRE
 
 class Format a where
 	format :: a -> String
+	default format :: Show a => a -> String
+	format = show
 
 instance Format String where
 	format = id
@@ -42,8 +45,8 @@ instance Hole [(String, String)] where
 
 infixr 1 %~
 
-(%~) :: Hole a => String -> a -> Either String String
-fmt %~ hargs = case fmt =~ "\\$(\\{([a-zA-Z]+)\\})?" of
+(%~) :: (Hole a, IsString s) => String -> a -> Either String s
+fmt %~ hargs = fmap fromString $ case fmt =~ "\\$(\\{([a-zA-Z]+)\\})?" of
 	(pre, "", "", []) -> Right pre
 	(pre, _, post, []) -> Right $ pre ++ post
 	(pre, _, post, gs) -> do
@@ -79,7 +82,7 @@ fmt %~ hargs = case fmt =~ "\\$(\\{([a-zA-Z]+)\\})?" of
 
 infixr 1 ~~
 
-(~~) :: Hole a => String -> a -> String
+(~~) :: (Hole a, IsString s) => String -> a -> s
 fmt ~~ hargs = either error id $ fmt %~ hargs
 
 infixr 5 %
