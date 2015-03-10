@@ -24,7 +24,7 @@ import qualified Data.Text as T (isInfixOf, isPrefixOf)
 import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
-import qualified System.Log.Simple as Log
+import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
 
 import qualified HsDev.Database.Async as DB
@@ -162,7 +162,7 @@ commands = [
 	where
 		cmd' :: ToJSON a => String -> [String] -> [Opt] -> String -> ([String] -> Opts String -> CommandActionT a) -> Cmd CommandAction
 		cmd' nm pos named descr act = checkPosArgs $ cmd nm pos named descr act' where
-			act' (Args args os) copts = do
+			act' (Args args os) copts = Log.scopeLog (commandLogger copts) (fromString nm) $ do
 				r <- runErrorT (act args os copts)
 				case r of
 					Left (CommandError e ds) -> return $ Error e $ M.fromList $ map (first unpack) ds
@@ -839,6 +839,7 @@ updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `
 		(not $ flagSet "no-docs" as)
 		(not $ flagSet "no-infer" as)
 		(commandGhcMod copts)
+		(commandLogger copts)
 	logErr :: String -> ErrorT String (Update.UpdateDB IO) ()
 	logErr e = liftIO $ commandLog copts Log.Error e
 

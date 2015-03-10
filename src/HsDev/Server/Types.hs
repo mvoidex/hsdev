@@ -33,6 +33,7 @@ data CommandOptions = CommandOptions {
 	commandReadCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
 	commandRoot :: FilePath,
 	commandLog :: Level -> String -> IO (),
+	commandLogger :: Log,
 	commandListenLog :: ([String] -> IO ()) -> IO (),
 	commandLogWait :: IO (),
 #if mingw32_HOST_OS

@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, MultiParamTypeClasses #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.Update (
 	Status(..), Progress(..), Task(..), isStatus,
@@ -20,6 +21,7 @@ module HsDev.Database.Update (
 import Control.Applicative
 import Control.Lens (preview, _Just, view)
 import Control.Monad.Catch
+import Control.Monad.CatchIO
 import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -31,6 +33,8 @@ import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath)
+import qualified System.Log.Simple as Log
+import qualified System.Log.Simple.Base as Log (scopeLog)
 
 import Control.Concurrent.Worker (Worker)
 import qualified HsDev.Cache.Structured as Cache
@@ -108,14 +112,21 @@ data Settings = Settings {
 	ghcOptions :: [String],
 	updateDocs :: Bool,
 	runInferTypes :: Bool,
-	settingsGhcModWorker :: Worker (ReaderT WorkerMap IO) }
+	settingsGhcModWorker :: Worker (ReaderT WorkerMap IO),
+	settingsLogger :: Log.Log }
 
 newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [ModuleLocation] m) a }
-	deriving (Applicative, Monad, MonadIO, MonadThrow, MonadCatch, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
+	deriving (Applicative, Monad, MonadIO, MonadCatchIO, MonadThrow, MonadCatch, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
+
+instance MonadCatchIO m => Log.MonadLog (UpdateDB m) where
+	askLog = liftM settingsLogger ask
+
+instance (Log.MonadLog m, Error e) => Log.MonadLog (ErrorT e m) where
+	askLog = lift Log.askLog
 
 -- | Run `UpdateDB` monad
-updateDB :: MonadIO m => Settings -> ErrorT String (UpdateDB m) () -> m ()
-updateDB sets act = do
+updateDB :: MonadCatchIO m => Settings -> ErrorT String (UpdateDB m) () -> m ()
+updateDB sets act = Log.scopeLog (settingsLogger sets) "update" $ do
 	updatedMods <- execWriterT (runUpdateDB (runErrorT act' >> return ()) `runReaderT` sets)
 	wait $ database sets
 	dbval <- liftIO $ readAsync $ database sets
@@ -137,9 +148,11 @@ updateDB sets act = do
 				getMods = do
 					db' <- liftIO $ readAsync $ database sets
 					return $ catMaybes [M.lookup mloc' (databaseModules db') | mloc' <- mlocs']
-			when (updateDocs sets)
+			when (updateDocs sets) $ do
+				Log.log Log.Trace "inspecting source docs"
 				(getMods >>= waiter . runTask "inspecting source docs" [] . runTasks . map scanDocs)
-			when (runInferTypes sets)
+			when (runInferTypes sets) $ do
+				Log.log Log.Trace "inferring types"
 				(getMods >>= waiter . runTask "inferring types" [] . runTasks . map inferModTypes)
 		scanDocs :: MonadIO m => InspectedModule -> ErrorT String (UpdateDB m) ()
 		scanDocs im = runTask "scanning docs" (subject (view inspectedId im) ["module" .= view inspectedId im]) $ do

@@ -329,7 +329,7 @@ chaner ch = Consumer withChan where
 	withChan f = f (F.putChan ch . T.unpack)
 
 -- | Inits log chan and returns functions (print message, wait channel)
-initLog :: Opts String -> IO (Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
+initLog :: Opts String -> IO (Log, Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
 initLog sopts = do
 	msgs <- F.newChan
 	outputDone <- newEmptyMVar
@@ -344,14 +344,14 @@ initLog sopts = do
 		listenLog f = logException "listen log" (F.putChan msgs) $ do
 			msgs' <- F.dupChan msgs
 			F.readChan msgs' >>= f
-	return (\lev -> writeLog l lev . T.pack, listenLog, F.closeChan msgs >> takeMVar outputDone)
+	return (l, \lev -> writeLog l lev . T.pack, listenLog, F.closeChan msgs >> takeMVar outputDone)
 	where
 		rules :: Rules
 		rules = maybeToList $ (parseRule_ . T.pack) <$> arg "log-config" sopts
 
 -- | Run server
 runServer :: Opts String -> (CommandOptions -> IO ()) -> IO ()
-runServer sopts act = bracket (initLog sopts) (\(_, _, x) -> x) $ \(outputStr, listenLog, waitOutput) -> do
+runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> do
 	db <- DB.newAsync
 	when (flagSet "load" sopts) $ withCache sopts () $ \cdir -> do
 		outputStr Log.Info $ "Loading cache from " ++ cdir
@@ -370,6 +370,7 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, x) -> x) $ \(outputStr, l
 		(readCache sopts outputStr)
 		"."
 		outputStr
+		logger'
 		listenLog
 		waitOutput
 #if mingw32_HOST_OS
