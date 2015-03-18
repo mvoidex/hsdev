@@ -2,7 +2,7 @@
 
 module HsDev.Project (
 	Project(..),
-	ProjectDescription(..), Target(..), Library(..), Executable(..), Test(..), Info(..),
+	ProjectDescription(..), Target(..), Library(..), Executable(..), Test(..), Info(..), infoSourceDirsDef,
 	readProject, loadProject, getProjectSandbox,
 	project,
 	Extensions(..), withExtensions,
@@ -23,7 +23,7 @@ module HsDev.Project (
 import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
-import Control.Lens (makeLenses)
+import Control.Lens (makeLenses, Simple, Lens, view, lens)
 import Control.Exception
 import Control.Monad.Error
 import Data.Aeson
@@ -197,6 +197,15 @@ data Info = Info {
 	_infoSourceDirs :: [FilePath] }
 		deriving (Eq, Read)
 
+-- | infoSourceDirs lens with default
+infoSourceDirsDef :: Simple Lens Info [FilePath]
+infoSourceDirsDef = lens get' set' where
+	get' i = case _infoSourceDirs i of
+		[] -> ["."]
+		dirs -> dirs
+	set' i ["."] = i { _infoSourceDirs = [] }
+	set' i dirs = i { _infoSourceDirs = dirs }
+
 instance Show Info where
 	show i = unlines $ lang ++ exts ++ sources where
 		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ _infoLanguage i
@@ -329,7 +338,7 @@ infos p =
 
 -- | Check if source related to target, source must be relative to project directory
 inTarget :: FilePath -> Info -> Bool
-inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ _infoSourceDirs info
+inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ view infoSourceDirsDef info
 
 -- | Get target for source file
 fileTarget :: Project -> FilePath -> Maybe Info
@@ -340,12 +349,12 @@ fileTarget p f = find (makeRelative (_projectPath p) f `inTarget`) $
 findSourceDir :: Project -> FilePath -> Maybe FilePath
 findSourceDir p f = do
 	info <- fileTarget p f
-	listToMaybe $ filter (`isParent` f) $ map (_projectPath p </>) $ _infoSourceDirs info
+	listToMaybe $ filter (`isParent` f) $ map (_projectPath p </>) $ view infoSourceDirsDef info
 
 -- | Returns source dirs for library, executables and tests
 sourceDirs :: ProjectDescription -> [Extensions FilePath]
 sourceDirs = ordNub . concatMap dirs . infos where
-	dirs i = map (`withExtensions` i) $ _infoSourceDirs i
+	dirs i = map (`withExtensions` i) $ view infoSourceDirsDef i
 
 parseDT :: Distribution.Text.Text a => String -> String -> Parser a
 parseDT typeName v = maybe err return (simpleParse v) where
