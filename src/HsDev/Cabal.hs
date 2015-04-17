@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, MultiWayIf #-}
+{-# LANGUAGE OverloadedStrings, MultiWayIf, FlexibleContexts #-}
 
 module HsDev.Cabal (
 	Cabal(..), sandbox,
@@ -8,7 +8,7 @@ module HsDev.Cabal (
 
 import Control.Applicative
 import Control.DeepSeq (NFData(..))
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Aeson
 import Data.List
 import System.Directory
@@ -71,18 +71,18 @@ findPackageDb sand = do
 		| otherwise -> return Nothing
 
 -- | Create sandbox by directory or package-db file
-locateSandbox :: FilePath -> ErrorT String IO Cabal
+locateSandbox :: FilePath -> ExceptT String IO Cabal
 locateSandbox p = liftE (findPackageDb p) >>= maybe
 	(throwError $ "Can't locate package-db in sandbox: " ++ p)
 	(return . Sandbox)
 
 -- | Try find sandbox by parent directory
 getSandbox :: FilePath -> IO Cabal
-getSandbox = liftM (either (const Cabal) id) . runErrorT . locateSandbox
+getSandbox = liftM (either (const Cabal) id) . runExceptT . locateSandbox
 
 -- | Search sandbox
 searchSandbox :: FilePath -> IO Cabal
-searchSandbox p = runErrorT (searchPath p locateSandbox) >>= either (const $ return Cabal) return
+searchSandbox p = runExceptT (searchPath p locateSandbox) >>= either (const $ return Cabal) return
 
 -- | Cabal ghc option
 cabalOpt :: Cabal -> [String]

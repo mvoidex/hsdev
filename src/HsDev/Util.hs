@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module HsDev.Util (
 	withCurrentDirectory,
 	directoryContents,
@@ -23,11 +25,10 @@ module HsDev.Util (
 	liftTask
 	) where
 
-import Control.Applicative
 import Control.Arrow (second, left)
 import Control.Exception
 import Control.Monad
-import Control.Monad.Error
+import Control.Monad.Except
 import qualified Control.Monad.Catch as C
 import Data.Aeson
 import Data.Aeson.Types (Parser)
@@ -42,7 +43,6 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Text (Text)
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
-import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
 import System.IO
@@ -141,16 +141,16 @@ objectUnion (Object l) _ = Object l
 objectUnion _ (Object r) = Object r
 objectUnion _ _ = Null
 
--- | Lift IO exception to ErrorT
-liftException :: C.MonadCatch m => m a -> ErrorT String m a
-liftException = ErrorT . liftM (left $ \(SomeException e) -> show e) . C.try
+-- | Lift IO exception to ExceptT
+liftException :: C.MonadCatch m => m a -> ExceptT String m a
+liftException = ExceptT . liftM (left $ \(SomeException e) -> show e) . C.try
 
 -- | Same as @liftException@
-liftE :: C.MonadCatch m => m a -> ErrorT String m a
+liftE :: C.MonadCatch m => m a -> ExceptT String m a
 liftE = liftException
 
 -- | @liftE@ for IO
-liftEIO :: (C.MonadCatch m, MonadIO m) => IO a -> ErrorT String m a
+liftEIO :: (C.MonadCatch m, MonadIO m) => IO a -> ExceptT String m a
 liftEIO = liftE . liftIO
 
 -- | Run actions ignoring errors
@@ -161,19 +161,19 @@ triesMap :: MonadPlus m => (a -> m b) -> [a] -> m [b]
 triesMap f = tries . map f
 
 -- | Lift IO exception to MonadError
-liftExceptionM :: (C.MonadCatch m, Error e, MonadError e m) => m a -> m a
+liftExceptionM :: (C.MonadCatch m, MonadError String m) => m a -> m a
 liftExceptionM act = C.catch act onError where
-	onError = throwError . strMsg . (\(SomeException e) -> show e)
+	onError = throwError . (\(SomeException e) -> show e)
 
--- | Lift IO exceptions to ErrorT
-liftIOErrors :: C.MonadCatch m => ErrorT String m a -> ErrorT String m a
-liftIOErrors act = liftException (runErrorT act) >>= either throwError return
+-- | Lift IO exceptions to ExceptT
+liftIOErrors :: C.MonadCatch m => ExceptT String m a -> ExceptT String m a
+liftIOErrors act = liftException (runExceptT act) >>= either throwError return
 
-eitherT :: (Monad m, Error e, MonadError e m) => Either String a -> m a
-eitherT = either (throwError . strMsg) return
+eitherT :: (Monad m, MonadError String m) => Either String a -> m a
+eitherT = either throwError return
 
 -- | Throw error as exception
-liftThrow :: (Show e, Error e, MonadError e m, C.MonadCatch m) => m a -> m a
+liftThrow :: (Show e, MonadError e m, C.MonadCatch m) => m a -> m a
 liftThrow act = catchError act (C.throwM . userError . show)
 
 fromUtf8 :: ByteString -> String
@@ -210,5 +210,5 @@ logIO pre out = handle onIO where
 ignoreIO :: IO () -> IO ()
 ignoreIO = handle (const (return ()) :: IOException -> IO ())
 
-liftTask :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Task a) -> ErrorT String m a
-liftTask = liftExceptionM . ErrorT . liftIO . liftM (left show) . join . liftM taskWait
+liftTask :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Task a) -> ExceptT String m a
+liftTask = liftExceptionM . ExceptT . liftIO . liftM (left show) . join . liftM taskWait

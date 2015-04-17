@@ -31,7 +31,7 @@ import Control.Concurrent
 import Control.DeepSeq
 import Control.Exception (SomeException(..))
 import Control.Lens (view, preview, set, _Just, over)
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad.Catch (MonadThrow(..), MonadCatch(..))
 import Control.Monad.Reader
 import Data.Aeson
@@ -41,7 +41,6 @@ import Data.Maybe
 import qualified Data.Map as M
 import Data.String (fromString)
 import Exception (gcatch)
-import GHC (getSessionDynFlags, defaultCleanupHandler)
 import System.Directory
 import System.FilePath (normalise)
 import Text.Read (readMaybe)
@@ -57,7 +56,7 @@ import HsDev.Symbols
 import HsDev.Tools.Base
 import HsDev.Util ((.::), liftIOErrors, liftThrow, withCurrentDirectory, readFileUtf8, ordNub)
 
-list :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
+list :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]
 list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opts }) $ do
 	ms <- (map splitPackage . lines) <$> GhcMod.modules
 	return [CabalModule cabal (readMaybe p) m | (m, p) <- ms]
@@ -65,7 +64,7 @@ list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opt
 		splitPackage :: String -> (String, String)
 		splitPackage = second (drop 1) . break isSpace
 
-browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ErrorT String IO InspectedModule
+browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ExceptT String IO InspectedModule
 browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection opts) $ runGhcMod
 	(GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.qualified = True, GhcMod.ghcUserOptions = packageOpt mpackage ++ opts }) $ do
 		ds <- (mapMaybe parseDecl . lines) <$> GhcMod.browse mpkgname
@@ -103,10 +102,10 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 browseInspection :: [String] -> Inspection
 browseInspection = InspectionAt 0 . sort . ordNub
 
-langs :: ErrorT String IO [String]
+langs :: ExceptT String IO [String]
 langs = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.languages
 
-flags :: ErrorT String IO [String]
+flags :: ExceptT String IO [String]
 flags = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.flags
 
 info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
@@ -118,7 +117,7 @@ info opts cabal file sname = do
 	where
 		toDecl fstr s =
 			liftM (recalcDeclTabs fstr) .
-			maybe (throwError $ strMsg $ "Can't parse info: '" ++ sname ++ "'") return $
+			maybe (throwError $ GhcMod.GMEString $ "Can't parse info: '" ++ sname ++ "'") return $
 			parseData s `mplus` parseFunction s
 		recalcDeclTabs :: String -> Declaration -> Declaration
 		recalcDeclTabs fstr = over (declarationPosition . _Just) (recalcTabs fstr)
@@ -187,6 +186,8 @@ typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.ghcUserOptions =
 data OutputMessageLevel = WarningMessage | ErrorMessage deriving (Eq, Ord, Bounded, Enum, Read, Show)
 
 instance NFData OutputMessageLevel where
+	rnf WarningMessage = ()
+	rnf ErrorMessage = ()
 
 instance ToJSON OutputMessageLevel where
 	toJSON WarningMessage = toJSON ("warning" :: String)
@@ -265,8 +266,8 @@ lint opts file = do
 		res <- GhcMod.lint file
 		return $ map (recalcOutputMessageTabs [(file, cts)]) $ parseOutputMessages res
 
-runGhcMod :: (GhcMod.IOish m, MonadCatch m) => GhcMod.Options -> GhcModT m a -> ErrorT String m a
-runGhcMod opts act = liftIOErrors $ ErrorT $ liftM (left show . fst) $ runGhcModT opts act
+runGhcMod :: (GhcMod.IOish m, MonadCatch m) => GhcMod.Options -> GhcModT m a -> ExceptT String m a
+runGhcMod opts act = liftIOErrors $ ExceptT $ liftM (left show . fst) $ runGhcModT opts act
 
 locateGhcModEnv :: FilePath -> IO (Either Project Cabal)
 locateGhcModEnv f = do
@@ -282,21 +283,14 @@ ghcModWorker p = do
 	home <- getHomeDirectory
 	startWorker (runGhcModT'' $ ghcModEnvPath home p) id liftThrow
 	where
-		makeEnv :: FilePath -> IO GhcMod.GhcModEnv
-		makeEnv = GhcMod.newGhcModEnv GhcMod.defaultOptions
 		-- TODO: Uncomment comment below after ghc-mod exports neccessary functions
-		functionNotExported = True
+		functionNotExported = False
 		runGhcModT'' :: FilePath -> GhcModT IO () -> IO ()
 		runGhcModT'' cur act
 			| functionNotExported = withCurrentDirectory cur $
 				void $ runGhcModT GhcMod.defaultOptions $ act `catchError` (void . return)
 			| otherwise = do
-				env' <- makeEnv cur
-				void $ GhcMod.runGhcModT' env' GhcMod.defaultState $ do
-					dflags <- getSessionDynFlags
-					defaultCleanupHandler dflags $ do
-						--GhcMod.initializeFlagsWithCradle GhcMod.defaultOptions (GhcMod.gmCradle env')
-						act
+				void $ GhcMod.runGhcModT' cur GhcMod.defaultOptions $ act `catchError` (void . return)
 
 type WorkerMap = MVar (M.Map FilePath (Worker (GhcModT IO)))
 
@@ -322,11 +316,11 @@ dispatch file act = do
 		t <- pushTask w act
 		return (M.insert envPath' w wmap, t)
 
-waitMultiGhcMod :: Worker (ReaderT WorkerMap IO) -> FilePath -> GhcModT IO a -> ErrorT String IO a
+waitMultiGhcMod :: Worker (ReaderT WorkerMap IO) -> FilePath -> GhcModT IO a -> ExceptT String IO a
 waitMultiGhcMod w f =
 	liftIO . pushTask w . dispatch f >=>
-	asErrorT . taskWait >=>
-	asErrorT . taskWait
+	asExceptT . taskWait >=>
+	asExceptT . taskWait
 	where
-		asErrorT :: Monad m => m (Either SomeException a) -> ErrorT String m a
-		asErrorT = ErrorT . liftM (left (\(SomeException e) -> show e))
+		asExceptT :: Monad m => m (Either SomeException a) -> ExceptT String m a
+		asExceptT = ExceptT . liftM (left (\(SomeException e) -> show e))

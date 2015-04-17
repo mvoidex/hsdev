@@ -15,7 +15,6 @@ module HsDev.Database (
 	structured, structurize, merge
 	) where
 
-import Control.Applicative
 import Control.Lens (set, view)
 import Control.Monad (msum, join)
 import Control.DeepSeq (NFData(..))
@@ -25,7 +24,6 @@ import Data.Function (on)
 import Data.Group (Group(..))
 import Data.Map (Map)
 import Data.Maybe
-import Data.Monoid (Monoid(..))
 import qualified Data.Map as M
 
 import HsDev.Symbols

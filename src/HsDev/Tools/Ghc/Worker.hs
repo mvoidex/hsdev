@@ -10,7 +10,7 @@ module HsDev.Tools.Ghc.Worker (
 	) where
 
 import Control.Monad
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad.Catch
 import Data.Dynamic
 import GHC

@@ -1,13 +1,13 @@
 {-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances #-}
 
 module HsDev.Server.Types (
-	CommandOptions(..), CommandError(..), commandError,
+	CommandOptions(..), CommandError(..), commandError_, commandError,
 	CommandAction, CommandM, CommandActionT,
 	ResultValue(..)
 	) where
 
 import Control.Applicative
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad.Reader
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Types (Pair)
@@ -30,7 +30,7 @@ import System.Win32.FileMapping.NamePool (Pool)
 data CommandOptions = CommandOptions {
 	commandDatabase :: DB.Async Database,
 	commandWriteCache :: Database -> IO (),
-	commandReadCache :: (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database),
+	commandReadCache :: (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database),
 	commandRoot :: FilePath,
 	commandLog :: Level -> String -> IO (),
 	commandLogger :: Log,
@@ -48,16 +48,19 @@ data CommandOptions = CommandOptions {
 
 data CommandError = CommandError String [Pair]
 
-instance Control.Monad.Error.Error CommandError where
-	noMsg = CommandError noMsg []
-	strMsg m = CommandError m []
+instance Monoid CommandError where
+	mempty = CommandError "" []
+	mappend (CommandError lmsg lp) (CommandError rmsg rp) = CommandError (lmsg ++ ", " ++ rmsg) (lp ++ rp)
 
-commandError :: String -> [Pair] -> ErrorT CommandError IO a
+commandError_ :: String -> ExceptT CommandError IO a
+commandError_ m = commandError m []
+
+commandError :: String -> [Pair] -> ExceptT CommandError IO a
 commandError m ps = throwError $ CommandError m ps
 
 type CommandAction = CommandOptions -> IO Result
 
-type CommandM a = ErrorT CommandError IO a
+type CommandM a = ExceptT CommandError IO a
 
 type CommandActionT a = CommandOptions -> CommandM a
 

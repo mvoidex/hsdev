@@ -20,10 +20,7 @@ import Data.List (unfoldr)
 import Data.Maybe
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Monoid (mempty, mconcat)
-import Data.Foldable (Foldable(foldMap))
 import Data.Text (unpack)
-import Data.Traversable (Traversable(traverse))
 
 import System.Console.Args hiding (withOpts)
 import HsDev.Util ((.::), (.::?), objectUnion)

@@ -20,12 +20,11 @@ module HsDev.Commands (
 
 import Control.Applicative
 import Control.Lens (view, set, each)
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Maybe
 import qualified Data.Map as M (lookup)
 import Data.String (fromString)
 import qualified Data.Text as T (isPrefixOf, split, unpack)
-import Data.Traversable (traverse)
 import System.Directory (canonicalizePath)
 
 import HsDev.Database
@@ -37,7 +36,7 @@ import HsDev.Tools.Base (matchRx, at)
 import HsDev.Util (liftE, ordNub)
 
 -- | Find declaration by name
-findDeclaration :: Database -> String -> ErrorT String IO [ModuleDeclaration]
+findDeclaration :: Database -> String -> ExceptT String IO [ModuleDeclaration]
 findDeclaration db ident = return $ selectDeclarations checkName db where
 	checkName :: ModuleDeclaration -> Bool
 	checkName m =
@@ -47,24 +46,24 @@ findDeclaration db ident = return $ selectDeclarations checkName db where
 	(qname, iname) = splitIdentifier ident
 
 -- | Find module by name
-findModule :: Database -> String -> ErrorT String IO [Module]
+findModule :: Database -> String -> ExceptT String IO [Module]
 findModule db mname = return $ selectModules ((== fromString mname) . view moduleName) db
 
 -- | Find module in file
-fileModule :: Database -> FilePath -> ErrorT String IO Module
+fileModule :: Database -> FilePath -> ExceptT String IO Module
 fileModule db src = do
 	src' <- liftE $ canonicalizePath src
 	maybe (throwError $ "File '" ++ src' ++ "' not found") return $ lookupFile src' db
 
 -- | Find project of module
-getProject :: Database -> Project -> ErrorT String IO Project
+getProject :: Database -> Project -> ExceptT String IO Project
 getProject db p = do
 	p' <- liftE $ canonicalizePath $ view projectCabal p
 	maybe (throwError $ "Project " ++ p' ++ " not found") return $
 		M.lookup p' $ databaseProjects db
 
 -- | Lookup visible within project symbol
-lookupSymbol :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
+lookupSymbol :: Database -> Cabal -> FilePath -> String -> ExceptT String IO [ModuleDeclaration]
 lookupSymbol db cabal file ident = do
 	(_, mthis, mproj) <- fileCtx db file
 	liftM
@@ -77,7 +76,7 @@ lookupSymbol db cabal file ident = do
 		(qname, iname) = splitIdentifier ident
 
 -- | Whois symbol in scope
-whois :: Database -> Cabal -> FilePath -> String -> ErrorT String IO [ModuleDeclaration]
+whois :: Database -> Cabal -> FilePath -> String -> ExceptT String IO [ModuleDeclaration]
 whois db cabal file ident = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
@@ -90,7 +89,7 @@ whois db cabal file ident = do
 		checkDecl d = fmap fromString qname `elem` scopes d && view declarationName d == fromString iname
 
 -- | Accessible modules
-scopeModules :: Database -> Cabal -> FilePath -> ErrorT String IO [Module]
+scopeModules :: Database -> Cabal -> FilePath -> ExceptT String IO [Module]
 scopeModules db cabal file = do
 	(file', mthis, mproj) <- fileCtxMaybe db file
 	newestPackage <$> case mproj of
@@ -103,14 +102,14 @@ scopeModules db cabal file = do
 		deps f p = maybe [] (view infoDepends) $ fileTarget p f
 
 -- | Symbols in scope
-scope :: Database -> Cabal -> FilePath -> Bool -> ErrorT String IO [ModuleDeclaration]
+scope :: Database -> Cabal -> FilePath -> Bool -> ExceptT String IO [ModuleDeclaration]
 scope db cabal file False = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $ moduleModuleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) mthis
 scope db cabal file True = concatMap moduleModuleDeclarations <$> scopeModules db cabal file
 
 -- | Completions
-completions :: Database -> Cabal -> FilePath -> String -> Bool -> ErrorT String IO [ModuleDeclaration]
+completions :: Database -> Cabal -> FilePath -> String -> Bool -> ExceptT String IO [ModuleDeclaration]
 completions db cabal file prefix wide = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
@@ -126,7 +125,7 @@ completions db cabal file prefix wide = do
 			| otherwise = m
 
 -- | Module completions
-moduleCompletions :: Database -> [Module] -> String -> ErrorT String IO [String]
+moduleCompletions :: Database -> [Module] -> String -> ExceptT String IO [String]
 moduleCompletions _ ms prefix = return $ map T.unpack $ ordNub $ completions' $ map (view moduleName) ms where
 	completions' = mapMaybe getNext where
 		getNext m
@@ -161,7 +160,7 @@ splitIdentifier name = fromMaybe (Nothing, name) $ do
 		dropDot s = init s
 
 -- | Get context file and project
-fileCtx :: Database -> FilePath -> ErrorT String IO (FilePath, Module, Maybe Project)
+fileCtx :: Database -> FilePath -> ExceptT String IO (FilePath, Module, Maybe Project)
 fileCtx db file = do
 	file' <- liftE $ canonicalizePath file
 	mthis <- fileModule db file'
@@ -169,7 +168,7 @@ fileCtx db file = do
 	return (file', mthis, mproj)
 
 -- | Try get context file
-fileCtxMaybe :: Database -> FilePath -> ErrorT String IO (FilePath, Maybe Module, Maybe Project)
+fileCtxMaybe :: Database -> FilePath -> ExceptT String IO (FilePath, Maybe Module, Maybe Project)
 fileCtxMaybe db file = ((\(f, m, p) -> (f, Just m, p)) <$> fileCtx db file) <|> onlyProj where
 	onlyProj = do
 		file' <- liftE $ canonicalizePath file

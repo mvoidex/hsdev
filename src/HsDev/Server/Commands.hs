@@ -19,7 +19,7 @@ import Control.Arrow (second)
 import Control.Concurrent
 import Control.Exception
 import Control.Monad
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Char8 as BS
@@ -28,8 +28,6 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Either (isLeft)
 import qualified Data.Map as M
 import Data.Maybe
-import Data.Monoid
-import Data.Traversable (traverse)
 import Data.Text (Text)
 import qualified Data.Text as T (pack, unpack)
 import Network.Socket hiding (connect)
@@ -545,8 +543,8 @@ writeCache sopts logMsg' d = withCache sopts () $ \cdir -> do
 			ms -> logMsg' Log.Debug $ "cache write: " ++ show (length ms) ++ " files"
 	logMsg' Log.Info $ "cache saved to " ++ cdir
 
-readCache :: Opts String -> (Log.Level -> String -> IO ()) -> (FilePath -> ErrorT String IO Structured) -> IO (Maybe Database)
-readCache sopts logMsg' act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runErrorT . act where
+readCache :: Opts String -> (Log.Level -> String -> IO ()) -> (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database)
+readCache sopts logMsg' act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runExceptT . act where
 	cacheErr e = logMsg' Log.Error ("Error reading cache: " ++ e) >> return Nothing
 	cacheOk s = do
 		forM_ (M.keys (structuredCabals s)) $ \c -> logMsg' Log.Debug ("cache read: cabal " ++ show c)
@@ -571,7 +569,7 @@ mmap mmapPool r
 	| L.length msg <= 1024 = return r
 	| otherwise = withSync (responseError "timeout" []) $ \sync -> timeout 10000000 $
 		withName mmapPool $ \mmapName -> do
-			runErrorT $ flip catchError
+			runExceptT $ flip catchError
 				(\e -> liftIO $ sync $ responseError e [])
 				(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
 					sync $ result $ MmapFile mmapName
@@ -586,7 +584,7 @@ unMmap :: Response -> IO Response
 #if mingw32_HOST_OS
 unMmap (Right (Result v))
 	| Just (MmapFile f) <- parseMaybe parseJSON v = do
-		cts <- runErrorT (fmap L.fromStrict (readMapFile f))
+		cts <- runExceptT (fmap L.fromStrict (readMapFile f))
 		case cts of
 			Left _ -> return $ responseError "Unable to read map view of file" ["file" .= f]
 			Right r' -> case eitherDecode r' of

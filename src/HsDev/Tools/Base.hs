@@ -11,7 +11,7 @@ module HsDev.Tools.Base (
 	) where
 
 import Control.Lens (set)
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad.State
 import Data.Array (assocs)
 import Data.List (unfoldr, intercalate)
@@ -24,7 +24,7 @@ import HsDev.Symbols
 import HsDev.Util (liftIOErrors)
 
 type Result = Either String String
-type ToolM a = ErrorT String IO a
+type ToolM a = ExceptT String IO a
 
 -- | Run command and wait for result
 runWait :: FilePath -> [String] -> String -> IO Result
@@ -38,7 +38,7 @@ runWait_ name args = runWait name args ""
 
 -- | Tool
 tool :: FilePath -> [String] -> String -> ToolM String
-tool name args input = liftIOErrors $ ErrorT $ runWait name args input
+tool name args input = liftIOErrors $ ExceptT $ runWait name args input
 
 -- | Tool with no input
 tool_ :: FilePath -> [String] -> ToolM String
@@ -66,12 +66,12 @@ replaceRx pat w = intercalate w . splitRx pat
 at :: (Int -> Maybe String) -> Int -> String
 at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
 
-inspect :: Monad m => ModuleLocation -> ErrorT String m Inspection -> ErrorT String m Module -> ErrorT String m InspectedModule
+inspect :: Monad m => ModuleLocation -> ExceptT String m Inspection -> ExceptT String m Module -> ExceptT String m InspectedModule
 inspect mloc insp act = lift $ execStateT inspect' (Inspected InspectionNone mloc (Left "not inspected")) where
-	inspect' = runErrorT $ do
-		i <- mapErrorT lift insp
+	inspect' = runExceptT $ do
+		i <- mapExceptT lift insp
 		modify (set inspection i)
-		v <- mapErrorT lift act
+		v <- mapExceptT lift act
 		modify (set inspectionResult (Right v))
 		`catchError`
 		\e -> modify (set inspectionResult (Left e))

@@ -35,14 +35,11 @@ import Control.Lens (makeLenses, view, set, Simple, Lens, lens)
 import Control.Monad
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
-import Data.Foldable (Foldable(..))
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
-import Data.Monoid
 import Data.Text (Text, unpack)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime)
-import Data.Traversable (Traversable(..))
 
 import HsDev.Project
 import HsDev.Symbols.Class

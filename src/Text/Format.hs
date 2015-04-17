@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances, UndecidableInstances, OverlappingInstances, DefaultSignatures #-}
+{-# LANGUAGE FlexibleInstances, UndecidableInstances, DefaultSignatures #-}
 
 -- | Format module
 --
@@ -34,7 +34,7 @@ class Hole a where
 instance Hole FormatArgs where
 	hole = id
 
-instance Format a => Hole a where
+instance {-# OVERLAPPABLE #-} Format a => Hole a where
 	hole v = [(Nothing, format v)]
 
 instance Format a => Hole (String, a) where

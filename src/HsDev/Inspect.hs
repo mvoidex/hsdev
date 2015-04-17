@@ -15,7 +15,7 @@ import qualified Control.Exception as E
 import Control.Lens (view, preview, set, over)
 import Control.Lens.At (ix)
 import Control.Monad
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Char (isSpace)
 import Data.Function (on)
 import Data.List
@@ -26,7 +26,6 @@ import Data.String (IsString, fromString)
 import Data.Text (Text)
 import qualified Data.Text as T (unpack)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
-import Data.Traversable (traverse, sequenceA)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
 import qualified System.Directory as Dir
@@ -283,7 +282,7 @@ addDocs :: Map String String -> Module -> Module
 addDocs docsMap = over moduleDeclarations (map $ addDoc docsMap)
 
 -- | Extract file docs and set them to module declarations
-inspectDocs :: [String] -> Module -> ErrorT String IO Module
+inspectDocs :: [String] -> Module -> ExceptT String IO Module
 inspectDocs opts m = do
 	let
 		hdocsWorkaround = True
@@ -293,18 +292,18 @@ inspectDocs opts m = do
 	return $ maybe id addDocs docsMap $ m
 
 -- | Inspect contents
-inspectContents :: String -> [String] -> String -> ErrorT String IO InspectedModule
+inspectContents :: String -> [String] -> String -> ExceptT String IO InspectedModule
 inspectContents name opts cts = inspect (ModuleSource $ Just name) (contentsInspection cts opts) $ do
-	analyzed <- ErrorT $ return $ analyzeModule exts (Just name) cts <|> analyzeModule_ exts (Just name) cts
+	analyzed <- ExceptT $ return $ analyzeModule exts (Just name) cts <|> analyzeModule_ exts (Just name) cts
 	return $ set moduleLocation (ModuleSource $ Just name) analyzed
 	where
 		exts = mapMaybe flagExtension opts
 
-contentsInspection :: String -> [String] -> ErrorT String IO Inspection
+contentsInspection :: String -> [String] -> ExceptT String IO Inspection
 contentsInspection _ _ = return InspectionNone -- crc or smth
 
 -- | Inspect file
-inspectFile :: [String] -> FilePath -> ErrorT String IO InspectedModule
+inspectFile :: [String] -> FilePath -> ExceptT String IO InspectedModule
 inspectFile opts file = do
 	proj <- liftE $ locateProject file
 	absFilename <- liftE $ Dir.canonicalizePath file
@@ -312,7 +311,7 @@ inspectFile opts file = do
 		-- docsMap <- liftE $ if hdocsWorkaround
 		-- 	then hdocsProcess absFilename opts
 		-- 	else liftM Just $ hdocs (FileModule absFilename Nothing) opts
-		forced <- ErrorT $ E.handle onError $ do
+		forced <- ExceptT $ E.handle onError $ do
 			analyzed <- liftM (\s -> analyzeModule exts (Just absFilename) s <|> analyzeModule_ exts (Just absFilename) s) $
 				readFileUtf8 absFilename
 			force analyzed `deepseq` return analyzed
@@ -325,19 +324,19 @@ inspectFile opts file = do
 		exts = mapMaybe flagExtension opts
 
 -- | File inspection data
-fileInspection :: FilePath -> [String] -> ErrorT String IO Inspection
+fileInspection :: FilePath -> [String] -> ExceptT String IO Inspection
 fileInspection f opts = do
 	tm <- liftE $ Dir.getModificationTime f
 	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ sort $ ordNub opts
 
 -- | Enumerate project dirs
-projectDirs :: Project -> ErrorT String IO [Extensions FilePath]
+projectDirs :: Project -> ExceptT String IO [Extensions FilePath]
 projectDirs p = do
 	p' <- loadProject p
 	return $ ordNub $ map (fmap (normalise . (view projectPath p' </>))) $ maybe [] sourceDirs $ view projectDescription p'
 
 -- | Enumerate project source files
-projectSources :: Project -> ErrorT String IO [Extensions FilePath]
+projectSources :: Project -> ExceptT String IO [Extensions FilePath]
 projectSources p = do
 	dirs <- projectDirs p
 	let
@@ -351,7 +350,7 @@ projectSources p = do
 	liftM (ordNub . concat) $ triesMap (liftM sequenceA . traverse (liftE . enumHs)) dirs
 
 -- | Inspect project
-inspectProject :: [String] -> Project -> ErrorT String IO (Project, [InspectedModule])
+inspectProject :: [String] -> Project -> ExceptT String IO (Project, [InspectedModule])
 inspectProject opts p = do
 	p' <- loadProject p
 	srcs <- projectSources p'

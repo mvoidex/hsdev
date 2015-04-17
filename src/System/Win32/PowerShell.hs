@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, OverlappingInstances, GeneralizedNewtypeDeriving, LambdaCase #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, GeneralizedNewtypeDeriving, LambdaCase #-}
 
 module System.Win32.PowerShell (
 	-- * Run PowerShell
@@ -20,7 +20,6 @@ module System.Win32.PowerShell (
 
 import Prelude hiding (filter)
 
-import Control.Applicative (Applicative(..))
 import Control.Monad
 import Control.Monad.Writer
 import Data.Char (isAlphaNum)
@@ -185,7 +184,7 @@ instance ToPS Bool where
 	toPS True = "$true"
 	toPS False = "$false"
 
-instance ToPS a => ToPS [a] where
+instance {-# OVERLAPPABLE #-} ToPS a => ToPS [a] where
 	toPS = intercalate ", " . map toPS
 
 translate :: String -> String

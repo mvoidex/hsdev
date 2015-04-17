@@ -41,14 +41,13 @@ import Control.Applicative
 import Control.Arrow
 import Control.Lens (view, set, over)
 import Control.Monad.Trans.Maybe
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Function (on)
 import Data.List
 import Data.Maybe (fromMaybe)
 import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T (concat, split, unpack)
-import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
 
@@ -212,7 +211,7 @@ locateSourceDir :: FilePath -> IO (Maybe FilePath)
 locateSourceDir f = runMaybeT $ do
 	file <- liftIO $ canonicalizePath f
 	p <- MaybeT $ locateProject file
-	proj <- MaybeT $ fmap (either (const Nothing) Just) $ runErrorT $ loadProject p
+	proj <- MaybeT $ fmap (either (const Nothing) Just) $ runExceptT $ loadProject p
 	MaybeT $ return $ findSourceDir proj file
 
 -- | Get source module root directory, i.e. for "...\src\Foo\Bar.hs" with module 'Foo.Bar' will return "...\src"

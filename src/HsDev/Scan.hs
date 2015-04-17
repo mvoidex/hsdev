@@ -10,10 +10,9 @@ module HsDev.Scan (
 
 import Control.Applicative ((<|>))
 import Control.Lens (view, preview)
-import Control.Monad.Error
+import Control.Monad.Except
 import qualified Data.Map as M
 import Data.Maybe (catMaybes, fromMaybe)
-import Data.Traversable (traverse)
 import System.Directory
 
 import HsDev.Scan.Browse (browsePackages)
@@ -25,7 +24,7 @@ import HsDev.Project
 import HsDev.Util
 
 -- | Enum cabal modules
-enumCabal :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
+enumCabal :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]
 enumCabal = list
 
 -- | Compile flags
@@ -44,7 +43,7 @@ data ScanContents = ScanContents {
 	sandboxesToScan :: [SandboxToScan] }
 
 -- | Enum project sources
-enumProject :: Project -> ErrorT String IO ProjectToScan
+enumProject :: Project -> ExceptT String IO ProjectToScan
 enumProject p = do
 	p' <- loadProject p
 	cabal <- liftE $ searchSandbox (view projectPath p')
@@ -61,7 +60,7 @@ enumProject p = do
 	return (p', [(FileModule (view entity src) (Just p'), extensionsOpts (view extensions src) ++ projOpts (view entity src)) | src <- srcs])
 
 -- | Enum directory modules
-enumDirectory :: FilePath -> ErrorT String IO ScanContents
+enumDirectory :: FilePath -> ExceptT String IO ScanContents
 enumDirectory dir = do
 	cts <- liftException $ traverseDirectory dir
 	let
@@ -79,36 +78,36 @@ enumDirectory dir = do
 		sandboxesToScan = map Sandbox sboxes }
 
 -- | Scan project file
-scanProjectFile :: [String] -> FilePath -> ErrorT String IO Project
+scanProjectFile :: [String] -> FilePath -> ExceptT String IO Project
 scanProjectFile _ f = do
 	proj <- (liftE $ locateProject f) >>= maybe (throwError "Can't locate project") return
 	loadProject proj
 
 -- | Scan module
-scanModule :: [String] -> ModuleLocation -> ErrorT String IO InspectedModule
+scanModule :: [String] -> ModuleLocation -> ExceptT String IO InspectedModule
 scanModule opts (FileModule f _) = inspectFile opts f
 -- scanModule opts (FileModule f _) = inspectFile opts f >>= traverse infer' where
 -- 	infer' m = tryInfer <|> return m where
--- 		tryInfer = mapErrorT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
+-- 		tryInfer = mapExceptT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
 -- 			runGhcMod defaultOptions $ inferTypes opts Cabal m
 scanModule opts (CabalModule c p n) = browse opts c n p
 scanModule _ (ModuleSource _) = throwError "Can inspect only modules in file or cabal"
 
 -- | Scan additional info and modify scanned module. Dones't fail on error, just left module unchanged
-scanModify :: ([String] -> Cabal -> Module -> ErrorT String IO Module) -> InspectedModule -> ErrorT String IO InspectedModule
+scanModify :: ([String] -> Cabal -> Module -> ExceptT String IO Module) -> InspectedModule -> ExceptT String IO InspectedModule
 scanModify f im = traverse f' im <|> return im where
 	-- TODO: Get actual sandbox
 	f' = f (fromMaybe [] $ preview (inspection . inspectionOpts) im) Cabal
 
 -- | Is inspected module up to date?
-upToDate :: [String] -> InspectedModule -> ErrorT String IO Bool
+upToDate :: [String] -> InspectedModule -> ExceptT String IO Bool
 upToDate opts (Inspected insp m _) = case m of
 	FileModule f _ -> liftM (== insp) $ fileInspection f opts
 	CabalModule _ _ _ -> return $ insp == browseInspection opts
 	_ -> return False
 
 -- | Rescan inspected module
-rescanModule :: [String] -> InspectedModule -> ErrorT String IO (Maybe InspectedModule)
+rescanModule :: [String] -> InspectedModule -> ExceptT String IO (Maybe InspectedModule)
 rescanModule opts im = do
 	up <- upToDate opts im
 	if up
@@ -116,10 +115,10 @@ rescanModule opts im = do
 		else fmap Just $ scanModule opts (view inspectedId im)
 
 -- | Is module new or recently changed
-changedModule :: Database -> [String] -> ModuleLocation -> ErrorT String IO Bool
+changedModule :: Database -> [String] -> ModuleLocation -> ExceptT String IO Bool
 changedModule db opts m = maybe (return True) (liftM not . upToDate opts) m' where
 	m' = M.lookup m (databaseModules db)
 
 -- | Returns new (to scan) and changed (to rescan) modules
-changedModules :: Database -> [String] -> [ModuleToScan] -> ErrorT String IO [ModuleToScan]
+changedModules :: Database -> [String] -> [ModuleToScan] -> ExceptT String IO [ModuleToScan]
 changedModules db opts ms = filterM (\(m, opts') -> changedModule db (opts ++ opts') m) ms

@@ -14,7 +14,6 @@ module HsDev.Tools.AutoFix (
 	module Data.Mark
 	) where
 
-import Control.Applicative
 import Control.Lens (view, preview)
 import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)

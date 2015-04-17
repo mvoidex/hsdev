@@ -3,7 +3,7 @@ module Main (
 	) where
 
 import Control.Exception (finally)
-import Control.Monad.Error
+import Control.Monad.Except
 import System.Directory
 import System.Environment (getArgs)
 
@@ -29,7 +29,7 @@ cmds = withHelp "hsclearimports" (printWith putStrLn) $ [
 			cur <- getCurrentDirectory
 			flip finally (setCurrentDirectory cur) $ do
 				maybe (return ()) setCurrentDirectory mroot
-				void $ runErrorT $ catchError
+				void $ runExceptT $ catchError
 					(clearImports (listArg "ghc" as) file >>= mapM_ (liftIO . putStrLn . format as))
 					(\e -> liftIO (putStrLn $ "Error: " ++ e))
 		clear _ = putStrLn "Invalid arguments"

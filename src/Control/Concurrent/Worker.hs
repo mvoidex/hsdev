@@ -12,7 +12,7 @@ module Control.Concurrent.Worker (
 import Control.Concurrent.MVar
 import Control.Monad.IO.Class
 import Control.Monad.Catch
-import Control.Monad.Error
+import Control.Monad.Except
 
 import Control.Concurrent.FiniteChan
 import Control.Concurrent.Task

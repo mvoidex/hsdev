@@ -6,7 +6,7 @@ module HsDev.Scan.Browse (
 	) where
 
 import Control.Lens (view, preview, _Just)
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Maybe
 import Data.String (fromString)
 import Text.Read (readMaybe)
@@ -33,28 +33,28 @@ import qualified Var as GHC
 import Pretty
 
 -- | Browse packages
-browsePackages :: [String] -> Cabal -> ErrorT String IO [ModulePackage]
+browsePackages :: [String] -> Cabal -> ExceptT String IO [ModulePackage]
 browsePackages opts cabal = liftIOErrors $ withPackages (cabalOpt cabal ++ opts) $ \dflags -> do
 	return $ mapMaybe (readPackage . GHC.packageConfigId) $ fromMaybe [] $ GHC.pkgDatabase dflags
 
-listModules :: [String] -> Cabal -> ErrorT String IO [ModuleLocation]
+listModules :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]
 listModules opts cabal = liftIOErrors $ withPackages_ (cabalOpt cabal ++ opts) $ do
-	ms <- lift $ GHC.packageDbModules False
+	ms <- lift packageDbModules
 	return $ map (ghcModuleLocation cabal) ms
 
-browseModules :: [String] -> Cabal -> [ModuleLocation] -> ErrorT String IO [InspectedModule]
+browseModules :: [String] -> Cabal -> [ModuleLocation] -> ExceptT String IO [InspectedModule]
 browseModules opts cabal mlocs = liftIOErrors $ withPackages_ (cabalOpt cabal ++ opts) $ do
-	ms <- lift $ GHC.packageDbModules False
+	ms <- lift packageDbModules
 	liftM catMaybes $ mapM browseModule' [m | m <- ms, ghcModuleLocation cabal m `elem` mlocs]
 	where
-		browseModule' :: GHC.Module -> ErrorT String GHC.Ghc (Maybe InspectedModule)
+		browseModule' :: GHC.Module -> ExceptT String GHC.Ghc (Maybe InspectedModule)
 		browseModule' m = tryT $ inspect (ghcModuleLocation cabal m) (return $ InspectionAt 0 opts) (browseModule cabal m)
 
 -- | Browse all modules
-browse :: [String] -> Cabal -> ErrorT String IO [InspectedModule]
+browse :: [String] -> Cabal -> ExceptT String IO [InspectedModule]
 browse opts cabal = listModules opts cabal >>= browseModules opts cabal
 
-browseModule :: Cabal -> GHC.Module -> ErrorT String GHC.Ghc Module
+browseModule :: Cabal -> GHC.Module -> ExceptT String GHC.Ghc Module
 browseModule cabal m = do
 	mi <- lift (GHC.getModuleInfo m) >>= maybe (throwError "Can't find module info") return
 	ds <- mapM (toDecl mi) (GHC.modInfoExports mi)
@@ -70,7 +70,7 @@ browseModule cabal m = do
 	where
 		thisLoc = view moduleIdLocation $ mloc m
 		mloc m' = ModuleId (fromString mname') $
-			CabalModule cabal (readMaybe $ GHC.packageIdString $ GHC.modulePackageId m') mname'
+			CabalModule cabal (readMaybe $ GHC.packageKeyString $ GHC.modulePackageKey m') mname'
 			where
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl minfo n = do
@@ -93,7 +93,7 @@ browseModule cabal m = do
 				| GHC.isAlgTyCon t && not (GHC.isNewTyCon t) && not (GHC.isClassTyCon t) = Data
 				| GHC.isNewTyCon t = NewType
 				| GHC.isClassTyCon t = Class
-				| GHC.isSynTyCon t = Type
+				| GHC.isTypeSynonymTyCon t = Type
 				| otherwise = Type
 		showResult _ _ = Nothing
 
@@ -106,10 +106,10 @@ withInitializedPackages ghcOpts cont = GHC.runGhc (Just GHC.libdir) $ do
 			(result, _) <- GHC.liftIO $ GHC.initPackages fs'
 			cont result
 
-withPackages :: [String] -> (GHC.DynFlags -> ErrorT String GHC.Ghc a) -> ErrorT String IO a
-withPackages ghcOpts cont = ErrorT $ withInitializedPackages ghcOpts (runErrorT . cont)
+withPackages :: [String] -> (GHC.DynFlags -> ExceptT String GHC.Ghc a) -> ExceptT String IO a
+withPackages ghcOpts cont = ExceptT $ withInitializedPackages ghcOpts (runExceptT . cont)
 
-withPackages_ :: [String] -> ErrorT String GHC.Ghc a -> ErrorT String IO a
+withPackages_ :: [String] -> ExceptT String GHC.Ghc a -> ExceptT String IO a
 withPackages_ ghcOpts act = withPackages ghcOpts (const act)
 
 inModuleSource :: GHC.Name -> GHC.Ghc (Maybe GHC.TyThing)
@@ -138,11 +138,16 @@ showUnqualifiedPage dflag = Pretty.showDoc Pretty.LeftMode 0 . GHC.withPprStyleD
 styleUnqualified :: GHC.PprStyle
 styleUnqualified = GHC.mkUserStyle GHC.neverQualify GHC.AllTheWay
 
-tryT :: (Monad m, Error e) => ErrorT e m a -> ErrorT e m (Maybe a)
+tryT :: Monad m => ExceptT e m a -> ExceptT e m (Maybe a)
 tryT act = catchError (liftM Just act) (const $ return Nothing)
 
-readPackage :: GHC.PackageId -> Maybe ModulePackage
-readPackage = readMaybe . GHC.packageIdString
+readPackage :: GHC.PackageKey -> Maybe ModulePackage
+readPackage = readMaybe . GHC.packageKeyString
 
 ghcModuleLocation :: Cabal -> GHC.Module -> ModuleLocation
-ghcModuleLocation cabal m = CabalModule cabal (readPackage $ GHC.modulePackageId m) (GHC.moduleNameString $ GHC.moduleName m)
+ghcModuleLocation cabal m = CabalModule cabal (readPackage $ GHC.modulePackageKey m) (GHC.moduleNameString $ GHC.moduleName m)
+
+packageDbModules :: GHC.GhcMonad m => m [GHC.Module]
+packageDbModules = do
+	dflags <- GHC.getSessionDynFlags
+	return [m | mn <- GHC.listVisibleModuleNames dflags, (m, _) <- GHC.lookupModuleInAllPackages dflags mn]

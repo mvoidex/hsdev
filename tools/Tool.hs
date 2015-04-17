@@ -13,7 +13,7 @@ module Tool (
 	module System.Console.Cmd
 	) where
 
-import Control.Monad.Error (runErrorT, throwError)
+import Control.Monad.Except (runExceptT, throwError)
 import Data.Aeson
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as L (ByteString, putStrLn)
@@ -48,7 +48,7 @@ usage toolName = mapM_ (putStrLn . ('\t':) . ((toolName ++ " ") ++) . brief)
 -- | Command with JSONable result
 jsonCmd :: ToJSON a => String -> [String] -> [Opt] -> String -> (Args -> ToolM a) -> Cmd (IO ())
 jsonCmd name pos os descr act = cmd name pos ([prettyOpt, lispOpt] ++ os) descr $ \(Args as opts) -> do
-	r <- runErrorT $ act (Args as opts)
+	r <- runExceptT $ act (Args as opts)
 	L.putStrLn $ either (toStr opts . errorStr) (toStr opts) r
 	where
 		toStr :: ToJSON a => Opts String -> a -> L.ByteString

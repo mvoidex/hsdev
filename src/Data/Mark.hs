@@ -23,7 +23,6 @@ module Data.Mark (
 import Prelude hiding (splitAt, length, lines, unlines)
 
 import Control.Arrow ((&&&))
-import Control.Applicative
 import Control.Lens (view)
 import Control.Lens.Iso
 import Control.Monad.State
@@ -31,7 +30,6 @@ import Data.Aeson
 import qualified Data.List as List (splitAt, length, break, intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T (splitAt, length, split, intercalate)
-import Data.Monoid
 
 import HsDev.Util ((.::))
 

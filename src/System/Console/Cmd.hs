@@ -10,7 +10,7 @@ module System.Console.Cmd (
 import Control.Arrow (Arrow((&&&)))
 import Control.Monad ()
 import Data.List (stripPrefix, isPrefixOf)
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Map ()
 import Data.Maybe
 import qualified Data.Map as M (delete)
@@ -18,7 +18,7 @@ import qualified Data.Map as M (delete)
 import System.Console.Args
 import Text.Format ((~~), (%))
 
-type CmdAction a = ErrorT String Maybe a
+type CmdAction a = ExceptT String Maybe a
 
 -- | Arguments doesn't match command
 notMatch :: CmdAction a
@@ -72,7 +72,7 @@ cutName name (Args as os) = case stripPrefix (words name) as of
 	Nothing -> notMatch
 
 verifyOpts :: [Opt] -> Args -> CmdAction Args
-verifyOpts os = ErrorT . Just . verify os
+verifyOpts os = ExceptT . Just . verify os
 
 cmda :: String -> [String] -> [Opt] -> String -> (Args -> CmdAction a) -> Cmd a
 cmda name as os cdesc act = Cmd {
@@ -164,5 +164,5 @@ runArgs cmds onDef onError = runOn cmds onDef onError (const id)
 -- | Run commands with 
 runOn :: [Cmd a] -> a -> (String -> a) -> (Cmd a -> c -> Args) -> c -> a
 runOn cmds onDef onError f as = maybe onDef (either onError id) found where
-	found = listToMaybe $ mapMaybe (runErrorT . (`act` as)) cmds
+	found = listToMaybe $ mapMaybe (runExceptT . (`act` as)) cmds
 	act c = runCmd c . f c

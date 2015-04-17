@@ -25,11 +25,8 @@ import Data.List
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe
-import Data.Monoid
-import Data.Foldable (Foldable(foldMap))
 import Data.String (fromString)
 import qualified Data.Text as T
-import Data.Traversable (Traversable(traverse))
 import Text.Read (readMaybe)
 
 import Data.Help

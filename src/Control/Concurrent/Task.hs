@@ -7,14 +7,12 @@ module Control.Concurrent.Task (
 	runTask, runTask_, runTaskTry, runTaskError, forkTask, tryT
 	) where
 
-import Control.Applicative
 import Control.Concurrent
 import Control.Monad
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad.Catch
 import Data.Either
 import Data.Maybe
-import Data.Traversable
 import Data.Typeable
 
 -- | Task result
@@ -113,12 +111,12 @@ runTaskTry f act = do
 			taskResultTake = takeMVar var,
 			taskResultFail = void . tryPutMVar var . Left }	
 
-runTaskError :: (Show e, Error e, MonadError e m, MonadCatch m, MonadIO m, MonadIO n) => (Task a -> m () -> n ()) -> m a -> n (Task a)
+runTaskError :: (Show e, MonadError e m, MonadCatch m, MonadIO m, MonadIO n) => (Task a -> m () -> n ()) -> m a -> n (Task a)
 runTaskError f = runTaskTry f . tryT
 
 -- | Run task in separate thread
 forkTask :: IO a -> IO (Task a)
 forkTask = runTask (void . forkIO)
 
-tryT :: (Show e, Error e, MonadError e m) => m a -> m (Either SomeException a)
+tryT :: (Show e, MonadError e m) => m a -> m (Either SomeException a)
 tryT act = catchError (liftM Right act) (return . Left . toException . userError . show)

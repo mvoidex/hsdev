@@ -8,20 +8,17 @@ import Control.Applicative
 import Control.Arrow
 import Control.Lens (view, over, preview, _Just)
 import Control.Monad
-import Control.Monad.Error
+import Control.Monad.Except
 import Control.Monad.Catch (try, SomeException(..))
 import Control.Monad.Trans.Maybe
 import Data.Aeson hiding (Result, Error)
-import Data.Aeson.Encode.Pretty
 import Data.Either
 import Data.List
 import Data.Maybe
-import Data.Monoid
 import qualified Data.Map as M
 import Data.String (fromString)
 import Data.Text (unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf)
-import Data.Traversable (traverse)
 import System.Directory
 import System.FilePath
 import qualified System.Log.Simple.Base as Log
@@ -163,7 +160,7 @@ commands = [
 		cmd' :: ToJSON a => String -> [String] -> [Opt] -> String -> ([String] -> Opts String -> CommandActionT a) -> Cmd CommandAction
 		cmd' nm pos named descr act = checkPosArgs $ cmd nm pos named descr act' where
 			act' (Args args os) copts = Log.scopeLog (commandLogger copts) (fromString nm) $ do
-				r <- runErrorT (act args os copts)
+				r <- runExceptT (act args os copts)
 				case r of
 					Left (CommandError e ds) -> return $ Error e $ M.fromList $ map (first unpack) ds
 					Right r' -> return $ Result $ toJSON r'
@@ -288,7 +285,7 @@ commands = [
 				fileMap = M.fromList $ mapMaybe toPair $
 					selectModules (byFile . view moduleId) dbval
 
-			(errors, filteredMods) <- liftM partitionEithers $ mapM runErrorT $ concat [
+			(errors, filteredMods) <- liftM partitionEithers $ mapM runExceptT $ concat [
 				[do
 					p' <- findProject copts p
 					return $ M.fromList $ mapMaybe toPair $
@@ -297,7 +294,7 @@ commands = [
 				[do
 					f' <- findPath copts f
 					maybe
-						(throwError $ "Unknown file: " ++ f')
+						(throwError $ commandStrMsg $ "Unknown file: " ++ f')
 						(return . M.singleton f')
 						(lookupFile f' dbval) |
 					f <- listArg "file" as],
@@ -310,9 +307,9 @@ commands = [
 					M.elems $ if null filteredMods then fileMap else M.unions filteredMods
 
 			if not (null errors)
-				then commandError (intercalate ", " errors) []
+				then commandError (intercalate ", " [err | CommandError err _ <- errors]) (concat [ps | CommandError _ ps <- errors])
 				else updateProcess copts as [Update.runTask "rescanning modules" [] $ do
-					needRescan <- Update.liftErrorT $ filterM (changedModule dbval (listArg "ghc" as) . view inspectedId) rescanMods
+					needRescan <- Update.liftExceptT $ filterM (changedModule dbval (listArg "ghc" as) . view inspectedId) rescanMods
 					Update.scanModules (listArg "ghc" as)
 						(map (view inspectedId &&& fromMaybe [] . preview (inspection . inspectionOpts)) needRescan)]
 
@@ -407,7 +404,7 @@ commands = [
 				toResult = newest as . filterMatch as . filter filters
 			case ns of
 				[] -> return $ toResult $ allDeclarations dbval
-				[nm] -> liftM toResult $ mapErrorT
+				[nm] -> liftM toResult $ mapExceptT
 					(liftM $ left (\e -> CommandError ("Can't find symbol: " ++ e) []))
 					(findDeclaration dbval nm)
 				_ -> commandError "Too much arguments" []
@@ -416,10 +413,10 @@ commands = [
 		modul' :: [String] -> Opts String -> CommandActionT Module
 		modul' _ as copts = do
 			dbval <- liftM (localsDatabase as) $ getDb copts
-			proj <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findProject copts) $ arg "project" as
-			cabal <- mapErrorT (fmap $ strMsg +++ id) $ getCabal_ copts as
-			file' <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findPath copts) $ arg "file" as
-			deps <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findDep copts) $ arg "deps" as
+			proj <- traverse (findProject copts) $ arg "project" as
+			cabal <- getCabal_ copts as
+			file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ arg "file" as
+			deps <- traverse (findDep copts) $ arg "deps" as
 			let
 				filters = allOf $ catMaybes [
 					fmap inProject proj,
@@ -430,11 +427,10 @@ commands = [
 					fmap inDeps deps,
 					fmap inVersion (arg "version" as),
 					if flagSet "src" as then Just byFile else Nothing]
-			rs <- mapErrorT (fmap $ strMsg +++ id) $
-				(newest as . filter (filters . view moduleId)) <$> maybe
-					(return $ allModules dbval)
-					(mapErrorStr . findModule dbval)
-					(arg "module" as)
+			rs <- (newest as . filter (filters . view moduleId)) <$> maybe
+				(return $ allModules dbval)
+				(mapCommandErrorStr . findModule dbval)
+				(arg "module" as)
 			case rs of
 				[] -> commandError "Module not found" []
 				[m] -> return m
@@ -444,20 +440,19 @@ commands = [
 		resolve' :: [String] -> Opts String -> CommandActionT Module
 		resolve' _ as copts = do
 			dbval <- liftM (localsDatabase as) $ getDb copts
-			proj <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findProject copts) $ arg "project" as
-			cabal <- mapErrorT (fmap $ strMsg +++ id) $ getCabal copts as
-			file' <- mapErrorT (fmap $ strMsg +++ id) $ traverse (findPath copts) $ arg "file" as
+			proj <- traverse (findProject copts) $ arg "project" as
+			cabal <- getCabal copts as
+			file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ arg "file" as
 			let
 				filters = allOf $ catMaybes [
 					fmap inProject proj,
 					fmap inFile file',
 					fmap inModule (arg "module" as),
 					Just byFile]
-			rs <- mapErrorT (fmap $ strMsg +++ id) $
-				(newest as . filter (filters . view moduleId)) <$> maybe
-					(return $ allModules dbval)
-					(mapErrorStr . findModule dbval)
-					(arg "module" as)
+			rs <- (newest as . filter (filters . view moduleId)) <$> maybe
+				(return $ allModules dbval)
+				(mapCommandErrorStr . findModule dbval)
+				(arg "module" as)
 			let
 				cabaldb = filterDB (restrictCabal cabal) (const True) dbval
 				getScope = if flagSet "exports" as then exportsModule else scopeModule
@@ -470,7 +465,7 @@ commands = [
 		project' :: [String] -> Opts String -> CommandActionT Project
 		project' _ as copts = do
 			proj <- runMaybeT $ msum $ map MaybeT [
-				traverse (mapErrorStr . findProject copts) $ arg "project" as,
+				traverse (findProject copts) $ arg "project" as,
 				liftM join $ traverse (liftIO . searchProject) $ arg "path" as]
 			maybe (commandError "Specify project name, .cabal file or search directory" []) return proj
 
@@ -485,7 +480,7 @@ commands = [
 		lookup' [nm] as copts = do
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			mapErrorStr $ lookupSymbol dbval cabal srcFile nm
+			mapCommandErrorStr $ lookupSymbol dbval cabal srcFile nm
 		lookup' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Get detailed info about symbol in source file
@@ -493,7 +488,7 @@ commands = [
 		whois' [nm] as copts = do
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			mapErrorStr $ whois dbval cabal srcFile nm
+			mapCommandErrorStr $ whois dbval cabal srcFile nm
 		whois' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Get modules accessible from module or from directory
@@ -501,7 +496,7 @@ commands = [
 		scopeModules' [] as copts = do
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			liftM (map (view moduleId)) $ mapErrorStr $ scopeModules dbval cabal srcFile
+			liftM (map (view moduleId)) $ mapCommandErrorStr $ scopeModules dbval cabal srcFile
 		scopeModules' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Get declarations accessible from module
@@ -509,7 +504,7 @@ commands = [
 		scope' [] as copts = do
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			liftM (filterMatch as) $ mapErrorStr $ scope dbval cabal srcFile (flagSet "global" as)
+			liftM (filterMatch as) $ mapCommandErrorStr $ scope dbval cabal srcFile (flagSet "global" as)
 		scope' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Completion
@@ -518,7 +513,7 @@ commands = [
 		complete' [input] as copts = do
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			mapErrorStr $ completions dbval cabal srcFile input (flagSet "wide" as)
+			mapCommandErrorStr $ completions dbval cabal srcFile input (flagSet "wide" as)
 		complete' _ _ _ = commandError "Invalid arguments" []
 
 		-- | Hayoo
@@ -526,7 +521,7 @@ commands = [
 		hayoo' [] _ _ = commandError "Query not specified" []
 		hayoo' [query] opts _ = liftM concat $ forM [page .. page + pred pages] $ \i -> liftM
 			(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
-			mapErrorStr $ Hayoo.hayoo query (Just i)
+			mapCommandErrorStr $ Hayoo.hayoo query (Just i)
 			where
 				page = fromMaybe 0 $ narg "page" opts
 				pages = fromMaybe 1 $ narg "pages" opts
@@ -534,15 +529,15 @@ commands = [
 
 		-- | Cabal list
 		cabalList' :: [String] -> Opts String -> CommandActionT [Cabal.CabalPackage]
-		cabalList' qs _ _ = mapErrorStr $ Cabal.cabalList qs
+		cabalList' qs _ _ = mapCommandErrorStr $ Cabal.cabalList qs
 
 		-- | Ghc-mod lang
 		ghcmodLang' :: [String] -> Opts String -> CommandActionT [String]
-		ghcmodLang' _ _ _ = mapErrorStr GhcMod.langs
+		ghcmodLang' _ _ _ = mapCommandErrorStr GhcMod.langs
 
 		-- | Ghc-mod flags
 		ghcmodFlags' :: [String] -> Opts String -> CommandActionT [String]
-		ghcmodFlags' _ _ _ = mapErrorStr GhcMod.flags
+		ghcmodFlags' _ _ _ = mapCommandErrorStr GhcMod.flags
 
 		-- | Ghc-mod type
 		ghcmodType' :: [String] -> Opts String -> CommandActionT [GhcMod.TypedRegion]
@@ -552,8 +547,8 @@ commands = [
 			column' <- maybe (commandError "column must be a number" []) return $ readMaybe column
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			(srcFile', _, _) <- mapErrorStr $ fileCtx dbval srcFile
-			mapErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) srcFile' $
+			(srcFile', _, _) <- mapCommandErrorStr $ fileCtx dbval srcFile
+			mapCommandErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) srcFile' $
 				GhcMod.typeOf (listArg "ghc" as) cabal srcFile' line' column'
 		ghcmodType' [] _ _ = commandError "Specify line" []
 		ghcmodType' _ _ _ = commandError "Too much arguments" []
@@ -565,7 +560,7 @@ commands = [
 			files' <- mapM (findPath copts) files
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
 			cabal <- getCabal copts as
-			mapErrorStr $ liftM concat $ forM files' $ \file' ->
+			mapCommandErrorStr $ liftM concat $ forM files' $ \file' ->
 				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
 					GhcMod.check (listArg "ghc" as) cabal [file'] mproj
 
@@ -574,7 +569,7 @@ commands = [
 		ghcmodLint' [] _ _ = commandError "Specify at least one file to hlint" []
 		ghcmodLint' files as copts = do
 			files' <- mapM (findPath copts) files
-			mapErrorStr $ liftM concat $ forM files' $ \file' ->
+			mapCommandErrorStr $ liftM concat $ forM files' $ \file' ->
 				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
 					GhcMod.lint (listArg "hlint" as) file'
 
@@ -585,7 +580,7 @@ commands = [
 			files' <- mapM (findPath copts) files
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
 			cabal <- getCabal copts as
-			mapErrorStr $ liftM concat $ forM files' $ \file' ->
+			mapCommandErrorStr $ liftM concat $ forM files' $ \file' ->
 				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $ do
 					check' <- GhcMod.check (listArg "ghc" as) cabal [file'] mproj
 					lint' <- GhcMod.lint (listArg "hlint" as) file'
@@ -627,11 +622,11 @@ commands = [
 						(corrs', cts') <- liftM (`AutoFix.editEval` doFix file) $ liftE $ readFileUtf8 file
 						liftE $ writeFileUtf8 file cts'
 						return corrs'
-			mapErrorStr $ liftM concat $ mapM runFix files
+			mapCommandErrorStr $ liftM concat $ mapM runFix files
 
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
-		ghcEval' exprs _ copts = mapErrorStr $ liftM (map toValue) $ liftTask $
+		ghcEval' exprs _ copts = mapCommandErrorStr $ liftM (map toValue) $ liftTask $
 			pushTask (commandGhc copts) $ mapM (try . evaluate) exprs
 			where
 				toValue :: Either SomeException String -> Value
@@ -692,6 +687,9 @@ commands = [
 
 -- Helper functions
 
+commandStrMsg :: String -> CommandError
+commandStrMsg m = CommandError m []
+
 -- | Check positional args count
 checkPosArgs :: Cmd a -> Cmd a
 checkPosArgs c = validateArgs pos' c where
@@ -703,33 +701,33 @@ checkPosArgs c = validateArgs pos' c where
 			(failMatch ("unexpected positional arguments: " ++ unwords (drop (length $ cmdArgs c) args)))
 
 -- | Find sandbox by path
-findSandbox :: (MonadIO m, Error e) => CommandOptions -> Maybe FilePath -> ErrorT e m Cabal
+findSandbox :: MonadIO m => CommandOptions -> Maybe FilePath -> ExceptT CommandError m Cabal
 findSandbox copts = maybe
 	(return Cabal)
-	(findPath copts >=> mapErrorStr . liftIO . getSandbox)
+	(findPath copts >=> mapCommandErrorStr . liftIO . getSandbox)
 
 -- | Canonicalize path
-findPath :: (MonadIO m, Error e) => CommandOptions -> FilePath -> ErrorT e m FilePath
+findPath :: MonadIO m => CommandOptions -> FilePath -> ExceptT e m FilePath
 findPath copts f = liftIO $ canonicalizePath (normalise f') where
 	f'
 		| isRelative f = commandRoot copts </> f
 		| otherwise = f
 
 -- | Get context: file and sandbox
-getCtx :: (MonadIO m, Functor m, Error e) => CommandOptions -> Opts String -> ErrorT e m (FilePath, Cabal)
+getCtx :: (MonadIO m, Functor m) => CommandOptions -> Opts String -> ExceptT CommandError m (FilePath, Cabal)
 getCtx copts as = do
 	f <- forceJust "No file specified" $ traverse (findPath copts) $ arg "file" as
 	c <- getCabal_ copts as >>= maybe (liftIO $ getSandbox f) return
 	return (f, c)
 
 -- | Get current sandbox set, user-db by default
-getCabal :: (MonadIO m, Error e) => CommandOptions -> Opts String -> ErrorT e m Cabal
+getCabal :: MonadIO m => CommandOptions -> Opts String -> ExceptT CommandError m Cabal
 getCabal copts as
 	| flagSet "cabal" as = findSandbox copts Nothing
 	| otherwise  = findSandbox copts $ arg "sandbox" as
 
 -- | Get current sandbox if set
-getCabal_ :: (MonadIO m, Functor m, Error e) => CommandOptions -> Opts String -> ErrorT e m (Maybe Cabal)
+getCabal_ :: (MonadIO m, Functor m) => CommandOptions -> Opts String -> ExceptT CommandError m (Maybe Cabal)
 getCabal_ copts as
 	| flagSet "cabal" as = Just <$> findSandbox copts Nothing
 	| otherwise = case arg "sandbox" as of
@@ -737,7 +735,7 @@ getCabal_ copts as
 		Nothing -> return Nothing
 
 -- | Get list of enumerated sandboxes
-getSandboxes :: (MonadIO m, Functor m, Error e) => CommandOptions -> Opts String -> ErrorT e m [Cabal]
+getSandboxes :: (MonadIO m, Functor m) => CommandOptions -> Opts String -> ExceptT CommandError m [Cabal]
 getSandboxes copts as = traverse (findSandbox copts) paths where
 	paths
 		| flagSet "cabal" as = Nothing : sboxes
@@ -745,7 +743,7 @@ getSandboxes copts as = traverse (findSandbox copts) paths where
 	sboxes = map Just $ listArg "sandbox" as
 
 -- | Find project by name of path
-findProject :: (MonadIO m, Error e) => CommandOptions -> String -> ErrorT e m Project
+findProject :: MonadIO m => CommandOptions -> String -> ExceptT CommandError m Project
 findProject copts proj = do
 	db' <- getDb copts
 	proj' <- liftM addCabal $ findPath copts proj
@@ -753,19 +751,19 @@ findProject copts proj = do
 		resultProj =
 			M.lookup proj' (databaseProjects db') <|>
 			find ((== proj) . view projectName) (M.elems $ databaseProjects db')
-	maybe (throwError $ strMsg $ "Projects " ++ proj ++ " not found") return resultProj
+	maybe (throwError $ commandStrMsg $ "Projects " ++ proj ++ " not found") return resultProj
 	where
 		addCabal p
 			| takeExtension p == ".cabal" = p
 			| otherwise = p </> (takeBaseName p <.> "cabal")
 
 -- | Find dependency: it may be source, project file or project name, also returns sandbox found
-findDep :: (MonadIO m, Error e) => CommandOptions -> String -> ErrorT e m (Project, Maybe FilePath, Cabal)
+findDep :: MonadIO m => CommandOptions -> String -> ExceptT CommandError m (Project, Maybe FilePath, Cabal)
 findDep copts depName = do
 	proj <- msum [
-		mapErrorStr $ do
+		mapCommandErrorStr $ do
 			p <- liftIO (locateProject depName)
-			maybe (throwError $ strMsg $ "Project " ++ depName ++ " not found") (mapErrorT liftIO . loadProject) p,
+			maybe (throwError $ "Project " ++ depName ++ " not found") (mapExceptT liftIO . loadProject) p,
 		findProject copts depName]
 	src <- if takeExtension depName == ".hs"
 		then liftM Just (findPath copts depName)
@@ -813,22 +811,22 @@ newest as
 	| otherwise = newestPackage
 
 -- | Convert from just of throw
-forceJust :: (MonadIO m, Error e) => String -> ErrorT e m (Maybe a) -> ErrorT e m a
-forceJust msg act = act >>= maybe (throwError $ strMsg msg) return
+forceJust :: MonadIO m => String -> ExceptT CommandError m (Maybe a) -> ExceptT CommandError m a
+forceJust msg act = act >>= maybe (throwError $ commandStrMsg msg) return
 
 -- | Get actual DB state
-getDb :: (MonadIO m) => CommandOptions -> m Database
+getDb :: MonadIO m => CommandOptions -> m Database
 getDb = liftIO . DB.readAsync . commandDatabase
 
 -- | Get DB async var
 dbVar :: CommandOptions -> DB.Async Database
 dbVar = commandDatabase
 
-mapErrorStr :: (Monad m, Error e) => ErrorT String m a -> ErrorT e m a
-mapErrorStr = mapErrorT (liftM $ left strMsg)
+mapCommandErrorStr :: (Monad m) => ExceptT String m a -> ExceptT CommandError m a
+mapCommandErrorStr = mapExceptT (liftM $ left commandStrMsg)
 
 -- | Run DB update action
-updateProcess :: CommandOptions -> Opts String -> [ErrorT String (Update.UpdateDB IO) ()] -> CommandM ()
+updateProcess :: CommandOptions -> Opts String -> [ExceptT String (Update.UpdateDB IO) ()] -> CommandM ()
 updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `catchError` logErr | act <- acts] where
 	settings = Update.Settings
 		(commandDatabase copts)
@@ -840,7 +838,7 @@ updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `
 		(not $ flagSet "no-infer" as)
 		(commandGhcMod copts)
 		(commandLogger copts)
-	logErr :: String -> ErrorT String (Update.UpdateDB IO) ()
+	logErr :: String -> ExceptT String (Update.UpdateDB IO) ()
 	logErr e = liftIO $ commandLog copts Log.Error e
 
 -- | Filter declarations with prefix and infix

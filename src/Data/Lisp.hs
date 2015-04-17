@@ -7,7 +7,6 @@ module Data.Lisp (
 import Prelude hiding (String, Bool)
 import qualified Prelude as P (String, Bool)
 
-import Control.Applicative
 import Data.Aeson (ToJSON(..), FromJSON(..), (.=))
 import qualified Data.Aeson as A
 import Data.Aeson.Types (parseMaybe, parseEither)

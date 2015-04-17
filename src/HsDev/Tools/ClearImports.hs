@@ -8,7 +8,7 @@ module HsDev.Tools.ClearImports (
 import Control.Arrow
 import Control.Concurrent (threadDelay)
 import Control.Exception
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Char
 import Data.List
 import System.Directory
@@ -21,7 +21,7 @@ import GHC.Paths (libdir)
 import HsDev.Util
 
 -- | Dump minimal imports
-dumpMinimalImports :: [String] -> FilePath -> ErrorT String IO String
+dumpMinimalImports :: [String] -> FilePath -> ExceptT String IO String
 dumpMinimalImports opts f = do
 	cur <- liftE getCurrentDirectory
 	file <- liftE $ canonicalizePath f
@@ -68,7 +68,7 @@ cleanTmpImports dir = do
 		ignoreIO' _ = return ()
 
 -- | Dump and read imports
-findMinimalImports :: [String] -> FilePath -> ErrorT String IO [String]
+findMinimalImports :: [String] -> FilePath -> ExceptT String IO [String]
 findMinimalImports opts f = do
 	file <- liftE $ canonicalizePath f
 	mname <- dumpMinimalImports opts file
@@ -91,7 +91,7 @@ splitImport = splitBraces . unwords . map trim where
 	splitBraces = (trim *** (trim . cut)) . break (== '(')
 
 -- | Returns minimal imports for file specified
-clearImports :: [String] -> FilePath -> ErrorT String IO [(String, String)]
+clearImports :: [String] -> FilePath -> ExceptT String IO [(String, String)]
 clearImports opts = liftM (map splitImport . groupImports) . findMinimalImports opts
 
 -- | Retry action on fail

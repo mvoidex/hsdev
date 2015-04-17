@@ -4,7 +4,6 @@ module Main (
 	main
 	) where
 
-import Control.Applicative
 import Control.Monad (liftM, (>=>))
 import Control.Monad.IO.Class
 import Data.Aeson (toJSON)

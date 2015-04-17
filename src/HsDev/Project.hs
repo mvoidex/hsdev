@@ -20,20 +20,16 @@ module HsDev.Project (
 	extensionsOpts
 	) where
 
-import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
 import Control.Lens (makeLenses, Simple, Lens, view, lens)
 import Control.Exception
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.List
 import Data.Maybe
-import Data.Monoid
-import Data.Foldable (Foldable(..))
 import Data.Ord
-import Data.Traversable
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
@@ -238,7 +234,7 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 		_projectTests = fmap toTest $ PD.testSuites r }
 	ParseFailed e -> Left $ "Parse failed: " ++ show e
 	where
-		toLibrary (PD.Library exposeds _ info) = Library (map components exposeds) (toInfo info)
+		toLibrary (PD.Library exposeds _ _ _ _ info) = Library (map components exposeds) (toInfo info)
 		toExecutable (PD.Executable name path info) = Executable name path (toInfo info)
 		toTest (PD.TestSuite name _ info enabled) = Test name enabled (toInfo info)
 		toInfo info = Info {
@@ -269,16 +265,16 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 			flattenBranch (_, t, mb) = flattenTree f t : map (flattenTree f) (maybeToList mb)
 
 -- | Read project info from .cabal
-readProject :: FilePath -> ErrorT String IO Project
+readProject :: FilePath -> ExceptT String IO Project
 readProject file = do
-	source <- ErrorT $ handle (\e -> return (Left ("IO error: " ++ show (e :: IOException)))) (fmap Right $ readFile file)
+	source <- ExceptT $ handle (\e -> return (Left ("IO error: " ++ show (e :: IOException)))) (fmap Right $ readFile file)
 	length source `seq` either throwError (return . mkProject) $ analyzeCabal source
 	where
 		mkProject desc = (project file) {
 			_projectDescription = Just desc }
 
 -- | Load project description
-loadProject :: Project -> ErrorT String IO Project
+loadProject :: Project -> ExceptT String IO Project
 loadProject p
 	| isJust (_projectDescription p) = return p
 	| otherwise = readProject (_projectCabal p)

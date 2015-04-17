@@ -6,11 +6,10 @@ module HsDev.Tools.GhcMod.InferType (
 
 import Control.Applicative
 import Control.Lens (view, preview, set, _Just)
-import Control.Monad.Error
+import Control.Monad.Except
 import Data.Maybe (listToMaybe)
 import Data.String (fromString)
 import qualified Data.Text as T (unpack)
-import Data.Traversable (traverse)
 import qualified Language.Haskell.GhcMod as GhcMod
 
 import HsDev.Cabal
@@ -45,11 +44,11 @@ inferTypes opts cabal m = case view moduleLocation m of
 		inferredDecls <- traverse (\d -> inferType opts cabal src d <|> return d) $
 			view moduleDeclarations m
 		return $ set moduleDeclarations inferredDecls m
-	_ -> throwError $ strMsg "Type infer works only for source files"
+	_ -> fail "Type infer works only for source files"
 
 -- | Infer type in module
-infer :: [String] -> Cabal -> Module -> ErrorT String IO Module
+infer :: [String] -> Cabal -> Module -> ExceptT String IO Module
 infer opts cabal m = case view moduleLocation m of
-	FileModule src _ -> mapErrorT (withCurrentDirectory (sourceModuleRoot (view moduleName m) src)) $
+	FileModule src _ -> mapExceptT (withCurrentDirectory (sourceModuleRoot (view moduleName m) src)) $
 		runGhcMod GhcMod.defaultOptions $ inferTypes opts cabal m
-	_ -> throwError $ strMsg "Type infer works only for source files"
+	_ -> throwError "Type infer works only for source files"

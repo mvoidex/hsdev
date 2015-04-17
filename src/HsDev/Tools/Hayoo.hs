@@ -12,7 +12,7 @@ module HsDev.Tools.Hayoo (
 
 import Control.Arrow
 import Control.Applicative
-import Control.Monad.Error
+import Control.Monad.Except
 
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as L
@@ -120,10 +120,10 @@ hayooAsDeclaration f
 			| otherwise = error "Impossible"
 
 -- | Search hayoo
-hayoo :: String -> Maybe Int -> ErrorT String IO HayooResult
+hayoo :: String -> Maybe Int -> ExceptT String IO HayooResult
 hayoo q page = do
-	resp <- ErrorT $ (show +++ rspBody) <$> simpleHTTP (getRequest $ maybe id addPage page $ "http://hayoo.fh-wedel.de/json/?query=" ++ urlEncode q)
-	ErrorT $ return $ eitherDecode $ L.pack resp
+	resp <- ExceptT $ (show +++ rspBody) <$> simpleHTTP (getRequest $ maybe id addPage page $ "http://hayoo.fh-wedel.de/json/?query=" ++ urlEncode q)
+	ExceptT $ return $ eitherDecode $ L.pack resp
 	where
 		addPage :: Int -> String -> String
 		addPage p s = s ++ "&page=" ++ show p

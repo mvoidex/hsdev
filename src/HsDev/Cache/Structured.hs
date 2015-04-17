@@ -3,13 +3,11 @@ module HsDev.Cache.Structured (
 	loadCabal, loadProject, loadFiles
 	) where
 
-import Control.Applicative
 import Control.DeepSeq
 import Control.Exception
 import Control.Lens (preview)
-import Control.Monad.Error
+import Control.Monad.Except
 import qualified Data.Map as M (assocs)
-import Data.Monoid
 import System.Directory
 import System.FilePath
 
@@ -41,35 +39,35 @@ dump dir db = do
 
 -- | Load all cache
 load :: FilePath -> IO (Either String Structured)
-load dir = runErrorT $ join $ either throwError return <$> (structured <$> loadCabals <*> loadProjects <*> loadStandaloneFiles) where
+load dir = runExceptT $ join $ either throwError return <$> (structured <$> loadCabals <*> loadProjects <*> loadStandaloneFiles) where
 	loadCabals = loadDir (dir </> "cabal")
 	loadProjects = loadDir (dir </> "projects")
-	loadStandaloneFiles = ErrorT $ Cache.load (dir </> Cache.standaloneCache)
+	loadStandaloneFiles = ExceptT $ Cache.load (dir </> Cache.standaloneCache)
 
 	loadDir p = do
 		fs <- liftE $ liftM (filter ((== ".json") . takeExtension)) $ directoryContents p
-		mapM (ErrorT . Cache.load) fs
+		mapM (ExceptT . Cache.load) fs
 
 -- | Load data from cache
-loadData :: FilePath -> ErrorT String IO Database
-loadData = liftExceptionM . ErrorT . Cache.load
+loadData :: FilePath -> ExceptT String IO Database
+loadData = liftExceptionM . ExceptT . Cache.load
 
 -- | Load cabal from cache
-loadCabal :: Cabal -> FilePath -> ErrorT String IO Structured
+loadCabal :: Cabal -> FilePath -> ExceptT String IO Structured
 loadCabal c dir = do
 	dat <- loadData (dir </> "cabal" </> Cache.cabalCache c)
-	ErrorT $ return $ structured [dat] [] mempty
+	ExceptT $ return $ structured [dat] [] mempty
 
 -- | Load project from cache
-loadProject :: FilePath -> FilePath -> ErrorT String IO Structured
+loadProject :: FilePath -> FilePath -> ExceptT String IO Structured
 loadProject p dir = do
 	dat <- loadData (dir </> "projects" </> Cache.projectCache (project p))
-	ErrorT $ return $ structured [] [dat] mempty
+	ExceptT $ return $ structured [] [dat] mempty
 
 -- | Load standalone files
-loadFiles :: (FilePath -> Bool) -> FilePath -> ErrorT String IO Structured
+loadFiles :: (FilePath -> Bool) -> FilePath -> ExceptT String IO Structured
 loadFiles f dir = do
 	dat <- loadData (dir </> Cache.standaloneCache)
-	ErrorT $ return $ structured [] [] $ filterDB f' (const False) dat
+	ExceptT $ return $ structured [] [] $ filterDB f' (const False) dat
 	where
 		f' = maybe False f . preview (moduleIdLocation . moduleFile)

@@ -6,7 +6,6 @@ module HsDev.Tools.Cabal (
 	) where
 
 import Control.Arrow
-import Control.Applicative
 import Control.Monad
 import Data.Aeson
 import Data.Char (isSpace)

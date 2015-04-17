@@ -9,7 +9,7 @@ module HsDev.Tools.HDocs (
 import Control.Exception
 import Control.Lens (set, view, over)
 import Control.Monad ()
-import Control.Monad.Error
+import Control.Monad.Except
 
 import Data.Aeson (decode)
 import qualified Data.ByteString.Lazy.Char8 as L (pack)
@@ -25,14 +25,14 @@ import HsDev.Symbols
 
 -- | Get docs for module
 hdocs :: ModuleLocation -> [String] -> IO (Map String String)
-hdocs mloc opts = runErrorT (docs' mloc) >>= return . either (const M.empty) HDocs.formatDocs where
-	docs' :: ModuleLocation -> ErrorT String IO HDocs.ModuleDocMap
+hdocs mloc opts = runExceptT (docs' mloc) >>= return . either (const M.empty) HDocs.formatDocs where
+	docs' :: ModuleLocation -> ExceptT String IO HDocs.ModuleDocMap
 	docs' (FileModule fpath _) = liftM snd $ HDocs.readSource opts fpath
 	docs' (CabalModule _ _ mname) = HDocs.moduleDocs opts mname
 	docs' _ = throwError $ "Can't get docs for: " ++ show mloc
 
 -- | Get all docs
-hdocsCabal :: Cabal -> [String] -> ErrorT String IO (Map String (Map String String))
+hdocsCabal :: Cabal -> [String] -> ExceptT String IO (Map String (Map String String))
 hdocsCabal cabal opts = liftM (M.map HDocs.formatDocs) $ HDocs.installedDocs (cabalOpt cabal ++ opts)
 
 -- | Set docs for module
