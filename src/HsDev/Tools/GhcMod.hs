@@ -112,7 +112,7 @@ info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
 info opts cabal file sname = do
 	fileCts <- liftIO $ readFileUtf8 file
 	rs <- withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
-		liftM nullToNL $ GhcMod.info file sname
+		liftM nullToNL $ GhcMod.info file (GhcMod.Expression sname)
 	toDecl fileCts rs
 	where
 		toDecl fstr s =
