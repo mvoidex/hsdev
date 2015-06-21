@@ -1,5 +1,5 @@
 module HsDev.Tools.HDocs (
-	hdocs, hdocsCabal,
+	hdocsy, hdocs, hdocsCabal,
 	setDocs,
 	loadDocs,
 
@@ -19,9 +19,15 @@ import Data.String (fromString)
 import System.Process (readProcess)
 
 import qualified HDocs.Module as HDocs
-import qualified HDocs.Haddock as HDocs (readSource)
+import qualified HDocs.Haddock as HDocs (readSource, readSources_)
 
 import HsDev.Symbols
+
+-- | Get docs for modules
+hdocsy :: [ModuleLocation] -> [String] -> IO [Map String String]
+hdocsy mlocs opts = runExceptT (docs' mlocs) >>= return . either (const $ replicate (length mlocs) M.empty) (map HDocs.formatDocs) where
+	docs' :: [ModuleLocation] -> ExceptT String IO [HDocs.ModuleDocMap]
+	docs' ms = liftM (map snd) $ HDocs.readSources_ opts $ map (view moduleFile) ms
 
 -- | Get docs for module
 hdocs :: ModuleLocation -> [String] -> IO (Map String String)

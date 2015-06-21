@@ -60,14 +60,14 @@ commands = [
 		manyReq $ projectArg `desc` "project path or .cabal",
 		manyReq $ fileArg `desc` "source file",
 		manyReq $ pathArg `desc` "directory to scan for files and projects",
-		ghcOpts, nodocsFlag, noinferFlag])
+		ghcOpts, docsFlag, inferFlag])
 		"scan sources"
 		scan',
 	cmd' "rescan" [] (sandboxes ++ [
 		manyReq $ projectArg `desc` "project path or .cabal",
 		manyReq $ fileArg `desc` "source file",
 		manyReq $ pathArg `desc` "path to rescan",
-		ghcOpts, nodocsFlag, noinferFlag])
+		ghcOpts, docsFlag, inferFlag])
 		"rescan sources"
 		rescan',
 	cmdList' "remove" [] (sandboxes ++ [
@@ -185,6 +185,7 @@ commands = [
 		ctx = [fileArg `desc` "source file", sandboxArg]
 		dataArg = req "data" "contents" `desc` "data to pass to command"
 		depsArg = req "deps" "object" `desc` "filter to such that in dependency of specified object (file or project)"
+		docsFlag = flag "docs" `desc` "scan source file docs"
 		exportsArg = flag "exports" `short` ['e'] `desc` "resolve module exports"
 		fileArg = req "file" "path" `short` ['f']
 		findArg = req "find" "query" `desc` "infix match"
@@ -195,11 +196,10 @@ commands = [
 			req "pages" "count" `short` ['n'] `desc` "pages count (1 by default)"]
 		hlintOpts = list "hlint" "option" `short` ['h'] `desc` "options to pass to hlint"
 		holdArg = flag "hold" `short` ['h'] `desc` "don't return any response"
+		inferFlag = flag "infer" `desc` "infer types"
 		localsArg = flag "locals" `short` ['l'] `desc` "look in local declarations"
 		matches = [prefixArg, findArg]
 		moduleArg = req "module" "name" `short` ['m'] `desc` "module name"
-		nodocsFlag = flag "no-docs" `desc` "don't scan source file docs"
-		noinferFlag = flag "no-infer" `desc` "don't infer types"
 		noLastArg = flag "no-last" `desc` "select not only last version packages"
 		packageArg = req "package" "name" `desc` "module package"
 		pathArg = req "path" "path" `short` ['p']
@@ -834,8 +834,8 @@ updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `
 		(commandWriteCache copts)
 		(commandNotify copts . Notification . toJSON)
 		(listArg "ghc" as)
-		(not $ flagSet "no-docs" as)
-		(not $ flagSet "no-infer" as)
+		(flagSet "docs" as)
+		(flagSet "infer" as)
 		(commandGhcMod copts)
 		(commandLogger copts)
 	logErr :: String -> ExceptT String (Update.UpdateDB IO) ()
