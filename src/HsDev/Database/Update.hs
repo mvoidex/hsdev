@@ -18,7 +18,7 @@ module HsDev.Database.Update (
 	liftExceptT
 	) where
 
-import Control.Lens (preview, _Just, view, set, _Right)
+import Control.Lens (preview, _Just, view)
 import Control.Monad.Catch
 import Control.Monad.CatchIO
 import Control.Monad.Except
@@ -26,14 +26,10 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Data.Aeson
 import Data.Aeson.Types
-import Data.Either (rights)
-import Data.Function (on)
-import Data.List (sortBy, groupBy)
 import qualified Data.HashMap.Strict as HM
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
-import Data.Ord (comparing)
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath)
 import qualified System.Log.Simple as Log
@@ -44,7 +40,7 @@ import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async
 import HsDev.Display
-import HsDev.Inspect (inspectDocsChunk, inspectDocs)
+import HsDev.Inspect (inspectDocs)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.HDocs
