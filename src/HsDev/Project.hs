@@ -342,10 +342,10 @@ fileTarget p f = find (makeRelative (_projectPath p) f `inTarget`) $
 	maybe [] infos $ _projectDescription p
 
 -- | Finds source dir file belongs to
-findSourceDir :: Project -> FilePath -> Maybe FilePath
+findSourceDir :: Project -> FilePath -> Maybe (Extensions FilePath)
 findSourceDir p f = do
 	info <- fileTarget p f
-	listToMaybe $ filter (`isParent` f) $ map (_projectPath p </>) $ view infoSourceDirsDef info
+	fmap (`withExtensions` info) $ listToMaybe $ filter (`isParent` f) $ map (_projectPath p </>) $ view infoSourceDirsDef info
 
 -- | Returns source dirs for library, executables and tests
 sourceDirs :: ProjectDescription -> [Extensions FilePath]

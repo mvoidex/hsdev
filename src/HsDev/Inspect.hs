@@ -313,6 +313,8 @@ inspectFile :: [String] -> FilePath -> ExceptT String IO InspectedModule
 inspectFile opts file = do
 	proj <- liftE $ locateProject file
 	absFilename <- liftE $ Dir.canonicalizePath file
+	ex <- liftE $ Dir.doesFileExist absFilename
+	unless ex $ throwError $ "File '" ++ absFilename ++ "' doesn't exist"
 	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
 		-- docsMap <- liftE $ if hdocsWorkaround
 		-- 	then hdocsProcess absFilename opts

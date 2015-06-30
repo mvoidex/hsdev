@@ -2,6 +2,7 @@ module Main (
 	main
 	) where
 
+import Control.Lens (view)
 import Control.Exception (finally)
 import Control.Monad.Except
 import System.Directory
@@ -9,6 +10,7 @@ import System.Environment (getArgs)
 
 import HsDev.Tools.ClearImports (clearImports)
 import HsDev.Symbols (locateSourceDir)
+import HsDev.Project (entity)
 
 import System.Console.Cmd
 
@@ -25,7 +27,7 @@ cmds = withHelp "hsclearimports" (printWith putStrLn) $ [
 		clear :: Args -> IO ()
 		clear (Args [f] as) = do
 			file <- canonicalizePath f
-			mroot <- locateSourceDir file
+			mroot <- liftM (fmap $ view entity) $ locateSourceDir file
 			cur <- getCurrentDirectory
 			flip finally (setCurrentDirectory cur) $ do
 				maybe (return ()) setCurrentDirectory mroot

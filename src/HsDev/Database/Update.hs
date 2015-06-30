@@ -3,7 +3,7 @@
 
 module HsDev.Database.Update (
 	Status(..), Progress(..), Task(..), isStatus,
-	Settings(..),
+	Settings(..), settings,
 
 	UpdateDB,
 	updateDB,
@@ -13,9 +13,12 @@ module HsDev.Database.Update (
 
 	scanModule, scanModules, scanFile, scanCabal, scanProjectFile, scanProject, scanDirectory,
 	scan,
+	updateEvent, processEvent,
 
 	-- * Helpers
-	liftExceptT
+	liftExceptT,
+
+	module HsDev.Watcher
 	) where
 
 import Control.Lens (preview, _Just, view)
@@ -31,102 +34,29 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
 import qualified Data.Text as T (unpack)
-import System.Directory (canonicalizePath)
+import System.Directory (canonicalizePath, doesFileExist)
 import qualified System.Log.Simple as Log
 import qualified System.Log.Simple.Base as Log (scopeLog)
 
-import Control.Concurrent.Worker (Worker)
 import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
-import HsDev.Database.Async
+import HsDev.Database.Async hiding (Event)
 import HsDev.Display
 import HsDev.Inspect (inspectDocs)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.HDocs
 import HsDev.Tools.GhcMod.InferType (inferTypes)
-import HsDev.Tools.GhcMod (WorkerMap)
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
-import HsDev.Util ((.::), liftEIO, isParent, ordNub)
-
-data Status = StatusWorking | StatusOk | StatusError String
-
-instance ToJSON Status where
-	toJSON StatusWorking = toJSON ("working" :: String)
-	toJSON StatusOk = toJSON ("ok" :: String)
-	toJSON (StatusError e) = toJSON $ object ["error" .= e]
-
-instance FromJSON Status where
-	parseJSON v = msum $ map ($ v) [
-		withText "status" $ \t -> guard (t == "working") *> return StatusWorking,
-		withText "status" $ \t -> guard (t == "ok") *> return StatusOk,
-		withObject "status" $ \obj -> StatusError <$> (obj .:: "error"),
-		fail "invalid status"]
-
-data Progress = Progress {
-	progressCurrent :: Int,
-	progressTotal :: Int }
-
-instance ToJSON Progress where
-	toJSON (Progress c t) = object [
-		"current" .= c,
-		"total" .= t]
-
-instance FromJSON Progress where
-	parseJSON = withObject "progress" $ \v -> Progress <$> (v .:: "current") <*> (v .:: "total")
-
-data Task = Task {
-	taskName :: String,
-	taskStatus :: Status,
-	taskParams :: Object,
-	taskProgress :: Maybe Progress,
-	taskChild :: Maybe Task }
-
-instance ToJSON Task where
-	toJSON t = object [
-		"status" .= taskStatus t,
-		"task" .= taskName t,
-		"params" .= taskParams t,
-		"progress" .= taskProgress t,
-		"child" .= taskChild t]
-
-instance FromJSON Task where
-	parseJSON = withObject "task" $ \v -> Task <$>
-		(v .:: "task") <*>
-		(v .:: "status") <*>
-		(v .:: "params") <*>
-		(v .:: "progress") <*>
-		(v .:: "child")
+import HsDev.Util (liftEIO, isParent, ordNub)
+import HsDev.Database.Update.Types
+import HsDev.Watcher
+import Text.Format
 
 isStatus :: Value -> Bool
 isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
-
-data Settings = Settings {
-	database :: Async Database,
-	databaseCacheReader :: (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database),
-	databaseCacheWriter :: Database -> IO (),
-	onStatus :: Task -> IO (),
-	ghcOptions :: [String],
-	updateDocs :: Bool,
-	runInferTypes :: Bool,
-	settingsGhcModWorker :: Worker (ReaderT WorkerMap IO),
-	settingsLogger :: Log.Log }
-
-newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [ModuleLocation] m) a }
-	deriving (Applicative, Monad, MonadIO, MonadCatchIO, MonadThrow, MonadCatch, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
-
-instance MonadCatchIO m => MonadCatchIO (ExceptT e m) where
-	catch act onError = ExceptT $ Control.Monad.CatchIO.catch (runExceptT act) (runExceptT . onError)
-	block = ExceptT . block . runExceptT
-	unblock = ExceptT . unblock . runExceptT
-
-instance MonadCatchIO m => Log.MonadLog (UpdateDB m) where
-	askLog = liftM settingsLogger ask
-
-instance Log.MonadLog m => Log.MonadLog (ExceptT e m) where
-	askLog = lift Log.askLog
 
 -- | Run `UpdateDB` monad
 updateDB :: MonadCatchIO m => Settings -> ExceptT String (UpdateDB m) () -> m ()
@@ -275,20 +205,30 @@ scanFile :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ExceptT String 
 scanFile opts fpath = do
 	dbval <- readDB
 	fpath' <- liftEIO $ canonicalizePath fpath
-	mloc <- case lookupFile fpath' dbval of
-		Just m -> return $ view moduleLocation m
-		Nothing -> do
-			mproj <- liftEIO $ locateProject fpath'
-			return $ FileModule fpath' mproj
-	dirty <- liftExceptT $ S.changedModule dbval opts mloc
-	let
-		mtarget = preview (moduleProject . _Just) mloc >>= (`fileTarget` fpath')
-		fileExts = maybe [] (extensionsOpts . view infoExtensions) mtarget
-	when dirty $ scanModule (opts ++ fileExts) mloc
+	ex <- liftEIO $ doesFileExist fpath'
+	mlocs <- case ex of
+		True -> do
+			mloc <- case lookupFile fpath' dbval of
+				Just m -> return $ view moduleLocation m
+				Nothing -> do
+					mproj <- liftEIO $ locateProject fpath'
+					return $ FileModule fpath' mproj
+			return [(mloc, [])]
+		False -> return []
+	mapM_ (watch watchModule) $ map fst mlocs
+	scan
+		(Cache.loadFiles (== fpath'))
+		(filterDB (inFile fpath') (const False) . standaloneDB)
+		mlocs
+		opts
+		(scanModules opts)
+	where
+		inFile f = maybe False (== f) . preview (moduleIdLocation . moduleFile)
 
 -- | Scan cabal modules
 scanCabal :: (MonadIO m, MonadCatch m) => [String] -> Cabal -> ExceptT String (UpdateDB m) ()
 scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox" .= cabalSandbox]) $ do
+	watch watchSandbox cabalSandbox
 	mlocs <- runTask "getting list of cabal modules" [] $ 
 		liftExceptT $ listModules opts cabalSandbox
 	scan (Cache.loadCabal cabalSandbox) (cabalDB cabalSandbox) (zip mlocs $ repeat []) opts $ \mlocs' -> do
@@ -309,6 +249,7 @@ scanProjectFile opts cabal = runTask "scanning" (subject cabal ["file" .= cabal]
 scanProject :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ExceptT String (UpdateDB m) ()
 scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" .= cabal]) $ do
 	proj <- scanProjectFile opts cabal
+	watch watchProject proj
 	(_, sources) <- liftExceptT $ S.enumProject proj
 	scan (Cache.loadProject $ view projectCabal proj) (projectDB proj) sources opts $ \ms -> do
 		scanModules opts ms
@@ -321,6 +262,7 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 		liftExceptT $ S.enumDirectory dir
 	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks $ map (scanCabal opts) sboxes
+	mapM_ (watch watchModule) $ map fst standSrcs
 	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
 	where
 		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)
@@ -346,9 +288,41 @@ scan cache' part' mlocs opts act = do
 	runTask "removing obsolete modules" ["modules" .= map (view moduleLocation) (allModules obsolete)] $ cleaner $ return obsolete
 	act changed
 
+instance Format Cabal where
+
+updateEvent :: (MonadIO m, MonadCatch m, MonadCatchIO m) => Watched -> Event -> ExceptT String (UpdateDB m) ()
+updateEvent (WatchedProject proj) e
+	| isSource e = do
+		Log.log Log.Info $ "File '${file}' in project ${proj} changed" ~~
+			("file" %= view eventPath e) %
+			("proj" %= view projectName proj)
+		scanFile [] $ view eventPath e
+	| isCabal e = do
+		Log.log Log.Info $ "Project ${proj} changed" ~~ ("proj" %= view projectName proj)
+		scanProject [] $ view projectCabal proj
+	| otherwise = return ()
+updateEvent (WatchedSandbox cabal) e
+	| isConf e = do
+		Log.log Log.Info $ "Sandbox ${cabal} changed" ~~ ("cabal" %= cabal)
+		scanCabal [] cabal
+	| otherwise = return ()
+updateEvent WatchedModule e
+	| isSource e = do
+		Log.log Log.Info $ "Module ${file} changed" ~~ ("file" %= view eventPath e)
+		scanFile [] $ view eventPath e
+	| otherwise = return ()
+
+processEvent :: Settings -> Watched -> Event -> IO ()
+processEvent s w e = updateDB s $ updateEvent w e
+
 -- | Lift errors
 liftExceptT :: MonadIO m => ExceptT String IO a -> ExceptT String m a
 liftExceptT = mapExceptT liftIO
 
 subject :: Display a => a -> [Pair] -> [Pair]
 subject x ps = ["name" .= display x, "type" .= displayType x] ++ ps
+
+watch :: (MonadIO m, MonadReader Settings m) => (Watcher -> a -> IO ()) -> a -> m ()
+watch f x = do
+	w <- asks settingsWatcher
+	liftIO $ f w x

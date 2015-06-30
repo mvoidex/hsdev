@@ -20,6 +20,7 @@ import qualified HsDev.Database.Async as DB
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
+import HsDev.Watcher.Types (Watcher)
 import HsDev.Tools.GhcMod (OutputMessage, TypedRegion, WorkerMap)
 import HsDev.Tools.Ghc.Worker (Worker, Ghc)
 
@@ -36,6 +37,7 @@ data CommandOptions = CommandOptions {
 	commandLogger :: Log,
 	commandListenLog :: ([String] -> IO ()) -> IO (),
 	commandLogWait :: IO (),
+	commandWatcher :: Watcher,
 #if mingw32_HOST_OS
 	commandMmapPool :: Maybe Pool,
 #endif

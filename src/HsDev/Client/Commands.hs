@@ -827,17 +827,7 @@ mapCommandErrorStr = mapExceptT (liftM $ left commandStrMsg)
 
 -- | Run DB update action
 updateProcess :: CommandOptions -> Opts String -> [ExceptT String (Update.UpdateDB IO) ()] -> CommandM ()
-updateProcess copts as acts = lift $ Update.updateDB settings $ sequence_ [act `catchError` logErr | act <- acts] where
-	settings = Update.Settings
-		(commandDatabase copts)
-		(commandReadCache copts)
-		(commandWriteCache copts)
-		(commandNotify copts . Notification . toJSON)
-		(listArg "ghc" as)
-		(flagSet "docs" as)
-		(flagSet "infer" as)
-		(commandGhcMod copts)
-		(commandLogger copts)
+updateProcess copts as acts = lift $ Update.updateDB (Update.settings copts as) $ sequence_ [act `catchError` logErr | act <- acts] where
 	logErr :: String -> ExceptT String (Update.UpdateDB IO) ()
 	logErr e = liftIO $ commandLog copts Log.Error e
 

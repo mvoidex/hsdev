@@ -46,6 +46,7 @@ import Control.Apply.Util
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
+import qualified System.Directory.Watcher as Watcher
 import System.Console.Cmd hiding (run)
 import Text.Format ((~~), (%), Format(..))
 
@@ -53,6 +54,7 @@ import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
+import qualified HsDev.Database.Update as Update
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.GhcMod (ghcModMultiWorker)
 import HsDev.Server.Message as M
@@ -356,7 +358,7 @@ initLog sopts = do
 
 -- | Run server
 runServer :: Opts String -> (CommandOptions -> IO ()) -> IO ()
-runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> Log.scopeLog logger' (T.pack "hsdev") $ do
+runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> Log.scopeLog logger' (T.pack "hsdev") $ Watcher.withWatcher $ \watcher -> do
 	db <- DB.newAsync
 	when (flagSet "load" sopts) $ withCache sopts () $ \cdir -> do
 		outputStr Log.Info $ "Loading cache from " ++ cdir
@@ -369,24 +371,28 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 #endif
 	ghcw <- ghcWorker
 	ghcmodw <- ghcModMultiWorker
-	act $ CommandOptions
-		db
-		(writeCache sopts outputStr)
-		(readCache sopts outputStr)
-		"."
-		outputStr
-		logger'
-		listenLog
-		waitOutput
+	let
+		copts = CommandOptions
+			db
+			(writeCache sopts outputStr)
+			(readCache sopts outputStr)
+			"."
+			outputStr
+			logger'
+			listenLog
+			waitOutput
+			watcher
 #if mingw32_HOST_OS
-		mmapPool
+			mmapPool
 #endif
-		ghcw
-		ghcmodw
-		(const $ return ())
-		(return ())
-		(return ())
-		(return ())
+			ghcw
+			ghcmodw
+			(const $ return ())
+			(return ())
+			(return ())
+			(return ())
+	_ <- forkIO $ Update.onEvent watcher (Update.processEvent $ Update.settings copts mempty)
+	act copts
 
 decodeLispOrJSON :: FromJSON a => ByteString -> Either String (Bool, a)
 decodeLispOrJSON str =
