@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeSynonymInstances, ViewPatterns #-}
 
 module HsDev.Inspect (
-	analyzeModule, inspectDocs,
+	analyzeModule, inspectDocsChunk, inspectDocs,
 	inspectContents, contentsInspection,
 	inspectFile, fileInspection,
 	projectDirs, projectSources,
@@ -35,7 +35,7 @@ import Data.Generics.Uniplate.Data
 import HsDev.Symbols
 import HsDev.Project
 import HsDev.Tools.Base
-import HsDev.Tools.HDocs (hdocs, hdocsProcess)
+import HsDev.Tools.HDocs (hdocsy, hdocs, hdocsProcess)
 import HsDev.Util
 
 -- | Analize source contents
@@ -281,11 +281,17 @@ addDoc docsMap decl' = set declarationDocs (preview (ix (view declarationName de
 addDocs :: Map String String -> Module -> Module
 addDocs docsMap = over moduleDeclarations (map $ addDoc docsMap)
 
+-- | Extract files docs and set them to declarations
+inspectDocsChunk :: [String] -> [Module] -> ExceptT String IO [Module]
+inspectDocsChunk opts ms = do
+	docsMaps <- liftE $ hdocsy (map (view moduleLocation) ms) opts
+	return $ zipWith addDocs docsMaps ms
+
 -- | Extract file docs and set them to module declarations
 inspectDocs :: [String] -> Module -> ExceptT String IO Module
 inspectDocs opts m = do
 	let
-		hdocsWorkaround = True
+		hdocsWorkaround = False
 	docsMap <- liftE $ if hdocsWorkaround
 		then hdocsProcess (fromMaybe (T.unpack $ view moduleName m) (preview (moduleLocation . moduleFile) m)) opts
 		else liftM Just $ hdocs (view moduleLocation m) opts
@@ -307,6 +313,8 @@ inspectFile :: [String] -> FilePath -> ExceptT String IO InspectedModule
 inspectFile opts file = do
 	proj <- liftE $ locateProject file
 	absFilename <- liftE $ Dir.canonicalizePath file
+	ex <- liftE $ Dir.doesFileExist absFilename
+	unless ex $ throwError $ "File '" ++ absFilename ++ "' doesn't exist"
 	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
 		-- docsMap <- liftE $ if hdocsWorkaround
 		-- 	then hdocsProcess absFilename opts

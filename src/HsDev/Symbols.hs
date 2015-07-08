@@ -207,7 +207,7 @@ searchProject :: FilePath -> IO (Maybe Project)
 searchProject file = runMaybeT $ searchPath file (MaybeT . locateProject) <|> mzero
 
 -- | Locate source dir of file
-locateSourceDir :: FilePath -> IO (Maybe FilePath)
+locateSourceDir :: FilePath -> IO (Maybe (Extensions FilePath))
 locateSourceDir f = runMaybeT $ do
 	file <- liftIO $ canonicalizePath f
 	p <- MaybeT $ locateProject file

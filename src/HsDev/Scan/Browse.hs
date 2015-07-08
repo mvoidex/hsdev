@@ -27,7 +27,6 @@ import qualified GHC.PackageDb as GHC
 import qualified GhcMonad as GHC (liftIO)
 import qualified GHC.Paths as GHC
 import qualified Name as GHC
-import qualified Module as GHC
 import qualified Outputable as GHC
 import qualified Packages as GHC
 import qualified PatSyn as GHC
@@ -59,7 +58,7 @@ browse :: [String] -> Cabal -> ExceptT String IO [InspectedModule]
 browse opts cabal = listModules opts cabal >>= browseModules opts cabal
 
 browseModule :: Cabal -> GHC.PackageConfig -> GHC.Module -> ExceptT String GHC.Ghc Module
-browseModule cabal p m = do
+browseModule cabal package m = do
 	mi <- lift (GHC.getModuleInfo m) >>= maybe (throwError "Can't find module info") return
 	ds <- mapM (toDecl mi) (GHC.modInfoExports mi)
 	let
@@ -74,7 +73,7 @@ browseModule cabal p m = do
 	where
 		thisLoc = view moduleIdLocation $ mloc m
 		mloc m' = ModuleId (fromString mname') $
-			CabalModule cabal (readPackage p) mname'
+			CabalModule cabal (readPackage package) mname'
 			where
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl minfo n = do
