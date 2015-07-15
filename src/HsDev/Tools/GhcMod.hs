@@ -30,11 +30,11 @@ import Control.Arrow
 import Control.Concurrent
 import Control.DeepSeq
 import Control.Exception (SomeException(..))
-import Control.Lens (view, preview, set, _Just, over)
+import Control.Lens (view, preview, _Just, over)
 import Control.Monad.Except
 import Control.Monad.Catch (MonadThrow(..), MonadCatch(..))
 import Control.Monad.Reader
-import Data.Aeson
+import Data.Aeson hiding (Error)
 import Data.Char
 import Data.List (sort)
 import Data.Maybe
@@ -183,68 +183,25 @@ typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.ghcUserOptions =
 		parsePosition :: String -> ReadM Position
 		parsePosition fstr = recalcTabs fstr <$> (Position <$> readParse <*> readParse)
 
-data OutputMessageLevel = WarningMessage | ErrorMessage deriving (Eq, Ord, Bounded, Enum, Read, Show)
-
-instance NFData OutputMessageLevel where
-	rnf WarningMessage = ()
-	rnf ErrorMessage = ()
-
-instance ToJSON OutputMessageLevel where
-	toJSON WarningMessage = toJSON ("warning" :: String)
-	toJSON ErrorMessage = toJSON ("error" :: String)
-
-instance FromJSON OutputMessageLevel where
-	parseJSON v = do
-		s <- parseJSON v
-		msum [
-			guard (s == ("warning" :: String)) >> return WarningMessage,
-			guard (s == ("error" :: String)) >> return ErrorMessage,
-			fail "Invalid output message level"]
-
-data OutputMessage = OutputMessage {
-	errorLocation :: Location,
-	errorLevel :: OutputMessageLevel,
-	errorMessage :: String }
-		deriving (Eq, Show)
-
-instance NFData OutputMessage where
-	rnf (OutputMessage l w m) = rnf l `seq` rnf w `seq` rnf m
-
-instance ToJSON OutputMessage where
-	toJSON (OutputMessage l w m) = object [
-		"location" .= l,
-		"level" .= w,
-		"message" .= m]
-
-instance FromJSON OutputMessage where
-	parseJSON = withObject "error message" $ \v -> OutputMessage <$>
-		v .:: "location" <*>
-		v .:: "level" <*>
-		v .:: "message"
-
-parseOutputMessages :: String -> [OutputMessage]
+parseOutputMessages :: String -> [Note OutputMessage]
 parseOutputMessages = mapMaybe parseOutputMessage . lines
 
-parseOutputMessage :: String -> Maybe OutputMessage
+parseOutputMessage :: String -> Maybe (Note OutputMessage)
 parseOutputMessage s = do
 	groups <- matchRx "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
-	return OutputMessage {
-		errorLocation = Location {
-			_locationModule = FileModule (normalise (groups `at` 1)) Nothing,
-			_locationPosition = Position <$> readMaybe (groups `at` 2) <*> readMaybe (groups `at` 3) },
-		errorLevel = if groups 5 == Just "Warning" then WarningMessage else ErrorMessage,
-		errorMessage = nullToNL (groups `at` 6) }
+	l <- readMaybe (groups `at` 2)
+	c <- readMaybe (groups `at` 3)
+	return Note {
+		_noteSource = FileModule (normalise (groups `at` 1)) Nothing,
+		_noteRegion = regionAt (Position l c),
+		_noteLevel = if groups 5 == Just "Warning" then Warning else Error,
+		_note = outputMessage $ nullToNL (groups `at` 6) }
 
-recalcOutputMessageTabs :: [(FilePath, String)] -> OutputMessage -> OutputMessage
-recalcOutputMessageTabs fileCts msg = msg {
-	errorLocation = recalc' (errorLocation msg) }
-	where
-		recalc' :: Location -> Location
-		recalc' loc = fromMaybe loc $ do
-			pos <- view locationPosition loc
-			src <- preview (locationModule . moduleFile) loc
-			cts <- lookup src fileCts
-			return $ set locationPosition (Just $ recalcTabs cts pos) loc
+recalcOutputMessageTabs :: [(FilePath, String)] -> Note OutputMessage -> Note OutputMessage
+recalcOutputMessageTabs fileCts n = fromMaybe n $ do
+	src <- preview (noteSource . moduleFile) n
+	cts <- lookup src fileCts
+	return $ recalcTabs cts n
 
 -- | Replace NULL with newline
 nullToNL :: String -> String
@@ -252,14 +209,14 @@ nullToNL = map $ \case
 	'\0' -> '\n'
 	ch -> ch
 
-check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [OutputMessage]
+check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [Note OutputMessage]
 check opts cabal files _ = do
 	cts <- liftIO $ mapM readFileUtf8 files
 	withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
 		res <- GhcMod.checkSyntax files
 		return $ map (recalcOutputMessageTabs (zip files cts)) $ parseOutputMessages res
 
-lint :: [String] -> FilePath -> GhcModT IO [OutputMessage]
+lint :: [String] -> FilePath -> GhcModT IO [Note OutputMessage]
 lint opts file = do
 	cts <- liftIO $ readFileUtf8 file
 	withOptions (\o -> o { GhcMod.hlintOpts = opts }) $ do

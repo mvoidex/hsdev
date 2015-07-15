@@ -7,7 +7,9 @@ module HsDev.Tools.Base (
 	inspect,
 	-- * Read parse utils
 	ReadM,
-	readParse, parseReads, parseRead
+	readParse, parseReads, parseRead,
+
+	module HsDev.Tools.Types
 	) where
 
 import Control.Lens (set)
@@ -20,6 +22,7 @@ import System.Exit
 import System.Process
 import Text.Regex.PCRE ((=~), MatchResult(..))
 
+import HsDev.Tools.Types
 import HsDev.Symbols
 import HsDev.Util (liftIOErrors)
 

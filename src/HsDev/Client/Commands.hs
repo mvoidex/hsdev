@@ -6,7 +6,7 @@ module HsDev.Client.Commands (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (view, over, preview, _Just)
+import Control.Lens (view, over, preview, each, _Just)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Catch (try, SomeException(..))
@@ -37,6 +37,7 @@ import HsDev.Server.Message as M
 import HsDev.Server.Types
 import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Worker
+import qualified HsDev.Tools.Types as Tools
 import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Tools.Hayoo as Hayoo
@@ -554,7 +555,7 @@ commands = [
 		ghcmodType' _ _ _ = commandError "Too much arguments" []
 
 		-- | Ghc-mod check
-		ghcmodCheck' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
+		ghcmodCheck' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
 		ghcmodCheck' [] _ _ = commandError "Specify at least one file" []
 		ghcmodCheck' files as copts = do
 			files' <- mapM (findPath copts) files
@@ -565,7 +566,7 @@ commands = [
 					GhcMod.check (listArg "ghc" as) cabal [file'] mproj
 
 		-- | Ghc-mod lint
-		ghcmodLint' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
+		ghcmodLint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
 		ghcmodLint' [] _ _ = commandError "Specify at least one file to hlint" []
 		ghcmodLint' files as copts = do
 			files' <- mapM (findPath copts) files
@@ -574,7 +575,7 @@ commands = [
 					GhcMod.lint (listArg "hlint" as) file'
 
 		-- | Ghc-mod check & lint
-		ghcmodCheckLint' :: [String] -> Opts String -> CommandActionT [GhcMod.OutputMessage]
+		ghcmodCheckLint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
 		ghcmodCheckLint' [] _ _ = commandError "Specify at least one file" []
 		ghcmodCheckLint' files as copts = do
 			files' <- mapM (findPath copts) files
@@ -587,7 +588,7 @@ commands = [
 					return $ check' ++ lint'
 
 		-- | Autofix show
-		autofixShow' :: [String] -> Opts String -> CommandActionT [AutoFix.Correction]
+		autofixShow' :: [String] -> Opts String -> CommandActionT [Tools.Note AutoFix.Correction]
 		autofixShow' _ as _ = do
 			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
 			msgs <- either
@@ -599,7 +600,7 @@ commands = [
 			return $ AutoFix.corrections msgs
 
 		-- | Autofix fix
-		autofixFix' :: [String] -> Opts String -> CommandActionT [AutoFix.Correction]
+		autofixFix' :: [String] -> Opts String -> CommandActionT [Tools.Note AutoFix.Correction]
 		autofixFix' _ as copts = do
 			let
 				readCorrs cts = either
@@ -611,11 +612,17 @@ commands = [
 			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
 			corrs <- readCorrs jsonData
 			upCorrs <- liftM (fromMaybe []) $ traverse readCorrs $ arg "rest" as
-			files <- liftM (ordNub . sort) $ mapM (findPath copts) $ map AutoFix.correctionFile corrs
+			files <- liftM (ordNub . sort) $ mapM (findPath copts) $ mapMaybe (preview $ Tools.noteSource . moduleFile) corrs
 			let
-				doFix file = AutoFix.autoFix
-					(filter ((== file) . AutoFix.correctionFile) corrs)
-					(filter ((== file) . AutoFix.correctionFile) upCorrs)
+				doFix :: FilePath -> AutoFix.EditM String [Tools.Note AutoFix.Correction]
+				doFix file = do
+					AutoFix.autoFix_ fCorrs
+					(each . Tools.note) AutoFix.updateRange fUpCorrs
+					where
+						findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
+						findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
+						fCorrs = map (view Tools.note) $ findCorrs file corrs
+						fUpCorrs = findCorrs file upCorrs
 				runFix file
 					| flagSet "pure" as = return $ fst $ AutoFix.runEdit $ doFix file
 					| otherwise = do

@@ -6,6 +6,7 @@ module HsDev (
 	module HsDev.Project,
 	module HsDev.Scan,
 	module HsDev.Symbols,
+	module HsDev.Tools.Base,
 	module HsDev.Tools.GhcMod,
 	module HsDev.Util
 	) where
@@ -17,5 +18,6 @@ import HsDev.Inspect
 import HsDev.Project
 import HsDev.Scan
 import HsDev.Symbols
+import HsDev.Tools.Base
 import HsDev.Tools.GhcMod
 import HsDev.Util

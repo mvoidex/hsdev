@@ -66,6 +66,8 @@ library
     HsDev.Tools.GhcMod.InferType
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
+    HsDev.Tools.HLint
+    HsDev.Tools.Types
     HsDev.Util
     HsDev.Version
     HsDev.Watcher
@@ -85,7 +87,6 @@ library
   else
     build-depends:
       unix >= 2.7.0
-
 
   build-depends:
     base >= 4.7 && < 5,
@@ -108,6 +109,7 @@ library
     haddock-api >= 2.16.0 && < 2.17.0,
     haskell-src-exts >= 1.16.0,
     hdocs >= 0.4.3,
+    hlint >= 1.9.0 && < 2.0.0,
     HTTP >= 4000.2.0,
     lens >= 4.8,
     monad-loops >= 0.4,
@@ -238,6 +240,7 @@ executable hsautofix
     aeson-pretty >= 0.7.0,
     bytestring >= 0.10.0,
     directory >= 1.2.0,
+    lens >= 4.8,
     mtl >= 2.2.0
 
 test-suite test

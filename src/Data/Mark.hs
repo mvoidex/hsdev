@@ -1,17 +1,17 @@
-{-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances, RankNTypes, MultiParamTypeClasses, FunctionalDependencies #-}
+{-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances, RankNTypes, MultiParamTypeClasses #-}
 
 module Data.Mark (
 	Point(..), point, (.-.), (.+.), till, Size, linesSize, stringSize,
-	Region(..), regionLines, emptyRegion,
+	Range(..), rangeLines, emptyRange,
 	line,
-	region, regionSize, at,
+	range, rangeSize, at,
 	-- * Mappings
 	Map(..), apply, back,
 	cut, insert,
-	cutRegion, insertRegion,
+	cutRange, insertRange,
 	-- * Edited data
 	Contents, Edit(..),
-	EditM(..), editRegion, mapRegion, runEdit, edit, editEval,
+	EditM(..), editRange, mapRange, runEdit, edit, editEval,
 	Prefix(..), prefix, Suffix(..), suffix, concatCts, splitCts,
 	-- * Editable class
 	Editable(..), measure,
@@ -69,10 +69,10 @@ point l c
 	| c < 0 = error "Column can't be less then zero"
 	| otherwise = Point l c
 
--- | Region from "Point" to "Point"
-data Region = Region {
-	regionFrom :: Point,
-	regionTo :: Point }
+-- | Range from "Point" to "Point"
+data Range = Range {
+	rangeFrom :: Point,
+	rangeTo :: Point }
 		deriving (Eq, Ord, Read, Show)
 
 type Size = Point
@@ -81,9 +81,9 @@ instance Monoid Size where
 	mempty = Point 0 0
 	l `mappend` r = r .+. l
 
--- | Region from one @Point@ to another
-till :: Point -> Point -> Region
-l `till` r = Region (min l r) (max l r)
+-- | Range from one @Point@ to another
+till :: Point -> Point -> Range
+l `till` r = Range (min l r) (max l r)
 
 -- | Distance in @n@ lines
 linesSize :: Int -> Point
@@ -93,39 +93,39 @@ linesSize n = Point n 0
 stringSize :: Int -> Point
 stringSize n = Point 0 n
 
-instance ToJSON Region where
-	toJSON (Region f t) = object ["from" .= f, "to" .= t]
+instance ToJSON Range where
+	toJSON (Range f t) = object ["from" .= f, "to" .= t]
 
-instance FromJSON Region where
-	parseJSON = withObject "region" $ \v -> Region <$> v .:: "from" <*> v .:: "to"
+instance FromJSON Range where
+	parseJSON = withObject "range" $ \v -> Range <$> v .:: "from" <*> v .:: "to"
 
--- | "Region" height in lines. Any "Region" at least of one line height
-regionLines :: Region -> Int
-regionLines r = succ $ pointLine (regionTo r) - pointLine (regionFrom r)
+-- | "Range" height in lines. Any "Range" at least of one line height
+rangeLines :: Range -> Int
+rangeLines r = succ $ pointLine (rangeTo r) - pointLine (rangeFrom r)
 
--- | Is "Region" empty
-emptyRegion :: Region -> Bool
-emptyRegion r = regionTo r == regionFrom r
+-- | Is "Range" empty
+emptyRange :: Range -> Bool
+emptyRange r = rangeTo r == rangeFrom r
 
--- | n'th line region, starts at the beginning of line and ends on the next line
-line :: Int -> Region
-line l = region (Point l 0) (Point (succ l) 0)
+-- | n'th line range, starts at the beginning of line and ends on the next line
+line :: Int -> Range
+line l = range (Point l 0) (Point (succ l) 0)
 
--- | Make region
-region :: Point -> Point -> Region
-region f t = Region (min f t) (max f t)
+-- | Make range
+range :: Point -> Point -> Range
+range f t = Range (min f t) (max f t)
 
--- | Make region from starting point and its size
-regionSize :: Point -> Size -> Region
-regionSize pt sz = region pt (sz .+. pt)
+-- | Make range from starting point and its size
+rangeSize :: Point -> Size -> Range
+rangeSize pt sz = range pt (sz .+. pt)
 
--- | Get contents at specified region
-at :: Editable a => Contents a -> Region -> Contents a
+-- | Get contents at specified range
+at :: Editable a => Contents a -> Range -> Contents a
 at cts r =
-	onHead (snd . splitAt (pointColumn $ regionFrom r)) .
-	onLast (fst . splitAt (pointColumn $ regionTo r)) .
-	take (regionLines r) .
-	drop (pointLine (regionFrom r)) $
+	onHead (snd . splitAt (pointColumn $ rangeFrom r)) .
+	onLast (fst . splitAt (pointColumn $ rangeTo r)) .
+	take (rangeLines r) .
+	drop (pointLine (rangeFrom r)) $
 	cts
 	where
 		onHead :: (a -> a) -> [a] -> [a]
@@ -135,45 +135,45 @@ at cts r =
 		onLast _ [] = []
 		onLast f l@(last -> x) = init l ++ [f x]
 
--- | Main idea is that there are only two basic actions , that chances regions: inserting and cutting
--- When something is cutted out or inserted in, region positions must be updated
+-- | Main idea is that there are only two basic actions, that chances ranges: inserting and cutting
+-- When something is cutted out or inserted in, range positions must be updated
 -- All editings can be represented as many cuts and inserts, so we can combine them to get function
--- which maps source regions to regions on updated data
--- Because insert is dual to cut (and therefore composes iso), we can also get function to map regions back
--- Combining this functions while edit, we get function, that maps regions from source data to edited one
+-- which maps source ranges to ranges on updated data
+-- Because insert is dual to cut (and therefore composes iso), we can also get function to map ranges back
+-- Combining this functions while edit, we get function, that maps ranges from source data to edited one
 -- To get back function, we must also combine opposite actions, or we can represent actions as isomorphisms
 -- Same idea goes for modifying contents, represent each action as isomorphism and combine them together
-newtype Map = Map { mapIso :: Iso' Region Region }
+newtype Map = Map { mapIso :: Iso' Range Range }
 
 instance Monoid Map where
 	mempty = Map $ iso id id
 	(Map l) `mappend` (Map r) = Map (r . l)
 
 -- | Apply mapping
-apply :: Map -> Region -> Region
+apply :: Map -> Range -> Range
 apply = view . mapIso
 
 -- | Back mapping
 back :: Map -> Map
 back (Map f) = Map (from f)
 
--- | Cut region mapping
-cut :: Region -> Map
-cut rgn = Map $ iso (cutRegion rgn) (insertRegion rgn)
+-- | Cut range mapping
+cut :: Range -> Map
+cut rgn = Map $ iso (cutRange rgn) (insertRange rgn)
 
 -- | Opposite to "cut"
-insert :: Region -> Map
+insert :: Range -> Map
 insert = back . cut
 
--- | Update second region position as if it was data cutted at first region
-cutRegion :: Region -> Region -> Region
-cutRegion (Region is ie) (Region s e) = Region
+-- | Update second range position as if it was data cutted at first range
+cutRange :: Range -> Range -> Range
+cutRange (Range is ie) (Range s e) = Range
 	(if is < s then (s .-. ie) .+. is else s)
 	(if is < e then (e .-. ie) .+. is else e)
 
--- | Update second region position as if it was data inserted at first region
-insertRegion :: Region -> Region -> Region
-insertRegion (Region is ie) (Region s e) = Region
+-- | Update second range position as if it was data inserted at first range
+insertRange :: Range -> Range -> Range
+insertRange (Range is ie) (Range s e) = Range
 	(if is <= s then (s .-. is) .+. ie else s)
 	(if is < e then (e .-. is) .+. ie else e)
 
@@ -183,27 +183,27 @@ type Contents a = [a]
 -- | Edit data
 data Edit a = Edit {
 	editCts :: Contents a -> Contents a, -- ^ Edit contents splitted by lines
-	editMap :: Map } -- ^ Map region from source contents to edited
+	editMap :: Map } -- ^ Map range from source contents to edited
 
 instance Monoid (Edit a) where
 	mempty = Edit id mempty
 	(Edit fl ml) `mappend` (Edit fr mr) = Edit (fr . fl) (ml `mappend` mr)
 
--- | Edit monad is state on "Edit", it also collects region mappings
+-- | Edit monad is state on "Edit", it also collects range mappings
 newtype EditM s a = EditM { runEditM :: State (Edit s) a }
 	deriving (Functor, Applicative, Monad, MonadState (Edit s))
 
 -- | Basic edit action in monad
--- It takes region, region edit function and contents updater
--- and passes mapped region to these functions to get new state
-editRegion :: Region -> (Region -> Edit a) -> EditM a ()
-editRegion rgn edit' = do
-	rgn' <- mapRegion rgn
+-- It takes range, range edit function and contents updater
+-- and passes mapped range to these functions to get new state
+editRange :: Range -> (Range -> Edit a) -> EditM a ()
+editRange rgn edit' = do
+	rgn' <- mapRange rgn
 	modify (`mappend` (edit' rgn'))
 
--- | Get mapped region
-mapRegion :: Region -> EditM a Region
-mapRegion rgn = gets (($ rgn) . apply . editMap)
+-- | Get mapped range
+mapRange :: Range -> EditM a Range
+mapRange rgn = gets (($ rgn) . apply . editMap)
 
 -- | Run edit monad
 runEdit :: Editable s => EditM s a -> (a, Edit s)
@@ -278,39 +278,39 @@ measure [] = error "Invalid argument"
 measure cts = Point (pred $ List.length cts) (length $ last cts)
 
 class EditAction e where
-	erase :: Editable s => Region -> e s ()
+	erase :: Editable s => Range -> e s ()
 	write :: Editable s => Point -> s -> e s ()
-	replace :: Editable s => Region -> s -> e s ()
+	replace :: Editable s => Range -> s -> e s ()
 
 instance EditAction EditM where
-	erase rgn = editRegion rgn (\r -> Edit (erase' r) (cut r)) where
-		erase' :: Editable a => Region -> Contents a -> Contents a
-		erase' rgn' cts = fst (splitCts (regionFrom rgn') cts) `concatCts` snd (splitCts (regionTo rgn') cts)
+	erase rgn = editRange rgn (\r -> Edit (erase' r) (cut r)) where
+		erase' :: Editable a => Range -> Contents a -> Contents a
+		erase' rgn' cts = fst (splitCts (rangeFrom rgn') cts) `concatCts` snd (splitCts (rangeTo rgn') cts)
 
-	write pt cts = editRegion (pt `regionSize` measure cts') (\r -> Edit (write' r) (insert r)) where
+	write pt cts = editRange (pt `rangeSize` measure cts') (\r -> Edit (write' r) (insert r)) where
 		cts' = lines cts
 		write' rgn' origin = prefix (before' `concatCts` suffix cts') `concatCts` after' where
-			(before', after') = splitCts (regionFrom rgn') origin
+			(before', after') = splitCts (rangeFrom rgn') origin
 
-	replace rgn cts = erase rgn >> write (regionFrom rgn) cts
+	replace rgn cts = erase rgn >> write (rangeFrom rgn) cts
 
 -- | Serializable replace action
 data Replace s a = Replace {
-	replaceRegion :: Region,
+	replaceRange :: Range,
 	replaceWith :: s }
 		deriving (Eq, Read, Show)
 
 instance (Editable s, ToJSON s) => ToJSON (Replace s a) where
-	toJSON (Replace e c) = object ["region" .= e, "contents" .= c]
+	toJSON (Replace e c) = object ["range" .= e, "contents" .= c]
 
 instance (Editable s, FromJSON s) => FromJSON (Replace s a) where
-	parseJSON = withObject "edit" $ \v -> Replace <$> v .:: "region" <*> v .:: "contents"
+	parseJSON = withObject "edit" $ \v -> Replace <$> v .:: "range" <*> v .:: "contents"
 
 instance EditAction Replace where
 	erase rgn = Replace rgn mempty
-	write pt cts = Replace (region pt pt) cts
+	write pt cts = Replace (range pt pt) cts
 	replace rgn cts = Replace rgn cts
 
 -- | Run replace actions to get monadic action
 run :: Editable s => [Replace s ()] -> EditM s ()
-run = mapM_ (uncurry replace . (replaceRegion &&& replaceWith))
+run = mapM_ (uncurry replace . (replaceRange &&& replaceWith))

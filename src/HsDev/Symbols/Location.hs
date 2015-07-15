@@ -2,7 +2,7 @@
 
 module HsDev.Symbols.Location (
 	ModulePackage(..), ModuleLocation(..), moduleStandalone,
-	Position(..), Region(..), region, regionLines, regionStr,
+	Position(..), Region(..), region, regionAt, regionLines, regionStr,
 	Location(..),
 
 	packageName, packageVersion,
@@ -12,7 +12,7 @@ module HsDev.Symbols.Location (
 	locationModule, locationPosition,
 
 	packageOpt,
-	recalcTabs,
+	RecalcTabs(..),
 
 	module HsDev.Cabal
 	) where
@@ -132,6 +132,9 @@ makeLenses ''Region
 region :: Position -> Position -> Region
 region f t = Region (min f t) (max f t)
 
+regionAt :: Position -> Region
+regionAt f = region f f
+
 regionLines :: Region -> Int
 regionLines (Region f t) = succ (view positionLine t - view positionLine f)
 
@@ -188,16 +191,22 @@ instance FromJSON Location where
 packageOpt :: Maybe ModulePackage -> [String]
 packageOpt = maybeToList . fmap (("-package " ++) . view packageName)
 
--- | Recalc position to interpret '\t' as one symbol instead of 8
-recalcTabs :: String -> Position -> Position
-recalcTabs cts (Position l c) = Position l c' where
-	line = listToMaybe $ drop (pred l) $ lines cts
-	c' = case line of
-		Nothing -> c
-		Just line' -> let sizes = map charSize line' in
-			succ . fromMaybe (length sizes) .
-			findIndex (>= pred c) .
-			scanl (+) 0 $ sizes
-	charSize :: Char -> Int
-	charSize '\t' = 8
-	charSize _ = 1
+-- | Recalc positions to interpret '\t' as one symbol instead of 8
+class RecalcTabs a where
+	recalcTabs :: String -> a -> a
+
+instance RecalcTabs Position where
+	recalcTabs cts (Position l c) = Position l c' where
+		line = listToMaybe $ drop (pred l) $ lines cts
+		c' = case line of
+			Nothing -> c
+			Just line' -> let sizes = map charSize line' in
+				succ . fromMaybe (length sizes) .
+				findIndex (>= pred c) .
+				scanl (+) 0 $ sizes
+		charSize :: Char -> Int
+		charSize '\t' = 8
+		charSize _ = 1
+
+instance RecalcTabs Region where
+	recalcTabs cts (Region f t) = Region (recalcTabs cts f) (recalcTabs cts t)
