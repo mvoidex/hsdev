@@ -21,7 +21,7 @@ import HsDev.Util
 
 -- | Check files and collect warnings and errors
 check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> Ghc [Note OutputMessage]
-check opts _ files _ = do
+check opts cabal files _ = do
 	cts <- liftIO $ mapM readFileUtf8 files
 	ch <- liftIO newChan
 	let
@@ -54,7 +54,7 @@ check opts _ files _ = do
 					lookup fileName $ zip files cts
 	withFlags $ do
 		modifyFlags (\fs -> fs { log_action = logAction })
-		_ <- addCmdOpts ("-Wall" : opts)
+		_ <- addCmdOpts ("-Wall" : (cabalOpt cabal ++ opts))
 		clearTargets
 		mapM (flip makeTarget Nothing) files >>= loadTargets
 	liftIO $ stopChan ch
