@@ -369,7 +369,7 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"
 #endif
-	ghcw <- ghcWorker
+	ghcw <- ghciWorker
 	ghcmodw <- ghcModMultiWorker
 	let
 		copts = CommandOptions
