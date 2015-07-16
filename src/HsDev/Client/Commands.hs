@@ -41,6 +41,7 @@ import qualified HsDev.Tools.Types as Tools
 import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Tools.Hayoo as Hayoo
+import qualified HsDev.Tools.HLint as HLint
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Cache
 
@@ -133,11 +134,12 @@ commands = [
 	-- Tool commands
 	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
 	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
+	cmdList' "hlint" ["files..."] [] "hlint source files" hlint',
 	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
 	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
 	cmdList' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
-	cmdList' "ghc-mod lint" ["files..."] [hlintOpts] "lint source file" ghcmodLint',
+	cmdList' "ghc-mod lint" ["files..."] [hlintOpts] "lint source files" ghcmodLint',
 	cmdList' "ghc-mod check-lint" ["files..."] [sandboxArg, ghcOpts, hlintOpts] "check & lint source files" ghcmodCheckLint',
 	-- Autofix
 	cmd' "autofix show" [] [dataArg] "generate corrections for check & lint messages" autofixShow',
@@ -531,6 +533,12 @@ commands = [
 		-- | Cabal list
 		cabalList' :: [String] -> Opts String -> CommandActionT [Cabal.CabalPackage]
 		cabalList' qs _ _ = mapCommandErrorStr $ Cabal.cabalList qs
+
+		-- | HLint
+		hlint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
+		hlint' files _ copts = do
+			files' <- mapM (findPath copts) files
+			mapCommandErrorStr $ liftM concat $ mapM HLint.hlint files'
 
 		-- | Ghc-mod lang
 		ghcmodLang' :: [String] -> Opts String -> CommandActionT [String]
