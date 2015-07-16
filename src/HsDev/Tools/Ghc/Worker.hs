@@ -4,7 +4,7 @@ module HsDev.Tools.Ghc.Worker (
 	-- * Workers
 	ghcWorker, ghciWorker,
 	-- * Initializers and actions
-	modifyFlags, withFlags,
+	withFlags, modifyFlags, addCmdOpts,
 	importModules, preludeModules,
 	evaluate,
 	clearTargets, makeTarget, loadTargets,
@@ -46,6 +46,10 @@ ghcWorker opts initialize = startWorker (runGhc (Just libdir)) ghcInit id where
 ghciWorker :: IO (Worker Ghc)
 ghciWorker = ghcWorker [] (importModules preludeModules)
 
+-- | Alter @DynFlags@ temporary
+withFlags :: Ghc a -> Ghc a
+withFlags = gbracket getSessionDynFlags (\fs -> setSessionDynFlags fs >> return ()) . const
+
 -- | Update @DynFlags@
 modifyFlags :: (DynFlags -> DynFlags) -> Ghc ()
 modifyFlags f = do
@@ -56,11 +60,13 @@ modifyFlags f = do
 	_ <- liftIO $ initPackages fs'
 	return ()
 
--- | Update @DynFlags@, act, then change flags back
-withFlags :: (DynFlags -> DynFlags) -> Ghc a -> Ghc a
-withFlags alter act = do
+addCmdOpts :: [String] -> Ghc DynFlags
+addCmdOpts opts = do
 	fs <- getSessionDynFlags
-	gbracket (modifyFlags alter) (const $ modifyFlags (const fs)) $ const act
+	(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
+	_ <- setSessionDynFlags fs'
+	(fs'', _) <- liftIO $ initPackages fs'
+	return fs''
 
 -- | Import some modules
 importModules :: [String] -> Ghc ()
