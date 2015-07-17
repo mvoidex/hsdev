@@ -23,6 +23,7 @@ data Worker m = Worker {
 	workerTask :: MVar (Task ()),
 	workerRestart :: IO Bool }
 
+-- | Create new worker
 startWorker :: MonadIO m => (m () -> IO ()) -> (m () -> m ()) -> (forall a. m a -> m a) -> IO (Worker m)
 startWorker run initialize wrap = do
 	ch <- newChan
