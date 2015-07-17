@@ -25,6 +25,8 @@ instance Format Int where
 	format = show
 instance Format Integer where
 	format = show
+instance Format Bool where
+	format = show
 
 type FormatArgs = [(Maybe String, String)]
 

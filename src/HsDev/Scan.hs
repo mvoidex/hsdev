@@ -14,7 +14,7 @@ module HsDev.Scan (
 	) where
 
 import Control.Applicative ((<|>))
-import Control.Lens (view, preview)
+import Control.Lens (view, preview, set, _Right)
 import Control.Monad.Except
 import qualified Data.Map as M
 import Data.Maybe (catMaybes, fromMaybe)
@@ -90,7 +90,10 @@ scanProjectFile _ f = do
 
 -- | Scan module
 scanModule :: [String] -> ModuleLocation -> ExceptT String IO InspectedModule
-scanModule opts (FileModule f _) = inspectFile opts f
+scanModule opts (FileModule f p) = liftM setProj $ inspectFile opts f where
+	setProj =
+		set (inspectedId . moduleProject) p .
+		set (inspectionResult . _Right . moduleLocation . moduleProject) p
 -- scanModule opts (FileModule f _) = inspectFile opts f >>= traverse infer' where
 -- 	infer' m = tryInfer <|> return m where
 -- 		tryInfer = mapExceptT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $

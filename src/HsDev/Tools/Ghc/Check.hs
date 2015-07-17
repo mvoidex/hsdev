@@ -64,7 +64,7 @@ check opts cabal m = case view moduleLocation m of
 				cabalOpt cabal,
 				["-i" ++ s | s <- srcDirs],
 				extensionsOpts exts,
-				["-hide-all-packages"],
+				maybe [] (const ["-hide-all-packages"]) minfo,
 				["-package " ++ p | p <- deps],
 				opts]
 			clearTargets
