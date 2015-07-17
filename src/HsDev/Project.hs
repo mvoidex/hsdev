@@ -207,7 +207,7 @@ instance Show Info where
 		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ _infoLanguage i
 		exts
 			| null (_infoExtensions i) = []
-			| otherwise = ["_extensions:"] ++ map (tab 1) (map display (_infoExtensions i))
+			| otherwise = ["extensions:"] ++ map (tab 1) (map display (_infoExtensions i))
 		sources = ["source-dirs:"] ++
 			(map (tab 1) $ _infoSourceDirs i)
 
@@ -215,14 +215,14 @@ instance ToJSON Info where
 	toJSON i = object [
 		"build-depends" .= _infoDepends i,
 		"language" .= fmap display (_infoLanguage i),
-		"_extensions" .= map display (_infoExtensions i),
+		"extensions" .= map display (_infoExtensions i),
 		"source-dirs" .= _infoSourceDirs i]
 
 instance FromJSON Info where
 	parseJSON = withObject "info" $ \v -> Info <$>
 		v .: "build-depends" <*>
 		((v .:: "language") >>= traverse (parseDT "Language")) <*>
-		((v .:: "_extensions") >>= traverse (parseDT "Extension")) <*>
+		((v .:: "extensions") >>= traverse (parseDT "Extension")) <*>
 		v .:: "source-dirs"
 
 -- | Analyze cabal file
