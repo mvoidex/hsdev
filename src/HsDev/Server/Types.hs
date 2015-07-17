@@ -41,6 +41,7 @@ data CommandOptions = CommandOptions {
 	commandMmapPool :: Maybe Pool,
 #endif
 	commandGhc :: Worker Ghc,
+	commandGhci :: Worker Ghc,
 	commandGhcMod :: Worker (ReaderT WorkerMap IO),
 	commandNotify :: Notification -> IO (),
 	commandLink :: IO (),

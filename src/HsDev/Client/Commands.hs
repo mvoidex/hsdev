@@ -24,24 +24,25 @@ import System.FilePath
 import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
 
-import qualified HsDev.Database.Async as DB
+import HsDev.Cache
+import qualified HsDev.Cache.Structured as SC
 import HsDev.Commands
-import HsDev.Symbols
-import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
-import HsDev.Symbols.Util
-import HsDev.Util
+import qualified HsDev.Database.Async as DB
 import HsDev.Scan
 import HsDev.Server.Message as M
 import HsDev.Server.Types
+import HsDev.Symbols
+import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
+import HsDev.Symbols.Util
+import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Worker
-import qualified HsDev.Tools.Types as Tools
-import qualified HsDev.Tools.AutoFix as AutoFix
+import qualified HsDev.Tools.Ghc.Check as Check
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Tools.HLint as HLint
-import qualified HsDev.Cache.Structured as SC
-import HsDev.Cache
+import qualified HsDev.Tools.Types as Tools
+import HsDev.Util
 
 import Control.Concurrent.Util
 import System.Console.Cmd
@@ -133,6 +134,8 @@ commands = [
 	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
 	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
 	cmdList' "lint" ["files..."] [] "lint source files" lint',
+	cmdList' "check" ["files..."] [sandboxArg, ghcOpts] "check source files" check',
+	cmdList' "check-lint" ["files..."] [] "check and lint source files" checkLint',
 	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
 	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
@@ -538,6 +541,25 @@ commands = [
 			files' <- mapM (findPath copts) files
 			mapCommandErrorStr $ liftM concat $ mapM HLint.hlint files'
 
+		-- | Check
+		check' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
+		check' files as copts = do
+			files' <- mapM (findPath copts) files
+			db <- getDb copts
+			cabal <- getCabal copts as
+			liftM concat $ forM files' $ \file' -> do
+				m <- maybe
+					(commandError_ $ "File '" ++ file' ++ "' not found, maybe you forgot to scan it?")
+					return $
+					lookupFile file' db
+				notes <- mapCommandErrorStr $ liftTask $
+					pushTask (commandGhc copts) (runExceptT $ Check.check (listArg "ghc" as) cabal m)
+				either commandError_ return notes
+
+		-- | Check and lint
+		checkLint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
+		checkLint' files as copts = liftM2 (++) (check' files as copts) (lint' files as copts)
+
 		-- | Ghc-mod lang
 		ghcmodLang' :: [String] -> Opts String -> CommandActionT [String]
 		ghcmodLang' _ _ _ = mapCommandErrorStr GhcMod.langs
@@ -589,9 +611,9 @@ commands = [
 			cabal <- getCabal copts as
 			mapCommandErrorStr $ liftM concat $ forM files' $ \file' ->
 				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $ do
-					check' <- GhcMod.check (listArg "ghc" as) cabal [file'] mproj
-					lint' <- GhcMod.lint (listArg "hlint" as) file'
-					return $ check' ++ lint'
+					checked <- GhcMod.check (listArg "ghc" as) cabal [file'] mproj
+					linted <- GhcMod.lint (listArg "hlint" as) file'
+					return $ checked ++ linted
 
 		-- | Autofix show
 		autofixShow' :: [String] -> Opts String -> CommandActionT [Tools.Note AutoFix.Correction]
@@ -640,7 +662,7 @@ commands = [
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
 		ghcEval' exprs _ copts = mapCommandErrorStr $ liftM (map toValue) $ liftTask $
-			pushTask (commandGhc copts) $ mapM (try . evaluate) exprs
+			pushTask (commandGhci copts) $ mapM (try . evaluate) exprs
 			where
 				toValue :: Either SomeException String -> Value
 				toValue (Left (SomeException e)) = object ["fail" .= show e]
