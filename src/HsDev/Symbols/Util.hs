@@ -48,7 +48,7 @@ inDepsOfTarget i m = any (`inPackage` m) $ view infoDepends i
 
 -- | Check if module in deps of source
 inDepsOfFile :: Project -> FilePath -> ModuleId -> Bool
-inDepsOfFile p f = maybe (const False) inDepsOfTarget $ fileTarget p f
+inDepsOfFile p f m = any (`inDepsOfTarget` m) (fileTargets p f)
 
 -- | Check if module in deps of project
 inDepsOfProject :: Project -> ModuleId -> Bool
@@ -127,7 +127,7 @@ visible :: Project -> ModuleId -> ModuleId -> Bool
 visible p (ModuleId _ (FileModule src _)) m =
 	inProject p m || any (`inPackage` m) deps || maybe False ((`elem` deps) . view projectName) (projectOf m)
 	where
-		deps = maybe [] (view infoDepends) $ fileTarget p src
+		deps = concatMap (view infoDepends) $ fileTargets p src
 visible _ _ _ = False
 
 -- | Check if module is in scope with qualifier

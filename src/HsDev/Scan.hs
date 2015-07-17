@@ -55,7 +55,7 @@ enumProject p = do
 	pkgs <- liftM (map $ view packageName) $ browsePackages [] cabal
 	let
 		projOpts :: FilePath -> [String]
-		projOpts f = maybe [] makeOpts $ fileTarget p' f where
+		projOpts f = concatMap makeOpts $ fileTargets p' f where
 			makeOpts :: Info -> [String]
 			makeOpts i = concat [
 				["-hide-all-packages"],

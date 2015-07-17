@@ -145,7 +145,7 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 		Just il -> filter (passImportList il . view declarationName)
 	byImport :: Import -> ModuleId -> Bool
 	byImport i' m' = view importModuleName i' == view moduleIdName m'
-	deps f p = maybe [] (view infoDepends) $ fileTarget p f
+	deps f p = concatMap (view infoDepends) $ fileTargets p f
 	inDepsOf' f p m' = any (`inPackage` m') (deps f p)
 
 -- | Merge imported declarations

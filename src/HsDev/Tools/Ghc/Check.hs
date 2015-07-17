@@ -51,12 +51,13 @@ check opts cabal m = case view moduleLocation m of
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file) $
 				preview (_Just . projectPath) proj
-			minfo = do
-				proj' <- proj
-				fileTarget proj' file
-			srcDirs = maybe [] (view infoSourceDirs) minfo
-			exts = maybe [] (view infoExtensions) minfo
-			deps = maybe [] (view infoDepends) minfo
+			infos' = maybe [] (`fileTargets` file) proj
+			srcDirs = concatMap (view infoSourceDirs) infos'
+			exts = concatMap (view infoExtensions) infos'
+			deps = concatMap (view infoDepends) infos'
+			hidePackages
+				| null infos' = []
+				| otherwise = ["-hide-all-packages"]
 		lift $ withFlags $ withCurrentDirectory dir $ do
 			modifyFlags (\fs -> fs { log_action = logAction ch })
 			_ <- addCmdOpts $ concat [
@@ -64,7 +65,7 @@ check opts cabal m = case view moduleLocation m of
 				cabalOpt cabal,
 				["-i" ++ s | s <- srcDirs],
 				extensionsOpts exts,
-				maybe [] (const ["-hide-all-packages"]) minfo,
+				hidePackages,
 				["-package " ++ p | p <- deps],
 				opts]
 			clearTargets

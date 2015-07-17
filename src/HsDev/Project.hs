@@ -6,7 +6,7 @@ module HsDev.Project (
 	readProject, loadProject, getProjectSandbox,
 	project,
 	Extensions(..), withExtensions,
-	infos, inTarget, fileTarget, findSourceDir, sourceDirs,
+	infos, inTarget, fileTargets, findSourceDir, sourceDirs,
 
 	projectName, projectPath, projectCabal, projectDescription, projectLibrary, projectExecutables, projectTests,
 	libraryModules, libraryBuildInfo,
@@ -336,15 +336,20 @@ infos p =
 inTarget :: FilePath -> Info -> Bool
 inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ view infoSourceDirsDef info
 
--- | Get target for source file
-fileTarget :: Project -> FilePath -> Maybe Info
-fileTarget p f = find (makeRelative (_projectPath p) f `inTarget`) $
-	maybe [] infos $ _projectDescription p
+-- | Get possible targets for source file
+-- There can be many candidates in case of module related to several executables or tests
+fileTargets :: Project -> FilePath -> [Info]
+fileTargets p f = case filter ((`isSuffixOf` f') . normalise . _executablePath) exes of
+	[] -> filter (f' `inTarget`) $ maybe [] infos $ _projectDescription p
+	exes' -> map _executableBuildInfo exes'
+	where
+		f' = makeRelative (_projectPath p) f
+		exes = maybe [] _projectExecutables $ _projectDescription p
 
 -- | Finds source dir file belongs to
 findSourceDir :: Project -> FilePath -> Maybe (Extensions FilePath)
 findSourceDir p f = do
-	info <- fileTarget p f
+	info <- listToMaybe $ fileTargets p f
 	fmap (`withExtensions` info) $ listToMaybe $ filter (`isParent` f) $ map (_projectPath p </>) $ view infoSourceDirsDef info
 
 -- | Returns source dirs for library, executables and tests

@@ -105,7 +105,7 @@ scopeModules db cabal file = do
 				inProject proj,
 				\m -> any (`inPackage` m) deps']
 	where
-		deps f p = maybe [] (view infoDepends) $ fileTarget p f
+		deps f p = concatMap (view infoDepends) $ fileTargets p f
 
 -- | Symbols in scope
 scope :: Database -> Cabal -> FilePath -> Bool -> ExceptT String IO [ModuleDeclaration]
@@ -189,4 +189,4 @@ fileDeps file cabal mproj = filterDB fileDeps' (const True) where
 		(maybe (const True) inProject mproj)
 		(liftM2 (&&)
 			(restrictCabal cabal)
-			(maybe (const True) inDepsOfTarget (join $ fileTarget <$> mproj <*> pure file)))
+			(\m -> any (`inDepsOfTarget` m) (fromMaybe [] $ fileTargets <$> mproj <*> pure file)))
