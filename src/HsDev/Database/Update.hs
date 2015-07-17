@@ -18,7 +18,9 @@ module HsDev.Database.Update (
 	-- * Helpers
 	liftExceptT,
 
-	module HsDev.Watcher
+	module HsDev.Watcher,
+
+	module Control.Monad.Except
 	) where
 
 import Control.Lens (preview, _Just, view)
@@ -30,7 +32,6 @@ import Control.Monad.Writer
 import Data.Aeson
 import Data.Aeson.Types
 import qualified Data.HashMap.Strict as HM
-import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
 import qualified Data.Text as T (unpack)

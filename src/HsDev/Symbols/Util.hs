@@ -18,7 +18,6 @@ import Data.String (fromString)
 import System.FilePath (normalise)
 
 import HsDev.Symbols
-import HsDev.Project
 import HsDev.Util (ordNub)
 
 -- | Get module project

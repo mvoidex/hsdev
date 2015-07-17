@@ -13,7 +13,6 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Data.Function (on)
 import Data.List (sortBy, groupBy)
-import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import Data.Maybe.JustIf
@@ -22,7 +21,6 @@ import Data.String (fromString)
 import Data.Text (Text)
 
 import HsDev.Database
-import HsDev.Project
 import HsDev.Symbols
 import HsDev.Symbols.Util
 

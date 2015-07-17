@@ -15,7 +15,12 @@ module HsDev.Commands (
 	splitIdentifier,
 
 	-- * Helpers
-	fileCtx, fileCtxMaybe
+	fileCtx, fileCtxMaybe,
+
+	-- * Reexports
+	module HsDev.Database,
+	module HsDev.Symbols.Types,
+	module Control.Monad.Except
 	) where
 
 import Control.Applicative
@@ -31,6 +36,7 @@ import HsDev.Database
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
+import HsDev.Symbols.Types
 import HsDev.Symbols.Util
 import HsDev.Tools.Base (matchRx, at)
 import HsDev.Util (liftE, ordNub)

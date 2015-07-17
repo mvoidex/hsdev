@@ -7,7 +7,10 @@ module HsDev.Tools.Hayoo (
 	-- * Search help online
 	hayoo,
 	-- * Utils
-	untagDescription
+	untagDescription,
+
+	-- * Reexportss
+	module Control.Monad.Except
 	) where
 
 import Control.Arrow
@@ -21,7 +24,6 @@ import Network.HTTP
 import Data.String (fromString)
 
 import HsDev.Symbols
-import HsDev.Symbols.Documented
 import HsDev.Tools.Base (replaceRx)
 import HsDev.Util
 

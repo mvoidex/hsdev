@@ -5,7 +5,12 @@ module HsDev.Scan (
 
 	-- * Scan
 	scanProjectFile,
-	scanModule, scanModify, upToDate, rescanModule, changedModule, changedModules
+	scanModule, scanModify, upToDate, rescanModule, changedModule, changedModules,
+
+	-- * Reexportss
+	module HsDev.Database,
+	module HsDev.Symbols.Types,
+	module Control.Monad.Except,
 	) where
 
 import Control.Applicative ((<|>))
@@ -17,10 +22,10 @@ import System.Directory
 
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.Symbols
+import HsDev.Symbols.Types
 import HsDev.Database
 import HsDev.Tools.GhcMod
 import HsDev.Inspect
-import HsDev.Project
 import HsDev.Util
 
 -- | Enum cabal modules

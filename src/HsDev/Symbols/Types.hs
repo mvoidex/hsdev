@@ -26,7 +26,12 @@ module HsDev.Symbols.Types (
 	functionType, localDeclarations, related, typeInfo,
 	declarationModuleId, moduleDeclaration,
 	exportedBy, exportedDeclaration,
-	inspectionAt, inspectionOpts, inspection, inspectedId, inspectionResult
+	inspectionAt, inspectionOpts, inspection, inspectedId, inspectionResult,
+
+	module HsDev.Cabal,
+	module HsDev.Project,
+	module HsDev.Symbols.Class,
+	module HsDev.Symbols.Documented
 	) where
 
 import Control.Applicative
@@ -41,6 +46,7 @@ import Data.Text (Text, unpack)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime)
 
+import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented

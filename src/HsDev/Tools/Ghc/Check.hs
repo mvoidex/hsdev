@@ -1,7 +1,10 @@
 {-# LANGUAGE PatternGuards #-}
 
 module HsDev.Tools.Ghc.Check (
-	check
+	check,
+
+	Ghc,
+	module HsDev.Tools.Types
 	) where
 
 import Control.Lens (preview)
@@ -9,7 +12,6 @@ import Control.Concurrent.FiniteChan
 import HsDev.Tools.Ghc.Worker
 
 import GHC hiding (Warning)
-import GhcMonad (liftIO)
 import Outputable
 import FastString (unpackFS)
 import qualified ErrUtils as E
@@ -17,6 +19,7 @@ import qualified ErrUtils as E
 import HsDev.Project (Project(..))
 import HsDev.Symbols.Location
 import HsDev.Tools.Base
+import HsDev.Tools.Types
 import HsDev.Util
 
 -- | Check files and collect warnings and errors

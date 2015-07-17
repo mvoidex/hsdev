@@ -12,7 +12,6 @@ import Control.Monad.Reader
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Types (Pair)
 import qualified Data.HashMap.Strict as HM (null)
-import Data.Map (Map)
 import System.Log.Simple
 
 import HsDev.Database

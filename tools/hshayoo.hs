@@ -2,7 +2,6 @@ module Main (
 	main
 	) where
 
-import Control.Monad (liftM, forM)
 import Data.Maybe
 import HsDev.Tools.Hayoo
 

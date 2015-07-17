@@ -22,7 +22,10 @@ module HsDev.Tools.GhcMod (
 	waitMultiGhcMod,
 
 	GhcModT,
-	module Control.Concurrent.Worker
+	module Control.Concurrent.Worker,
+
+	module Control.Monad.Except,
+	module HsDev.Tools.Types
 	) where
 
 import Control.Applicative
@@ -54,6 +57,7 @@ import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Base
+import HsDev.Tools.Types
 import HsDev.Util ((.::), liftIOErrors, liftThrow, withCurrentDirectory, readFileUtf8, ordNub)
 
 list :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]

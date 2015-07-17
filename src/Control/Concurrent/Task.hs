@@ -4,7 +4,11 @@ module Control.Concurrent.Task (
 	Task(..), TaskException(..), TaskResult(..),
 	taskStarted, taskRunning, taskStopped, taskDone, taskFailed, taskCancelled,
 	taskWaitStart, taskWait, taskKill, taskCancel, taskStop,
-	runTask, runTask_, runTaskTry, runTaskError, forkTask, tryT
+	runTask, runTask_, runTaskTry, runTaskError, forkTask, tryT,
+
+	-- * Reexports
+	SomeException,
+	MonadIO, MonadCatch, MonadError
 	) where
 
 import Control.Concurrent

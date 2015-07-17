@@ -3,7 +3,9 @@ module HsDev.Tools.HDocs (
 	setDocs,
 	loadDocs,
 
-	hdocsProcess
+	hdocsProcess,
+
+	module Control.Monad.Except
 	) where
 
 import Control.Exception

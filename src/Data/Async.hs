@@ -2,7 +2,10 @@ module Data.Async (
 	Event(..),
 	event,
 	Async(..),
-	newAsync, readAsync, modifyAsync
+	newAsync, readAsync, modifyAsync,
+
+	-- * Reexports
+	Group, NFData
 	) where
 
 import Control.DeepSeq (NFData, force)

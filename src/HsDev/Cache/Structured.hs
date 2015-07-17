@@ -14,8 +14,7 @@ import System.FilePath
 import Data.Group (Group(zero))
 import qualified HsDev.Cache as Cache
 import HsDev.Database
-import HsDev.Symbols
-import HsDev.Project (project)
+import HsDev.Symbols hiding (loadProject)
 import HsDev.Util
 
 -- | Write cache

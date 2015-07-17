@@ -5,7 +5,9 @@ module HsDev.Inspect (
 	inspectContents, contentsInspection,
 	inspectFile, fileInspection,
 	projectDirs, projectSources,
-	inspectProject
+	inspectProject,
+
+	module Control.Monad.Except
 	) where
 
 import Control.Arrow
@@ -33,7 +35,6 @@ import System.FilePath
 import Data.Generics.Uniplate.Data
 
 import HsDev.Symbols
-import HsDev.Project
 import HsDev.Tools.Base
 import HsDev.Tools.HDocs (hdocsy, hdocs, hdocsProcess)
 import HsDev.Util

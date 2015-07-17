@@ -1,6 +1,8 @@
 module HsDev.Watcher.Types (
 	Watched(..),
-	Watcher
+	Watcher,
+
+	Cabal, Project
 	) where
 
 import qualified System.Directory.Watcher as W

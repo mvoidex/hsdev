@@ -1,5 +1,7 @@
 module HsDev.Tools.HLint (
-	hlint
+	hlint,
+
+	module Control.Monad.Except
 	) where
 
 import Control.Monad.Except

@@ -9,7 +9,8 @@ module HsDev.Tools.AutoFix (
 	match,
 	findCorrector,
 
-	module Data.Mark
+	module Data.Mark,
+	module HsDev.Tools.Types
 	) where
 
 import Control.Applicative
@@ -20,6 +21,7 @@ import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Mark hiding (at, length)
 import HsDev.Symbols.Location
 import HsDev.Tools.Base
+import HsDev.Tools.Types
 import HsDev.Util ((.::))
 
 data Correction = Correction {

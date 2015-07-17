@@ -22,7 +22,11 @@ module HsDev.Util (
 	-- * IO
 	hGetLineBS, logException, logIO, ignoreIO,
 	-- * Task
-	liftTask
+	liftTask,
+
+	-- * Reexportss
+	module Control.Monad.Except,
+	MonadIO(..)
 	) where
 
 import Control.Arrow (second, left)

@@ -26,8 +26,6 @@ import Text.Read (readMaybe)
 
 import qualified HsDev.Database.Async as DB
 import HsDev.Commands
-import HsDev.Database
-import HsDev.Project
 import HsDev.Symbols
 import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util

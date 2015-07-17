@@ -2,7 +2,10 @@
 
 module HsDev.Tools.Cabal (
 	CabalPackage(..),
-	cabalList
+	cabalList,
+
+	-- * Reexports
+	Version(..), License(..)
 	) where
 
 import Control.Arrow

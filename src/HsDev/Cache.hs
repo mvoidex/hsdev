@@ -7,6 +7,9 @@ module HsDev.Cache (
 	standaloneCache,
 	dump,
 	load,
+
+	-- * Reexports
+	Database
 	) where
 
 import Control.DeepSeq (force)

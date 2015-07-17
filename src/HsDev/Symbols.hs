@@ -1,4 +1,4 @@
-{-# LANGUAGE  TypeSynonymInstances, FlexibleInstances, OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols (
@@ -31,7 +31,7 @@ module HsDev.Symbols (
 	-- * Other
 	unalias,
 
-	-- * Reexports
+	-- * Reexportss
 	module HsDev.Symbols.Types,
 	module HsDev.Symbols.Class,
 	module HsDev.Symbols.Documented
@@ -54,7 +54,6 @@ import System.FilePath
 import HsDev.Symbols.Types
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented (Documented(..))
-import HsDev.Project
 import HsDev.Util (searchPath)
 
 -- | Get name of export

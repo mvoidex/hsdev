@@ -12,7 +12,9 @@ module HsDev.Database (
 	append, remove,
 
 	Structured(..),
-	structured, structurize, merge
+	structured, structurize, merge,
+
+	Map
 	) where
 
 import Control.Lens (set, view)
@@ -28,7 +30,6 @@ import qualified Data.Map as M
 
 import HsDev.Symbols
 import HsDev.Symbols.Util
-import HsDev.Project
 import HsDev.Util ((.::), ordNub)
 
 -- | HsDev database

@@ -4,7 +4,9 @@ module HsDev.Scan.Browse (
 	-- * Scan cabal modules
 	listModules, browseModules, browse,
 	-- * Helpers
-	withPackages, withPackages_, packageDbModules, lookupModule_
+	withPackages, withPackages_, packageDbModules, lookupModule_,
+
+	module Control.Monad.Except
 	) where
 
 import Control.Lens (view, preview, _Just)

@@ -2,7 +2,9 @@ module HsDev.Tools.ClearImports (
 	dumpMinimalImports, waitImports, cleanTmpImports,
 	findMinimalImports,
 	groupImports, splitImport,
-	clearImports
+	clearImports,
+
+	module Control.Monad.Except
 	) where
 
 import Control.Arrow
