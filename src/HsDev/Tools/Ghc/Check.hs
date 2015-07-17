@@ -4,7 +4,8 @@ module HsDev.Tools.Ghc.Check (
 	check,
 
 	Ghc,
-	module HsDev.Tools.Types
+	module HsDev.Tools.Types,
+	Cabal(..), Project(..)
 	) where
 
 import Control.Lens (preview)

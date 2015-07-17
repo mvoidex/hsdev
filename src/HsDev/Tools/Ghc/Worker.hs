@@ -8,6 +8,8 @@ module HsDev.Tools.Ghc.Worker (
 	importModules, preludeModules,
 	evaluate,
 	clearTargets, makeTarget, loadTargets,
+	-- * Utils
+	withCurrentDirectory,
 
 	Ghc,
 
@@ -23,6 +25,7 @@ import GHC
 import GHC.Paths
 import Packages
 import StringBuffer
+import System.Directory (getCurrentDirectory, setCurrentDirectory)
 
 import Control.Concurrent.Worker
 
@@ -96,6 +99,11 @@ makeTarget name (Just cts) = do
 -- | Load all targets
 loadTargets :: [Target] -> Ghc ()
 loadTargets ts = setTargets ts >> load LoadAllTargets >> return ()
+
+-- | Set current directory and restore it after action
+withCurrentDirectory :: FilePath -> Ghc a -> Ghc a
+withCurrentDirectory dir act = gbracket (liftIO getCurrentDirectory) (liftIO . setCurrentDirectory) $
+	const (liftIO (setCurrentDirectory dir) >> act)
 
 -- TODO: Load target by @ModuleLocation@, which may cause updating @DynFlags@
 
