@@ -132,7 +132,7 @@ commands = [
 	-- Tool commands
 	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
 	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
-	cmdList' "hlint" ["files..."] [] "hlint source files" hlint',
+	cmdList' "lint" ["files..."] [] "lint source files" lint',
 	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
 	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
@@ -533,8 +533,8 @@ commands = [
 		cabalList' qs _ _ = mapCommandErrorStr $ Cabal.cabalList qs
 
 		-- | HLint
-		hlint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		hlint' files _ copts = do
+		lint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
+		lint' files _ copts = do
 			files' <- mapM (findPath copts) files
 			mapCommandErrorStr $ liftM concat $ mapM HLint.hlint files'
 
