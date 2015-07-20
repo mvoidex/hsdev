@@ -3,6 +3,7 @@
 [![Hackage version](https://img.shields.io/hackage/v/hsdev.svg?style=flat)](http://hackage.haskell.org/package/hsdev) [![Build Status](https://travis-ci.org/mvoidex/hsdev.png)](https://travis-ci.org/mvoidex/hsdev)
 
 Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
+Uses (fsnotify)[http://hackage.haskell.org/package/fsnotify] to watch for changes.
 And several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofix`
 
 ## Usage
@@ -12,24 +13,29 @@ Then you can connect to server and send requests (see [requests/responses](MESSA
 
 ### Commands
 
+* `version` — returns version number
 * `start`, `run` and `stop` — server commands
 * `connect` — interactive connect to server
 * `ping` — ping server
+* `listen` — connect to server and listen for its log (for debug)
 * `add` — add inspected modules
-* `scan`, `rescan` — scan installed modules, cabal projects and files
+* `scan`, `rescan` — scan installed modules, cabal projects and files (`rescan` is deprecated because of using `fsnotify`)
 * `remove` — unload data
-* `modules`, `packages`, `projects` — list information about specified modules, packages or projects
+* `modules`, `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
 * `resolve` — resolve scope symbols and exports for sources module
 * `symbol`, `module`, `project` — find symbol, module or project
 * `lookup`, `whois` — find visible or imported symbol
-* `scope` — get modules or declarations, accessible from file
+* `scope`, `scope modules` — get modules or declarations, accessible from file
 * `complete` — get completions for file and input
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
+* `lint`, `check`, `lint-check` — lint or check source files. These commands have some advantages over `ghc-mod` ones: `lint` uses `hlint` as library, `check` returns more precise source position and also uses project description to pass `-package` flags.
 * `ghc-mod type`, `ghc-mod check`, `ghc-mod lint`, `ghc-mod lang`, `ghc-mod flags` — run `ghc-mod` command in corresponding ghc-mod worker (separate workers per project and per sandbox)
 * `autofix show`, `autofix fix` — commands to fix some warnings and apply `hlint` suggestions
 * `dump` — dump modules or projects info
 * `load` — load data
+
+#### TODO: Detailed commands description with examples
 
 ### Examples
 
