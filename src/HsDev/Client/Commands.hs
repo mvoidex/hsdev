@@ -135,7 +135,7 @@ commands = [
 	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
 	cmdList' "lint" ["files..."] [] "lint source files" lint',
 	cmdList' "check" ["files..."] [sandboxArg, ghcOpts] "check source files" check',
-	cmdList' "check-lint" ["files..."] [] "check and lint source files" checkLint',
+	cmdList' "check-lint" ["files..."] [sandboxArg, ghcOpts] "check and lint source files" checkLint',
 	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
 	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
