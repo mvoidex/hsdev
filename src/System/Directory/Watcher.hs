@@ -53,9 +53,9 @@ withWatcher act = FS.withManager $ \man -> do
 -- | Watch directory
 watchDir :: Watcher a -> FilePath -> (Event -> Bool) -> a -> IO ()
 watchDir w f p v = do
-	f' <- canonicalizePath f
-	e <- doesDirectoryExist f'
+	e <- doesDirectoryExist f
 	when e $ do
+		f' <- canonicalizePath f
 		watching <- isWatchingDir w f'
 		unless watching $ do
 			stop <- FS.watchDir
@@ -92,9 +92,9 @@ isWatchingDir w f = do
 -- | Watch directory tree
 watchTree :: Watcher a -> FilePath -> (Event -> Bool) -> a -> IO ()
 watchTree w f p v = do
-	f' <- canonicalizePath f
-	e <- doesDirectoryExist f'
+	e <- doesDirectoryExist f
 	when e $ do
+		f' <- canonicalizePath f
 		watching <- isWatchingTree w f'
 		unless watching $ do
 			stop <- FS.watchTree

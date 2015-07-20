@@ -7,7 +7,7 @@ module HsDev.Watcher (
 	) where
 
 import Control.Lens (view)
-import System.FilePath (takeDirectory, takeExtension)
+import System.FilePath (takeDirectory, takeExtension, (</>))
 
 import System.Directory.Watcher hiding (Watcher)
 import HsDev.Project
@@ -18,9 +18,10 @@ import HsDev.Watcher.Types
 watchProject :: Watcher -> Project -> IO ()
 watchProject w proj = do
 	mapM_ (\dir -> watchTree w dir isSource (WatchedProject proj)) dirs
-	watchDir w (view projectPath proj) isCabal (WatchedProject proj)
+	watchDir w projDir isCabal (WatchedProject proj)
 	where
-		dirs = map (view entity) $ maybe [] sourceDirs $ view projectDescription proj
+		dirs = map ((projDir </>) . view entity) $ maybe [] sourceDirs $ view projectDescription proj
+		projDir = view projectPath proj
 
 -- | Watch for standalone source
 watchModule :: Watcher -> ModuleLocation -> IO ()
