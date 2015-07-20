@@ -14,12 +14,15 @@ module HsDev.Tools.Ghc.Check (
 import Control.Lens (preview, view, each, _Just, (^..))
 import Control.Monad.Except
 import Control.Concurrent.FiniteChan
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Version (showVersion)
 import HsDev.Tools.Ghc.Worker
 import System.FilePath (makeRelative)
+import Text.Read (readMaybe)
 
 import GHC hiding (Warning, Module, moduleName)
 import Outputable
+import qualified Packages as GHC
 import FastString (unpackFS)
 import qualified ErrUtils as E
 
@@ -47,6 +50,7 @@ check :: [String] -> Cabal -> Module -> ExceptT String Ghc [Note OutputMessage]
 check opts cabal m = case view moduleLocation m of
 	FileModule file proj -> do
 		ch <- liftIO newChan
+		pkgs <- lift $ liftM (map $ view packageName) listPackages
 		let
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file) $
@@ -66,7 +70,7 @@ check opts cabal m = case view moduleLocation m of
 				["-i" ++ s | s <- srcDirs],
 				extensionsOpts exts,
 				hidePackages,
-				["-package " ++ p | p <- deps],
+				["-package " ++ p | p <- deps, p `elem` pkgs],
 				opts]
 			clearTargets
 			target <- makeTarget (makeRelative dir file) Nothing
@@ -102,6 +106,13 @@ logAction ch fs sev src _ msg
 		srcMod = case src of
 			RealSrcSpan s' -> FileModule (unpackFS $ srcSpanFile s') Nothing
 			_ -> ModuleSource Nothing
+
+-- | Get list of installed packages
+listPackages :: Ghc [ModulePackage]
+listPackages = getSessionDynFlags >>= return . mapMaybe readPackage . fromMaybe [] . pkgDatabase
+
+readPackage :: GHC.PackageConfig -> Maybe ModulePackage
+readPackage pc = readMaybe $ GHC.packageNameString pc ++ "-" ++ showVersion (GHC.packageVersion pc)
 
 -- Recalc tabs for notes
 recalcNotesTabs :: [Note OutputMessage] -> IO [Note OutputMessage]
