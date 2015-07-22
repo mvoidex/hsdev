@@ -4,7 +4,7 @@ module Data.Mark (
 	Point(..), point, (.-.), (.+.), till, Size, linesSize, stringSize,
 	Range(..), rangeLines, emptyRange,
 	line,
-	range, rangeSize, at,
+	range, rangeSize, expandLines, at,
 	-- * Mappings
 	Map(..), apply, back,
 	cut, insert,
@@ -118,6 +118,10 @@ range f t = Range (min f t) (max f t)
 -- | Make range from starting point and its size
 rangeSize :: Point -> Size -> Range
 rangeSize pt sz = range pt (sz .+. pt)
+
+-- | Expand range to contain full lines
+expandLines :: Range -> Range
+expandLines (Range (Point sline _) (Point eline _)) = Range (Point sline 0) (Point (succ eline) 0)
 
 -- | Get contents at specified range
 at :: Editable a => Contents a -> Range -> Contents a

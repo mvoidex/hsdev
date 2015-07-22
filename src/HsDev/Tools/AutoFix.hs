@@ -77,9 +77,9 @@ type CorrectorMatch = Note OutputMessage -> Maybe (Note Correction)
 correctors :: [CorrectorMatch]
 correctors = [
 	match "^The import of `([\\w\\.]+)' is redundant" $ \_ rgn -> Correction
-		"Redunant import"
+		"Redundant import"
 		(replace
-			(rangeFrom rgn `rangeSize` linesSize 1)
+			(expandLines rgn)
 			""),
 	match "^(.*?)\nFound:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g rgn -> Correction
 		(g `at` 1)
