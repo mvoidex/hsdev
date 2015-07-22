@@ -21,7 +21,7 @@ hlint file = do
 	(flags, classify, hint) <- liftIO autoSettings
 	p <- liftIO $ parseModuleEx flags file' (Just cts)
 	m <- either (throwError . parseErrorMessage) return p
-	return $ map (recalcTabs cts . fromIdea) $ applyHints classify hint [m]
+	return $ map (recalcTabs cts 8 . fromIdea) $ applyHints classify hint [m]
 
 fromIdea :: Idea -> Note OutputMessage
 fromIdea idea = Note {

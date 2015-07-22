@@ -124,7 +124,7 @@ info opts cabal file sname = do
 			maybe (throwError $ GhcMod.GMEString $ "Can't parse info: '" ++ sname ++ "'") return $
 			parseData s `mplus` parseFunction s
 		recalcDeclTabs :: String -> Declaration -> Declaration
-		recalcDeclTabs fstr = over (declarationPosition . _Just) (recalcTabs fstr)
+		recalcDeclTabs fstr = over (declarationPosition . _Just) (recalcTabs fstr 8)
 		parseFunction s = do
 			groups <- matchRx (sname ++ "\\s+::\\s+(.*?)(\\s+-- Defined (at (.*)|in `(.*)'))?$") s
 			return (decl (fromString sname) (Function (Just $ fromString $ groups `at` 1) [] Nothing)) {
@@ -175,7 +175,9 @@ instance FromJSON TypedRegion where
 typeOf :: [String] -> Cabal -> FilePath -> Int -> Int -> GhcModT IO [TypedRegion]
 typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
 	fileCts <- liftIO $ readFileUtf8 file
-	ts <- lines <$> GhcMod.types file line col
+	let
+		Position line' col' = calcTabs fileCts 8 (Position line col)
+	ts <- lines <$> GhcMod.types file line' col'
 	return $ mapMaybe (toRegionType fileCts) ts
 	where
 		toRegionType :: String -> String -> Maybe TypedRegion
@@ -185,7 +187,7 @@ typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.ghcUserOptions =
 		parseRegion :: String -> ReadM Region
 		parseRegion fstr = Region <$> parsePosition fstr <*> parsePosition fstr
 		parsePosition :: String -> ReadM Position
-		parsePosition fstr = recalcTabs fstr <$> (Position <$> readParse <*> readParse)
+		parsePosition fstr = recalcTabs fstr 8 <$> (Position <$> readParse <*> readParse)
 
 parseOutputMessages :: String -> [Note OutputMessage]
 parseOutputMessages = mapMaybe parseOutputMessage . lines
@@ -205,7 +207,7 @@ recalcOutputMessageTabs :: [(FilePath, String)] -> Note OutputMessage -> Note Ou
 recalcOutputMessageTabs fileCts n = fromMaybe n $ do
 	src <- preview (noteSource . moduleFile) n
 	cts <- lookup src fileCts
-	return $ recalcTabs cts n
+	return $ recalcTabs cts 8 n
 
 -- | Replace NULL with newline
 nullToNL :: String -> String

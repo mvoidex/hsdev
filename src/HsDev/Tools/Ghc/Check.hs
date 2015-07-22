@@ -122,7 +122,7 @@ recalcNotesTabs notes = do
 		recalc' n = fromMaybe n $ do
 			fname <- preview (noteSource . moduleFile) n
 			cts' <- lookup fname (zip files cts)
-			return $ recalcTabs cts' n
+			return $ recalcTabs cts' 8 n
 	return $ map recalc' notes
 	where
 		files = ordNub $ notes ^.. each . noteSource . moduleFile

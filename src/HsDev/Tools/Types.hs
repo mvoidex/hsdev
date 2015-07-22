@@ -67,7 +67,8 @@ instance FromJSON a => FromJSON (Note a) where
 		v .:: "note"
 
 instance RecalcTabs (Note a) where
-	recalcTabs cts (Note s r l n) = Note s (recalcTabs cts r) l n
+	recalcTabs cts n' (Note s r l n) = Note s (recalcTabs cts n' r) l n
+	calcTabs cts n' (Note s r l n) = Note s (calcTabs cts n' r) l n
 
 instance Canonicalize (Note a) where
 	canonicalize (Note s r l n) = Note <$> canonicalize s <*> pure r <*> pure l <*> pure n

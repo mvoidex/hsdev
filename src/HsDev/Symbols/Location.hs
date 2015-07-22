@@ -140,13 +140,9 @@ regionLines (Region f t) = succ (view positionLine t - view positionLine f)
 
 -- | Get string at region
 regionStr :: Region -> String -> String
-regionStr r@(Region f t) s = intercalate "\n" $ drop (pred $ view positionColumn f) fline' : tl where
+regionStr r@(Region f t) s = intercalate "\n" $ drop (pred $ view positionColumn f) fline : tl where
 	s' = take (regionLines r) $ drop (pred (view positionLine f)) $ lines s
 	(fline:tl) = init s' ++ [take (pred $ view positionColumn t) (last s')]
-	fline' = concatMap untab fline where
-		untab :: Char -> String
-		untab '\t' = replicate 8 ' '
-		untab ch = [ch]
 
 instance NFData Region where
 	rnf (Region f t) = rnf f `seq` rnf t
@@ -191,12 +187,15 @@ instance FromJSON Location where
 packageOpt :: Maybe ModulePackage -> [String]
 packageOpt = maybeToList . fmap (("-package " ++) . view packageName)
 
--- | Recalc positions to interpret '\t' as one symbol instead of 8
+-- | Recalc positions to interpret '\t' as one symbol instead of N
 class RecalcTabs a where
-	recalcTabs :: String -> a -> a
+	-- | Interpret '\t' as one symbol instead of N
+	recalcTabs :: String -> Int -> a -> a
+	-- | Inverse of `recalcTabs`: interpret '\t' as N symbols instead of 1
+	calcTabs :: String -> Int -> a -> a
 
 instance RecalcTabs Position where
-	recalcTabs cts (Position l c) = Position l c' where
+	recalcTabs cts n (Position l c) = Position l c' where
 		line = listToMaybe $ drop (pred l) $ lines cts
 		c' = case line of
 			Nothing -> c
@@ -205,8 +204,15 @@ instance RecalcTabs Position where
 				findIndex (>= pred c) .
 				scanl (+) 0 $ sizes
 		charSize :: Char -> Int
-		charSize '\t' = 8
+		charSize '\t' = n
+		charSize _ = 1
+	calcTabs cts n (Position l c) = Position l c' where
+		line = listToMaybe $ drop (pred l) $ lines cts
+		c' = maybe c (succ . sum . map charSize . take (pred c)) line
+		charSize :: Char -> Int
+		charSize '\t' = n
 		charSize _ = 1
 
 instance RecalcTabs Region where
-	recalcTabs cts (Region f t) = Region (recalcTabs cts f) (recalcTabs cts t)
+	recalcTabs cts n (Region f t) = Region (recalcTabs cts n f) (recalcTabs cts n t)
+	calcTabs cts n (Region f t) = Region (calcTabs cts n f) (calcTabs cts n t)
