@@ -1,15 +1,17 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, FlexibleInstances, MultiParamTypeClasses, TypeFamilies, UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.Update.Types (
 	Status(..), Progress(..), Task(..), Settings(..), settings, UpdateDB(..)
 	) where
 
+import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.CatchIO
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Control.Monad.Trans.Control
 import Data.Aeson
 import qualified System.Log.Simple as Log
 
@@ -111,3 +113,11 @@ instance MonadCatchIO m => Log.MonadLog (UpdateDB m) where
 
 instance Log.MonadLog m => Log.MonadLog (ExceptT e m) where
 	askLog = lift Log.askLog
+
+instance MonadBase b m => MonadBase b (UpdateDB m) where
+	liftBase = UpdateDB . liftBase
+
+instance MonadBaseControl b m => MonadBaseControl b (UpdateDB m) where
+	type StM (UpdateDB m) a = StM (ReaderT Settings (WriterT [ModuleLocation] m)) a
+	liftBaseWith f = UpdateDB $ liftBaseWith (\f' -> f (f' . runUpdateDB))
+	restoreM = UpdateDB . restoreM

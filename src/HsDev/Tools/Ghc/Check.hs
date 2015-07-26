@@ -57,7 +57,7 @@ check opts cabal m = case view moduleLocation m of
 				preview (_Just . projectPath) proj
 			infos' = maybe [] (`fileTargets` file) proj
 			srcDirs = concatMap (view infoSourceDirs) infos'
-			exts = concatMap (view infoExtensions) infos'
+			exts = map (file `withExtensions`) infos'
 			deps = concatMap (view infoDepends) infos'
 			hidePackages
 				| null infos' = []
@@ -68,7 +68,7 @@ check opts cabal m = case view moduleLocation m of
 				["-Wall"],
 				cabalOpt cabal,
 				["-i" ++ s | s <- srcDirs],
-				extensionsOpts exts,
+				concatMap extensionsOpts exts,
 				hidePackages,
 				["-package " ++ p | p <- deps, p `elem` pkgs],
 				opts]

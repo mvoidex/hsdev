@@ -12,8 +12,8 @@ module HsDev.Project (
 	libraryModules, libraryBuildInfo,
 	executableName, executablePath, executableBuildInfo,
 	testName, testEnabled, testBuildInfo,
-	infoDepends, infoLanguage, infoExtensions, infoSourceDirs,
-	extensions, entity,
+	infoDepends, infoLanguage, infoExtensions, infoGHCOptions, infoSourceDirs,
+	extensions, ghcOptions, entity,
 
 	-- * Helpers
 	showExtension, flagExtension, extensionFlag,
@@ -30,6 +30,7 @@ import Data.Aeson.Types (Parser)
 import Data.List
 import Data.Maybe
 import Data.Ord
+import Distribution.Compiler (CompilerFlavor(GHC))
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
@@ -190,6 +191,7 @@ data Info = Info {
 	_infoDepends :: [String],
 	_infoLanguage :: Maybe Language,
 	_infoExtensions :: [Extension],
+	_infoGHCOptions :: [String],
 	_infoSourceDirs :: [FilePath] }
 		deriving (Eq, Read)
 
@@ -203,11 +205,14 @@ infoSourceDirsDef = lens get' set' where
 	set' i dirs = i { _infoSourceDirs = dirs }
 
 instance Show Info where
-	show i = unlines $ lang ++ exts ++ sources where
+	show i = unlines $ lang ++ exts ++ opts ++ sources where
 		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ _infoLanguage i
 		exts
 			| null (_infoExtensions i) = []
 			| otherwise = ["extensions:"] ++ map (tab 1) (map display (_infoExtensions i))
+		opts
+			| null (_infoGHCOptions i) = []
+			| otherwise = ["ghc-options:"] ++ map (tab 1) (_infoGHCOptions i)
 		sources = ["source-dirs:"] ++
 			(map (tab 1) $ _infoSourceDirs i)
 
@@ -216,6 +221,7 @@ instance ToJSON Info where
 		"build-depends" .= _infoDepends i,
 		"language" .= fmap display (_infoLanguage i),
 		"extensions" .= map display (_infoExtensions i),
+		"ghc-options" .= _infoGHCOptions i,
 		"source-dirs" .= _infoSourceDirs i]
 
 instance FromJSON Info where
@@ -223,6 +229,7 @@ instance FromJSON Info where
 		v .: "build-depends" <*>
 		((v .:: "language") >>= traverse (parseDT "Language")) <*>
 		((v .:: "extensions") >>= traverse (parseDT "Extension")) <*>
+		v .:: "ghc-options" <*>
 		v .:: "source-dirs"
 
 -- | Analyze cabal file
@@ -241,6 +248,7 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 			_infoDepends = map pkgName (PD.targetBuildDepends info),
 			_infoLanguage = PD.defaultLanguage info,
 			_infoExtensions = PD.defaultExtensions info,
+			_infoGHCOptions = fromMaybe [] $ lookup GHC (PD.options info),
 			_infoSourceDirs = PD.hsSourceDirs info }
 
 		pkgName :: P.Dependency -> String
@@ -300,6 +308,7 @@ project file
 -- | Entity with project extensions
 data Extensions a = Extensions {
 	_extensions :: [Extension],
+	_ghcOptions :: [String],
 	_entity :: a }
 		deriving (Eq, Read, Show)
 
@@ -307,22 +316,23 @@ instance Ord a => Ord (Extensions a) where
 	compare = comparing _entity
 
 instance Functor Extensions where
-	fmap f (Extensions e x) = Extensions e (f x)
+	fmap f (Extensions e o x) = Extensions e o (f x)
 
 instance Applicative Extensions where
-	pure = Extensions []
-	(Extensions l f) <*> (Extensions r x) = Extensions (l ++ r) (f x)
+	pure = Extensions [] []
+	(Extensions l lo f) <*> (Extensions r ro x) = Extensions (ordNub $ l ++ r) (ordNub $ lo ++ ro) (f x)
 
 instance Foldable Extensions where
-	foldMap f (Extensions _ x) = f x
+	foldMap f (Extensions _ _ x) = f x
 
 instance Traversable Extensions where
-	traverse f (Extensions e x) = Extensions e <$> f x
+	traverse f (Extensions e o x) = Extensions e o <$> f x
 
 -- | Extensions for target
 withExtensions :: a -> Info -> Extensions a
 withExtensions x i = Extensions {
 	_extensions = _infoExtensions i,
+	_ghcOptions = _infoGHCOptions i,
 	_entity = x }
 
 -- | Returns build targets infos
@@ -374,8 +384,8 @@ extensionFlag :: String -> String
 extensionFlag = ("-X" ++)
 
 -- | Extensions as opts to GHC
-extensionsOpts :: [Extension] -> [String]
-extensionsOpts = map (extensionFlag . showExtension)
+extensionsOpts :: Extensions a -> [String]
+extensionsOpts e = map (extensionFlag . showExtension) (_extensions e) ++ _ghcOptions e
 
 makeLenses ''Project
 makeLenses ''ProjectDescription

@@ -62,7 +62,7 @@ enumProject p = do
 				["-package " ++ view projectName p'],
 				["-package " ++ dep | dep <- view infoDepends i, dep `elem` pkgs]]
 	srcs <- projectSources p'
-	return (p', [(FileModule (view entity src) (Just p'), extensionsOpts (view extensions src) ++ projOpts (view entity src)) | src <- srcs])
+	return (p', [(FileModule (view entity src) (Just p'), extensionsOpts src ++ projOpts (view entity src)) | src <- srcs])
 
 -- | Enum directory modules
 enumDirectory :: FilePath -> ExceptT String IO ScanContents

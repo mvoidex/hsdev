@@ -3,7 +3,7 @@
 module Control.Concurrent.Task (
 	Task(..), TaskException(..), TaskResult(..),
 	taskStarted, taskRunning, taskStopped, taskDone, taskFailed, taskCancelled,
-	taskWaitStart, taskWait, taskKill, taskCancel, taskStop,
+	taskWaitStart, taskWait, taskJoin, taskKill, taskCancel, taskStop,
 	runTask, runTask_, runTaskTry, runTaskError, forkTask, tryT,
 
 	-- * Reexports
@@ -37,8 +37,8 @@ data TaskResult a = TaskResult {
 instance Functor TaskResult where
 	fmap f r = TaskResult {
 		taskResultEmpty = taskResultEmpty r,
-		taskResultTryRead = fmap (fmap (fmap f)) $ taskResultTryRead r,
-		taskResultTake = fmap (fmap f) $ taskResultTake r,
+		taskResultTryRead = fmap (fmap f) <$> taskResultTryRead r,
+		taskResultTake = fmap f <$> taskResultTake r,
 		taskResultFail = taskResultFail r }
 
 instance Functor Task where
@@ -72,6 +72,10 @@ taskWaitStart = (`withMVar` (return . isJust)) . taskStart
 taskWait :: Task a -> IO (Either SomeException a)
 taskWait = taskResultTake . taskResult
 
+-- | Join task, rethrowing its exceptions
+taskJoin :: Task a -> IO a
+taskJoin = taskWait >=> either throwM return
+
 -- | Kill task
 taskKill :: Task a -> IO ()
 taskKill =
@@ -89,7 +93,7 @@ taskCancel t = do
 taskStop :: Task a -> IO Bool
 taskStop t = do
 	cancelled <- taskCancel t
-	when (not cancelled) $ taskKill t
+	unless cancelled $ taskKill t
 	return cancelled
 
 runTask :: (MonadCatch m, MonadIO m, MonadIO n) => (m () -> n ()) -> m a -> n (Task a)

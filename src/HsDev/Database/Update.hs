@@ -23,12 +23,14 @@ module HsDev.Database.Update (
 	module Control.Monad.Except
 	) where
 
+import Control.Concurrent.Lifted (fork)
 import Control.Lens (preview, _Just, view)
 import Control.Monad.Catch
 import Control.Monad.CatchIO
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Control.Monad.Trans.Control
 import Data.Aeson
 import Data.Aeson.Types
 import qualified Data.HashMap.Strict as HM
@@ -60,7 +62,7 @@ isStatus :: Value -> Bool
 isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
 
 -- | Run `UpdateDB` monad
-updateDB :: MonadCatchIO m => Settings -> ExceptT String (UpdateDB m) () -> m ()
+updateDB :: (MonadBaseControl IO m, MonadCatchIO m) => Settings -> ExceptT String (UpdateDB m) () -> m ()
 updateDB sets act = Log.scopeLog (settingsLogger sets) "update" $ do
 	updatedMods <- execWriterT (runUpdateDB (runExceptT act' >> return ()) `runReaderT` sets)
 	wait $ database sets
@@ -80,21 +82,22 @@ updateDB sets act = Log.scopeLog (settingsLogger sets) "update" $ do
 			mlocs' <- liftM (filter (isJust . preview moduleFile) . snd) $ listen act
 			wait $ database sets
 			let
+				getMods :: (MonadIO m) => m [InspectedModule]
 				getMods = do
 					db' <- liftIO $ readAsync $ database sets
 					return $ catMaybes [M.lookup mloc' (databaseModules db') | mloc' <- mlocs']
 			when (updateDocs sets) $ do
-				Log.log Log.Trace "inspecting source docs"
-				(getMods >>= waiter . runTask "inspecting source docs" [] . runTasks . map scanDocs)
+				Log.log Log.Trace "forking inspecting source docs"
+				void $ fork (getMods >>= waiter . mapM_ scanDocs)
 			when (runInferTypes sets) $ do
-				Log.log Log.Trace "inferring types"
-				(getMods >>= waiter . runTask "inferring types" [] . runTasks . map inferModTypes)
-		scanDocs :: MonadIO m => InspectedModule -> ExceptT String (UpdateDB m) ()
-		scanDocs im = runTask "scanning docs" (subject (view inspectedId im) ["module" .= view inspectedId im]) $ do
+				Log.log Log.Trace "forking inferring types"
+				void $ fork (getMods >>= waiter . mapM_ inferModTypes)
+		scanDocs :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => InspectedModule -> ExceptT String m ()
+		scanDocs im = do
 			im' <- liftExceptT $ S.scanModify (\opts _ -> inspectDocs opts) im
 			updater $ return $ fromModule im'
-		inferModTypes :: MonadIO m => InspectedModule -> ExceptT String (UpdateDB m) ()
-		inferModTypes im = runTask "inferring types" (subject (view inspectedId im) ["module" .= view inspectedId im]) $ do
+		inferModTypes :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => InspectedModule -> ExceptT String m ()
+		inferModTypes im = do
 			-- TODO: locate sandbox
 			im' <- liftExceptT $ S.scanModify infer' im
 			updater $ return $ fromModule im'

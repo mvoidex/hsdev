@@ -366,4 +366,4 @@ inspectProject opts p = do
 	modules <- mapM inspectFile' srcs
 	return (p', catMaybes modules)
 	where
-		inspectFile' exts = liftM return (inspectFile (opts ++ extensionsOpts (view extensions exts)) (view entity exts)) <|> return Nothing
+		inspectFile' exts = liftM return (inspectFile (opts ++ extensionsOpts exts) (view entity exts)) <|> return Nothing
