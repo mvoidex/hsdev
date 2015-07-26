@@ -1,7 +1,7 @@
 {-# LANGUAGE ViewPatterns, OverloadedStrings, GeneralizedNewtypeDeriving, TypeSynonymInstances, FlexibleInstances, RankNTypes, MultiParamTypeClasses #-}
 
 module Data.Mark (
-	Point(..), point, (.-.), (.+.), till, Size, linesSize, stringSize,
+	Point(..), point, lineStart, (.-.), (.+.), till, Size, linesSize, stringSize,
 	Range(..), rangeLines, emptyRange,
 	line,
 	range, rangeSize, expandLines, at,
@@ -17,7 +17,7 @@ module Data.Mark (
 	Editable(..), measure,
 	-- * Actions
 	EditAction(..),
-	Replace(..), run
+	Replace(..), inverse, reverseEdits, run
 	) where
 
 import Prelude hiding (splitAt, length, lines, unlines)
@@ -69,6 +69,9 @@ point l c
 	| c < 0 = error "Column can't be less then zero"
 	| otherwise = Point l c
 
+lineStart :: Int -> Point
+lineStart l = point l 0
+
 -- | Range from "Point" to "Point"
 data Range = Range {
 	rangeFrom :: Point,
@@ -80,6 +83,9 @@ type Size = Point
 instance Monoid Size where
 	mempty = Point 0 0
 	l `mappend` r = r .+. l
+
+rangeLength :: Range -> Size
+rangeLength (Range f t) = t .-. f
 
 -- | Range from one @Point@ to another
 till :: Point -> Point -> Range
@@ -161,6 +167,10 @@ apply = view . mapIso
 back :: Map -> Map
 back (Map f) = Map (from f)
 
+-- | Apply mapping to starting position only
+applyStart :: Map -> Range -> Range
+applyStart m r = rangeFrom (apply m r) `rangeSize` rangeLength r
+
 -- | Cut range mapping
 cut :: Range -> Map
 cut rgn = Map $ iso (cutRange rgn) (insertRange rgn)
@@ -178,8 +188,8 @@ cutRange (Range is ie) (Range s e) = Range
 -- | Update second range position as if it was data inserted at first range
 insertRange :: Range -> Range -> Range
 insertRange (Range is ie) (Range s e) = Range
-	(if is <= s then (s .-. is) .+. ie else s)
-	(if is <= e then (e .-. is) .+. ie else e)
+	(if is < s then (s .-. is) .+. ie else s)
+	(if is < e then (e .-. is) .+. ie else e)
 
 -- | Contents is list of lines
 type Contents a = [a]
@@ -314,6 +324,16 @@ instance EditAction Replace where
 	erase rgn = Replace rgn mempty
 	write pt = Replace (range pt pt)
 	replace = Replace
+
+-- | Inverted operation - restores previous state
+inverse :: Editable s => Contents s -> Replace s a -> Replace s a
+inverse cts (Replace r s) = Replace (rangeFrom r `rangeSize` measure (lines s)) (unlines $ cts `at` r)
+
+-- | Reverse list of operations
+reverseEdits :: Editable s => Contents s -> [Replace s ()] -> [Replace s ()]
+reverseEdits cts rs = map (remap . inverse cts) $ reverse rs where
+	edit' = snd $ runEdit $ run rs
+	remap r = r { replaceRange = editMap edit' `applyStart` replaceRange r }
 
 -- | Run replace actions to get monadic action
 run :: Editable s => [Replace s ()] -> EditM s ()
