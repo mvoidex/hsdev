@@ -37,6 +37,54 @@ Then you can connect to server and send requests (see [requests/responses](MESSA
 
 #### TODO: Detailed commands description with examples
 
+#### Scan
+
+Scans sources, projects, directories, sandboxes and installed modules. After scan hsdev watches for changes in directory and automatically rescans modifified sources.
+<pre>
+PS> hsdev scan --cabal --path path/to/projects --project path/to/some/project --file File.hs
+</pre>
+
+#### Resolve
+
+Resolve source module scope, taking into account reexports and import/export lists. When flag `--exports` set, resolve only exported declarations.
+<pre>
+PS> hsdev resolve --file .\src\HsDev\Cabal.hs --exports | json | % { $_.declarations.name }
+Cabal
+Sandbox
+cabalOpt
+findPackageDb
+getSandbox
+isPackageDb
+locateSandbox
+sandbox
+searchSandbox
+</pre>
+
+#### Whois
+
+Get information for symbol in context of source file. Understand qualified names and also names qualified with module shortcut (`import ... as`), note `M.` qualified for `map`:
+<pre>
+PS> hsdev whois M.map --file .\src\HsDev\Symbols\Resolve.hs | json | % { $_.declaration.decl.type }
+(a -> b) -> Map k a -> Map k b
+</pre>
+
+#### AutoFix
+
+Autofix commands used to assist for automatic fix of some warnings and hints from `hlint`. `autofix show` command parses `check` and `lint` command output, and returns `corrections` — data with regions and suggestions to fix. `autofix fix` command perform fix of selected corrections and also updates positions of other corrections, such that they stay relevant. These updated corrections can be used to pass them to `autofix fix` again.
+Example of interactive command, based on this command in SublimeHaskell:
+![autofix](https://raw.githubusercontent.com/SublimeHaskell/SublimeHaskell/hsdev/Commands/AutoFix.gif)
+
+<pre>
+# Get corrections
+PS> $corrs = hsdev check-lint ..\haskell\Test.hs | hsdev autofix show --stdin
+# Apply first correction, other corrections passed as --rest param to update their positions
+# Result is updated --rest corrections, which can be used again
+PS> $corrs2 = ($corrs | jq '[.[1]]' -c -r) | hsdev autofix fix --pure --rest (escape ($corrs | jq '.[1:5]' -c -r)) --stdin
+# One more
+PS> $corrs2 | hsdev autofix fix --stdin --pure
+</pre>
+
+
 ### Examples
 
 <pre>
