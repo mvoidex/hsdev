@@ -305,7 +305,7 @@ updateEvent (WatchedProject proj projOpts) e
 		let
 			opts = fromMaybe [] $ do
 				m <- lookupFile (view eventPath e) dbval
-				preview (inspection . inspectionOpts) . getInspected dbval m
+				preview (inspection . inspectionOpts) $ getInspected dbval m
 		scanFile opts $ view eventPath e
 	| isCabal e = do
 		Log.log Log.Info $ "Project ${proj} changed" ~~ ("proj" %= view projectName proj)
@@ -323,7 +323,7 @@ updateEvent WatchedModule e
 		let
 			opts = fromMaybe [] $ do
 				m <- lookupFile (view eventPath e) dbval
-				preview (inspection . inspectionOpts) . getInspected dbval m
+				preview (inspection . inspectionOpts) $ getInspected dbval m
 		scanFile opts $ view eventPath e
 	| otherwise = return ()
 
