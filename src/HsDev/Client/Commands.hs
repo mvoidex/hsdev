@@ -751,14 +751,16 @@ findProject copts proj = do
 -- | Find dependency: it may be source, project file or project name, also returns sandbox found
 findDep :: MonadIO m => CommandOptions -> String -> ExceptT CommandError m (Project, Maybe FilePath, Cabal)
 findDep copts depName = do
+	depPath <- findPath copts depName
 	proj <- msum [
 		mapCommandErrorStr $ do
-			p <- liftIO (locateProject depName)
+			p <- liftIO (locateProject depPath)
 			maybe (throwError $ "Project " ++ depName ++ " not found") (mapExceptT liftIO . loadProject) p,
 		findProject copts depName]
-	src <- if takeExtension depName == ".hs"
-		then liftM Just (findPath copts depName)
-		else return Nothing
+	let
+		src
+			| takeExtension depPath == ".hs" = Just depPath
+			| otherwise = Nothing
 	sbox <- liftIO $ searchSandbox $ view projectPath proj
 	return (proj, src, sbox)
 
