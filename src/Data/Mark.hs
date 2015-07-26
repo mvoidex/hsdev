@@ -91,7 +91,7 @@ linesSize n = Point n 0
 
 -- | Distance in @n@ chars within one line
 stringSize :: Int -> Point
-stringSize n = Point 0 n
+stringSize = Point 0
 
 instance ToJSON Range where
 	toJSON (Range f t) = object ["from" .= f, "to" .= t]
@@ -203,7 +203,7 @@ newtype EditM s a = EditM { runEditM :: State (Edit s) a }
 editRange :: Range -> (Range -> Edit a) -> EditM a ()
 editRange rgn edit' = do
 	rgn' <- mapRange rgn
-	modify (`mappend` (edit' rgn'))
+	modify (`mappend` edit' rgn')
 
 -- | Get mapped range
 mapRange :: Range -> EditM a Range
@@ -312,8 +312,8 @@ instance (Editable s, FromJSON s) => FromJSON (Replace s a) where
 
 instance EditAction Replace where
 	erase rgn = Replace rgn mempty
-	write pt cts = Replace (range pt pt) cts
-	replace rgn cts = Replace rgn cts
+	write pt = Replace (range pt pt)
+	replace = Replace
 
 -- | Run replace actions to get monadic action
 run :: Editable s => [Replace s ()] -> EditM s ()

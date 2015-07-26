@@ -120,7 +120,7 @@ cabalDB cabal = filterDB (inCabal cabal) (const False)
 
 -- | Standalone database
 standaloneDB :: Database -> Database
-standaloneDB db = filterDB (check') (const False) db where
+standaloneDB db = filterDB check' (const False) db where
 	check' m = standalone m && byFile m
 
 -- | Select module by predicate

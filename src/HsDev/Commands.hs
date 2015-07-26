@@ -153,7 +153,7 @@ restrictCabal cabal m = inCabal cabal m || not (byCabal m)
 -- | Check whether module is visible from source file
 visibleFrom :: Maybe Project -> Module -> ModuleId -> Bool
 visibleFrom (Just p) this m = visible p (view moduleId this) m
-visibleFrom Nothing this m = (view moduleId this) == m || byCabal m
+visibleFrom Nothing this m = view moduleId this == m || byCabal m
 
 -- | Split identifier into module name and identifier itself
 splitIdentifier :: String -> (Maybe String, String)

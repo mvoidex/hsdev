@@ -30,7 +30,7 @@ timeout tm act = race [
 withSync :: a -> ((a -> IO ()) -> IO b) -> IO a
 withSync v act = do
 	sync <- newEmptyMVar
-	void $ forkIO $ void $ act (putMVar sync) `onException` (putMVar sync v)
+	void $ forkIO $ void $ act (putMVar sync) `onException` putMVar sync v
 	takeMVar sync
 
 withSync_ :: (IO () -> IO a) -> IO ()

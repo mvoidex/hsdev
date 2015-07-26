@@ -110,8 +110,8 @@ compile (Invoke (CmdLet e (Args p ns))) = unwords $ List.filter (not . null) [in
 	invoke' = case e of
 		Var n -> n
 		_ -> unwords ["&", compile $ cbra e]
-	p' = intercalate " " $ map (compile . cbra) p
-	ns' = intercalate " " $ concatMap named' $ M.toList ns where
+	p' = unwords $ map (compile . cbra) p
+	ns' = unwords $ concatMap named' $ M.toList ns where
 		named' :: (String, Maybe Expr) -> [String]
 		named' (n, Just v) = ['-':n, compile $ cbra v]
 		named' (n, Nothing) = ['-':n]
@@ -156,7 +156,7 @@ call :: Expr -> [Expr] -> [(String, Maybe Expr)] -> CmdLet
 call f pos named' = CmdLet f $ Args pos (M.fromList named')
 
 cmdlet :: String -> [Expr] -> [(String, Maybe Expr)] -> CmdLet
-cmdlet n pos = call (name n) pos
+cmdlet n = call (name n)
 
 lambda :: [String] -> ([Expr] -> Expr) -> Expr
 lambda = Lambda

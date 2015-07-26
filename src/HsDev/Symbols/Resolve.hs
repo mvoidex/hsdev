@@ -135,8 +135,8 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 		db <- ask
 		return $
 			fromMaybe [] $
-			listToMaybe $ dropWhile null $
-			[selectModules (select' f) db | f <- byImport i' : fs]
+			listToMaybe $ dropWhile null
+				[selectModules (select' f) db | f <- byImport i' : fs]
 		where
 			select' f md  = view moduleName md == view importModuleName i' && f (view moduleId md)
 	filterImportList :: [Declaration] -> [Declaration]

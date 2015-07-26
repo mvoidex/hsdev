@@ -438,7 +438,7 @@ commands = [
 			case rs of
 				[] -> commandError "Module not found" []
 				[m] -> return m
-				ms' -> commandError "Ambiguous modules" ["modules" .= (map (view moduleId) ms')]
+				ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
 
 		-- | Resolve module scope
 		resolve' :: [String] -> Opts String -> CommandActionT Module
@@ -463,7 +463,7 @@ commands = [
 			case rs of
 				[] -> commandError "Module not found" []
 				[m] -> return $ getScope $ resolveOne cabaldb m
-				ms' -> commandError "Ambiguous modules" ["modules" .= (map (view moduleId) ms')]
+				ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
 
 		-- | Get project info
 		project' :: [String] -> Opts String -> CommandActionT Project

@@ -30,7 +30,7 @@ startWorker run initialize wrap = do
 	taskVar <- newEmptyMVar
 	let
 		start = forkTask $ do
-			run $ initialize $ processWork
+			run $ initialize processWork
 			processSkip
 		processWork = whileJust (liftM (fmap snd) $ liftIO $ getChan ch) id
 		processSkip = whileJust (liftM (fmap fst) $ getChan ch) taskStop

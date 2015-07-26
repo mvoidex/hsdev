@@ -39,7 +39,7 @@ import Pretty
 
 -- | Browse packages
 browsePackages :: [String] -> Cabal -> ExceptT String IO [ModulePackage]
-browsePackages opts cabal = liftIOErrors $ withPackages (cabalOpt cabal ++ opts) $ \dflags -> do
+browsePackages opts cabal = liftIOErrors $ withPackages (cabalOpt cabal ++ opts) $ \dflags ->
 	return $ mapMaybe readPackage $ fromMaybe [] $ GHC.pkgDatabase dflags
 
 listModules :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]

@@ -76,7 +76,7 @@ enumDirectory dir = do
 	projs <- triesMap (enumProject . project) projects
 	let
 		projPaths = map (view projectPath . fst) projs
-		standalone = map (\f -> FileModule f Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
+		standalone = map ((`FileModule` Nothing)) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
 	return $ ScanContents {
 		modulesToScan = [(s, []) | s <- standalone],
 		projectsToScan = projs,
@@ -129,4 +129,4 @@ changedModule db opts m = maybe (return True) (liftM not . upToDate opts) m' whe
 
 -- | Returns new (to scan) and changed (to rescan) modules
 changedModules :: Database -> [String] -> [ModuleToScan] -> ExceptT String IO [ModuleToScan]
-changedModules db opts ms = filterM (\(m, opts') -> changedModule db (opts ++ opts') m) ms
+changedModules db opts = filterM (\ (m, opts') -> changedModule db (opts ++ opts') m)

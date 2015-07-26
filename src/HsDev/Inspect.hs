@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, ViewPatterns #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 
 module HsDev.Inspect (
 	analyzeModule, inspectDocsChunk, inspectDocs,
@@ -82,7 +82,7 @@ analyzeModule_ exts file source = do
 			offsets = scanl (+) 0 $ map length parts'
 		break' :: [String] -> Maybe ([String], [String])
 		break' [] = Nothing
-		break' (l:ls) = Just $ first (l:) $ break (not . maybe True isSpace . listToMaybe) ls
+		break' (l:ls) = Just $ first (l:) $ span (maybe True isSpace . listToMaybe) ls
 
 		parseModuleName :: String -> Either String String
 		parseModuleName cts = maybe (Left "match fail") Right $ do
@@ -193,7 +193,7 @@ getConDecl t as (H.QualConDecl loc _ _ cdecl) = case cdecl of
 	H.RecDecl n fields -> mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` dataRes) [] Nothing) : concatMap (uncurry (getRec loc dataRes)) fields
 	where
 		dataRes :: H.Type
-		dataRes = foldr H.TyApp (H.TyCon (H.UnQual t)) $ map (H.TyVar . nameOf) as where
+		dataRes = foldr (H.TyApp . H.TyVar . nameOf) (H.TyCon (H.UnQual t)) as where
 			nameOf :: H.TyVarBind -> H.Name
 			nameOf (H.KindedVar n' _) = n'
 			nameOf (H.UnkindedVar n') = n'
@@ -296,7 +296,7 @@ inspectDocs opts m = do
 	docsMap <- liftE $ if hdocsWorkaround
 		then hdocsProcess (fromMaybe (T.unpack $ view moduleName m) (preview (moduleLocation . moduleFile) m)) opts
 		else liftM Just $ hdocs (view moduleLocation m) opts
-	return $ maybe id addDocs docsMap $ m
+	return $ maybe id addDocs docsMap m
 
 -- | Inspect contents
 inspectContents :: String -> [String] -> String -> ExceptT String IO InspectedModule

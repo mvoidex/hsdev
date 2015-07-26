@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, GeneralizedNewtypeDeriving, OverloadedStrings, MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, MultiParamTypeClasses #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.Update (
@@ -220,7 +220,7 @@ scanFile opts fpath = do
 					return $ FileModule fpath' mproj
 			return [(mloc, [])]
 		False -> return []
-	mapM_ (watch watchModule) $ map fst mlocs
+	mapM_ (watch watchModule . fst) mlocs
 	scan
 		(Cache.loadFiles (== fpath'))
 		(filterDB (inFile fpath') (const False) . standaloneDB)
@@ -267,7 +267,7 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 		liftExceptT $ S.enumDirectory dir
 	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks $ map (scanCabal opts) sboxes
-	mapM_ (watch watchModule) $ map fst standSrcs
+	mapM_ (watch watchModule . fst) standSrcs
 	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
 	where
 		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)

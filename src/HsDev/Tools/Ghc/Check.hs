@@ -41,7 +41,7 @@ checkFiles opts cabal files _ = do
 		modifyFlags (\fs -> fs { log_action = logAction ch })
 		_ <- addCmdOpts ("-Wall" : (cabalOpt cabal ++ opts))
 		clearTargets
-		mapM (flip makeTarget Nothing) files >>= loadTargets
+		mapM (`makeTarget` Nothing) files >>= loadTargets
 	notes <- liftIO $ stopChan ch
 	liftIO $ recalcNotesTabs notes
 

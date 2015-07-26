@@ -518,7 +518,7 @@ instance Symbol ModuleDeclaration where
 		qualifiedName :: ModuleId -> Declaration -> Text
 		qualifiedName m' d' = T.concat [_moduleIdName m', ".", _declarationName d']
 	symbolDocs = _declarationDocs . _moduleDeclaration
-	symbolLocation d = set locationPosition (_declarationPosition $ _moduleDeclaration d) $
+	symbolLocation d = set locationPosition (_declarationPosition $ _moduleDeclaration d)
 		(symbolLocation . _declarationModuleId $ d)
 
 instance Documented ModuleId where

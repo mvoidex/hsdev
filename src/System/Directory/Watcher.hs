@@ -62,7 +62,7 @@ watchDir w f p v = do
 				(watcherMan w)
 				(fromString f')
 				(p . fromEvent)
-				(writeChan (watcherChan w) . ((,) v) . fromEvent)
+				(writeChan (watcherChan w) . (,) v . fromEvent)
 			modifyMVar_ (watcherDirs w) $ return . M.insert f' (False, stop)
 
 watchDir_ :: Watcher () -> FilePath -> (Event -> Bool) -> IO ()
@@ -101,7 +101,7 @@ watchTree w f p v = do
 				(watcherMan w)
 				(fromString f')
 				(p . fromEvent)
-				(writeChan (watcherChan w) . ((,) v) . fromEvent)
+				(writeChan (watcherChan w) . (,) v . fromEvent)
 			modifyMVar_ (watcherDirs w) $ return . M.insert f' (True, stop)
 
 watchTree_ :: Watcher () -> FilePath -> (Event -> Bool) -> IO ()
