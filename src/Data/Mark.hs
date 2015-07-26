@@ -179,7 +179,7 @@ cutRange (Range is ie) (Range s e) = Range
 insertRange :: Range -> Range -> Range
 insertRange (Range is ie) (Range s e) = Range
 	(if is <= s then (s .-. is) .+. ie else s)
-	(if is < e then (e .-. is) .+. ie else e)
+	(if is <= e then (e .-. is) .+. ie else e)
 
 -- | Contents is list of lines
 type Contents a = [a]
@@ -291,7 +291,7 @@ instance EditAction EditM where
 		erase' :: Editable a => Range -> Contents a -> Contents a
 		erase' rgn' cts = fst (splitCts (rangeFrom rgn') cts) `concatCts` snd (splitCts (rangeTo rgn') cts)
 
-	write pt cts = editRange (pt `rangeSize` measure cts') (\r -> Edit (write' r) (insert r)) where
+	write pt cts = editRange (pt `till` pt) (\r -> Edit (write' r) (insert $ rangeFrom r `rangeSize` measure cts')) where
 		cts' = lines cts
 		write' rgn' origin = prefix (before' `concatCts` suffix cts') `concatCts` after' where
 			(before', after') = splitCts (rangeFrom rgn') origin
