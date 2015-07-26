@@ -24,6 +24,7 @@ module HsDev.Database.Update (
 	) where
 
 import Control.Concurrent.Lifted (fork)
+import Control.DeepSeq
 import Control.Lens (preview, _Just, view)
 import Control.Monad.Catch
 import Control.Monad.CatchIO
@@ -125,15 +126,15 @@ updater :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) =
 updater act = do
 	db <- asks database
 	db' <- act
-	update db $ return db'
-	tell $ map (view moduleLocation) $ allModules db'
+	update db $ return $!! db'
+	tell $!! map (view moduleLocation) $ allModules db'
 
 -- | Clear obsolete data from database
 cleaner :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => m Database -> m ()
 cleaner act = do
 	db <- asks database
 	db' <- act
-	clear db $ return db'
+	clear db $ return $!! db'
 
 -- | Get data from cache without updating DB
 loadCache :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => (FilePath -> ExceptT String IO Structured) -> m Database

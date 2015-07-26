@@ -9,6 +9,7 @@ module HsDev.Tools.HDocs (
 	) where
 
 import Control.Exception
+import Control.DeepSeq
 import Control.Lens (set, view, over)
 import Control.Monad ()
 import Control.Monad.Except
@@ -27,13 +28,13 @@ import HsDev.Symbols
 
 -- | Get docs for modules
 hdocsy :: [ModuleLocation] -> [String] -> IO [Map String String]
-hdocsy mlocs opts = runExceptT (docs' mlocs) >>= return . either (const $ replicate (length mlocs) M.empty) (map HDocs.formatDocs) where
+hdocsy mlocs opts = runExceptT (docs' mlocs) >>= return . either (const $ replicate (length mlocs) M.empty) (map $ force . HDocs.formatDocs) where
 	docs' :: [ModuleLocation] -> ExceptT String IO [HDocs.ModuleDocMap]
 	docs' ms = liftM (map snd) $ HDocs.readSources_ opts $ map (view moduleFile) ms
 
 -- | Get docs for module
 hdocs :: ModuleLocation -> [String] -> IO (Map String String)
-hdocs mloc opts = runExceptT (docs' mloc) >>= return . either (const M.empty) HDocs.formatDocs where
+hdocs mloc opts = runExceptT (docs' mloc) >>= return . either (const M.empty) (force . HDocs.formatDocs) where
 	docs' :: ModuleLocation -> ExceptT String IO HDocs.ModuleDocMap
 	docs' (FileModule fpath _) = liftM snd $ HDocs.readSource opts fpath
 	docs' (CabalModule _ _ mname) = HDocs.moduleDocs opts mname
@@ -41,7 +42,7 @@ hdocs mloc opts = runExceptT (docs' mloc) >>= return . either (const M.empty) HD
 
 -- | Get all docs
 hdocsCabal :: Cabal -> [String] -> ExceptT String IO (Map String (Map String String))
-hdocsCabal cabal opts = liftM (M.map HDocs.formatDocs) $ HDocs.installedDocs (cabalOpt cabal ++ opts)
+hdocsCabal cabal opts = liftM (M.map $ force . HDocs.formatDocs) $ HDocs.installedDocs (cabalOpt cabal ++ opts)
 
 -- | Set docs for module
 setDocs :: Map String String -> Module -> Module
