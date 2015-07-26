@@ -136,7 +136,7 @@ library
 executable hsdev
   main-is: hsdev.hs
   hs-source-dirs: tools
-  ghc-options: -threaded -Wall -fno-warn-tabs
+  ghc-options: -threaded -Wall -fno-warn-tabs "-with-rtsopts=-N4"
 
   build-depends:
     base >= 4.7 && < 5,
