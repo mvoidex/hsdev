@@ -5,7 +5,7 @@ module HsDev.Tools.HLint (
 	) where
 
 import Control.Arrow
-import Control.Lens (over, _Just)
+import Control.Lens (over, view, _Just)
 import Control.Monad.Except
 import Data.Char
 import Data.List
@@ -27,7 +27,7 @@ hlint file = do
 	(flags, classify, hint) <- liftIO autoSettings
 	p <- liftIO $ parseModuleEx (flags { cppFlags = CppSimple }) file' (Just cts)
 	m <- either (throwError . parseErrorMessage) return p
-	return $ map (recalcTabs cts 8 . indentIdea (analyzeIndent cts) . fromIdea) $ applyHints classify hint [m]
+	return $ map (recalcTabs cts 8 . indentIdea cts . fromIdea) $ applyHints classify hint [m]
 
 fromIdea :: Idea -> Note OutputMessage
 fromIdea idea = Note {
@@ -43,10 +43,17 @@ fromIdea idea = Note {
 	where
 		src = ideaSpan idea
 
-indentIdea :: Maybe String -> Note OutputMessage -> Note OutputMessage
-indentIdea Nothing = id
-indentIdea (Just i) = over (note . messageSuggestion . _Just) indent' where
-	indent' = intercalate "\n" . map (uncurry (++) . first (concat . (`replicate` i) . (`div` 2) . length) . span isSpace) . split (== '\n')
+indentIdea :: String -> Note OutputMessage -> Note OutputMessage
+indentIdea cts idea = case analyzeIndent cts of
+	Nothing -> idea
+	Just i -> over (note . messageSuggestion . _Just) (indent' i) idea
+	where
+		indent' i' = intercalate "\n" . indentTail . map (uncurry (++) . first (concat . (`replicate` i') . (`div` 2) . length) . span isSpace) . split (== '\n')
+		indentTail [] = []
+		indentTail (h : hs) = h : map (firstIndent ++) hs
+		firstIndent = takeWhile isSpace firstLine
+		firstLine = regionStr (Position firstLineNum 1 `region` Position (succ firstLineNum) 1) cts
+		firstLineNum = view (noteRegion . regionFrom . positionLine) idea
 
 -- | Indent in source
 data Indent = Spaces Int | Tabs deriving (Eq, Ord)
@@ -65,11 +72,6 @@ analyzeIndent =
 	group . sort .
 	mapMaybe (guessIndent . takeWhile isSpace) . lines
 	where
-		guessIndent :: String -> Maybe Indent
-		guessIndent s
-			| all (== ' ') s = Just $ Spaces $ length s
-			| all (== '\t') s = Just Tabs
-			| otherwise = Nothing
 		selectIndent :: [Indent] -> Maybe Indent
 		selectIndent [] = Nothing
 		selectIndent (Tabs : _) = Just Tabs
@@ -80,3 +82,10 @@ analyzeIndent =
 		dropUnusual :: [(Indent, Int)] -> [(Indent, Int)]
 		dropUnusual [] = []
 		dropUnusual is@((_, freq):_) = takeWhile ((> freq `div` 5) . snd) is
+
+-- | Guess indent of one line
+guessIndent :: String -> Maybe Indent
+guessIndent s
+	| all (== ' ') s = Just $ Spaces $ length s
+	| all (== '\t') s = Just Tabs
+	| otherwise = Nothing
