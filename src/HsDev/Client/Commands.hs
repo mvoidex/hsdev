@@ -12,7 +12,6 @@ import Control.Monad.Except
 import Control.Monad.Catch (try, SomeException(..))
 import Control.Monad.Trans.Maybe
 import Data.Aeson hiding (Result, Error)
-import Data.Either
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
@@ -28,7 +27,6 @@ import HsDev.Cache
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Commands
 import qualified HsDev.Database.Async as DB
-import HsDev.Scan
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Symbols
@@ -64,13 +62,6 @@ commands = [
 		ghcOpts, docsFlag, inferFlag])
 		"scan sources"
 		scan',
-	cmd' "rescan" [] (sandboxes ++ [
-		manyReq $ projectArg `desc` "project path or .cabal",
-		manyReq $ fileArg `desc` "source file",
-		manyReq $ pathArg `desc` "path to rescan",
-		ghcOpts, docsFlag, inferFlag])
-		"rescan sources"
-		rescan',
 	cmdList' "remove" [] (sandboxes ++ [
 		projectArg `desc` "module project",
 		fileArg `desc` "module source file",
@@ -277,45 +268,6 @@ commands = [
 					("file", Update.scanFile),
 					("path", Update.scanDirectory)],
 				map (Update.scanCabal (listArg "ghc" as)) cabals]
-
-		-- | Rescan data
-		rescan' :: [String] -> Opts String -> CommandActionT ()
-		rescan' _ as copts = do
-			cabals <- getSandboxes copts as
-			updateProcess copts as $ map (Update.scanCabal (listArg "ghc" as)) cabals
-
-			dbval <- getDb copts
-			let
-				fileMap = M.fromList $ mapMaybe toPair $
-					selectModules (byFile . view moduleId) dbval
-
-			(errors, filteredMods) <- liftM partitionEithers $ mapM runExceptT $ concat [
-				[do
-					p' <- findProject copts p
-					return $ M.fromList $ mapMaybe toPair $
-						selectModules (inProject p' . view moduleId) dbval |
-					p <- listArg "project" as],
-				[do
-					f' <- findPath copts f
-					maybe
-						(throwError $ commandStrMsg $ "Unknown file: " ++ f')
-						(return . M.singleton f')
-						(lookupFile f' dbval) |
-					f <- listArg "file" as],
-				[do
-					d' <- findPath copts d
-					return $ M.filterWithKey (\f _ -> isParent d' f) fileMap |
-					d <- listArg "path" as]]
-			let
-				rescanMods = map (getInspected dbval) $
-					M.elems $ if null filteredMods then fileMap else M.unions filteredMods
-
-			if not (null errors)
-				then commandError (intercalate ", " [err | CommandError err _ <- errors]) (concat [ps | CommandError _ ps <- errors])
-				else updateProcess copts as [Update.runTask "rescanning modules" [] $ do
-					needRescan <- Update.liftExceptT $ filterM (changedModule dbval (listArg "ghc" as) . view inspectedId) rescanMods
-					Update.scanModules (listArg "ghc" as)
-						(map (view inspectedId &&& fromMaybe [] . preview (inspection . inspectionOpts)) needRescan)]
 
 		-- | Remove data
 		remove' :: [String] -> Opts String -> CommandActionT [ModuleId]
@@ -816,12 +768,6 @@ inDeps (proj, src, cabal) = liftM2 (&&) (restrictCabal cabal) deps' where
 	deps' = case src of
 		Nothing -> inDepsOfProject proj
 		Just src' -> inDepsOfFile proj src'
-
--- | Supply module with its source file path if any
-toPair :: Module -> Maybe (FilePath, Module)
-toPair m = case view moduleLocation m of
-	FileModule f _ -> Just (f, m)
-	_ -> Nothing
 
 -- | Wait for DB to complete update
 waitDb :: CommandOptions -> Opts String -> CommandM ()
