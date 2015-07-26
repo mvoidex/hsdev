@@ -15,10 +15,10 @@ import HsDev.Symbols
 import HsDev.Watcher.Types
 
 -- | Watch for project sources changes
-watchProject :: Watcher -> Project -> IO ()
-watchProject w proj = do
-	mapM_ (\dir -> watchTree w dir isSource (WatchedProject proj)) dirs
-	watchDir w projDir isCabal (WatchedProject proj)
+watchProject :: Watcher -> Project -> [String] -> IO ()
+watchProject w proj opts = do
+	mapM_ (\dir -> watchTree w dir isSource (WatchedProject proj opts)) dirs
+	watchDir w projDir isCabal (WatchedProject proj opts)
 	where
 		dirs = map ((projDir </>) . view entity) $ maybe [] sourceDirs $ view projectDescription proj
 		projDir = view projectPath proj
@@ -26,14 +26,14 @@ watchProject w proj = do
 -- | Watch for standalone source
 watchModule :: Watcher -> ModuleLocation -> IO ()
 watchModule w (FileModule f Nothing) = watchDir w (takeDirectory f) isSource WatchedModule
-watchModule w (FileModule _ (Just proj)) = watchProject w proj
-watchModule w (CabalModule cabal _ _) = watchSandbox w cabal
+watchModule w (FileModule _ (Just proj)) = watchProject w proj []
+watchModule w (CabalModule cabal _ _) = watchSandbox w cabal []
 watchModule _ _ = return ()
 
 -- | Watch for sandbox
-watchSandbox :: Watcher -> Cabal -> IO ()
-watchSandbox _ Cabal = return ()
-watchSandbox w (Sandbox f) = watchTree w f isConf (WatchedSandbox $ Sandbox f)
+watchSandbox :: Watcher -> Cabal -> [String] -> IO ()
+watchSandbox _ Cabal _ = return ()
+watchSandbox w (Sandbox f) opts = watchTree w f isConf (WatchedSandbox (Sandbox f) opts)
 
 isSource :: Event -> Bool
 isSource (Event _ f _) = takeExtension f == ".hs"

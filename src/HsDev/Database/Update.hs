@@ -220,7 +220,7 @@ scanFile opts fpath = do
 					return $ FileModule fpath' mproj
 			return [(mloc, [])]
 		False -> return []
-	mapM_ (watch watchModule . fst) mlocs
+	mapM_ watch [(`watchModule` m) | (m, _) <- mlocs]
 	scan
 		(Cache.loadFiles (== fpath'))
 		(filterDB (inFile fpath') (const False) . standaloneDB)
@@ -233,7 +233,7 @@ scanFile opts fpath = do
 -- | Scan cabal modules
 scanCabal :: (MonadIO m, MonadCatch m) => [String] -> Cabal -> ExceptT String (UpdateDB m) ()
 scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox" .= cabalSandbox]) $ do
-	watch watchSandbox cabalSandbox
+	watch (\w -> watchSandbox w cabalSandbox opts)
 	mlocs <- runTask "getting list of cabal modules" [] $ 
 		liftExceptT $ listModules opts cabalSandbox
 	scan (Cache.loadCabal cabalSandbox) (cabalDB cabalSandbox) (zip mlocs $ repeat []) opts $ \mlocs' -> do
@@ -254,7 +254,7 @@ scanProjectFile opts cabal = runTask "scanning" (subject cabal ["file" .= cabal]
 scanProject :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ExceptT String (UpdateDB m) ()
 scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" .= cabal]) $ do
 	proj <- scanProjectFile opts cabal
-	watch watchProject proj
+	watch (\w -> watchProject w proj opts)
 	(_, sources) <- liftExceptT $ S.enumProject proj
 	scan (Cache.loadProject $ view projectCabal proj) (projectDB proj) sources opts $ \ms -> do
 		scanModules opts ms
@@ -267,7 +267,7 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 		liftExceptT $ S.enumDirectory dir
 	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks $ map (scanCabal opts) sboxes
-	mapM_ (watch watchModule . fst) standSrcs
+	mapM_ watch [(`watchModule` m) | (m, _) <- standSrcs]
 	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
 	where
 		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)
@@ -296,25 +296,35 @@ scan cache' part' mlocs opts act = do
 instance Format Cabal where
 
 updateEvent :: (MonadIO m, MonadCatch m, MonadCatchIO m) => Watched -> Event -> ExceptT String (UpdateDB m) ()
-updateEvent (WatchedProject proj) e
+updateEvent (WatchedProject proj projOpts) e
 	| isSource e = do
 		Log.log Log.Info $ "File '${file}' in project ${proj} changed" ~~
 			("file" %= view eventPath e) %
 			("proj" %= view projectName proj)
-		scanFile [] $ view eventPath e
+		dbval <- readDB
+		let
+			opts = fromMaybe [] $ do
+				m <- lookupFile (view eventPath e) dbval
+				preview (inspection . inspectionOpts) . getInspected dbval m
+		scanFile opts $ view eventPath e
 	| isCabal e = do
 		Log.log Log.Info $ "Project ${proj} changed" ~~ ("proj" %= view projectName proj)
-		scanProject [] $ view projectCabal proj
+		scanProject projOpts $ view projectCabal proj
 	| otherwise = return ()
-updateEvent (WatchedSandbox cabal) e
+updateEvent (WatchedSandbox cabal cabalOpts) e
 	| isConf e = do
 		Log.log Log.Info $ "Sandbox ${cabal} changed" ~~ ("cabal" %= cabal)
-		scanCabal [] cabal
+		scanCabal cabalOpts cabal
 	| otherwise = return ()
 updateEvent WatchedModule e
 	| isSource e = do
 		Log.log Log.Info $ "Module ${file} changed" ~~ ("file" %= view eventPath e)
-		scanFile [] $ view eventPath e
+		dbval <- readDB
+		let
+			opts = fromMaybe [] $ do
+				m <- lookupFile (view eventPath e) dbval
+				preview (inspection . inspectionOpts) . getInspected dbval m
+		scanFile opts $ view eventPath e
 	| otherwise = return ()
 
 processEvent :: Settings -> Watched -> Event -> IO ()
@@ -327,7 +337,7 @@ liftExceptT = mapExceptT liftIO
 subject :: Display a => a -> [Pair] -> [Pair]
 subject x ps = ["name" .= display x, "type" .= displayType x] ++ ps
 
-watch :: (MonadIO m, MonadReader Settings m) => (Watcher -> a -> IO ()) -> a -> m ()
-watch f x = do
+watch :: (MonadIO m, MonadReader Settings m) => (Watcher -> IO ()) -> m ()
+watch f = do
 	w <- asks settingsWatcher
-	liftIO $ f w x
+	liftIO $ f w
