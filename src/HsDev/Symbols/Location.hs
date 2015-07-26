@@ -11,6 +11,8 @@ module HsDev.Symbols.Location (
 	regionFrom, regionTo,
 	locationModule, locationPosition,
 
+	sourceModuleRoot,
+	importedModulePath,
 	packageOpt,
 	RecalcTabs(..),
 
@@ -25,6 +27,9 @@ import Data.Aeson
 import Data.Char (isSpace, isDigit)
 import Data.List (intercalate, findIndex)
 import Data.Maybe
+import Data.Text (Text)
+import qualified Data.Text as T (split, unpack)
+import System.FilePath
 import Text.Read (readMaybe)
 
 import HsDev.Cabal
@@ -183,6 +188,23 @@ instance FromJSON Location where
 	parseJSON = withObject "location" $ \v -> Location <$>
 		v .:: "module" <*>
 		v .:: "pos"
+
+-- | Get source module root directory, i.e. for "...\src\Foo\Bar.hs" with module 'Foo.Bar' will return "...\src"
+sourceModuleRoot :: Text -> FilePath -> FilePath
+sourceModuleRoot mname = 
+	joinPath .
+	reverse . drop (length $ T.split (== '.') mname) . reverse .
+	splitDirectories
+
+-- | Get path of imported module
+-- >importedModulePath "Foo.Bar" "...\src\Foo\Bar.hs" "Quux.Blah" = "...\src\Quux\Blah.hs"
+importedModulePath :: Text -> FilePath -> Text -> FilePath
+importedModulePath mname file imp =
+	(`addExtension` "hs") . joinPath .
+	(++ ipath) . splitDirectories $
+	sourceModuleRoot mname file
+	where
+		ipath = map T.unpack $ T.split (== '.') imp
 
 packageOpt :: Maybe ModulePackage -> [String]
 packageOpt = maybeToList . fmap (("-package " ++) . view packageName)

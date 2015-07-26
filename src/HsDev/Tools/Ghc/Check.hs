@@ -26,7 +26,7 @@ import qualified Packages as GHC
 import FastString (unpackFS)
 import qualified ErrUtils as E
 
-import HsDev.Symbols (Canonicalize(..), sourceModuleRoot)
+import HsDev.Symbols (Canonicalize(..), moduleOpts)
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
 import HsDev.Tools.Base
@@ -50,27 +50,17 @@ check :: [String] -> Cabal -> Module -> ExceptT String Ghc [Note OutputMessage]
 check opts cabal m = case view moduleLocation m of
 	FileModule file proj -> do
 		ch <- liftIO newChan
-		pkgs <- lift $ liftM (map $ view packageName) listPackages
+		pkgs <- lift listPackages
 		let
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file) $
 				preview (_Just . projectPath) proj
-			infos' = maybe [] (`fileTargets` file) proj
-			srcDirs = concatMap (view infoSourceDirs) infos'
-			exts = map (file `withExtensions`) infos'
-			deps = concatMap (view infoDepends) infos'
-			hidePackages
-				| null infos' = []
-				| otherwise = ["-hide-all-packages"]
 		lift $ withFlags $ withCurrentDirectory dir $ do
 			modifyFlags (\fs -> fs { log_action = logAction ch })
 			_ <- addCmdOpts $ concat [
 				["-Wall"],
 				cabalOpt cabal,
-				["-i" ++ s | s <- srcDirs],
-				concatMap extensionsOpts exts,
-				hidePackages,
-				["-package " ++ p | p <- deps, p `elem` pkgs],
+				moduleOpts pkgs m,
 				opts]
 			clearTargets
 			target <- makeTarget (makeRelative dir file) Nothing

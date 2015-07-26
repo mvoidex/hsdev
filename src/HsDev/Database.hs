@@ -2,7 +2,7 @@
 
 module HsDev.Database (
 	Database(..),
-	databaseIntersection, nullDatabase, databaseLocals, allModules, allDeclarations,
+	databaseIntersection, nullDatabase, databaseLocals, allModules, allDeclarations, allPackages,
 	fromModule, fromProject,
 	filterDB,
 	projectDB, cabalDB, standaloneDB,
@@ -17,7 +17,7 @@ module HsDev.Database (
 	Map
 	) where
 
-import Control.Lens (set, view)
+import Control.Lens (set, view, preview, _Just)
 import Control.Monad (msum, join)
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
@@ -93,6 +93,10 @@ allDeclarations :: Database -> [ModuleDeclaration]
 allDeclarations db = do
 	m <- allModules db
 	moduleModuleDeclarations m
+
+-- | All packages
+allPackages :: Database -> [ModulePackage]
+allPackages = ordNub . mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules
 
 -- | Make database from module
 fromModule :: InspectedModule -> Database

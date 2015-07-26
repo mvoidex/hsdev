@@ -22,8 +22,7 @@ module HsDev.Symbols (
 	Canonicalize(..),
 	locateProject, searchProject,
 	locateSourceDir,
-	sourceModuleRoot,
-	importedModulePath,
+	moduleOpts,
 
 	-- * Modifiers
 	addDeclaration,
@@ -47,7 +46,7 @@ import Data.List
 import Data.Maybe (fromMaybe)
 import Data.Ord (comparing)
 import Data.Text (Text)
-import qualified Data.Text as T (concat, split, unpack)
+import qualified Data.Text as T (concat)
 import System.Directory
 import System.FilePath
 
@@ -213,22 +212,24 @@ locateSourceDir f = runMaybeT $ do
 	proj <- MaybeT $ fmap (either (const Nothing) Just) $ runExceptT $ loadProject p
 	MaybeT $ return $ findSourceDir proj file
 
--- | Get source module root directory, i.e. for "...\src\Foo\Bar.hs" with module 'Foo.Bar' will return "...\src"
-sourceModuleRoot :: Text -> FilePath -> FilePath
-sourceModuleRoot mname = 
-	joinPath .
-	reverse . drop (length $ T.split (== '.') mname) . reverse .
-	splitDirectories
-
--- | Get path of imported module
--- >importedModulePath "Foo.Bar" "...\src\Foo\Bar.hs" "Quux.Blah" = "...\src\Quux\Blah.hs"
-importedModulePath :: Text -> FilePath -> Text -> FilePath
-importedModulePath mname file imp =
-	(`addExtension` "hs") . joinPath .
-	(++ ipath) . splitDirectories $
-	sourceModuleRoot mname file
-	where
-		ipath = map T.unpack $ T.split (== '.') imp
+-- | Options for GHC of module and project
+moduleOpts :: [ModulePackage] -> Module -> [String]
+moduleOpts pkgs m = case view moduleLocation m of
+	FileModule file proj -> concat [
+		["-i" ++ s | s <- srcDirs],
+		concatMap extensionsOpts exts,
+		hidePackages,
+		["-package " ++ p | p <- deps, p `elem` pkgs']]
+		where
+			infos' = maybe [] (`fileTargets` file) proj
+			srcDirs = concatMap (view infoSourceDirs) infos'
+			exts = map (file `withExtensions`) infos'
+			deps = concatMap (view infoDepends) infos'
+			pkgs' = map (view packageName) pkgs
+			hidePackages
+				| null infos' = []
+				| otherwise = ["-hide-all-packages"]
+	_ -> []
 
 -- | Add declaration to module
 addDeclaration :: Declaration -> Module -> Module

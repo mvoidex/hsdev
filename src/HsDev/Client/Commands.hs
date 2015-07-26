@@ -576,9 +576,9 @@ commands = [
 			column' <- maybe (commandError "column must be a number" []) return $ readMaybe column
 			dbval <- getDb copts
 			(srcFile, cabal) <- getCtx copts as
-			(srcFile', _, _) <- mapCommandErrorStr $ fileCtx dbval srcFile
+			(srcFile', m', _) <- mapCommandErrorStr $ fileCtx dbval srcFile
 			mapCommandErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) srcFile' $
-				GhcMod.typeOf (listArg "ghc" as) cabal srcFile' line' column'
+				GhcMod.typeOf (listArg "ghc" as ++ moduleOpts (allPackages dbval) m') cabal srcFile' line' column'
 		ghcmodType' [] _ _ = commandError "Specify line" []
 		ghcmodType' _ _ _ = commandError "Too much arguments" []
 
@@ -589,9 +589,11 @@ commands = [
 			files' <- mapM (findPath copts) files
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
 			cabal <- getCabal copts as
-			mapCommandErrorStr $ liftM concat $ forM files' $ \file' ->
+			dbval <- getDb copts
+			mapCommandErrorStr $ liftM concat $ forM files' $ \file' -> do
+				(_, m', _) <- fileCtx dbval file'
 				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
-					GhcMod.check (listArg "ghc" as) cabal [file'] mproj
+					GhcMod.check (listArg "ghc" as ++ moduleOpts (allPackages dbval) m') cabal [file'] mproj
 
 		-- | Ghc-mod lint
 		ghcmodLint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
@@ -609,9 +611,11 @@ commands = [
 			files' <- mapM (findPath copts) files
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
 			cabal <- getCabal copts as
-			mapCommandErrorStr $ liftM concat $ forM files' $ \file' ->
+			dbval <- getDb copts
+			mapCommandErrorStr $ liftM concat $ forM files' $ \file' -> do
+				(_, m', _) <- fileCtx dbval file'
 				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $ do
-					checked <- GhcMod.check (listArg "ghc" as) cabal [file'] mproj
+					checked <- GhcMod.check (listArg "ghc" as ++ moduleOpts (allPackages dbval) m') cabal [file'] mproj
 					linted <- GhcMod.lint (listArg "hlint" as) file'
 					return $ checked ++ linted
 
