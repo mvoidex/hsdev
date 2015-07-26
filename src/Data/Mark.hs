@@ -151,7 +151,7 @@ newtype Map = Map { mapIso :: Iso' Range Range }
 
 instance Monoid Map where
 	mempty = Map $ iso id id
-	(Map l) `mappend` (Map r) = Map (r . l)
+	(Map l) `mappend` (Map r) = Map (l . r)
 
 -- | Apply mapping
 apply :: Map -> Range -> Range
