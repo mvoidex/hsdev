@@ -29,7 +29,7 @@ Then you can connect to server and send requests (see [requests/responses](MESSA
 * `complete` — get completions for file and input
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
-* `lint`, `check`, `lint-check` — lint or check source files. These commands have some advantages over `ghc-mod` ones: `lint` uses `hlint` as library, `check` returns more precise source position and also uses project description to pass `-package` flags.
+* `lint`, `check`, `lint-check` — lint or check source files. These commands have some advantages over `ghc-mod` ones: `lint` uses `hlint` as library, `check` returns more precise source position and also uses project description to pass `-package` flags, these commands also can accept file contents
 * `ghc-mod type`, `ghc-mod check`, `ghc-mod lint`, `ghc-mod lang`, `ghc-mod flags` — run `ghc-mod` command in corresponding ghc-mod worker (separate workers per project and per sandbox)
 * `autofix show`, `autofix fix` — commands to fix some warnings and apply `hlint` suggestions
 * `dump` — dump modules or projects info
