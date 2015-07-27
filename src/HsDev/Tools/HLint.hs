@@ -1,5 +1,5 @@
 module HsDev.Tools.HLint (
-	hlint,
+	hlint, hlintFile, hlintSource,
 
 	module Control.Monad.Except
 	) where
@@ -20,14 +20,20 @@ import HsDev.Symbols.Location
 import HsDev.Tools.Base
 import HsDev.Util (readFileUtf8, split)
 
-hlint :: FilePath -> ExceptT String IO [Note OutputMessage]
-hlint file = do
+hlint :: FilePath -> Maybe String -> ExceptT String IO [Note OutputMessage]
+hlint file msrc = do
 	file' <- liftIO $ canonicalize file
-	cts <- liftIO $ readFileUtf8 file'
+	cts <- maybe (liftIO $ readFileUtf8 file') return msrc
 	(flags, classify, hint) <- liftIO autoSettings
 	p <- liftIO $ parseModuleEx (flags { cppFlags = CppSimple }) file' (Just cts)
 	m <- either (throwError . parseErrorMessage) return p
 	return $ map (recalcTabs cts 8 . indentIdea cts . fromIdea) $ applyHints classify hint [m]
+
+hlintFile :: FilePath -> ExceptT String IO [Note OutputMessage]
+hlintFile f = hlint f Nothing
+
+hlintSource :: FilePath -> String -> ExceptT String IO [Note OutputMessage]
+hlintSource f = hlint f . Just
 
 fromIdea :: Idea -> Note OutputMessage
 fromIdea idea = Note {

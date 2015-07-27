@@ -1,7 +1,7 @@
 {-# LANGUAGE PatternGuards #-}
 
 module HsDev.Tools.Ghc.Check (
-	checkFiles, check,
+	checkFiles, check, checkFile, checkSource,
 
 	Ghc,
 	module HsDev.Tools.Types,
@@ -16,13 +16,16 @@ import Control.Monad.Except
 import Control.Concurrent.FiniteChan
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Version (showVersion)
+import Data.Time.Clock (getCurrentTime)
 import HsDev.Tools.Ghc.Worker
 import System.FilePath (makeRelative)
+import System.Directory (doesDirectoryExist)
 import Text.Read (readMaybe)
 
 import GHC hiding (Warning, Module, moduleName)
 import Outputable
 import qualified Packages as GHC
+import StringBuffer (stringToStringBuffer)
 import FastString (unpackFS)
 import qualified ErrUtils as E
 
@@ -45,9 +48,9 @@ checkFiles opts cabal files _ = do
 	notes <- liftIO $ stopChan ch
 	liftIO $ recalcNotesTabs notes
 
--- | Check module and collect warnings and errors
-check :: [String] -> Cabal -> Module -> ExceptT String Ghc [Note OutputMessage]
-check opts cabal m = case view moduleLocation m of
+-- | Check module source
+check :: [String] -> Cabal -> Module -> Maybe String -> ExceptT String Ghc [Note OutputMessage]
+check opts cabal m msrc = case view moduleLocation m of
 	FileModule file proj -> do
 		ch <- liftIO newChan
 		pkgs <- lift listPackages
@@ -55,19 +58,31 @@ check opts cabal m = case view moduleLocation m of
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file) $
 				preview (_Just . projectPath) proj
-		lift $ withFlags $ withCurrentDirectory dir $ do
+		dirExist <- liftIO $ doesDirectoryExist dir
+		lift $ withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
 			modifyFlags (\fs -> fs { log_action = logAction ch })
 			_ <- addCmdOpts $ concat [
 				["-Wall"],
 				cabalOpt cabal,
 				moduleOpts pkgs m,
 				opts]
+			tm <- liftIO getCurrentTime
 			clearTargets
 			target <- makeTarget (makeRelative dir file) Nothing
-			loadTargets [target]
+			let
+				setCts t src = t { targetContents = Just (stringToStringBuffer src, tm) }
+			loadTargets [maybe target (setCts target) msrc]
 		notes <- liftIO $ stopChan ch
 		liftIO $ recalcNotesTabs notes
 	_ -> throwError "Module is not source"
+
+-- | Check module and collect warnings and errors
+checkFile :: [String] -> Cabal -> Module -> ExceptT String Ghc [Note OutputMessage]
+checkFile opts cabal m = check opts cabal m Nothing
+
+-- | Check module and collect warnings and errors
+checkSource :: [String] -> Cabal -> Module -> String -> ExceptT String Ghc [Note OutputMessage]
+checkSource opts cabal m src = check opts cabal m (Just src)
 
 -- | Log  ghc warnings and errors as to chan
 -- You may have to apply recalcTabs on result notes

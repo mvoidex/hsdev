@@ -124,9 +124,9 @@ commands = [
 	-- Tool commands
 	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
 	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
-	cmdList' "lint" ["files..."] [] "lint source files" lint',
-	cmdList' "check" ["files..."] [sandboxArg, ghcOpts] "check source files" check',
-	cmdList' "check-lint" ["files..."] [sandboxArg, ghcOpts] "check and lint source files" checkLint',
+	cmdList' "lint" ["files..."] [dataArg] "lint source files or file contents" lint',
+	cmdList' "check" ["files..."] [dataArg, sandboxArg, ghcOpts] "check source files or file contents" check',
+	cmdList' "check-lint" ["files..."] [dataArg, sandboxArg, ghcOpts] "check and lint source files or file contents" checkLint',
 	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
 	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
@@ -489,23 +489,53 @@ commands = [
 
 		-- | HLint
 		lint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		lint' files _ copts = do
-			files' <- mapM (findPath copts) files
-			mapCommandErrorStr $ liftM concat $ mapM HLint.hlint files'
+		lint' files as copts = case arg "data" as of
+			Nothing -> do
+				files' <- mapM (findPath copts) files
+				mapCommandErrorStr $ liftM concat $ mapM HLint.hlintFile files'
+			Just src -> do
+				src' <- either
+					(\err -> commandError "Unable to decode data" [
+						"why" .= err,
+						"data" .= src])
+					return $
+					eitherDecode (toUtf8 src)
+				when (length files > 1) $ commandError_ "Only one file permitted when passing source"
+				file' <- traverse (findPath copts) $ listToMaybe files
+				mapCommandErrorStr $ HLint.hlintSource (fromMaybe "<unnamed>" file') src'
 
 		-- | Check
 		check' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		check' files as copts = do
-			files' <- mapM (findPath copts) files
-			db <- getDb copts
-			cabal <- getCabal copts as
-			liftM concat $ forM files' $ \file' -> do
+		check' files as copts = case arg "data" as of
+			Nothing -> do
+				files' <- mapM (findPath copts) files
+				db <- getDb copts
+				cabal <- getCabal copts as
+				liftM concat $ forM files' $ \file' -> do
+					m <- maybe
+						(commandError_ $ "File '" ++ file' ++ "' not found, maybe you forgot to scan it?")
+						return $
+						lookupFile file' db
+					notes <- mapCommandErrorStr $ liftTask $
+						pushTask (commandGhc copts) (runExceptT $ Check.checkFile (listArg "ghc" as) cabal m)
+					either commandError_ return notes
+			Just src -> do
+				src' <- either
+					(\err -> commandError "Unable to decode data" [
+						"why" .= err,
+						"data" .= src])
+					return $
+					eitherDecode (toUtf8 src)
+				when (length files > 1) $ commandError_ "Only one file permitted when passing source"
+				file' <- maybe (commandError_ "File must be specified") return $ listToMaybe files
+				db <- getDb copts
+				cabal <- getCabal copts as
 				m <- maybe
-					(commandError_ $ "File '" ++ file' ++ "' not found, maybe you forgot to scan it?")
+					(commandError_ $ "File '" ++ file' ++ "' not found")
 					return $
 					lookupFile file' db
 				notes <- mapCommandErrorStr $ liftTask $
-					pushTask (commandGhc copts) (runExceptT $ Check.check (listArg "ghc" as) cabal m)
+					pushTask (commandGhc copts) (runExceptT $ Check.checkSource (listArg "ghc" as) cabal m src')
 				either commandError_ return notes
 
 		-- | Check and lint
