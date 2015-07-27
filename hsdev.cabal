@@ -109,7 +109,7 @@ library
     ghc-paths >= 0.1.0,
     haddock-api >= 2.16.0 && < 2.17.0,
     haskell-src-exts >= 1.16.0,
-    hdocs >= 0.4.3,
+    hdocs >= 0.4.4,
     hlint >= 1.9.0 && < 2.0.0,
     HTTP >= 4000.2.0,
     lens >= 4.8,

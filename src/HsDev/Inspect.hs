@@ -1,7 +1,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 
 module HsDev.Inspect (
-	analyzeModule, inspectDocsChunk, inspectDocs,
+	analyzeModule, inspectDocsChunk, inspectDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, fileInspection,
 	projectDirs, projectSources,
@@ -33,6 +33,7 @@ import qualified Language.Haskell.Exts as H
 import qualified System.Directory as Dir
 import System.FilePath
 import Data.Generics.Uniplate.Data
+import HDocs.Haddock
 
 import HsDev.Symbols
 import HsDev.Tools.Base
@@ -297,6 +298,14 @@ inspectDocs opts m = do
 		then hdocsProcess (fromMaybe (T.unpack $ view moduleName m) (preview (moduleLocation . moduleFile) m)) opts
 		else liftM Just $ hdocs (view moduleLocation m) opts
 	return $ maybe id addDocs docsMap m
+
+-- | Like @inspectDocs@, but in @Ghc@ monad
+inspectDocsGhc :: [String] -> Module -> ExceptT String Ghc Module
+inspectDocsGhc opts m = case view moduleLocation m of
+	FileModule fpath _ -> do
+		docsMap <- liftM (fmap (formatDocs . snd) . listToMaybe) $ readSourcesGhc opts [fpath]
+		return $ maybe id addDocs docsMap m
+	_ -> throwError "Can inspect only source file docs"
 
 -- | Inspect contents
 inspectContents :: String -> [String] -> String -> ExceptT String IO InspectedModule
