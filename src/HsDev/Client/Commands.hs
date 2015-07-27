@@ -527,7 +527,7 @@ commands = [
 					return $
 					eitherDecode (toUtf8 src)
 				when (length files > 1) $ commandError_ "Only one file permitted when passing source"
-				file' <- maybe (commandError_ "File must be specified") return $ listToMaybe files
+				file' <- maybe (commandError_ "File must be specified") (findPath copts) $ listToMaybe files
 				db <- getDb copts
 				cabal <- getCabal copts as
 				m <- maybe
