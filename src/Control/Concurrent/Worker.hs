@@ -5,6 +5,7 @@ module Control.Concurrent.Worker (
 	startWorker,
 	sendTask, pushTask,
 	stopWorker, syncTask,
+	inWorker,
 
 	module Control.Concurrent.Task
 	) where
@@ -58,3 +59,7 @@ stopWorker = closeChan . workerChan
 -- | Send empty task and wait until worker run it
 syncTask :: (MonadCatch m, MonadIO m) => Worker m -> IO ()
 syncTask w = pushTask w (return ()) >>= void . taskWait
+
+-- | Run action in worker and wait for result
+inWorker :: (MonadIO m, MonadCatch m) => Worker m -> m a -> IO a
+inWorker w act = pushTask w act >>= taskJoin

@@ -62,6 +62,18 @@ commands = [
 		ghcOpts, docsFlag, inferFlag])
 		"scan sources"
 		scan',
+	cmd' "docs" [] [
+		manyReq $ projectArg `desc` "project path or .cabal",
+		manyReq $ fileArg `desc` "source file",
+		manyReq $ moduleArg `desc` "module name"]
+		"scan docs"
+		docs',
+	cmd' "infer" [] [
+		manyReq $ projectArg `desc` "project path or .cabal",
+		manyReq $ fileArg `desc` "source file",
+		manyReq $ moduleArg `desc` "module name"]
+		"infer types for specified modules"
+		infer',
 	cmdList' "remove" [] (sandboxes ++ [
 		projectArg `desc` "module project",
 		fileArg `desc` "module source file",
@@ -269,6 +281,34 @@ commands = [
 					("path", Update.scanDirectory)],
 				map (Update.scanCabal (listArg "ghc" as)) cabals]
 
+		-- | Scan docs
+		docs' :: [String] -> Opts String -> CommandActionT ()
+		docs' _ as copts = do
+			files <- traverse (findPath copts) $ listArg "file" as
+			projects <- traverse (findProject copts) $ listArg "project" as
+			dbval <- getDb copts
+			let
+				filters = anyOf $
+					map inProject projects ++
+					map inFile files ++
+					map inModule (listArg "module" as)
+				mods = selectModules (filters . view moduleId) dbval
+			updateProcess copts as [Update.scanDocs $ map (getInspected dbval) mods]
+
+		-- | Infer types
+		infer' :: [String] -> Opts String -> CommandActionT ()
+		infer' _ as copts = do
+			files <- traverse (findPath copts) $ listArg "file" as
+			projects <- traverse (findProject copts) $ listArg "project" as
+			dbval <- getDb copts
+			let
+				filters = anyOf $
+					map inProject projects ++
+					map inFile files ++
+					map inModule (listArg "module" as)
+				mods = selectModules (filters . view moduleId) dbval
+			updateProcess copts as [Update.inferModTypes $ map (getInspected dbval) mods]
+			
 		-- | Remove data
 		remove' :: [String] -> Opts String -> CommandActionT [ModuleId]
 		remove' _ as copts = do

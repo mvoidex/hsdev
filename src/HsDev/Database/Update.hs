@@ -12,6 +12,7 @@ module HsDev.Database.Update (
 	readDB,
 
 	scanModule, scanModules, scanFile, scanCabal, scanProjectFile, scanProject, scanDirectory,
+	scanDocs, inferModTypes,
 	scan,
 	updateEvent, processEvent,
 
@@ -42,13 +43,15 @@ import System.Directory (canonicalizePath, doesFileExist)
 import qualified System.Log.Simple as Log
 import qualified System.Log.Simple.Base as Log (scopeLog)
 
+import Control.Concurrent.Worker (inWorker)
 import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async hiding (Event)
 import HsDev.Display
-import HsDev.Inspect (inspectDocs)
+import HsDev.Inspect (inspectDocs, inspectDocsGhc)
 import HsDev.Project
 import HsDev.Symbols
+import HsDev.Tools.Ghc.Worker (ghcWorker)
 import HsDev.Tools.HDocs
 import HsDev.Tools.GhcMod.InferType (inferTypes)
 import qualified HsDev.Tools.GhcMod as GhcMod
@@ -89,16 +92,16 @@ updateDB sets act = Log.scopeLog (settingsLogger sets) "update" $ do
 					return $ catMaybes [M.lookup mloc' (databaseModules db') | mloc' <- mlocs']
 			when (updateDocs sets) $ do
 				Log.log Log.Trace "forking inspecting source docs"
-				void $ fork (getMods >>= waiter . mapM_ scanDocs)
+				void $ fork (getMods >>= waiter . mapM_ scanDocs_)
 			when (runInferTypes sets) $ do
 				Log.log Log.Trace "forking inferring types"
-				void $ fork (getMods >>= waiter . mapM_ inferModTypes)
-		scanDocs :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => InspectedModule -> ExceptT String m ()
-		scanDocs im = do
+				void $ fork (getMods >>= waiter . mapM_ inferModTypes_)
+		scanDocs_ :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => InspectedModule -> ExceptT String m ()
+		scanDocs_ im = do
 			im' <- liftExceptT $ S.scanModify (\opts _ -> inspectDocs opts) im
 			updater $ return $ fromModule im'
-		inferModTypes :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => InspectedModule -> ExceptT String m ()
-		inferModTypes im = do
+		inferModTypes_ :: (MonadIO m, MonadReader Settings m, MonadWriter [ModuleLocation] m) => InspectedModule -> ExceptT String m ()
+		inferModTypes_ im = do
 			-- TODO: locate sandbox
 			im' <- liftExceptT $ S.scanModify infer' im
 			updater $ return $ fromModule im'
@@ -271,6 +274,30 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
 	where
 		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)
+
+-- | Scan docs for inspected modules
+scanDocs :: (MonadIO m) => [InspectedModule] -> ExceptT String (UpdateDB m) ()
+scanDocs ims = do
+	w <- liftIO $ ghcWorker [] (return ())
+	runTasks $ map (scanDocs' w) ims
+	where
+		scanDocs' w im = runTask "scanning docs" (subject (view inspectedId im) []) $ do
+				im' <- liftExceptT $ S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im
+				updater $ return $ fromModule im'
+		inWorkerT w = ExceptT . inWorker w . runExceptT 
+
+inferModTypes :: (MonadIO m) => [InspectedModule] -> ExceptT String (UpdateDB m) ()
+inferModTypes = runTasks . map inferModTypes' where
+	inferModTypes' im = runTask "scanning docs" (subject (view inspectedId im) []) $ do
+		-- TODO: locate sandbox
+		sets <- ask
+		im' <- liftExceptT $ S.scanModify (infer' sets) im
+		updater $ return $ fromModule im'
+	infer' :: Settings -> [String] -> Cabal -> Module -> ExceptT String IO Module
+	infer' sets opts cabal m = case preview (moduleLocation . moduleFile) m of
+		Nothing -> return m
+		Just f -> GhcMod.waitMultiGhcMod (settingsGhcModWorker sets) f $
+			inferTypes opts cabal m
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
 scan :: (MonadIO m, MonadCatch m)
