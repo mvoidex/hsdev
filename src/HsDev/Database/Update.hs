@@ -276,22 +276,26 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)
 
 -- | Scan docs for inspected modules
-scanDocs :: (MonadIO m) => [InspectedModule] -> ExceptT String (UpdateDB m) ()
+scanDocs :: (MonadIO m, MonadCatchIO m) => [InspectedModule] -> ExceptT String (UpdateDB m) ()
 scanDocs ims = do
-	w <- liftIO $ ghcWorker [] (return ())
+	w <- liftIO $ ghcWorker ["-haddock"] (return ())
 	runTasks $ map (scanDocs' w) ims
 	where
 		scanDocs' w im = runTask "scanning docs" (subject (view inspectedId im) []) $ do
-				im' <- liftExceptT $ S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im
-				updater $ return $ fromModule im'
+			Log.log Log.Trace $ "Scanning docs for $" ~~  view inspectedId im
+			im' <- liftExceptT $ S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im
+			Log.log Log.Trace $ "Docs for $ updated" ~~ view inspectedId im
+			updater $ return $ fromModule im'
 		inWorkerT w = ExceptT . inWorker w . runExceptT 
 
-inferModTypes :: (MonadIO m) => [InspectedModule] -> ExceptT String (UpdateDB m) ()
+inferModTypes :: (MonadIO m, MonadCatchIO m) => [InspectedModule] -> ExceptT String (UpdateDB m) ()
 inferModTypes = runTasks . map inferModTypes' where
-	inferModTypes' im = runTask "scanning docs" (subject (view inspectedId im) []) $ do
+	inferModTypes' im = runTask "inferring types" (subject (view inspectedId im) []) $ do
 		-- TODO: locate sandbox
 		sets <- ask
+		Log.log Log.Trace $ "Inferring types for $" ~~ view inspectedId im
 		im' <- liftExceptT $ S.scanModify (infer' sets) im
+		Log.log Log.Trace $ "Types for $ inferred" ~~ view inspectedId im
 		updater $ return $ fromModule im'
 	infer' :: Settings -> [String] -> Cabal -> Module -> ExceptT String IO Module
 	infer' sets opts cabal m = case preview (moduleLocation . moduleFile) m of
@@ -319,8 +323,6 @@ scan cache' part' mlocs opts act = do
 	changed <- runTask "getting list of changed modules" [] $ liftExceptT $ S.changedModules dbval opts mlocs
 	runTask "removing obsolete modules" ["modules" .= map (view moduleLocation) (allModules obsolete)] $ cleaner $ return obsolete
 	act changed
-
-instance Format Cabal where
 
 updateEvent :: (MonadIO m, MonadCatch m, MonadCatchIO m) => Watched -> Event -> ExceptT String (UpdateDB m) ()
 updateEvent (WatchedProject proj projOpts) e
