@@ -164,14 +164,17 @@ getBinds _ = []
 getDecl :: H.Decl -> [Declaration]
 getDecl decl' = case decl' of
 	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ oneLinePrint typeSignature) [] Nothing) | n <- names]
-	H.TypeDecl loc n args _ -> [mkType loc n Type args]
-	H.DataDecl loc dataOrNew ctx n args cons _ -> mkType loc n (ctor dataOrNew `withCtx` ctx) args : concatMap (map (addRel n) . getConDecl n args) cons
-	H.GDataDecl loc dataOrNew ctx n args _ gcons _ -> mkType loc n (ctor dataOrNew `withCtx` ctx) args : concatMap (map (addRel n) . getGConDecl) gcons
-	H.ClassDecl loc ctx n args _ _ -> [mkType loc n (Class `withCtx` ctx) args]
+	H.TypeDecl loc n args _ -> [mkType loc n Type args `withDef` decl']
+	H.DataDecl loc dataOrNew ctx n args cons _ -> (mkType loc n (ctor dataOrNew `withCtx` ctx) args `withDef` decl') : concatMap (map (addRel n) . getConDecl n args) cons
+	H.GDataDecl loc dataOrNew ctx n args _ gcons _ -> (mkType loc n (ctor dataOrNew `withCtx` ctx) args `withDef` decl') : concatMap (map (addRel n) . getGConDecl) gcons
+	H.ClassDecl loc ctx n args _ _ -> [mkType loc n (Class `withCtx` ctx) args `withDef` decl']
 	_ -> []
 	where
 		mkType :: H.SrcLoc -> H.Name -> (TypeInfo -> DeclarationInfo) -> [H.TyVarBind] -> Declaration
 		mkType loc n ctor' args = setPosition loc $ decl (identOfName n) $ ctor' $ TypeInfo Nothing (map oneLinePrint args) Nothing []
+
+		withDef :: H.Pretty a => Declaration -> a -> Declaration
+		withDef tyDecl' tyDef = set (declaration . typeInfo . typeInfoDefinition) (Just $ prettyPrint tyDef) tyDecl'
 
 		withCtx :: (TypeInfo -> DeclarationInfo) -> H.Context -> TypeInfo -> DeclarationInfo
 		withCtx ctor' ctx = ctor' . set typeInfoContext (makeCtx ctx)
@@ -265,6 +268,21 @@ identOfName name = fromString $ case name of
 -- | Print something in one line
 oneLinePrint :: (H.Pretty a, IsString s) => a -> s
 oneLinePrint = fromString . H.prettyPrintStyleMode (H.style { H.mode = H.OneLineMode }) H.defaultMode
+
+-- | Print something
+prettyPrint :: (H.Pretty a, IsString s) => a -> s
+prettyPrint = fromString . H.prettyPrintStyleMode (H.style { H.mode = H.PageMode }) mode' where
+	mode' = H.PPHsMode {
+		H.classIndent = 4,
+		H.doIndent = 4,
+		H.multiIfIndent = 4,
+		H.caseIndent = 4,
+		H.letIndent = 4,
+		H.whereIndent = 4,
+		H.onsideIndent = 2,
+		H.spacing = False,
+		H.layout = H.PPOffsideRule,
+		H.linePragmas = False }
 
 -- | Convert @H.SrcLoc@ to @Position
 toPosition :: H.SrcLoc -> Position
