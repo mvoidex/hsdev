@@ -20,7 +20,6 @@ import qualified Data.Map as M
 import Data.Maybe (isJust)
 import Data.String (fromString)
 import Data.Time.Clock.POSIX
-import qualified Filesystem.Path.CurrentOS as F (encodeString)
 import System.FilePath (takeDirectory, isDrive)
 import System.Directory
 import qualified System.FSNotify as FS
@@ -141,7 +140,7 @@ onEvent :: Watcher a -> (a -> Event -> IO ()) -> IO ()
 onEvent w act = events w >>= mapM_ (uncurry act)
 
 fromEvent :: FS.Event -> Event
-fromEvent e = Event t (F.encodeString $ FS.eventPath e) (utcTimeToPOSIXSeconds $ FS.eventTime e) where
+fromEvent e = Event t (FS.eventPath e) (utcTimeToPOSIXSeconds $ FS.eventTime e) where
 	t = case e of
 		FS.Added _ _ -> Added
 		FS.Modified _ _ -> Modified
