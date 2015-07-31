@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Display (
 	Display(..)
@@ -6,6 +7,8 @@ module HsDev.Display (
 
 import Control.Lens (view)
 import Data.Maybe (fromMaybe)
+
+import Text.Format
 
 import HsDev.Cabal
 import HsDev.Symbols.Location
@@ -33,3 +36,12 @@ instance Display Project where
 instance Display FilePath where
 	display = id
 	displayType _ = "path"
+
+instance Format Cabal where
+	format = display
+
+instance Format ModuleLocation where
+	format = display
+
+instance Format Project where
+	format = display
