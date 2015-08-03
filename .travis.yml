@@ -1,11 +1,25 @@
-language: haskell
-ghc:
-  - "7.10"
+# https://github.com/hvr/multi-ghc-travis/blob/master/.travis.yml
+language: c
+
+env:
+ - CABALVER=1.22 GHCVER=7.10.1
+ - CABALVER=1.22 GHCVER=7.10.2
+
+before_install:
+ - travis_retry sudo apt-get-repository -y ppa:hvr/ghc
+ - travis_retry sudo apt-get update
+ - travis_retry sudo apt-get install cabal-install-$CABALVER ghc-$GHCVER
+ - export PATH=/opt/ghc/$GHCVER/bin:/opt/cabal/$CABALVER/bin:$PATH
 
 install:
-  - cabal update
-  - cabal install --only-dependencies
+ - cabal --version
+ - echo "$(ghc --version)"
+ - travis_retry cabal update
+ - cabal install --only-dependencies --enable-tests
 
 script:
-  - cabal configure
-  - cabal build
+ - cabal configure --enable-tests
+ - cabal build
+ - cabal test
+ - cabal check
+ - cabal sdist
