@@ -38,7 +38,7 @@ import HsDev.Symbols
 import HsDev.Symbols.Resolve
 import HsDev.Symbols.Types
 import HsDev.Symbols.Util
-import HsDev.Tools.Base (matchRx, at)
+import HsDev.Tools.Base (matchRx, at, at_)
 import HsDev.Util (liftE, ordNub)
 
 -- | Find declaration by name
@@ -159,7 +159,7 @@ visibleFrom Nothing this m = view moduleId this == m || byCabal m
 splitIdentifier :: String -> (Maybe String, String)
 splitIdentifier name = fromMaybe (Nothing, name) $ do
 	groups <- matchRx "(([A-Z][\\w']*\\.)*)(.*)" name
-	return (fmap dropDot $ groups 1, groups `at` 3)
+	return (fmap dropDot $ groups 1, groups `at_` 3)
 	where
 		dropDot :: String -> String
 		dropDot "" = ""

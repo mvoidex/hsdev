@@ -3,7 +3,7 @@ module HsDev.Tools.Base (
 	runWait, runWait_,
 	tool, tool_,
 	matchRx, splitRx, replaceRx,
-	at,
+	at, at_,
 	inspect,
 	-- * Read parse utils
 	ReadM,
@@ -68,6 +68,9 @@ replaceRx pat w = intercalate w . splitRx pat
 
 at :: (Int -> Maybe String) -> Int -> String
 at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
+
+at_ :: (Int -> Maybe String) -> Int -> String
+at_ g = fromMaybe "" . g
 
 inspect :: Monad m => ModuleLocation -> ExceptT String m Inspection -> ExceptT String m Module -> ExceptT String m InspectedModule
 inspect mloc insp act = lift $ execStateT inspect' (Inspected InspectionNone mloc (Left "not inspected")) where
