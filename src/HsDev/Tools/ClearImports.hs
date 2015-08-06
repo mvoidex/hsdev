@@ -13,6 +13,7 @@ import Control.Exception
 import Control.Monad.Except
 import Data.Char
 import Data.List
+import Data.Maybe (mapMaybe)
 import System.Directory
 import System.FilePath
 import qualified Language.Haskell.Exts as Exts
@@ -27,9 +28,9 @@ dumpMinimalImports :: [String] -> FilePath -> ExceptT String IO String
 dumpMinimalImports opts f = do
 	cur <- liftE getCurrentDirectory
 	file <- liftE $ canonicalizePath f
+	cts <- liftE $ readFileUtf8 file
 
-	m <- liftE $ Exts.parseFile file
-	mname <- case m of
+	mname <- case Exts.parseFileContentsWithMode (pmode file) cts of
 		Exts.ParseFailed loc err -> throwError $
 			"Failed to parse file at " ++
 			Exts.prettyPrint loc ++ ":" ++ err
@@ -53,6 +54,14 @@ dumpMinimalImports opts f = do
 			load LoadAllTargets
 
 	length mname `seq` return mname
+	where
+		pmode :: FilePath -> Exts.ParseMode
+		pmode f' = Exts.defaultParseMode {
+			Exts.parseFilename = f',
+			Exts.baseLanguage = Exts.Haskell2010,
+			Exts.extensions = Exts.glasgowExts ++ map Exts.parseExtension exts,
+			Exts.fixities = Just Exts.baseFixities }
+		exts = mapMaybe (stripPrefix "-X") opts
 
 -- | Read imports from file
 waitImports :: FilePath -> IO [String]
