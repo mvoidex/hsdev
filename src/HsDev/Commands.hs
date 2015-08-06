@@ -38,7 +38,7 @@ import HsDev.Symbols
 import HsDev.Symbols.Resolve
 import HsDev.Symbols.Types
 import HsDev.Symbols.Util
-import HsDev.Tools.Base (matchRx, at, at_)
+import HsDev.Tools.Base (matchRx, at_)
 import HsDev.Util (liftE, ordNub)
 
 -- | Find declaration by name
