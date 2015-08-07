@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), ModuleLocation(..), moduleStandalone,
+	ModulePackage(..), ModuleLocation(..), moduleStandalone, noLocation,
 	Position(..), Region(..), region, regionAt, regionLines, regionStr,
 	Location(..),
 
@@ -34,7 +34,7 @@ import Text.Read (readMaybe)
 
 import HsDev.Cabal
 import HsDev.Project
-import HsDev.Util ((.::))
+import HsDev.Util ((.::), (.::?))
 
 data ModulePackage = ModulePackage {
 	_packageName :: String,
@@ -96,13 +96,17 @@ instance Show ModuleLocation where
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap (view projectCabal) p]
 	toJSON (CabalModule c p n) = object ["cabal" .= c, "package" .= fmap show p, "name" .= n]
-	toJSON (ModuleSource s) = object ["source" .= s]
+	toJSON (ModuleSource (Just s)) = object ["source" .= s]
+	toJSON (ModuleSource Nothing) = object []
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .:: "project"))) <|>
 		(CabalModule <$> v .:: "cabal" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
-		(ModuleSource <$> v .:: "source")
+		(ModuleSource <$> v .::? "source")
+
+noLocation :: ModuleLocation
+noLocation = ModuleSource Nothing
 
 data Position = Position {
 	_positionLine :: Int,

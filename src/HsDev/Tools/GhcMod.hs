@@ -200,7 +200,7 @@ parseOutputMessage s = do
 	return Note {
 		_noteSource = FileModule (normalise (groups `at` 1)) Nothing,
 		_noteRegion = regionAt (Position l c),
-		_noteLevel = if groups 5 == Just "Warning" then Warning else Error,
+		_noteLevel = Just $ if groups 5 == Just "Warning" then Warning else Error,
 		_note = outputMessage $ nullToNL (groups `at` 6) }
 
 recalcOutputMessageTabs :: [(FilePath, String)] -> Note OutputMessage -> Note OutputMessage

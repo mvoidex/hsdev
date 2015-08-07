@@ -111,14 +111,14 @@ fileTypes opts cabal m msrc = case view moduleLocation m of
 			loadTargets [target]
 			ts <- moduleTypes file'
 			df <- getSessionDynFlags
-			return $ map (setExpr cts . uncurry (toNote df)) ts
+			return $ map (setExpr cts . recalcTabs cts 8 . uncurry (toNote df)) ts
 	_ -> throwError "Module is not source"
 	where
 		toNote :: DynFlags -> SrcSpan -> Type -> Note String
 		toNote df spn tp = Note {
-			_noteSource = view moduleLocation m,
+			_noteSource = noLocation,
 			_noteRegion = spanRegion spn,
-			_noteLevel = Hint,
+			_noteLevel = Nothing,
 			_note = showType df tp }
 		setExpr :: String -> Note String -> Note TypedExpr
 		setExpr cts n = over note (TypedExpr (regionStr (view noteRegion n) cts)) n

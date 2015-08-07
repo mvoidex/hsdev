@@ -91,7 +91,7 @@ logAction ch fs sev src _ msg
 		putChan ch $ Note {
 			_noteSource = src',
 			_noteRegion = spanRegion src,
-			_noteLevel = sev',
+			_noteLevel = Just sev',
 			_note = OutputMessage {
 				_message = showSDoc fs msg,
 				_messageSuggestion = Nothing } }

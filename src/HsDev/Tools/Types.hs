@@ -13,7 +13,7 @@ import Data.Aeson hiding (Error)
 
 import HsDev.Symbols (Canonicalize(..))
 import HsDev.Symbols.Location
-import HsDev.Util ((.::))
+import HsDev.Util ((.::), (.::?))
 
 -- | Note severity
 data Severity = Error | Warning | Hint deriving (Enum, Bounded, Eq, Ord, Read, Show)
@@ -41,7 +41,7 @@ instance FromJSON Severity where
 data Note a = Note {
 	_noteSource :: ModuleLocation,
 	_noteRegion :: Region,
-	_noteLevel :: Severity,
+	_noteLevel :: Maybe Severity,
 	_note :: a }
 
 makeLenses ''Note
@@ -63,7 +63,7 @@ instance FromJSON a => FromJSON (Note a) where
 	parseJSON = withObject "note" $ \v -> Note <$>
 		v .:: "source" <*>
 		v .:: "region" <*>
-		v .:: "level" <*>
+		v .::? "level" <*>
 		v .:: "note"
 
 instance RecalcTabs (Note a) where
