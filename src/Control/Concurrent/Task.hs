@@ -3,7 +3,7 @@
 module Control.Concurrent.Task (
 	Task(..), TaskException(..), TaskResult(..),
 	taskStarted, taskRunning, taskStopped, taskDone, taskFailed, taskCancelled,
-	taskWaitStart, taskWait, taskJoin, taskKill, taskCancel, taskStop,
+	taskWaitStart, taskWait, taskJoinWith, taskJoin, taskJoin_, taskKill, taskCancel, taskStop,
 	runTask, runTask_, runTaskTry, runTaskError, forkTask, tryT,
 
 	-- * Reexports
@@ -72,9 +72,17 @@ taskWaitStart = (`withMVar` (return . isJust)) . taskStart
 taskWait :: Task a -> IO (Either SomeException a)
 taskWait = taskResultTake . taskResult
 
+-- | Join task with
+taskJoinWith :: MonadIO m => (SomeException -> m a) -> Task a -> m a
+taskJoinWith err = liftIO . taskWait >=> either err return
+
 -- | Join task, rethrowing its exceptions
 taskJoin :: Task a -> IO a
-taskJoin = taskWait >=> either throwM return
+taskJoin = taskJoinWith throwM
+
+-- | Join task, returning exceptions as @EitherT@
+taskJoin_ :: Task a -> ExceptT SomeException IO a
+taskJoin_ = taskJoinWith throwError
 
 -- | Kill task
 taskKill :: Task a -> IO ()

@@ -36,6 +36,7 @@ import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Worker
 import qualified HsDev.Tools.Ghc.Check as Check
+import qualified HsDev.Tools.Ghc.Types as Types
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Tools.HLint as HLint
@@ -139,6 +140,7 @@ commands = [
 	cmdList' "lint" ["files..."] [dataArg] "lint source files or file contents" lint',
 	cmdList' "check" ["files..."] [dataArg, sandboxArg, ghcOpts] "check source files or file contents" check',
 	cmdList' "check-lint" ["files..."] [dataArg, sandboxArg, ghcOpts] "check and lint source files or file contents" checkLint',
+	cmdList' "types" ["file"] [dataArg, sandboxArg, ghcOpts] "get types for file expressions" types',
 	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
 	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
@@ -556,8 +558,8 @@ commands = [
 						(commandError_ $ "File '" ++ file' ++ "' not found, maybe you forgot to scan it?")
 						return $
 						lookupFile file' db
-					notes <- mapCommandErrorStr $ liftTask $
-						pushTask (commandGhc copts) (runExceptT $ Check.checkFile (listArg "ghc" as) cabal m)
+					notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
+						(runExceptT $ Check.checkFile (listArg "ghc" as) cabal m)
 					either commandError_ return notes
 			Just src -> do
 				src' <- either
@@ -574,13 +576,34 @@ commands = [
 					(commandError_ $ "File '" ++ file' ++ "' not found")
 					return $
 					lookupFile file' db
-				notes <- mapCommandErrorStr $ liftTask $
-					pushTask (commandGhc copts) (runExceptT $ Check.checkSource (listArg "ghc" as) cabal m src')
+				notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
+					(runExceptT $ Check.checkSource (listArg "ghc" as) cabal m src')
 				either commandError_ return notes
 
 		-- | Check and lint
 		checkLint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
 		checkLint' files as copts = liftM2 (++) (check' files as copts) (lint' files as copts)
+
+		-- | Types
+		types' :: [String] -> Opts String -> CommandActionT [Tools.Note Types.TypedExpr]
+		types' [file] as copts = do
+			file' <- findPath copts file
+			db <- getDb copts
+			cabal <- getCabal copts as
+			let
+				decodeData src = either
+					(\err -> commandError "Unable to decode data" ["why" .= err, "data" .= src])
+					return $
+					eitherDecode (toUtf8 src)
+			msrc <- traverse decodeData $ arg "data" as
+			m <- maybe
+				(commandError_ $ "File '" ++ file' ++ "' not found")
+				return $
+				lookupFile file' db
+			notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
+				(runExceptT $ Types.fileTypes (listArg "ghc" as) cabal m msrc)
+			either commandError_ return notes
+		types' _ _ _ = commandError_ "One file must be specified"
 
 		-- | Ghc-mod lang
 		ghcmodLang' :: [String] -> Opts String -> CommandActionT [String]

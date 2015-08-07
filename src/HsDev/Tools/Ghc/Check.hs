@@ -68,10 +68,8 @@ check opts cabal m msrc = case view moduleLocation m of
 				opts]
 			tm <- liftIO getCurrentTime
 			clearTargets
-			target <- makeTarget (makeRelative dir file) Nothing
-			let
-				setCts t src = t { targetContents = Just (stringToStringBuffer src, tm) }
-			loadTargets [maybe target (setCts target) msrc]
+			target <- makeTarget (makeRelative dir file) msrc
+			loadTargets [target]
 		notes <- liftIO $ stopChan ch
 		liftIO $ recalcNotesTabs notes
 	_ -> throwError "Module is not source"
@@ -92,12 +90,7 @@ logAction ch fs sev src _ msg
 		src' <- canonicalize srcMod
 		putChan ch $ Note {
 			_noteSource = src',
-			_noteRegion = case src of
-				RealSrcSpan s' ->
-					Position (srcSpanStartLine s') (srcSpanStartCol s')
-					`region`
-					Position (srcSpanEndLine s') (srcSpanEndCol s')
-				_ -> Position 0 0 `region` Position 0 0,
+			_noteRegion = spanRegion src,
 			_noteLevel = sev',
 			_note = OutputMessage {
 				_message = showSDoc fs msg,
@@ -111,13 +104,6 @@ logAction ch fs sev src _ msg
 		srcMod = case src of
 			RealSrcSpan s' -> FileModule (unpackFS $ srcSpanFile s') Nothing
 			_ -> ModuleSource Nothing
-
--- | Get list of installed packages
-listPackages :: Ghc [ModulePackage]
-listPackages = getSessionDynFlags >>= return . mapMaybe readPackage . fromMaybe [] . pkgDatabase
-
-readPackage :: GHC.PackageConfig -> Maybe ModulePackage
-readPackage pc = readMaybe $ GHC.packageNameString pc ++ "-" ++ showVersion (GHC.packageVersion pc)
 
 -- Recalc tabs for notes
 recalcNotesTabs :: [Note OutputMessage] -> IO [Note OutputMessage]

@@ -9,6 +9,7 @@ module HsDev.Tools.Ghc.Worker (
 	evaluate,
 	clearTargets, makeTarget, loadTargets,
 	-- * Utils
+	listPackages, spanRegion,
 	withCurrentDirectory,
 
 	Ghc,
@@ -20,14 +21,19 @@ import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.Except
 import Data.Dynamic
+import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
+import Data.Version (showVersion)
 import GHC
 import GHC.Paths
 import Packages
 import StringBuffer
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
+import Text.Read
 
 import Control.Concurrent.Worker
+
+import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage)
 
 -- | Ghc worker. Pass options and initializer action
 ghcWorker :: [String] -> Ghc () -> IO (Worker Ghc)
@@ -99,6 +105,18 @@ makeTarget name (Just cts) = do
 -- | Load all targets
 loadTargets :: [Target] -> Ghc ()
 loadTargets ts = setTargets ts >> load LoadAllTargets >> return ()
+
+-- | Get list of installed packages
+listPackages :: Ghc [ModulePackage]
+listPackages = getSessionDynFlags >>= return . mapMaybe readPackage . fromMaybe [] . pkgDatabase
+
+readPackage :: PackageConfig -> Maybe ModulePackage
+readPackage pc = readMaybe $ packageNameString pc ++ "-" ++ showVersion (packageVersion pc)
+
+-- | Get region of @SrcSpan@
+spanRegion :: SrcSpan -> Region
+spanRegion (RealSrcSpan s) = Position (srcSpanStartLine s) (srcSpanStartCol s) `region` Position (srcSpanEndLine s) (srcSpanEndCol s)
+spanRegion _ = Position 0 0 `region` Position 0 0
 
 -- | Set current directory and restore it after action
 withCurrentDirectory :: FilePath -> Ghc a -> Ghc a
