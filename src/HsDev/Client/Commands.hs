@@ -69,10 +69,10 @@ commands = [
 		manyReq $ moduleArg `desc` "module name"]
 		"scan docs"
 		docs',
-	cmd' "infer" [] [
+	cmd' "infer" [] ([
 		manyReq $ projectArg `desc` "project path or .cabal",
 		manyReq $ fileArg `desc` "source file",
-		manyReq $ moduleArg `desc` "module name"]
+		manyReq $ moduleArg `desc` "module name"] ++ autoScanOpts)
 		"infer types for specified modules"
 		infer',
 	cmdList' "remove" [] (sandboxes ++ [
@@ -101,7 +101,7 @@ commands = [
 		fileArg `desc` "source file",
 		moduleArg, localsArg,
 		packageArg, depsArg, noLastArg, packageVersionArg,
-		sourced, standaloned])
+		sourced, standaloned] ++ autoScanOpts)
 		"get symbol info"
 		symbol',
 	cmd' "module" [] (sandboxes ++ [
@@ -109,19 +109,19 @@ commands = [
 		packageArg, depsArg, noLastArg, packageVersionArg,
 		projectArg `desc` "module project",
 		fileArg `desc` "module source file",
-		sourced])
+		sourced] ++ autoScanOpts)
 		"get module info"
 		modul',
 	cmd' "resolve" [] (sandboxes ++ [
 		moduleArg, localsArg,
 		projectArg `desc` "module project",
 		fileArg `desc` "module source file",
-		exportsArg])
+		exportsArg] ++ autoScanOpts)
 		"resolve module scope (or exports)"
 		resolve',
-	cmd' "project" [] [
+	cmd' "project" [] ([
 		projectArg `desc` "project path or name",
-		pathArg `desc` "locate project in parent of this path"]
+		pathArg `desc` "locate project in parent of this path"] ++ autoScanOpts)
 		"get project info"
 		project',
 	cmd' "sandbox" [] [
@@ -137,16 +137,16 @@ commands = [
 	-- Tool commands
 	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
 	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
-	cmdList' "lint" ["files..."] [dataArg] "lint source files or file contents" lint',
-	cmdList' "check" ["files..."] [dataArg, sandboxArg, ghcOpts] "check source files or file contents" check',
-	cmdList' "check-lint" ["files..."] [dataArg, sandboxArg, ghcOpts] "check and lint source files or file contents" checkLint',
-	cmdList' "types" ["file"] [dataArg, sandboxArg, ghcOpts] "get types for file expressions" types',
+	cmdList' "lint" ["files..."] ([dataArg] ++ autoScanOpts) "lint source files or file contents" lint',
+	cmdList' "check" ["files..."] ([dataArg, sandboxArg, ghcOpts] ++ autoScanOpts) "check source files or file contents" check',
+	cmdList' "check-lint" ["files..."] ([dataArg, sandboxArg, ghcOpts] ++ autoScanOpts) "check and lint source files or file contents" checkLint',
+	cmdList' "types" ["file"] ([dataArg, sandboxArg, ghcOpts] ++ autoScanOpts) "get types for file expressions" types',
 	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
 	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
 	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
-	cmdList' "ghc-mod check" ["files..."] [sandboxArg, ghcOpts] "check source files" ghcmodCheck',
-	cmdList' "ghc-mod lint" ["files..."] [hlintOpts] "lint source files" ghcmodLint',
-	cmdList' "ghc-mod check-lint" ["files..."] [sandboxArg, ghcOpts, hlintOpts] "check & lint source files" ghcmodCheckLint',
+	cmdList' "ghc-mod check" ["files..."] ([sandboxArg, ghcOpts] ++ autoScanOpts) "check source files" ghcmodCheck',
+	cmdList' "ghc-mod lint" ["files..."] ([hlintOpts] ++ autoScanOpts) "lint source files" ghcmodLint',
+	cmdList' "ghc-mod check-lint" ["files..."] ([sandboxArg, ghcOpts, hlintOpts] ++ autoScanOpts) "check & lint source files" ghcmodCheckLint',
 	-- Autofix
 	cmd' "autofix show" [] [dataArg] "generate corrections for check & lint messages" autofixShow',
 	cmd' "autofix fix" [] [dataArg, restMsgsArg, pureArg] "fix errors and return rest corrections with updated regions" autofixFix',
@@ -189,6 +189,8 @@ commands = [
 
 		-- Command arguments and flags
 		allFlag d = flag "all" `short` ['a'] `desc` d
+		autoScanFlag = flag "autoscan" `short` ['s'] `desc` "automatically scan related files/projects"
+		autoScanOpts = [autoScanFlag, ghcOpts]
 		cacheDir = req "cache-dir" "path" `desc` "cache path"
 		cacheFile = req "cache-file" "path" `desc` "cache file"
 		ctx = [fileArg `desc` "source file", sandboxArg]
@@ -302,6 +304,7 @@ commands = [
 		infer' _ as copts = do
 			files <- traverse (findPath copts) $ listArg "file" as
 			projects <- traverse (findProject copts) $ listArg "project" as
+			autoScan as copts files projects
 			dbval <- getDb copts
 			let
 				filters = anyOf $
@@ -386,6 +389,7 @@ commands = [
 			dbval <- liftM (localsDatabase as) $ getDb copts
 			proj <- traverse (findProject copts) $ arg "project" as
 			file <- traverse (findPath copts) $ arg "file" as
+			autoScan as copts (maybeToList file) (maybeToList proj)
 			deps <- traverse (findDep copts) $ arg "deps" as
 			cabal <- getCabal_ copts as
 			let
@@ -414,6 +418,7 @@ commands = [
 			proj <- traverse (findProject copts) $ arg "project" as
 			cabal <- getCabal_ copts as
 			file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ arg "file" as
+			autoScan as copts (maybeToList file') (maybeToList proj)
 			deps <- traverse (findDep copts) $ arg "deps" as
 			let
 				filters = allOf $ catMaybes [
@@ -441,6 +446,7 @@ commands = [
 			proj <- traverse (findProject copts) $ arg "project" as
 			cabal <- getCabal copts as
 			file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ arg "file" as
+			autoScan as copts (maybeToList file') (maybeToList proj)
 			let
 				filters = allOf $ catMaybes [
 					fmap inProject proj,
@@ -462,9 +468,11 @@ commands = [
 		-- | Get project info
 		project' :: [String] -> Opts String -> CommandActionT Project
 		project' _ as copts = do
-			proj <- runMaybeT $ msum $ map MaybeT [
-				traverse (findProject copts) $ arg "project" as,
-				liftM join $ traverse (liftIO . searchProject) $ arg "path" as]
+			proj <- runMaybeT $ do
+				p <- msum $ map MaybeT [
+					traverse (findProject copts) $ arg "project" as,
+					liftM join $ traverse (liftIO . searchProject) $ arg "path" as]
+				lift $ if flagSet "autoscan" as then mapCommandErrorStr (loadProject p) else return p
 			maybe (commandError "Specify project name, .cabal file or search directory" []) return proj
 
 		-- | Locate sandbox
@@ -534,6 +542,7 @@ commands = [
 		lint' files as copts = case arg "data" as of
 			Nothing -> do
 				files' <- mapM (findPath copts) files
+				autoScan as copts files' []
 				mapCommandErrorStr $ liftM concat $ mapM HLint.hlintFile files'
 			Just src -> do
 				src' <- either
@@ -551,6 +560,7 @@ commands = [
 		check' files as copts = case arg "data" as of
 			Nothing -> do
 				files' <- mapM (findPath copts) files
+				autoScan as copts files' []
 				db <- getDb copts
 				cabal <- getCabal copts as
 				liftM concat $ forM files' $ \file' -> do
@@ -588,6 +598,7 @@ commands = [
 		types' :: [String] -> Opts String -> CommandActionT [Tools.Note Types.TypedExpr]
 		types' [file] as copts = do
 			file' <- findPath copts file
+			autoScan as copts [file'] []
 			db <- getDb copts
 			cabal <- getCabal copts as
 			let
@@ -632,6 +643,7 @@ commands = [
 		ghcmodCheck' [] _ _ = commandError "Specify at least one file" []
 		ghcmodCheck' files as copts = do
 			files' <- mapM (findPath copts) files
+			autoScan as copts files' []
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
 			cabal <- getCabal copts as
 			dbval <- getDb copts
@@ -645,6 +657,7 @@ commands = [
 		ghcmodLint' [] _ _ = commandError "Specify at least one file to hlint" []
 		ghcmodLint' files as copts = do
 			files' <- mapM (findPath copts) files
+			autoScan as copts files' []
 			mapCommandErrorStr $ liftM concat $ forM files' $ \file' ->
 				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
 					GhcMod.lint (listArg "hlint" as) file'
@@ -654,6 +667,7 @@ commands = [
 		ghcmodCheckLint' [] _ _ = commandError "Specify at least one file" []
 		ghcmodCheckLint' files as copts = do
 			files' <- mapM (findPath copts) files
+			autoScan as copts files' []
 			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
 			cabal <- getCabal copts as
 			dbval <- getDb copts
@@ -773,6 +787,13 @@ commands = [
 
 commandStrMsg :: String -> CommandError
 commandStrMsg m = CommandError m []
+
+-- | Automatically scan files and projects
+autoScan :: Opts String -> CommandOptions -> [FilePath] -> [Project] -> CommandM ()
+autoScan as copts srcs projs = updateProcess copts as $ concat [
+	concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- n]) [
+		(srcs, Update.scanFile),
+		(map (view projectCabal) projs, Update.scanProject)]]
 
 -- | Check positional args count
 checkPosArgs :: Cmd a -> Cmd a
