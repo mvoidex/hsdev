@@ -35,7 +35,7 @@ enumCabal = list
 -- | Compile flags
 type CompileFlag = String
 -- | Module with flags ready to scan
-type ModuleToScan = (ModuleLocation, [CompileFlag])
+type ModuleToScan = (ModuleLocation, [CompileFlag], Maybe String)
 -- | Project ready to scan
 type ProjectToScan = (Project, [ModuleToScan])
 -- | Cabal sandbox to scan
@@ -62,7 +62,7 @@ enumProject p = do
 				["-package " ++ view projectName p'],
 				["-package " ++ dep | dep <- view infoDepends i, dep `elem` pkgs]]
 	srcs <- projectSources p'
-	return (p', [(FileModule (view entity src) (Just p'), extensionsOpts src ++ projOpts (view entity src)) | src <- srcs])
+	return (p', [(FileModule (view entity src) (Just p'), extensionsOpts src ++ projOpts (view entity src), Nothing) | src <- srcs])
 
 -- | Enum directory modules
 enumDirectory :: FilePath -> ExceptT String IO ScanContents
@@ -77,8 +77,8 @@ enumDirectory dir = do
 	let
 		projPaths = map (view projectPath . fst) projs
 		standalone = map ((`FileModule` Nothing)) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
-	return $ ScanContents {
-		modulesToScan = [(s, []) | s <- standalone],
+	return ScanContents {
+		modulesToScan = [(s, [], Nothing) | s <- standalone],
 		projectsToScan = projs,
 		sandboxesToScan = map Sandbox sboxes }
 
@@ -89,8 +89,8 @@ scanProjectFile _ f = do
 	loadProject proj
 
 -- | Scan module
-scanModule :: [String] -> ModuleLocation -> ExceptT String IO InspectedModule
-scanModule opts (FileModule f p) = liftM setProj $ inspectFile opts f where
+scanModule :: [String] -> ModuleLocation -> Maybe String -> ExceptT String IO InspectedModule
+scanModule opts (FileModule f p) mcts = liftM setProj $ inspectFile opts f mcts where
 	setProj =
 		set (inspectedId . moduleProject) p .
 		set (inspectionResult . _Right . moduleLocation . moduleProject) p
@@ -98,8 +98,8 @@ scanModule opts (FileModule f p) = liftM setProj $ inspectFile opts f where
 -- 	infer' m = tryInfer <|> return m where
 -- 		tryInfer = mapExceptT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
 -- 			runGhcMod defaultOptions $ inferTypes opts Cabal m
-scanModule opts (CabalModule c p n) = browse opts c n p
-scanModule _ (ModuleSource _) = throwError "Can inspect only modules in file or cabal"
+scanModule opts (CabalModule c p n) _ = browse opts c n p
+scanModule _ (ModuleSource _) _ = throwError "Can inspect only modules in file or cabal"
 
 -- | Scan additional info and modify scanned module. Dones't fail on error, just left module unchanged
 scanModify :: ([String] -> Cabal -> Module -> ExceptT String IO Module) -> InspectedModule -> ExceptT String IO InspectedModule
@@ -120,7 +120,7 @@ rescanModule opts im = do
 	up <- upToDate opts im
 	if up
 		then return Nothing
-		else fmap Just $ scanModule opts (view inspectedId im)
+		else fmap Just $ scanModule opts (view inspectedId im) Nothing
 
 -- | Is module new or recently changed
 changedModule :: Database -> [String] -> ModuleLocation -> ExceptT String IO Bool
@@ -129,4 +129,4 @@ changedModule db opts m = maybe (return True) (liftM not . upToDate opts) m' whe
 
 -- | Returns new (to scan) and changed (to rescan) modules
 changedModules :: Database -> [String] -> [ModuleToScan] -> ExceptT String IO [ModuleToScan]
-changedModules db opts = filterM (\ (m, opts') -> changedModule db (opts ++ opts') m)
+changedModules db opts = filterM (\ (m, opts', _) -> changedModule db (opts ++ opts') m)

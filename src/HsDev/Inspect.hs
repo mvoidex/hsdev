@@ -42,7 +42,7 @@ import HsDev.Util
 
 -- | Analize source contents
 analyzeModule :: [String] -> Maybe FilePath -> String -> Either String Module
-analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' of
+analyzeModule exts file source = case H.parseFileContentsWithMode (parseMode file exts) source' of
 		H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
 		H.ParseOk (H.Module _ (H.ModuleName mname) _ _ mexports imports declarations) -> Right Module {
 			_moduleName = fromString mname,
@@ -52,13 +52,6 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 			_moduleImports = map getImport imports,
 			_moduleDeclarations = sortDeclarations $ getDecls declarations }
 	where
-		pmode :: H.ParseMode
-		pmode = H.defaultParseMode {
-			H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
-			H.baseLanguage = H.Haskell2010,
-			H.extensions = H.glasgowExts ++ map H.parseExtension exts,
-			H.fixities = Just H.baseFixities }
-
 		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
 		source' = map untab source
 		untab '\t' = ' '
@@ -68,7 +61,7 @@ analyzeModule exts file source = case H.parseFileContentsWithMode pmode source' 
 analyzeModule_ :: [String] -> Maybe FilePath -> String -> Either String Module
 analyzeModule_ exts file source = do
 	mname <- parseModuleName source'
-	return $ Module {
+	return Module {
 		_moduleName = fromString mname,
 		_moduleDocs = Nothing,
 		_moduleLocation = ModuleSource Nothing,
@@ -91,24 +84,24 @@ analyzeModule_ exts file source = do
 			g 1
 
 		parseDecl' :: Int -> String -> Maybe H.Decl
-		parseDecl' offset cts = fmap (transformBi addOffset) $ case H.parseDeclWithMode pmode cts of
+		parseDecl' offset cts = fmap (transformBi addOffset) $ case H.parseDeclWithMode (parseMode file exts) cts of
 			H.ParseFailed _ _ -> Nothing
 			H.ParseOk decl' -> Just decl'
 			where
 				addOffset :: H.SrcLoc -> H.SrcLoc
 				addOffset src = src { H.srcLine = H.srcLine src + offset }
 
-		pmode :: H.ParseMode
-		pmode = H.defaultParseMode {
-			H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
-			H.baseLanguage = H.Haskell2010,
-			H.extensions = H.glasgowExts ++ map H.parseExtension exts,
-			H.fixities = Just H.baseFixities }
-
 		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
 		source' = map untab source
 		untab '\t' = ' '
 		untab ch = ch
+
+parseMode :: Maybe FilePath -> [String] -> H.ParseMode
+parseMode file exts = H.defaultParseMode {
+	H.parseFilename = fromMaybe (H.parseFilename H.defaultParseMode) file,
+	H.baseLanguage = H.Haskell2010,
+	H.extensions = H.glasgowExts ++ map H.parseExtension exts,
+	H.fixities = Just H.baseFixities }
 
 -- | Get exports
 getExports :: H.ExportSpec -> [Export]
@@ -337,8 +330,8 @@ contentsInspection :: String -> [String] -> ExceptT String IO Inspection
 contentsInspection _ _ = return InspectionNone -- crc or smth
 
 -- | Inspect file
-inspectFile :: [String] -> FilePath -> ExceptT String IO InspectedModule
-inspectFile opts file = do
+inspectFile :: [String] -> FilePath -> Maybe String -> ExceptT String IO InspectedModule
+inspectFile opts file mcts = do
 	proj <- liftE $ locateProject file
 	absFilename <- liftE $ Dir.canonicalizePath file
 	ex <- liftE $ Dir.doesFileExist absFilename
@@ -349,7 +342,7 @@ inspectFile opts file = do
 		-- 	else liftM Just $ hdocs (FileModule absFilename Nothing) opts
 		forced <- ExceptT $ E.handle onError $ do
 			analyzed <- liftM (\s -> analyzeModule exts (Just absFilename) s <|> analyzeModule_ exts (Just absFilename) s) $
-				readFileUtf8 absFilename
+				maybe (readFileUtf8 absFilename) return mcts
 			force analyzed `deepseq` return analyzed
 		-- return $ setLoc absFilename proj . maybe id addDocs docsMap $ forced
 		return $ set moduleLocation (FileModule absFilename proj) forced
@@ -393,4 +386,4 @@ inspectProject opts p = do
 	modules <- mapM inspectFile' srcs
 	return (p', catMaybes modules)
 	where
-		inspectFile' exts = liftM return (inspectFile (opts ++ extensionsOpts exts) (view entity exts)) <|> return Nothing
+		inspectFile' exts = liftM return (inspectFile (opts ++ extensionsOpts exts) (view entity exts) Nothing) <|> return Nothing

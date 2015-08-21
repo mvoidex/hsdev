@@ -60,6 +60,7 @@ commands = [
 		manyReq $ projectArg `desc` "project path or .cabal",
 		manyReq $ fileArg `desc` "source file",
 		manyReq $ pathArg `desc` "directory to scan for files and projects",
+		dataArg `desc` "files contents in format [{<path>:<contents>}, ...]",
 		ghcOpts, docsFlag, inferFlag])
 		"scan sources"
 		scan',
@@ -278,7 +279,18 @@ commands = [
 		scan' :: [String] -> Opts String -> CommandActionT ()
 		scan' _ as copts = do
 			cabals <- getSandboxes copts as
+			let
+				getData :: String -> CommandM [(FilePath, String)]
+				getData d =
+					either
+						(\err -> commandError "Unable to decode data" [
+							"why" .= err,
+							"data" .= d])
+						(return . M.toList) .
+					eitherDecode . toUtf8 $ d
+			ctsFiles <- traverse getData $ arg "data" as
 			updateProcess copts as $ concat [
+				map (\(f, cts) -> Update.scanFileContents (listArg "ghc" as) f (Just cts)) (fromMaybe [] ctsFiles),
 				concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- listArg n as]) [
 					("project", Update.scanProject),
 					("file", Update.scanFile),
@@ -790,10 +802,10 @@ commandStrMsg m = CommandError m []
 
 -- | Automatically scan files and projects
 autoScan :: Opts String -> CommandOptions -> [FilePath] -> [Project] -> CommandM ()
-autoScan as copts srcs projs = updateProcess copts as $ concat [
+autoScan as copts srcs projs = updateProcess copts as $
 	concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- n]) [
 		(srcs, Update.scanFile),
-		(map (view projectCabal) projs, Update.scanProject)]]
+		(map (view projectCabal) projs, Update.scanProject)]
 
 -- | Check positional args count
 checkPosArgs :: Cmd a -> Cmd a

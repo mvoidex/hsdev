@@ -11,7 +11,7 @@ module HsDev.Database.Update (
 	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks,
 	readDB,
 
-	scanModule, scanModules, scanFile, scanCabal, scanProjectFile, scanProject, scanDirectory,
+	scanModule, scanModules, scanFile, scanFileContents, scanCabal, scanProjectFile, scanProject, scanDirectory,
 	scanDocs, inferModTypes,
 	scan,
 	updateEvent, processEvent,
@@ -26,7 +26,7 @@ module HsDev.Database.Update (
 
 import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
-import Control.Lens (preview, _Just, view)
+import Control.Lens (preview, _Just, view, _1, mapMOf_, each, (^..))
 import Control.Monad.Catch
 import Control.Monad.CatchIO
 import Control.Monad.Except
@@ -191,9 +191,9 @@ readDB :: (MonadIO m, MonadReader Settings m) => m Database
 readDB = asks database >>= liftIO . readAsync
 
 -- | Scan module
-scanModule :: (MonadIO m, MonadCatch m) => [String] -> ModuleLocation -> ExceptT String (UpdateDB m) ()
-scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
-	im <- liftExceptT $ S.scanModule opts mloc
+scanModule :: (MonadIO m, MonadCatch m) => [String] -> ModuleLocation -> Maybe String -> ExceptT String (UpdateDB m) ()
+scanModule opts mloc mcts = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
+	im <- liftExceptT $ S.scanModule opts mloc mcts
 	updater $ return $ fromModule im
 	_ <- ExceptT $ return $ view inspectionResult im
 	return ()
@@ -202,28 +202,32 @@ scanModule opts mloc = runTask "scanning" (subject mloc ["module" .= mloc]) $ do
 scanModules :: (MonadIO m, MonadCatch m) => [String] -> [S.ModuleToScan] -> ExceptT String (UpdateDB m) ()
 scanModules opts ms = runTasks $
 	[scanProjectFile opts p >> return () | p <- ps] ++
-	[scanModule (opts ++ snd m) (fst m) | m <- ms]
+	[scanModule (opts ++ mopts) m mcts | (m, mopts, mcts) <- ms]
 	where
-		ps = ordNub $ mapMaybe (toProj . fst) ms
+		ps = ordNub $ mapMaybe (toProj . view _1) ms
 		toProj (FileModule _ p) = fmap (view projectCabal) p
 		toProj _ = Nothing
 
 -- | Scan source file
 scanFile :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> ExceptT String (UpdateDB m) ()
-scanFile opts fpath = do
+scanFile opts fpath = scanFileContents opts fpath Nothing
+
+-- | Scan source file with contents
+scanFileContents :: (MonadIO m, MonadCatch m) => [String] -> FilePath -> Maybe String -> ExceptT String (UpdateDB m) ()
+scanFileContents opts fpath mcts = do
 	dbval <- readDB
 	fpath' <- liftEIO $ canonicalizePath fpath
 	ex <- liftEIO $ doesFileExist fpath'
-	mlocs <- case ex of
-		True -> do
+	mlocs <- if ex
+		then do
 			mloc <- case lookupFile fpath' dbval of
 				Just m -> return $ view moduleLocation m
 				Nothing -> do
 					mproj <- liftEIO $ locateProject fpath'
 					return $ FileModule fpath' mproj
-			return [(mloc, [])]
-		False -> return []
-	mapM_ watch [(`watchModule` m) | (m, _) <- mlocs]
+			return [(mloc, [], mcts)]
+		else return []
+	mapMOf_ (each . _1) (watch . flip watchModule) mlocs
 	scan
 		(Cache.loadFiles (== fpath'))
 		(filterDB (inFile fpath') (const False) . standaloneDB)
@@ -239,9 +243,9 @@ scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox
 	watch (\w -> watchSandbox w cabalSandbox opts)
 	mlocs <- runTask "getting list of cabal modules" [] $ 
 		liftExceptT $ listModules opts cabalSandbox
-	scan (Cache.loadCabal cabalSandbox) (cabalDB cabalSandbox) (zip mlocs $ repeat []) opts $ \mlocs' -> do
+	scan (Cache.loadCabal cabalSandbox) (cabalDB cabalSandbox) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- runTask "loading modules" [] $
-			liftExceptT $ browseModules opts cabalSandbox (map fst mlocs')
+			liftExceptT $ browseModules opts cabalSandbox (mlocs' ^.. each . _1)
 		docs <- runTask "loading docs" [] $
 			liftExceptT $ hdocsCabal cabalSandbox opts
 		updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
@@ -270,7 +274,7 @@ scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ do
 		liftExceptT $ S.enumDirectory dir
 	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks $ map (scanCabal opts) sboxes
-	mapM_ watch [(`watchModule` m) | (m, _) <- standSrcs]
+	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
 	where
 		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)
@@ -319,7 +323,7 @@ scan :: (MonadIO m, MonadCatch m)
 scan cache' part' mlocs opts act = do
 	dbval <- getCache cache' part'
 	let
-		obsolete = filterDB (\m -> view moduleIdLocation m `notElem` map fst mlocs) (const False) dbval
+		obsolete = filterDB (\m -> view moduleIdLocation m `notElem` (mlocs ^.. each . _1)) (const False) dbval
 	changed <- runTask "getting list of changed modules" [] $ liftExceptT $ S.changedModules dbval opts mlocs
 	runTask "removing obsolete modules" ["modules" .= map (view moduleLocation) (allModules obsolete)] $ cleaner $ return obsolete
 	act changed

@@ -28,7 +28,7 @@ main = toolMain "hsinspect" [
 		inspect' (Args [] opts) = liftIO getContents >>= liftM toJSON . inspectContents "stdin" (ghcs opts)
 		inspect' (Args [fname@(takeExtension -> ".hs")] opts) = do
 			fname' <- liftIO $ canonicalizePath fname
-			im <- scanModule (ghcs opts) (FileModule fname' Nothing)
+			im <- scanModule (ghcs opts) (FileModule fname' Nothing) Nothing
 			let
 				scanAdditional =
 					scanModify (\opts' _ -> inspectDocs opts') >=>
@@ -37,5 +37,5 @@ main = toolMain "hsinspect" [
 		inspect' (Args [fcabal@(takeExtension -> ".cabal")] _) = do
 			fcabal' <- liftIO $ canonicalizePath fcabal
 			toJSON <$> readProject fcabal'
-		inspect' (Args [mname] opts) = toJSON <$> scanModule (ghcs opts) (CabalModule Cabal Nothing mname)
+		inspect' (Args [mname] opts) = toJSON <$> scanModule (ghcs opts) (CabalModule Cabal Nothing mname) Nothing
 		inspect' _ = toolError "Specify module name or file name (.hs or .cabal)"
