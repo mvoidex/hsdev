@@ -60,7 +60,7 @@ commands = [
 		manyReq $ projectArg `desc` "project path or .cabal",
 		manyReq $ fileArg `desc` "source file",
 		manyReq $ pathArg `desc` "directory to scan for files and projects",
-		dataArg `desc` "files contents in format [{<path>:<contents>}, ...]",
+		dataArg `desc` "files contents in format {<path>:<contents>, ...}",
 		ghcOpts, docsFlag, inferFlag])
 		"scan sources"
 		scan',
@@ -802,10 +802,12 @@ commandStrMsg m = CommandError m []
 
 -- | Automatically scan files and projects
 autoScan :: Opts String -> CommandOptions -> [FilePath] -> [Project] -> CommandM ()
-autoScan as copts srcs projs = updateProcess copts as $
-	concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- n]) [
-		(srcs, Update.scanFile),
-		(map (view projectCabal) projs, Update.scanProject)]
+autoScan as copts srcs projs
+	| flagSet "autoscan" as = updateProcess copts as $
+		concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- n]) [
+			(srcs, Update.scanFile),
+			(map (view projectCabal) projs, Update.scanProject)]
+	| otherwise = return ()
 
 -- | Check positional args count
 checkPosArgs :: Cmd a -> Cmd a

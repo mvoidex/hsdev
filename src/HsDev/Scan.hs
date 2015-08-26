@@ -14,10 +14,10 @@ module HsDev.Scan (
 	) where
 
 import Control.Applicative ((<|>))
-import Control.Lens (view, preview, set, _Right)
+import Control.Lens (view, preview, set, _Right, _1, _2, _3, (^.))
 import Control.Monad.Except
 import qualified Data.Map as M
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 import System.Directory
 
 import HsDev.Scan.Browse (browsePackages)
@@ -129,4 +129,6 @@ changedModule db opts m = maybe (return True) (liftM not . upToDate opts) m' whe
 
 -- | Returns new (to scan) and changed (to rescan) modules
 changedModules :: Database -> [String] -> [ModuleToScan] -> ExceptT String IO [ModuleToScan]
-changedModules db opts = filterM (\ (m, opts', _) -> changedModule db (opts ++ opts') m)
+changedModules db opts = filterM $ \m -> if isJust (m ^. _3)
+	then return True
+	else changedModule db (opts ++ (m ^. _2)) (m ^. _1)

@@ -22,12 +22,12 @@ import Data.Char (isSpace)
 import Data.Function (on)
 import Data.List
 import Data.Map (Map)
-import Data.Maybe (fromMaybe, mapMaybe, catMaybes, listToMaybe)
+import Data.Maybe (fromMaybe, mapMaybe, catMaybes, listToMaybe, isJust)
 import Data.Ord (comparing)
 import Data.String (IsString, fromString)
 import Data.Text (Text)
 import qualified Data.Text as T (unpack)
-import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, getPOSIXTime)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
 import qualified System.Directory as Dir
@@ -336,7 +336,7 @@ inspectFile opts file mcts = do
 	absFilename <- liftE $ Dir.canonicalizePath file
 	ex <- liftE $ Dir.doesFileExist absFilename
 	unless ex $ throwError $ "File '" ++ absFilename ++ "' doesn't exist"
-	inspect (FileModule absFilename proj) (fileInspection absFilename opts) $ do
+	inspect (FileModule absFilename proj) ((if isJust mcts then fileContentsInspection else fileInspection) absFilename opts) $ do
 		-- docsMap <- liftE $ if hdocsWorkaround
 		-- 	then hdocsProcess absFilename opts
 		-- 	else liftM Just $ hdocs (FileModule absFilename Nothing) opts
@@ -357,6 +357,12 @@ fileInspection :: FilePath -> [String] -> ExceptT String IO Inspection
 fileInspection f opts = do
 	tm <- liftE $ Dir.getModificationTime f
 	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ sort $ ordNub opts
+
+-- | File contents inspection data
+fileContentsInspection :: FilePath -> [String] -> ExceptT String IO Inspection
+fileContentsInspection _ opts = do
+	tm <- liftE getPOSIXTime
+	return $ InspectionAt tm $ sort $ ordNub opts
 
 -- | Enumerate project dirs
 projectDirs :: Project -> ExceptT String IO [Extensions FilePath]
