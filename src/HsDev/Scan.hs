@@ -14,6 +14,7 @@ module HsDev.Scan (
 	) where
 
 import Control.Applicative ((<|>))
+import Control.DeepSeq
 import Control.Lens (view, preview, set, _Right, _1, _2, _3, (^.))
 import Control.Monad.Except
 import qualified Data.Map as M
@@ -46,6 +47,9 @@ data ScanContents = ScanContents {
 	modulesToScan :: [ModuleToScan],
 	projectsToScan :: [ProjectToScan],
 	sandboxesToScan :: [SandboxToScan] }
+
+instance NFData ScanContents where
+	rnf (ScanContents ms ps ss) = rnf ms `seq` rnf ps `seq` rnf ss
 
 -- | Enum project sources
 enumProject :: Project -> ExceptT String IO ProjectToScan
