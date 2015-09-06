@@ -14,18 +14,13 @@ module HsDev.Tools.Ghc.Check (
 import Control.Lens (preview, view, each, _Just, (^..))
 import Control.Monad.Except
 import Control.Concurrent.FiniteChan
-import Data.Maybe (fromMaybe, mapMaybe)
-import Data.Version (showVersion)
-import Data.Time.Clock (getCurrentTime)
+import Data.Maybe (fromMaybe)
 import HsDev.Tools.Ghc.Worker
 import System.FilePath (makeRelative)
 import System.Directory (doesDirectoryExist)
-import Text.Read (readMaybe)
 
 import GHC hiding (Warning, Module, moduleName)
 import Outputable
-import qualified Packages as GHC
-import StringBuffer (stringToStringBuffer)
 import FastString (unpackFS)
 import qualified ErrUtils as E
 
@@ -66,7 +61,6 @@ check opts cabal m msrc = case view moduleLocation m of
 				cabalOpt cabal,
 				moduleOpts pkgs m,
 				opts]
-			tm <- liftIO getCurrentTime
 			clearTargets
 			target <- makeTarget (makeRelative dir file) msrc
 			loadTargets [target]

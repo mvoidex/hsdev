@@ -21,8 +21,8 @@ module HsDev.Util (
 	fromUtf8, toUtf8, readFileUtf8, writeFileUtf8,
 	-- * IO
 	hGetLineBS, logException, logIO, ignoreIO,
-	-- * Task
-	liftTask,
+	-- * Async
+	liftAsync,
 
 	-- * Reexportss
 	module Control.Monad.Except,
@@ -51,7 +51,7 @@ import System.Directory
 import System.FilePath
 import System.IO
 
-import Control.Concurrent.Task
+import Control.Concurrent.Async
 
 -- | Run action with current directory set
 withCurrentDirectory :: FilePath -> IO a -> IO a
@@ -125,7 +125,7 @@ split p = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break p)
 
 -- | ordNub is quadratic, https://github.com/nh2/haskell-ordnub/#ordnub
 ordNub :: Ord a => [a] -> [a]
-ordNub l = go Set.empty l where
+ordNub = go Set.empty where
 	go _ [] = []
 	go s (x:xs)
 		| x `Set.member` s = go s xs
@@ -214,5 +214,5 @@ logIO pre out = handle onIO where
 ignoreIO :: IO () -> IO ()
 ignoreIO = handle (const (return ()) :: IOException -> IO ())
 
-liftTask :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Task a) -> ExceptT String m a
-liftTask = liftExceptionM . ExceptT . liftIO . liftM (left show) . join . liftM taskWait
+liftAsync :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Async a) -> ExceptT String m a
+liftAsync = liftExceptionM . ExceptT . liftIO . liftM (left show) . join . liftM waitCatch

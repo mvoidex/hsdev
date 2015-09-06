@@ -252,8 +252,7 @@ ghcModWorker p = do
 		runGhcModT'' cur act
 			| functionNotExported = withCurrentDirectory cur $
 				void $ runGhcModT GhcMod.defaultOptions $ act `catchError` (void . return)
-			| otherwise = do
-				void $ GhcMod.runGhcModT' cur GhcMod.defaultOptions $ act `catchError` (void . return)
+			| otherwise = void $ GhcMod.runGhcModT' cur GhcMod.defaultOptions $ act `catchError` (void . return)
 
 type WorkerMap = MVar (M.Map FilePath (Worker (GhcModT IO)))
 
@@ -267,7 +266,7 @@ instance MonadThrow (GhcModT IO) where
 instance MonadCatch (GhcModT IO) where
 	catch = gcatch
 
-dispatch :: FilePath -> GhcModT IO a -> ReaderT WorkerMap IO (Task a)
+dispatch :: FilePath -> GhcModT IO a -> ReaderT WorkerMap IO (Async a)
 dispatch file act = do
 	mvar <- ask
 	home <- liftIO getHomeDirectory
@@ -282,8 +281,8 @@ dispatch file act = do
 waitMultiGhcMod :: Worker (ReaderT WorkerMap IO) -> FilePath -> GhcModT IO a -> ExceptT String IO a
 waitMultiGhcMod w f =
 	liftIO . pushTask w . dispatch f >=>
-	asExceptT . taskWait >=>
-	asExceptT . taskWait
+	asExceptT . waitCatch >=>
+	asExceptT . waitCatch
 	where
 		asExceptT :: Monad m => m (Either SomeException a) -> ExceptT String m a
 		asExceptT = ExceptT . liftM (left (\(SomeException e) -> show e))

@@ -736,7 +736,7 @@ commands = [
 
 		-- | Evaluate expression
 		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
-		ghcEval' exprs _ copts = mapCommandErrorStr $ liftM (map toValue) $ liftTask $
+		ghcEval' exprs _ copts = mapCommandErrorStr $ liftM (map toValue) $ liftAsync $
 			pushTask (commandGhci copts) $ mapM (try . evaluate) exprs
 			where
 				toValue :: Either SomeException String -> Value
