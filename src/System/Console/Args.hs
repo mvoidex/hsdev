@@ -105,10 +105,10 @@ splitOpts :: [Opt] -> Opts a -> (Opts a, Opts a)
 splitOpts opts = (Opts *** Opts) . M.partitionWithKey (\n _ -> n `elem` optNames) . getOpts where
 	optNames = map optName opts
 
-(%--) :: Format a => String -> a -> Opts String
-n %-- v = Opts $ M.singleton n [format v]
+(%--) :: FormatBuild a => String -> a -> Opts String
+n %-- v = Opts $ M.singleton n [format "{}" ~~ formatBuild v]
 
-(%-?) :: Format a => String -> Maybe a -> Opts String
+(%-?) :: FormatBuild a => String -> Maybe a -> Opts String
 n %-? v = maybe mempty (n %--) v
 
 -- | Make 'Opts' with flag set
@@ -188,17 +188,17 @@ parse os = unfoldrM parseCmd >=> (verify os . mconcat) where
 				Required _ -> case cmds of
 					(value:cmds')
 						| not (isFlag value) -> Right $ Just (Args [] $ Opts $ M.singleton (optName opt') [value], cmds')
-						| otherwise -> Left $ "No value specified for option '$'" ~~ optName opt'
+						| otherwise -> Left $ format "No value specified for option '{}'" ~~ optName opt'
 					[] -> Left $ "No value specified for option '" ++ optName opt' ++ "'"
 				List _ -> case cmds of
 					(value:cmds')
 						| not (isFlag value) -> Right $ Just (Args [] $ Opts $ M.singleton (optName opt') [value], cmds')
-						| otherwise -> Left $ "No value specified for option '$'" ~~ optName opt'
-					[] -> Left $ "No value specified for option '$'" ~~ optName opt'
+						| otherwise -> Left $ format "No value specified for option '{}'" ~~ optName opt'
+					[] -> Left $ format "No value specified for option '{}'" ~~ optName opt'
 		| otherwise = Right $ Just (Args [cmd] mempty, cmds)
 
 	lookOpt :: String -> [Opt] -> Either String Opt
-	lookOpt n = maybe (Left $ "Invalid option '$'" ~~ n) Right . findOpt (dropWhile (== '-') n)
+	lookOpt n = maybe (Left $ format "Invalid option '{}'" ~~ n) Right . findOpt (dropWhile (== '-') n)
 
 -- | Parse with no options declarations
 parse_ :: [String] -> Args
@@ -273,14 +273,14 @@ verify os = withOpts' $ fmap (Opts . M.fromList) . mapM (uncurry verify') . M.to
 	withOpts' f (Args a o) = Args a <$> f o
 	verify' :: String -> [String] -> Either String (String, [String])
 	verify' n v = case findOpt n os of
-		Nothing -> Left $ "Invalid option '$'" ~~ n
+		Nothing -> Left $ format "Invalid option '{}'" ~~ n
 		Just opt -> maybe (Right (n, v)) Left $ case (optArg opt, v) of
 			(Flag, []) -> Nothing
-			(Flag, _) -> Just $ "Flag '$' has a value" ~~ n
-			(Required _, []) -> Just $ "No value for '$'" ~~ n
+			(Flag, _) -> Just $ format "Flag '{}' has a value" ~~ n
+			(Required _, []) -> Just $ format "No value for '{}'" ~~ n
 			(Required _, [_]) -> Nothing
-			(Required _, _:_) -> Just $ "Too much values for '$'" ~~ n
-			(List _, []) -> Just $ "No values for '$'" ~~ n
+			(Required _, _:_) -> Just $ format "Too much values for '{}'" ~~ n
+			(List _, []) -> Just $ format "No values for '{}'" ~~ n
 			(List _, _) -> Nothing
 
 isFlag :: String -> Bool

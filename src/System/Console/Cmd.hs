@@ -16,7 +16,7 @@ import Data.Maybe
 import qualified Data.Map as M (delete)
 
 import System.Console.Args
-import Text.Format ((~~), (%))
+import Text.Format (format, (~~))
 
 type CmdAction a = ExceptT String Maybe a
 
@@ -114,7 +114,7 @@ helpCommand tool toCmd cmds = helpcmd where
 		"help"
 		["command"]
 		[flag "help" `short` ['?'] `desc` "show help (when using form 'command -?' or 'command --help')"]
-		("help command, can be called in form '$ [command] -?' or '$ [command] --help" ~~ tool % tool)
+		(format "help command, can be called in form '{0} [command] -?' or '{0} [command] --help" ~~ tool)
 		onHelp
 	checkHelp :: Args -> Args
 	checkHelp a

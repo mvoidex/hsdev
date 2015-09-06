@@ -286,9 +286,9 @@ scanDocs ims = do
 	runTasks $ map (scanDocs' w) ims
 	where
 		scanDocs' w im = runTask "scanning docs" (subject (view inspectedId im) []) $ Log.scope "docs" $ do
-			Log.log Log.Trace $ "Scanning docs for $" ~~  view inspectedId im
+			Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
 			im' <- liftExceptT $ S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im
-			Log.log Log.Trace $ "Docs for $ updated" ~~ view inspectedId im
+			Log.log Log.Trace $ "Docs for {} updated" ~~ view inspectedId im
 			updater $ return $ fromModule im'
 		inWorkerT w = ExceptT . inWorker w . runExceptT 
 
@@ -297,9 +297,9 @@ inferModTypes = runTasks . map inferModTypes' where
 	inferModTypes' im = runTask "inferring types" (subject (view inspectedId im) []) $ Log.scope "infer" $ do
 		-- TODO: locate sandbox
 		sets <- ask
-		Log.log Log.Trace $ "Inferring types for $" ~~ view inspectedId im
+		Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
 		im' <- liftExceptT $ S.scanModify (infer' sets) im
-		Log.log Log.Trace $ "Types for $ inferred" ~~ view inspectedId im
+		Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
 		updater $ return $ fromModule im'
 	infer' :: Settings -> [String] -> Cabal -> Module -> ExceptT String IO Module
 	infer' sets opts cabal m = case preview (moduleLocation . moduleFile) m of
@@ -331,9 +331,9 @@ scan cache' part' mlocs opts act = Log.scope "scan" $ do
 updateEvent :: (MonadIO m, MonadCatch m, MonadCatchIO m) => Watched -> Event -> ExceptT String (UpdateDB m) ()
 updateEvent (WatchedProject proj projOpts) e
 	| isSource e = do
-		Log.log Log.Info $ "File '${file}' in project ${proj} changed" ~~
-			("file" %= view eventPath e) %
-			("proj" %= view projectName proj)
+		Log.log Log.Info $ "File '{file}' in project {proj} changed"
+			~~ ("file" %= view eventPath e)
+			~~ ("proj" %= view projectName proj)
 		dbval <- readDB
 		let
 			opts = fromMaybe [] $ do
@@ -341,17 +341,20 @@ updateEvent (WatchedProject proj projOpts) e
 				preview (inspection . inspectionOpts) $ getInspected dbval m
 		scanFile opts $ view eventPath e
 	| isCabal e = do
-		Log.log Log.Info $ "Project ${proj} changed" ~~ ("proj" %= view projectName proj)
+		Log.log Log.Info $ "Project {proj} changed"
+			~~ ("proj" %= view projectName proj)
 		scanProject projOpts $ view projectCabal proj
 	| otherwise = return ()
 updateEvent (WatchedSandbox cabal cabalOpts) e
 	| isConf e = do
-		Log.log Log.Info $ "Sandbox ${cabal} changed" ~~ ("cabal" %= cabal)
+		Log.log Log.Info $ "Sandbox {cabal} changed"
+			~~ ("cabal" %= cabal)
 		scanCabal cabalOpts cabal
 	| otherwise = return ()
 updateEvent WatchedModule e
 	| isSource e = do
-		Log.log Log.Info $ "Module ${file} changed" ~~ ("file" %= view eventPath e)
+		Log.log Log.Info $ "Module {file} changed"
+			~~ ("file" %= view eventPath e)
 		dbval <- readDB
 		let
 			opts = fromMaybe [] $ do

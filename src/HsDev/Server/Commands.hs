@@ -48,7 +48,7 @@ import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
 import qualified System.Directory.Watcher as Watcher
 import System.Console.Cmd hiding (run)
-import Text.Format ((~~), (%), Format(..))
+import Text.Format ((~~), FormatBuild(..))
 
 import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
@@ -104,10 +104,10 @@ commands = [
 				-- start-process foo 'bar baz' ⇒ foo bar baz -- not expected
 				-- start-process foo '"bar baz"' ⇒ foo "bar baz" -- ok
 				biescape = escape quote . escape quoteDouble
-				script = "try { start-process $ $ -WindowStyle Hidden -WorkingDirectory $ } catch { $$_.Exception, $$_.InvocationInfo.Line }" ~~ (
-					escape quote myExe %
-					(intercalate ", " (map biescape args)) %
-					escape quote curDir)
+				script = "try {{ start-process {} {} -WindowStyle Hidden -WorkingDirectory {} }} catch {{ $_.Exception, $_.InvocationInfo.Line }}"
+					~~ escape quote myExe
+					~~ intercalate ", " (map biescape args)
+					~~ escape quote curDir
 			r <- readProcess "powershell" [
 				"-Command",
 				script] ""
@@ -329,7 +329,7 @@ chaner :: F.Chan String -> Consumer Text
 chaner ch = Consumer withChan where
 	withChan f = f (F.putChan ch . T.unpack)
 
-instance Format Log.Level where
+instance FormatBuild Log.Level where
 
 -- | Inits log chan and returns functions (print message, wait channel)
 initLog :: Opts String -> IO (Log, Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
@@ -343,7 +343,7 @@ initLog sopts = do
 		[logger text console],
 		[logger text (chaner msgs)],
 		maybeToList $ (logger text . file) <$> arg "log" sopts]
-	Log.writeLog l Log.Info ("Log politics: low = $, high = $" ~~ (logLow % logHigh))
+	Log.writeLog l Log.Info ("Log politics: low = {}, high = {}" ~~ logLow ~~ logHigh)
 	let
 		listenLog f = logException "listen log" (F.putChan msgs) $ do
 			msgs' <- F.dupChan msgs

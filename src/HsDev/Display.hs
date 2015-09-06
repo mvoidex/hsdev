@@ -37,11 +37,11 @@ instance Display FilePath where
 	display = id
 	displayType _ = "path"
 
-instance Format Cabal where
-	format = display
+instance FormatBuild Cabal where
+	formatBuild = formatBuild . display
 
-instance Format ModuleLocation where
-	format = display
+instance FormatBuild ModuleLocation where
+	formatBuild = formatBuild . display
 
-instance Format Project where
-	format = display
+instance FormatBuild Project where
+	formatBuild = formatBuild . display
