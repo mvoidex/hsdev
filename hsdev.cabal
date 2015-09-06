@@ -22,7 +22,6 @@ library
   exposed-modules:
     Control.Apply.Util
     Control.Concurrent.FiniteChan
-    Control.Concurrent.Task
     Control.Concurrent.Worker
     Control.Concurrent.Util
     Data.Async
@@ -38,6 +37,7 @@ library
     HsDev.Client.Commands
     HsDev.Commands
     HsDev.Database
+    HsDev.Database.Async
     HsDev.Database.Update
     HsDev.Database.Update.Types
     HsDev.Display
