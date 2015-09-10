@@ -3,31 +3,32 @@
 module HsDev.Tools.AutoFix (
 	Correction(..), correctionMessage, corrector,
 	correct, corrections,
-	autoFix_, autoFix, updateRange,
+	autoFix_, autoFix,
 	CorrectorMatch,
 	correctors,
 	match,
 	findCorrector,
 
-	module Data.Mark,
+	module Data.Text.Region,
 	module HsDev.Tools.Types
 	) where
 
 import Control.Applicative
-import Control.Lens (makeLenses, set, view)
+import Control.Lens (makeLenses, set, view, (^.))
 import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)
+import Data.Text.Region hiding (Region(..))
+import qualified Data.Text.Region as R
 
-import Data.Mark hiding (at, length)
-import HsDev.Symbols.Location
+import HsDev.Symbols.Location (Position(..), Region(..))
 import HsDev.Tools.Base
 import HsDev.Tools.Types
 import HsDev.Util ((.::))
 
 data Correction = Correction {
 	_correctionMessage :: String,
-	_corrector :: Replace String () }
-		deriving (Eq, Read, Show)
+	_corrector :: Replace String }
+		deriving (Eq)
 
 instance ToJSON Correction where
 	toJSON (Correction msg cor) = object [
@@ -39,10 +40,13 @@ instance FromJSON Correction where
 		v .:: "message" <*>
 		v .:: "corrector"
 
+instance ApplyMap Correction where
+	applyMap m (Correction msg c) = Correction msg (applyMap m c)
+
 makeLenses ''Correction
 
 correct :: Correction -> EditM String ()
-correct c = run [_corrector c]
+correct c = run (Chain [_corrector c])
 
 corrections :: [Note OutputMessage] -> [Note Correction]
 corrections = mapMaybe toCorrection where
@@ -56,21 +60,16 @@ corrections = mapMaybe toCorrection where
 				note
 				(Correction
 					(view (note . message) n)
-					(replace (fromRegion $ view noteRegion n) sugg))
+					(replace (fromRegion $ view noteRegion n) (by sugg)))
 				n
 
 -- | Apply corrections
 autoFix_ :: [Correction] -> EditM String ()
-autoFix_ = mapM_ correct
+autoFix_ = grouped . mapM_ correct
 
 -- | Apply corrections and update rest correction positions
 autoFix :: [Correction] -> [Correction] -> EditM String [Correction]
-autoFix fix' up' = autoFix_ fix' >> mapM updateRange up'
-
-updateRange :: Correction -> EditM String Correction
-updateRange corr = do
-	region' <- mapRange $ replaceRange (_corrector corr)
-	return $ corr { _corrector = (_corrector corr) { replaceRange = region' } }
+autoFix fix' up' = grouped $ autoFix_ fix' >> mapM update up'
 
 type CorrectorMatch = Note OutputMessage -> Maybe (Note Correction)
 
@@ -78,16 +77,15 @@ correctors :: [CorrectorMatch]
 correctors = [
 	match "^The (?:qualified )?import of `([\\w\\.]+)' is redundant" $ \_ rgn -> Correction
 		"Redundant import"
-		(replace
-			(expandLines rgn)
-			""),
+		(cut
+			(expandLines rgn)),
 	match "^(.*?)\nFound:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g rgn -> Correction
 		(g `at` 1)
 		(replace
-			(rangeFrom rgn `rangeSize` stringSize (length $ g `at` 2))
-			(g `at` 3))]
+			((rgn ^. regionFrom) `regionSize` pt 0 (length $ g `at` 2))
+			(by $ g `at` 3))]
 
-match :: String -> ((Int -> Maybe String) -> Range -> Correction) -> CorrectorMatch
+match :: String -> ((Int -> Maybe String) -> R.Region -> Correction) -> CorrectorMatch
 match pat f n = do
 	g <- matchRx pat (view (note . message) n)
 	return $ set note (f g (fromRegion $ view noteRegion n)) n
@@ -95,8 +93,8 @@ match pat f n = do
 findCorrector :: Note OutputMessage -> Maybe (Note Correction)
 findCorrector n = listToMaybe $ mapMaybe ($ n) correctors
 
-fromRegion :: Region -> Range
+fromRegion :: Region -> R.Region
 fromRegion (Region f t) = fromPosition f `till` fromPosition t
 
 fromPosition :: Position -> Point
-fromPosition (Position l c) = point (pred l) (pred c)
+fromPosition (Position l c) = pt (pred l) (pred c)

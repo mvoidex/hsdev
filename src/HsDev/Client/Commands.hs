@@ -718,18 +718,18 @@ commands = [
 			files <- liftM (ordNub . sort) $ mapM (findPath copts) $ mapMaybe (preview $ Tools.noteSource . moduleFile) corrs
 			let
 				doFix :: FilePath -> AutoFix.EditM String [Tools.Note AutoFix.Correction]
-				doFix file = do
+				doFix file = AutoFix.grouped $ do
 					AutoFix.autoFix_ fCorrs
-					(each . Tools.note) AutoFix.updateRange fUpCorrs
+					(each . Tools.note) AutoFix.update fUpCorrs
 					where
 						findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
 						findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
 						fCorrs = map (view Tools.note) $ findCorrs file corrs
 						fUpCorrs = findCorrs file upCorrs
 				runFix file
-					| flagSet "pure" as = return $ fst $ AutoFix.runEdit $ doFix file
+					| flagSet "pure" as = return $ fst $ AutoFix.edit "" $ doFix file
 					| otherwise = do
-						(corrs', cts') <- liftM (`AutoFix.editEval` doFix file) $ liftE $ readFileUtf8 file
+						(corrs', cts') <- liftM (`AutoFix.edit` doFix file) $ liftE $ readFileUtf8 file
 						liftE $ writeFileUtf8 file cts'
 						return corrs'
 			mapCommandErrorStr $ liftM concat $ mapM runFix files

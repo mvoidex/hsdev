@@ -51,18 +51,18 @@ main = toolMain "hsautofix" [
 			files <- liftE $ mapM canonicalizePath $ ordNub $ sort $ mapMaybe (preview $ noteSource . moduleFile) corrs
 			let
 				doFix :: FilePath -> EditM String [Note Correction]
-				doFix file = do
+				doFix file = grouped $ do
 					autoFix_ fixCorrs'
-					(each . note) updateRange upCorrs'
+					(each . note) update upCorrs'
 					where
 						findCorrs :: FilePath -> [Note Correction] -> [Note Correction]
 						findCorrs f = filter ((== Just f) . preview (noteSource . moduleFile))
 						fixCorrs' = map (view note) $ findCorrs file fixCorrs
 						upCorrs' = findCorrs file upCorrs
 				runFix file
-					| flagSet "pure" as = return $ fst $ runEdit $ doFix file
+					| flagSet "pure" as = return $ fst $ edit "" $ doFix file
 					| otherwise = do
-						(corrs', cts') <- liftM (`editEval` doFix file) $ liftE $ readFileUtf8 file
+						(corrs', cts') <- liftM (`edit` doFix file) $ liftE $ readFileUtf8 file
 						liftE $ writeFileUtf8 file cts'
 						return corrs'
 			liftM concat $ mapM runFix files
