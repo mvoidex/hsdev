@@ -6,7 +6,7 @@ module HsDev.Client.Commands (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (view, over, preview, each, _Just)
+import Control.Lens (view, preview, each, _Just)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Catch (try, SomeException(..))
@@ -241,7 +241,6 @@ commands = [
 		-- | Add data
 		add' :: [String] -> Opts String -> CommandActionT ()
 		add' _ as copts = do
-			dbval <- getDb copts
 			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
 			decodedData <- either
 				(\err -> commandError "Unable to decode data" [
@@ -251,29 +250,10 @@ commands = [
 				eitherDecode $ toUtf8 jsonData
 
 			let
-				updateData (ResultDatabase db) = DB.update (dbVar copts) $ return db
-				updateData (ResultDeclaration d) = commandError "Can't insert declaration" ["declaration" .= d]
-				updateData (ResultModuleDeclaration md) = do
-					let
-						ModuleId mname mloc = view declarationModuleId md
-						defMod = Module mname Nothing mloc mempty mempty mempty
-						defInspMod = Inspected InspectionNone mloc (Right defMod)
-						dbmod = maybe
-							defInspMod
-							(over inspectionResult (<|> Right defMod)) $
-							M.lookup mloc (databaseModules dbval)
-						updatedMod = over inspectionResult (fmap $ addDeclaration (view moduleDeclaration md)) dbmod
-					DB.update (dbVar copts) $ return $ fromModule updatedMod
-				updateData (ResultModuleId (ModuleId mname mloc)) = when (M.notMember mloc $ databaseModules dbval) $
-					DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone mloc (Right $ Module mname Nothing mloc mempty mempty mempty)
-				updateData (ResultModule m) = DB.update (dbVar copts) $ return $ fromModule $ Inspected InspectionNone (view moduleLocation m) (Right m)
-				updateData (ResultInspectedModule m) = DB.update (dbVar copts) $ return $ fromModule m
-				updateData (ResultProject p) = DB.update (dbVar copts) $ return $ fromProject p
-				updateData (ResultList l) = mapM_ updateData l
-				updateData (ResultMap m) = mapM_ updateData $ M.elems m
-				updateData ResultNone = return ()
-				updateData _ = commandError "Invalid data" []
-			updateData decodedData
+				updateData (AddedDatabase db) = DB.update (dbVar copts) $ return db
+				updateData (AddedModule m) = DB.update (dbVar copts) $ return $ fromModule m
+				updateData (AddedProject p) = DB.update (dbVar copts) $ return $ fromProject p
+			mapM_ updateData (decodedData :: [AddedContents])
 
 		-- | Scan sources and installed packages
 		scan' :: [String] -> Opts String -> CommandActionT ()

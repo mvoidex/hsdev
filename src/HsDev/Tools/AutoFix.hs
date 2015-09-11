@@ -28,7 +28,7 @@ import HsDev.Util ((.::))
 data Correction = Correction {
 	_correctionMessage :: String,
 	_corrector :: Replace String }
-		deriving (Eq)
+		deriving (Eq, Show)
 
 instance ToJSON Correction where
 	toJSON (Correction msg cor) = object [

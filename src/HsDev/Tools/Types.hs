@@ -43,6 +43,7 @@ data Note a = Note {
 	_noteRegion :: Region,
 	_noteLevel :: Maybe Severity,
 	_note :: a }
+		deriving (Eq, Show)
 
 makeLenses ''Note
 
@@ -77,6 +78,7 @@ instance Canonicalize (Note a) where
 data OutputMessage = OutputMessage {
 	_message :: String,
 	_messageSuggestion :: Maybe String }
+		deriving (Eq, Ord, Read, Show)
 
 instance NFData OutputMessage where
 	rnf (OutputMessage m s) = rnf m `seq` rnf s
