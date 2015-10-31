@@ -34,7 +34,7 @@ import HsDev.Tools.GhcMod (OutputMessage, TypedRegion, WorkerMap)
 import HsDev.Tools.Ghc.Worker (Worker, Ghc)
 import HsDev.Tools.Types (Note, OutputMessage)
 import HsDev.Tools.AutoFix (Correction)
-import HsDev.Util ((.::), (.::?))
+import HsDev.Util ((.::), (.::?), jsonUnion)
 
 #if mingw32_HOST_OS
 import System.Win32.FileMapping.NamePool (Pool)
@@ -84,22 +84,48 @@ type CommandActionT a = CommandOptions -> CommandM a
 data Command =
 	Ping |
 	Listen |
-	AddData [AddedContents] |
-	Scan [ScanTarget] [FilePath] [ActiveFile] [String] Bool Bool |
-	Refine RefineCommand [SourceTarget] |
-	Remove ScanTarget |
-	GetInfo InfoCommand |
-	Context ContextCommand FilePath AutoScan |
-	Hayoo String Int Int |
-	CabalList [String] |
-	Lint [ActiveFile] AutoScan |
-	Check [ActiveFile] [String] AutoScan |
-	CheckLint [ActiveFile] [String] AutoScan |
-	Types ActiveFile [String] AutoScan |
-	GhcMod GhcModCommand |
-	AutoFix AutoFixCommand |
-	GhcEval [String] |
-	Link Bool |
+	AddData { addedContents :: [AddedContents] } |
+	Scan {
+		scanTargets :: [ScanTarget],
+		scanPaths :: [FilePath],
+		scanContents :: [ActiveFile],
+		scanGhcOpts :: [String],
+		scanDocs :: Bool,
+		scanInferTypes :: Bool } |
+	Refine {
+		refineCommand :: RefineCommand,
+		refineTargets :: [SourceTarget] } |
+	Remove {
+		removeTarget :: ScanTarget } |
+	GetInfo { getInfoCommand :: InfoCommand } |
+	Context {
+		contextCommand :: ContextCommand,
+		contextFile :: FilePath,
+		contextAutoScan :: AutoScan } |
+	Hayoo {
+		hayooQuery :: String,
+		hayooPage :: Int,
+		hayooPages :: Int } |
+	CabalList { cabalListPackages :: [String] } |
+	Lint {
+		lintFiles :: [ActiveFile],
+		lintAutoScan :: AutoScan } |
+	Check {
+		checkFiles :: [ActiveFile],
+		checkGhcOpts :: [String],
+		checkAutoScan :: AutoScan } |
+	CheckLint {
+		checkLintFiles :: [ActiveFile],
+		checkLintGhcOpts :: [String],
+		checkLintAutoScan :: AutoScan } |
+	Types {
+		typesFile :: ActiveFile,
+		typesGhcOpts :: [String],
+		typesAutoScan :: AutoScan } |
+	GhcMod { ghcModCommand :: GhcModCommand } |
+	AutoFix { autoFixCommand :: AutoFixCommand } |
+	GhcEval { ghcEvalExpressions :: [String] } |
+	Link { linkHold :: Bool } |
 	Exit
 		deriving (Show)
 
@@ -120,12 +146,12 @@ data InfoCommand =
 	InfoSandboxes |
 	InfoSymbol SearchQuery [TargetFilter] |
 	InfoModule [TargetFilter] |
-	InfoResolve [TargetFilter] |
+	InfoResolve [TargetFilter] Bool |
 	InfoProject (Either String FilePath) |
 	InfoSandbox FilePath
 		deriving (Show)
 
-data AutoScan = AutoScan Bool [String] deriving (Show)
+data AutoScan = AutoScan { autoScan :: Bool, autoScanGhcOpts :: [String] } deriving (Show)
 
 data ContextCommand =
 	Lookup String |
@@ -152,6 +178,7 @@ data AutoFixCommand =
 data ScanTarget = ScanProject FilePath | ScanPackage String | ScanCabal Cabal | ScanFile FilePath deriving (Show)
 data SourceTarget = SourceProject FilePath | SourceFile FilePath | SourceModule String deriving (Show)
 data ActiveFile = ActiveFile FilePath (Maybe String) deriving (Show)
+-- TODO: Why deps is just string?
 data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone | TargetOldToo deriving (Show)
 data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
@@ -175,7 +202,7 @@ instance FromCmd Command where
 		cmd "remove" (Remove <$> cmdP),
 		GetInfo <$> cmdP,
 		Context <$> cmdP <*> ctx <*> cmdP,
-		cmd "hayoo" (Hayoo <$> strArgument idm <*> hayooPage <*> hayooPages),
+		cmd "hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
 		cmd "cabal" (cmd "list" (CabalList <$> many (strArgument idm))),
 		cmd "lint" (Lint <$> many cmdP <*> cmdP),
 		cmd "check" (Check <$> many cmdP <*> ghcOpts <*> cmdP),
@@ -198,7 +225,7 @@ instance FromCmd InfoCommand where
 		cmd "sandboxes" (pure InfoSandboxes),
 		cmd "symbol" (InfoSymbol <$> cmdP <*> many cmdP),
 		cmd "module" (InfoModule <$> many cmdP),
-		cmd "resolve" (InfoResolve <$> many cmdP),
+		cmd "resolve" (InfoResolve <$> many cmdP <*> exportsFlag),
 		cmd "project" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" (InfoSandbox <$> (pathArg $ help "locate sandbox in parent of this path"))]
 
@@ -262,13 +289,13 @@ ctx = fileArg
 dataArg = strOption (long "data" <> metavar "contents" <> help "data to pass to command")
 depsArg = strOption (long "deps" <> metavar "object" <> help "filter to such that in dependency of specified object (file or project)")
 docsFlag = switch (long "docs" <> help "scan source file docs")
-exportsArg = switch (long "exports" <> short 'e' <> help "resolve module exports")
+exportsFlag = switch (long "exports" <> short 'e' <> help "resolve module exports")
 fileArg = strOption (long "file" <> metavar "path" <> short 'f')
 findArg = strOption (long "find" <> metavar "query" <> help "infix match")
 ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "options to pass to GHC"))
 globalFlag = switch (long "global" <> help "scope of project")
-hayooPage = option auto (long "page" <> metavar "n" <> short 'p' <> help "page number (0 by default)" <> value 0)
-hayooPages = option auto (long "pages" <> metavar "count" <> short 'n' <> help "pages count (1 by default)" <> value 1)
+hayooPageArg = option auto (long "page" <> metavar "n" <> short 'p' <> help "page number (0 by default)" <> value 0)
+hayooPagesArg = option auto (long "pages" <> metavar "count" <> short 'n' <> help "pages count (1 by default)" <> value 1)
 hlintOpts = many (strOption (long "hlint" <> metavar "option" <> short 'h' <> help "options to pass to hlint"))
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
@@ -287,6 +314,107 @@ sourced = switch (long "src" <> help "source files")
 standaloned = switch (long "stand" <> help "standalone files")
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
 
+cmdJson :: String -> [Pair] -> Value
+cmdJson nm ps = object $ ("command" .= nm) : ps
+
+instance ToJSON Command where
+	toJSON Ping = cmdJson "ping" []
+	toJSON Listen = cmdJson "listen" []
+	toJSON (AddData cts) = cmdJson "add" ["data" .= cts]
+	toJSON (Scan ts fs as ghcs docs' infer') = cmdJson "scan" ["targets" .= ts, "paths" .= fs, "contents" .= as, "ghc-opts" .= ghcs, "docs" .= docs', "infer" .= infer']
+	toJSON (Refine rcmd ts) = object ["targets" .= ts] `jsonUnion` rcmd
+	toJSON (Remove t) = cmdJson "remove" [] `jsonUnion` t
+	toJSON (GetInfo gcmd) = toJSON gcmd
+	toJSON (Context ccmd f as) = toJSON ccmd `jsonUnion` object ["file" .= f, "autoscan" .= as]
+	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
+	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
+	toJSON (Lint fs as) = cmdJson "lint" ["files" .= fs, "autoscan" .= as]
+	toJSON (Check fs ghcs as) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs, "autoscan" .= as]
+	toJSON (CheckLint fs ghcs as) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "autoscan" .= as]
+	toJSON (Types f ghcs as) = cmdJson "types" ["file" .= f, "ghc-opts" .= ghcs, "autoscan" .= as]
+	toJSON (GhcMod gcmd) = toJSON gcmd
+	toJSON (AutoFix acmd) = toJSON acmd
+	toJSON (GhcEval exprs) = cmdJson "ghc eval" ["exprs" .= exprs]
+	toJSON (Link h) = cmdJson "link" ["hold" .= h]
+	toJSON Exit = cmdJson "exit" []
+
+-- instance ToJSON AddedContents where
+-- 	toJSON (AddedDatabase db) = object ["database" .= db]
+-- 	toJSON (AddedModule im) = object ["module" .= im]
+-- 	toJSON (AddedProject p) = object ["project" .= p]
+
+instance ToJSON RefineCommand where
+	toJSON Docs = cmdJson "docs" []
+	toJSON Infer = cmdJson "infer" []
+
+instance ToJSON InfoCommand where
+	toJSON (InfoModules tf) = cmdJson "modules" ["filters" .= tf]
+	toJSON InfoPackages = cmdJson "packages" []
+	toJSON InfoProjects = cmdJson "projects" []
+	toJSON InfoSandboxes = cmdJson "sandboxes" []
+	toJSON (InfoSymbol q tf) = cmdJson "symbol" ["query" .= q, "filters" .= tf]
+	toJSON (InfoModule tf) = cmdJson "module" ["filters" .= tf]
+	toJSON (InfoResolve tf es) = cmdJson "resolve" ["filters" .= tf, "exports" .= es]
+	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
+	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
+
+instance ToJSON AutoScan where
+	toJSON (AutoScan f ghcs) = object ["do" .= f, "ghc-opts" .= ghcs]
+
+instance ToJSON ContextCommand where
+	toJSON (Lookup n) = cmdJson "lookup" ["name" .= n]
+	toJSON (Whois n) = cmdJson "whois" ["name" .= n]
+	toJSON ResolveScopeModules = cmdJson "scope modules" []
+	toJSON (ResolveScope q g) = cmdJson "scope" ["query" .= q, "global" .= g]
+	toJSON (Complete q w) = cmdJson "complete" ["prefix" .= q, "wide" .= w]
+
+instance ToJSON GhcModCommand where
+	toJSON GhcModLang = cmdJson "ghc-mod lang" []
+	toJSON GhcModFlags = cmdJson "ghc-mod flags" []
+	toJSON (GhcModType pos f ghcs) = cmdJson "ghc-mod type" ["position" .= pos, "file" .= f, "ghc-opts" .= ghcs]
+	toJSON (GhcModLint fs lints _) = cmdJson "ghc-mod lint" ["files" .= fs, "hlint-opts" .= lints]
+	toJSON (GhcModCheck fs ghcs _) = cmdJson "ghc-mod lint" ["files" .= fs, "ghc-opts" .= ghcs]
+	toJSON (GhcModCheckLint fs ghcs lints _) = cmdJson "ghc-mod lint" ["files" .= fs, "ghc-opts" .= ghcs, "hlint-opts" .= lints]
+
+instance ToJSON AutoFixCommand where
+	toJSON (AutoFixShow ns) = cmdJson "autofix show" ["messages" .= ns]
+	toJSON (AutoFixFix ns rests pure) = cmdJson "autofix fix" ["messages" .= ns, "rest" .= rests, "pure" .= pure]
+
+instance ToJSON ScanTarget where
+	toJSON (ScanProject fpath) = object ["project" .= fpath]
+	toJSON (ScanPackage pname) = object ["package" .= pname]
+	toJSON (ScanCabal cabal) = toJSON ["cabal" .= cabal]
+	toJSON (ScanFile fpath) = object ["file" .= fpath]
+
+instance ToJSON SourceTarget where
+	toJSON (SourceProject fpath) = object ["project" .= fpath]
+	toJSON (SourceFile fpath) = object ["file" .= fpath]
+	toJSON (SourceModule mname) = object ["module" .= mname]
+
+instance ToJSON ActiveFile where
+	toJSON (ActiveFile fpath mcts) = object ["file" .= fpath, "contents" .= mcts]
+
+instance ToJSON TargetFilter where
+	toJSON (TargetProject pname) = object ["project" .= pname]
+	toJSON (TargetFile fpath) = object ["file" .= fpath]
+	toJSON (TargetModule mname) = object ["module" .= mname]
+	toJSON (TargetDepsOf dep) = object ["deps" .= dep]
+	toJSON (TargetCabal cabal) = object ["cabal" .= cabal]
+	toJSON (TargetPackage pname) = object ["package" .= pname]
+	toJSON TargetSourced = toJSON ("sourced" :: String)
+	toJSON TargetStandalone = toJSON ("standalone" :: String)
+	toJSON TargetOldToo = toJSON ("old-too" :: String)
+
+instance ToJSON SearchQuery where
+	toJSON (SearchQuery q st) = object ["input" .= q, "type" .= st]
+
+instance ToJSON SearchType where
+	toJSON SearchExact = toJSON ("exact" :: String)
+	toJSON SearchPrefix = toJSON ("prefix" :: String)
+	toJSON SearchInfix = toJSON ("infix" :: String)
+	toJSON SearchSuffix = toJSON ("suffix" :: String)
+	toJSON SearchRegex = toJSON ("regex" :: String)
+
 instance ToJSON AddedContents where
 	toJSON (AddedDatabase db) = toJSON db
 	toJSON (AddedModule m) = toJSON m
@@ -297,9 +425,6 @@ instance FromJSON AddedContents where
 		AddedDatabase <$> parseJSON v,
 		AddedModule <$> parseJSON v,
 		AddedProject <$> parseJSON v]
-
-instance ToJSON ActiveFile where
-	toJSON (ActiveFile f c) = object ["file" .= f, "contents" .= c]
 
 instance FromJSON ActiveFile where
 	parseJSON = withObject "active-file" $ \v -> ActiveFile <$> v .:: "file" <*> v .::? "contents"

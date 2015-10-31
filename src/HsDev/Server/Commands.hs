@@ -58,7 +58,7 @@ import qualified HsDev.Database.Update as Update
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.GhcMod (ghcModMultiWorker)
 import HsDev.Server.Message as M
-import HsDev.Server.Types
+import HsDev.Server.Types hiding (cmd)
 import HsDev.Util
 
 #if mingw32_HOST_OS

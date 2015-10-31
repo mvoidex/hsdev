@@ -28,7 +28,7 @@ import qualified HsDev.Cache.Structured as SC
 import HsDev.Commands
 import qualified HsDev.Database.Async as DB
 import HsDev.Server.Message as M
-import HsDev.Server.Types
+import HsDev.Server.Types hiding (autoScan, cmd)
 import HsDev.Symbols
 import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util

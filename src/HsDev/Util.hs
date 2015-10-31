@@ -12,7 +12,7 @@ module HsDev.Util (
 	-- * Other utils
 	ordNub,
 	-- * Helper
-	(.::), (.::?), objectUnion,
+	(.::), (.::?), objectUnion, jsonUnion,
 	-- * Exceptions
 	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
 	eitherT,
@@ -144,6 +144,10 @@ objectUnion (Object l) (Object r) = Object $ HM.union l r
 objectUnion (Object l) _ = Object l
 objectUnion _ (Object r) = Object r
 objectUnion _ _ = Null
+
+-- | Union two JSON objects
+jsonUnion :: (ToJSON a, ToJSON b) => a -> b -> Value
+jsonUnion x y = objectUnion (toJSON x) (toJSON y)
 
 -- | Lift IO exception to ExceptT
 liftException :: C.MonadCatch m => m a -> ExceptT String m a
