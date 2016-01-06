@@ -267,7 +267,7 @@ data AutoFixCommand =
 
 data FileContents = FileContents FilePath String deriving (Show)
 -- TODO: Why deps is just string?
-data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone deriving (Eq, Show)
+data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone | TargetAny deriving (Eq, Show)
 data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
 
@@ -340,7 +340,7 @@ instance FromCmd FileContents where
 	cmdP = option readJSON (long "contents")
 
 instance FromCmd TargetFilter where
-	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> (flag' Cabal idm <|> (Sandbox <$> sandboxArg)), TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand")]
+	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> (flag' Cabal idm <|> (Sandbox <$> sandboxArg)), TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand"), pure TargetAny]
 
 instance FromCmd SearchQuery where
 	cmdP = SearchQuery <$> strArgument idm <*> (asum [
@@ -516,9 +516,10 @@ instance ToJSON TargetFilter where
 	toJSON (TargetPackage pname) = object ["package" .= pname]
 	toJSON TargetSourced = toJSON ("sourced" :: String)
 	toJSON TargetStandalone = toJSON ("standalone" :: String)
+	toJSON TargetAny = toJSON ()
 
 instance FromJSON TargetFilter where
-	parseJSON j = obj j <|> str' where
+	parseJSON j = obj j <|> str' <|> any' where
 		obj = withObject "target-filter" $ \v -> asum [
 			TargetProject <$> v .:: "project",
 			TargetFile <$> v .:: "file",
@@ -532,6 +533,7 @@ instance FromJSON TargetFilter where
 				"sourced" -> return TargetSourced
 				"standalone" -> return TargetStandalone
 				_ -> empty
+		any' = (\() -> TargetAny) <$> parseJSON j
 
 instance ToJSON SearchQuery where
 	toJSON (SearchQuery q st) = object ["input" .= q, "type" .= st]

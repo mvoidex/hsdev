@@ -93,16 +93,8 @@ runCommand copts (InferTypes projs fs ms) = runCommandM $ do
 runCommand copts (Remove projs packages cabals fs) = undefined
 runCommand copts (InfoModules f) = runCommandM $ do
 	dbval <- getDb copts
-	targetFilter <- case f of
-		TargetProject proj -> liftM inProject $ findProject copts proj
-		TargetFile file -> liftM inFile $ findPath copts file
-		TargetModule mname -> return $ inModule mname
-		TargetDepsOf dep -> liftM inDeps $ findDep copts dep
-		TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
-		TargetPackage pack -> return $ inPackage pack
-		TargetSourced -> return byFile
-		TargetStandalone -> return standalone
-	return $ map (view moduleId) $ newestPackage $ selectModules (targetFilter . view moduleId) dbval
+	filter' <- targetFilter copts f
+	return $ map (view moduleId) $ newestPackage $ selectModules (filter' . view moduleId) dbval
 runCommand copts InfoPackages = runCommandM $
 	(ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb copts
 runCommand copts InfoProjects = runCommandM $ (toList . databaseProjects) <$> getDb copts
@@ -110,28 +102,12 @@ runCommand copts InfoSandboxes = runCommandM $
 	(ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
 runCommand copts (InfoSymbol sq f) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
-	targetFilter <- case f of
-		TargetProject proj -> liftM inProject $ findProject copts proj
-		TargetFile file -> liftM inFile $ findPath copts file
-		TargetModule mname -> return $ inModule mname
-		TargetDepsOf dep -> liftM inDeps $ findDep copts dep
-		TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
-		TargetPackage pack -> return $ inPackage pack
-		TargetSourced -> return byFile
-		TargetStandalone -> return standalone
-	return $ newestPackage $ filterMatch sq $ filter (checkModule targetFilter) $ allDeclarations dbval
+	filter' <- targetFilter copts f
+	return $ newestPackage $ filterMatch sq $ filter (checkModule filter') $ allDeclarations dbval
 runCommand copts (InfoModule f) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
-	targetFilter <- case f of
-		TargetProject proj -> liftM inProject $ findProject copts proj
-		TargetFile file -> liftM inFile $ findPath copts file
-		TargetModule mname -> return $ inModule mname
-		TargetDepsOf dep -> liftM inDeps $ findDep copts dep
-		TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
-		TargetPackage pack -> return $ inPackage pack
-		TargetSourced -> return byFile
-		TargetStandalone -> return standalone
-	rs <- return $ newestPackage $ filter (targetFilter . view moduleId) $ allModules dbval
+	filter' <- targetFilter copts f
+	rs <- return $ newestPackage $ filter (filter' . view moduleId) $ allModules dbval
 	case rs of
 		[] -> commandError "Module not found" []
 		[m] -> return m
@@ -304,6 +280,18 @@ runCommand copts (GhcEval exprs) = runCommandM $ mapCommandErrorStr $ liftM (map
 		toValue (Right s) = toJSON s
 runCommand copts (Link hold) = runCommandM $ liftIO $ commandLink copts >> when hold (commandHold copts)
 runCommand copts Exit = runCommandM $ liftIO $ commandExit copts
+
+targetFilter :: MonadIO m => CommandOptions -> TargetFilter -> ExceptT CommandError m (ModuleId -> Bool)
+targetFilter copts f = case f of
+	TargetProject proj -> liftM inProject $ findProject copts proj
+	TargetFile file -> liftM inFile $ findPath copts file
+	TargetModule mname -> return $ inModule mname
+	TargetDepsOf dep -> liftM inDeps $ findDep copts dep
+	TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
+	TargetPackage pack -> return $ inPackage pack
+	TargetSourced -> return byFile
+	TargetStandalone -> return standalone
+	TargetAny -> return (const True)
 
 -- Helper functions
 
