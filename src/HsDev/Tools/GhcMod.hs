@@ -48,9 +48,10 @@ import System.Directory
 import System.FilePath (normalise)
 import Text.Read (readMaybe)
 
-import Language.Haskell.GhcMod (GhcModT, runGhcModT, withOptions)
+import Language.Haskell.GhcMod (GhcModT, withOptions)
 import qualified Language.Haskell.GhcMod as GhcMod
-import qualified Language.Haskell.GhcMod.Internal as GhcMod
+import qualified Language.Haskell.GhcMod.Monad as GhcMod
+import qualified Language.Haskell.GhcMod.Types as GhcMod
 
 import Control.Concurrent.Worker
 import HsDev.Cabal
@@ -61,7 +62,7 @@ import HsDev.Tools.Types
 import HsDev.Util ((.::), liftIOErrors, liftThrow, withCurrentDirectory, readFileUtf8, ordNub)
 
 list :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]
-list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opts }) $ do
+list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.optGhcUserOptions = opts }) $ do
 	ms <- (map splitPackage . lines) <$> GhcMod.modules
 	return [CabalModule cabal (readMaybe p) m | (m, p) <- ms]
 	where
@@ -70,7 +71,7 @@ list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.ghcUserOptions = opt
 
 browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ExceptT String IO InspectedModule
 browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection opts) $ runGhcMod
-	(GhcMod.defaultOptions { GhcMod.detailed = True, GhcMod.qualified = True, GhcMod.ghcUserOptions = packageOpt mpackage ++ opts }) $ do
+	(GhcMod.defaultOptions { GhcMod.optDetailed = True, GhcMod.optQualified = True, GhcMod.optGhcUserOptions = packageOpt mpackage ++ opts }) $ do
 		ds <- (mapMaybe parseDecl . lines) <$> GhcMod.browse mpkgname
 		return Module {
 			_moduleName = fromString mname,
@@ -115,7 +116,7 @@ flags = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.flags
 info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
 info opts cabal file sname = do
 	fileCts <- liftIO $ readFileUtf8 file
-	rs <- withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $
+	rs <- withOptions (\o -> o { GhcMod.optGhcUserOptions = cabalOpt cabal ++ opts }) $
 		liftM nullToNL $ GhcMod.info file (GhcMod.Expression sname)
 	toDecl fileCts rs
 	where
@@ -173,7 +174,7 @@ instance FromJSON TypedRegion where
 		v .:: "type"
 
 typeOf :: [String] -> Cabal -> FilePath -> Int -> Int -> GhcModT IO [TypedRegion]
-typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.optGhcUserOptions = cabalOpt cabal ++ opts }) $ do
 	fileCts <- liftIO $ readFileUtf8 file
 	let
 		Position line' col' = calcTabs fileCts 8 (Position line col)
@@ -218,19 +219,35 @@ nullToNL = map $ \case
 check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [Note OutputMessage]
 check opts cabal files _ = do
 	cts <- liftIO $ mapM readFileUtf8 files
-	withOptions (\o -> o { GhcMod.ghcUserOptions = cabalOpt cabal ++ opts }) $ do
+	withOptions (\o -> o { GhcMod.optGhcUserOptions = cabalOpt cabal ++ opts }) $ do
 		res <- GhcMod.checkSyntax files
 		return $ map (recalcOutputMessageTabs (zip files cts)) $ parseOutputMessages res
 
 lint :: [String] -> FilePath -> GhcModT IO [Note OutputMessage]
 lint opts file = do
 	cts <- liftIO $ readFileUtf8 file
-	withOptions (\o -> o { GhcMod.hlintOpts = opts }) $ do
+	withOptions (\o -> o { GhcMod.optHlintOpts = opts }) $ do
 		res <- GhcMod.lint file
 		return $ map (recalcOutputMessageTabs [(file, cts)]) $ parseOutputMessages res
 
+gmOut :: IO GhcMod.GhcModOut
+gmOut = do
+	ch <- newChan
+	return GhcMod.GhcModOut {
+		GhcMod.gmoOptions = GhcMod.OutputOpts {
+			GhcMod.ooptLogLevel = GhcMod.GmSilent,
+			GhcMod.ooptStyle = GhcMod.PlainStyle,
+			GhcMod.ooptLineSeparator = GhcMod.LineSeparator "\0",
+			GhcMod.ooptLinePrefix = Nothing },
+		GhcMod.gmoChan = ch }
+
 runGhcMod :: (GhcMod.IOish m, MonadCatch m) => GhcMod.Options -> GhcModT m a -> ExceptT String m a
-runGhcMod opts act = liftIOErrors $ ExceptT $ liftM (left show . fst) $ runGhcModT opts act
+runGhcMod opts act = do
+	out <- liftIO gmOut
+	cur <- liftIO getCurrentDirectory
+	liftIOErrors $ ExceptT $ liftM (left show . right fst . fst) $ flip runReaderT out $ GhcMod.unGmOutT $
+		GhcMod.withGhcModEnv cur opts $ \env ->
+			GhcMod.runGhcModT' env GhcMod.defaultGhcModState act
 
 locateGhcModEnv :: FilePath -> IO (Either Project Cabal)
 locateGhcModEnv f = do
@@ -246,19 +263,25 @@ ghcModWorker p = do
 	home <- getHomeDirectory
 	startWorker (runGhcModT'' $ ghcModEnvPath home p) id liftThrow
 	where
-		-- TODO: Uncomment comment below after ghc-mod exports neccessary functions
-		functionNotExported = False
 		runGhcModT'' :: FilePath -> GhcModT IO () -> IO ()
-		runGhcModT'' cur act
-			| functionNotExported = withCurrentDirectory cur $
-				void $ runGhcModT GhcMod.defaultOptions $ act `catchError` (void . return)
-			| otherwise = void $ GhcMod.runGhcModT' cur GhcMod.defaultOptions $ act `catchError` (void . return)
+		runGhcModT'' cur act = void $ do
+			out <- gmOut
+			flip runReaderT out $
+				GhcMod.unGmOutT $
+				GhcMod.withGhcModEnv cur GhcMod.defaultOptions $ \env ->
+					GhcMod.runGhcModT' env GhcMod.defaultGhcModState (act `catchError` (void . return))
 
 type WorkerMap = MVar (M.Map FilePath (Worker (GhcModT IO)))
 
 -- | Manage many ghc-mod workers for each project/sandbox
 ghcModMultiWorker :: IO (Worker (ReaderT WorkerMap IO))
 ghcModMultiWorker = newMVar M.empty >>= \m -> startWorker (`runReaderT` m) id id
+
+instance MonadThrow (GhcMod.GmOutT IO) where
+	throwM = lift . throwM
+
+instance MonadCatch (GhcMod.GmOutT IO) where
+	catch = gcatch
 
 instance MonadThrow (GhcModT IO) where
 	throwM = lift . throwM

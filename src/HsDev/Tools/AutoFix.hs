@@ -1,9 +1,10 @@
 {-# LANGUAGE TemplateHaskell, OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.AutoFix (
 	Correction(..), correctionMessage, corrector,
 	correct, corrections,
-	autoFix_, autoFix,
+	autoFix,
 	CorrectorMatch,
 	correctors,
 	match,
@@ -14,7 +15,7 @@ module HsDev.Tools.AutoFix (
 	) where
 
 import Control.Applicative
-import Control.Lens (makeLenses, set, view, (^.))
+import Control.Lens (makeLenses, set, view, (^.), over)
 import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text.Region hiding (Region(..))
@@ -43,10 +44,13 @@ instance FromJSON Correction where
 instance ApplyMap Correction where
 	applyMap m (Correction msg c) = Correction msg (applyMap m c)
 
+instance ApplyMap a => ApplyMap (Note a) where
+	applyMap m = over note (applyMap m)
+
 makeLenses ''Correction
 
-correct :: Correction -> EditM String ()
-correct c = run (Chain [_corrector c])
+correct :: Correction -> Edit String
+correct c = Chain [_corrector c]
 
 corrections :: [Note OutputMessage] -> [Note Correction]
 corrections = mapMaybe toCorrection where
@@ -64,12 +68,8 @@ corrections = mapMaybe toCorrection where
 				n
 
 -- | Apply corrections
-autoFix_ :: [Correction] -> EditM String ()
-autoFix_ = grouped . mapM_ correct
-
--- | Apply corrections and update rest correction positions
-autoFix :: [Correction] -> [Correction] -> EditM String [Correction]
-autoFix fix' up' = grouped $ autoFix_ fix' >> mapM update up'
+autoFix :: ApplyMap r => [Correction] -> EditM String r ()
+autoFix = run . mconcat . map correct
 
 type CorrectorMatch = Note OutputMessage -> Maybe (Note Correction)
 

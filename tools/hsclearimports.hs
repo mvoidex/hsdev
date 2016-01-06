@@ -6,46 +6,39 @@ import Control.Lens (view)
 import Control.Exception (finally)
 import Control.Monad.Except
 import System.Directory
-import System.Environment (getArgs)
 
 import HsDev.Tools.ClearImports (clearImports)
 import HsDev.Symbols (locateSourceDir)
 import HsDev.Project (entity)
 
-import System.Console.Cmd
+import Tool
 
-opts :: [Opt]
-opts = [
-	list "ghc" "GHC_OPT" `short` "g" `desc` "options for GHC",
-	flag "hide-import-list" `desc` "hide import list",
-	req "max-import-list" "N" `desc` "hide long import lists"]
+data Opts = Opts {
+	optsFile :: String,
+	optsGHC :: [String],
+	optsHideImportList :: Bool,
+	optsMaxImportList :: Maybe Int }
 
-cmds :: [Cmd (IO ())]
-cmds = withHelp "hsclearimports" (printWith putStrLn) $ [
-	cmd [] ["file"] opts "clear imports in haskell source" clear]
-	where
-		clear :: Args -> IO ()
-		clear (Args [f] as) = do
-			file <- canonicalizePath f
-			mroot <- liftM (fmap $ view entity) $ locateSourceDir file
-			cur <- getCurrentDirectory
-			flip finally (setCurrentDirectory cur) $ do
-				maybe (return ()) setCurrentDirectory mroot
-				void $ runExceptT $ catchError
-					(clearImports (listArg "ghc" as) file >>= mapM_ (liftIO . putStrLn . format as))
-					(\e -> liftIO (putStrLn $ "Error: " ++ e))
-		clear _ = putStrLn "Invalid arguments"
-
-		format :: Opts String -> (String, String) -> String
-		format as (imp, lst)
-			| flagSet "hide-import-list" as = imp
-			| maybe False (length lst >) (narg "max-import-list" as) = imp
-			| otherwise = imp ++ " (" ++ lst ++ ")"
+opts :: Parser Opts
+opts = Opts <$>
+	strArgument (metavar "file" <> help "file to clear imports in") <*>
+	many (strOption (long "ghc" <> short 'g' <> metavar "GHC_OPT" <> help "options for GHC")) <*>
+	switch (long "hide-import-list" <> help "hide import list") <*>
+	optional (option auto (long "max-import-list" <> metavar "N" <> help "hide long import lists"))
 
 main :: IO ()
-main = do
-	args <- getArgs
-	run cmds noCmd onError args
+main = toolMain "hsclearimports" "clears imports in haskell source" opts $ \opts' -> do
+	file <- canonicalizePath (optsFile opts')
+	mroot <- liftM (fmap $ view entity) $ locateSourceDir file
+	cur <- getCurrentDirectory
+	flip finally (setCurrentDirectory cur) $ do
+		maybe (return ()) setCurrentDirectory mroot
+		void $ runExceptT $ catchError
+			(clearImports (optsGHC opts') file >>= mapM_ (liftIO . putStrLn . format opts'))
+			(\e -> liftIO (putStrLn $ "Error: " ++ e))
 	where
-		noCmd = putStrLn "Invalid command"
-		onError = putStrLn
+		format :: Opts -> (String, String) -> String
+		format as (imp, lst)
+			| optsHideImportList as = imp
+			| maybe False (length lst >) (optsMaxImportList as) = imp
+			| otherwise = imp ++ " (" ++ lst ++ ")"

@@ -64,9 +64,9 @@ fileModule db src = do
 -- | Find project of module
 getProject :: Database -> Project -> ExceptT String IO Project
 getProject db p = do
-	p' <- liftE $ canonicalizePath $ view projectCabal p
-	maybe (throwError $ "Project " ++ p' ++ " not found") return $
-		M.lookup p' $ databaseProjects db
+	p' <- liftE $ canonicalize p
+	maybe (throwError $ "Project " ++ view projectCabal p' ++ " not found") return $
+		refineProject db p'
 
 -- | Lookup visible within project symbol
 lookupSymbol :: Database -> Cabal -> FilePath -> String -> ExceptT String IO [ModuleDeclaration]

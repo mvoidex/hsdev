@@ -1,43 +1,46 @@
-{-# LANGUAGE OverloadedStrings, CPP, PatternGuards, LambdaCase #-}
+{-# LANGUAGE OverloadedStrings, CPP, PatternGuards, LambdaCase, TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Commands (
-	commands,
-	serverOpts, serverDefCfg,
-	clientOpts, clientDefCfg,
-
-	clientCmd, sendCmd,
-
-	initLog, runServer,
-	processRequest, processClient,
-
-	withCache, writeCache, readCache
+	ServerCommand(..), ServerOpts(..), ClientOpts(..),
+	Request(..),
+	sendCommand, runServerCommand,
+	initLog, runServer, startServer, inServer,
+	processRequest, processClient, processClientSocket,
+	withCache, writeCache, readCache,
+	module HsDev.Server.Types
 	) where
 
 import Control.Applicative
 import Control.Arrow (second)
 import Control.Concurrent
+import Control.Concurrent.Async
 import Control.Exception
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.Reader
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Lazy.Char8 (ByteString)
+import Data.Default
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Either (isLeft)
 import qualified Data.Map as M
+import Data.Foldable (asum)
 import Data.Maybe
+import Data.Monoid
 import Data.Text (Text)
 import qualified Data.Text as T (pack, unpack)
 import Network.Socket hiding (connect)
 import qualified Network.Socket as Net hiding (send)
 import qualified Network.Socket.ByteString as Net (send)
 import qualified Network.Socket.ByteString.Lazy as Net (getContents)
+import Options.Applicative
 import System.Directory
 import System.Exit
 import System.IO
-import System.Log.Simple hiding (Level(..), Message(..))
+import System.Log.Simple hiding (Level(..), Message(..), Command(..))
 import System.Log.Simple.Base (writeLog)
 import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
@@ -47,7 +50,8 @@ import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
 import qualified System.Directory.Watcher as Watcher
-import System.Console.Cmd hiding (run)
+import System.Console.Cmd hiding (run, cmd, flag, short, help)
+import qualified System.Console.Cmd as C (cmd, flag, short, help)
 import Text.Format ((~~), FormatBuild(..))
 
 import qualified HsDev.Cache.Structured as SC
@@ -58,8 +62,9 @@ import qualified HsDev.Database.Update as Update
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.GhcMod (ghcModMultiWorker)
 import HsDev.Server.Message as M
-import HsDev.Server.Types hiding (cmd)
+import HsDev.Server.Types
 import HsDev.Util
+import HsDev.Version
 
 #if mingw32_HOST_OS
 import Data.Aeson.Types hiding (Result, Error)
@@ -75,223 +80,111 @@ import System.Posix.Process
 import System.Posix.IO
 #endif
 
--- | Server commands
-commands :: [Cmd (IO ())]
-commands = [
-	cmd' "start" server' "start remote server" start',
-	cmd' "run" server' "run server" run',
-	cmd' "stop" client' "stop remote server" stop',
-	cmd' "connect" client' "connect to send commands directly" connect']
-	where
-		cmd' :: String -> ([Opt], Opts String) -> String -> (Args -> IO ()) -> Cmd (IO ())
-		cmd' nm (opts', defOpts') desc' act' =
-			cmd nm [] opts' desc' act' `with` [defaultOpts defOpts']
-
-		server' = (serverOpts, serverDefCfg)
-		client' = (clientOpts, clientDefCfg)
-
-		-- | Start remote server
-		start' :: Args -> IO ()
-		start' (Args _ sopts) = do
-#if mingw32_HOST_OS
-			let
-				args = ["run"] ++ toArgs (Args [] sopts)
-			myExe <- getExecutablePath
-			curDir <- getCurrentDirectory
-			let
-				-- one escape for start-process and other for callable process
-				-- seems, that start-process just concats arguments into one string
-				-- start-process foo 'bar baz' ⇒ foo bar baz -- not expected
-				-- start-process foo '"bar baz"' ⇒ foo "bar baz" -- ok
-				biescape = escape quote . escape quoteDouble
-				script = "try {{ start-process {} {} -WindowStyle Hidden -WorkingDirectory {} }} catch {{ $_.Exception, $_.InvocationInfo.Line }}"
-					~~ escape quote myExe
-					~~ intercalate ", " (map biescape args)
-					~~ escape quote curDir
-			r <- readProcess "powershell" [
-				"-Command",
-				script] ""
-			if all isSpace r
-				then putStrLn $ "Server started at port " ++ (fromJust $ arg "port" sopts)
-				else mapM_ putStrLn [
-					"Failed to start server",
-					"\tCommand: " ++ script,
-					"\tResult: " ++ r]
-#else
-			let
-				forkError :: SomeException -> IO ()
-				forkError e  = putStrLn $ "Failed to start server: " ++ show e
-
-				proxy :: IO ()
-				proxy = do
-					_ <- createSession
-					_ <- forkProcess serverAction
-					exitImmediately ExitSuccess
-
-				serverAction :: IO ()
-				serverAction = do
-					mapM_ closeFd [stdInput, stdOutput, stdError]
-					nullFd <- openFd "/dev/null" ReadWrite Nothing defaultFileFlags
-					mapM_ (dupTo nullFd) [stdInput, stdOutput, stdError]
-					closeFd nullFd
-					run' (Args [] sopts)
-
-			handle forkError $ do
-				_ <- forkProcess proxy
-				putStrLn $ "Server started at port " ++ fromJust (arg "port" sopts)
-#endif
-
-		-- | Run server
-		run' :: Args -> IO ()
-		run' (Args _ sopts)
-			| flagSet "as-client" sopts = runServer sopts $ \copts -> do
-				commandLog copts Log.Info $ "Server started as client connecting at port " ++ fromJust (arg "port" sopts)
-				me <- myThreadId
-				s <- socket AF_INET Stream defaultProtocol
-				addr' <- inet_addr "127.0.0.1"
-				Net.connect s $ SockAddrInet (fromIntegral $ fromJust $ iarg "port" sopts) addr'
-				flip finally (close s) $ processClientSocket s (copts {
-					commandExit = killThread me })
-			| otherwise = runServer sopts $ \copts -> do
-				commandLog copts Log.Info $ "Server started at port " ++ fromJust (arg "port" sopts)
-
-				waitListen <- newEmptyMVar
-				clientChan <- F.newChan
-
-				void $ forkIO $ do
-					accepter <- myThreadId
-
-					let
-						serverStop :: IO ()
-						serverStop = void $ forkIO $ do
-							void $ tryPutMVar waitListen ()
-							killThread accepter
-
-					s <- socket AF_INET Stream defaultProtocol
-					bind s $ SockAddrInet (fromIntegral $ fromJust $ iarg "port" sopts) iNADDR_ANY
-					listen s maxListenQueue
-					forever $ logIO "accept client exception: " (commandLog copts Log.Error) $ do
-						s' <- fst <$> accept s
-						void $ forkIO $ logIO (show s' ++ " exception: ") (commandLog copts Log.Error) $
-							flip finally (close s') $
-								bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-									me <- myThreadId
-									let
-										timeoutWait = do
-											notDone <- isEmptyMVar done
-											when notDone $ do
-												void $ forkIO $ do
-													threadDelay 1000000
-													void $ tryPutMVar done ()
-													killThread me
-												takeMVar done
-										-- waitForever = forever $ hGetLineBS h
-									F.putChan clientChan timeoutWait
-									processClientSocket s' (copts {
-										-- commandHold = waitForever,
-										commandExit = serverStop })
-
-				takeMVar waitListen
-				DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
-				F.stopChan clientChan >>= sequence_
-				commandLog copts Log.Info "server stopped"
-
-		-- | Stop remote server
-		stop' :: Args -> IO ()
-		stop' (Args _ copts) = runArgs (map clientCmd Client.commands) onDef onError (Args ["exit"] copts) where
-			onDef = putStrLn "Command 'exit' not found"
-			onError es = putStrLn $ "Failed to stop server: " ++ es
-
-		-- | Connect to remote server
-		connect' :: Args -> IO ()
-		connect' (Args _ copts) = do
-			curDir <- getCurrentDirectory
-			s <- socket AF_INET Stream defaultProtocol
-			addr' <- inet_addr "127.0.0.1"
-			Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
-			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [(1 :: Integer)..] $ \i -> ignoreIO $ do
-				input' <- hGetLineBS stdin
-				case decodeLispOrJSON input' of
-					Left _ -> L.putStrLn $ encodeValue False $ object ["error" .= ("invalid command" :: String)]
-					Right (isLisp, req') -> do
-						L.hPutStrLn h $ encodeLispOrJSON isLisp $ Message (Just $ show i) $
-							req' `M.withOpts` ["current-directory" %-- curDir]
-						waitResp h
-			where
-				pretty = flagSet "pretty" copts
-
-				encodeValue :: ToJSON a => Bool -> a -> L.ByteString
-				encodeValue True = encodeLisp
-				encodeValue False
-					| pretty = encodePretty
-					| otherwise = encode
-
-				waitResp h = do
-					resp <- hGetLineBS h
-					parseResp h resp
-
-				parseResp h str = case decodeLispOrJSON str of
-					Left e -> putStrLn $ "Can't decode response: " ++ e
-					Right (isLisp, Message i r) -> do
-						r' <- unMmap r
-						putStrLn $ fromMaybe "_" i ++ ":" ++ fromUtf8 (encodeValue isLisp r')
-						case r of
-							Left _ -> waitResp h
-							_ -> return ()
+-- | Server control command
+data ServerCommand =
+	Version |
+	Start ServerOpts |
+	Run ServerOpts |
+	Stop ClientOpts |
+	Connect ClientOpts |
+	Remote ClientOpts Bool Command
+		deriving (Show)
 
 -- | Server options
-serverOpts :: [Opt]
-serverOpts = [
-	req "port" "number" `desc` "listen port",
-	req "timeout" "msec" `desc` "query timeout",
-	req "log" "file" `short` ['l'] `desc` "log file",
-	req "log-config" "config" `desc` "config log",
-	req "cache" "path" `desc` "cache directory",
-	flag "load" `desc` "force load all data from cache on startup"]
+data ServerOpts = ServerOpts {
+	serverPort :: Int,
+	serverTimeout :: Int,
+	serverLog :: Maybe FilePath,
+	serverLogConfig :: String,
+	serverCache :: Maybe FilePath,
+	serverLoad :: Bool }
+		deriving (Show)
+
+instance Default ServerOpts where
+	def = ServerOpts 1234 0 Nothing "use default" Nothing False
 
 -- | Client options
-clientOpts :: [Opt]
-clientOpts = [
-	req "port" "number" `desc` "connection port",
-	flag "pretty" `desc` "pretty json output",
-	flag "stdin" `desc` "pass data to stdin",
-	req "timeout" "msec" `desc` "overwrite timeout duration",
-	flag "silent" `desc` "supress notifications"]
+data ClientOpts = ClientOpts {
+	clientPort :: Int,
+	clientPretty :: Bool,
+	clientStdin :: Bool,
+	clientTimeout :: Int,
+	clientSilent :: Bool }
+		deriving (Show)
 
--- | Server default options
-serverDefCfg :: Opts String
-serverDefCfg = mconcat [
-	"port" %-- (4567 :: Int),
-	"timeout" %-- (1000 :: Int)]
+instance Default ClientOpts where
+	def = ClientOpts 1234 False False 0 False
 
--- | Client default options
-clientDefCfg :: Opts String
-clientDefCfg = mconcat ["port" %-- (4567 :: Int)]
+instance FromCmd ServerCommand where
+	cmdP = serv <|> remote where
+		serv = subparser $ mconcat [
+			cmd "version" "hsdev version" (pure Version),
+			cmd "start" "start remote server" (Start <$> cmdP),
+			cmd "run" "run server" (Run <$> cmdP),
+			cmd "stop" "stop remote server" (Stop <$> cmdP),
+			cmd "connect" "connect to send commands directly" (Connect <$> cmdP)]
+		remote = Remote <$> cmdP <*> noFileFlag <*> cmdP
 
--- | Command to send to client
-clientCmd :: Cmd CommandAction -> Cmd (IO ())
-clientCmd c = cmd (cmdName c) (cmdArgs c) (cmdOpts c ++ clientOpts) (cmdDesc c) (sendCmd (cmdName c))
-	`with` [defaultOpts clientDefCfg]
+instance FromCmd ServerOpts where
+	cmdP = ServerOpts <$>
+		(portArg <|> pure (serverPort def)) <*>
+		(timeoutArg <|> pure (serverTimeout def)) <*>
+		optional logArg <*>
+		(logConfigArg <|> pure (serverLogConfig def)) <*>
+		optional cacheArg <*>
+		loadFlag
 
--- | Send command to server
-sendCmd :: String -> Args -> IO ()
-sendCmd name (Args args opts) = do
-	var <- newEmptyMVar
-	thId <- forkIO $ ignoreIO sendReceive >> putMVar var ()
-	handle (\(SomeException _) -> killThread thId) $ takeMVar var
+instance FromCmd ClientOpts where
+	cmdP = ClientOpts <$>
+		(portArg <|> pure (clientPort def)) <*>
+		prettyFlag <*>
+		stdinFlag <*>
+		(timeoutArg <|> pure (clientTimeout def)) <*>
+		silentFlag
+
+serverOptsArgs :: ServerOpts -> [String]
+serverOptsArgs sopts = concat [
+	["--port", show $ serverPort sopts],
+	["--timeout", show $ serverTimeout sopts],
+	marg "--log" (serverLog sopts),
+	["--log-config", serverLogConfig sopts],
+	marg "--cache" (serverCache sopts),
+	if serverLoad sopts then ["--load"] else []]
 	where
-		(copts, opts') = splitOpts clientOpts opts
-		reqCall = Request name args opts'
-		pretty = flagSet "pretty" copts
+		marg :: String -> Maybe String -> [String]
+		marg n (Just v) = [n, v]
+		marg _ _ = []
+
+data Request = Request {
+	requestCommand :: Command,
+	requestDirectory :: FilePath,
+	requestNoFile :: Bool,
+	requestTimeout :: Int,
+	requestSilent :: Bool }
+
+instance ToJSON Request where
+	toJSON (Request c dir f tm s) = object ["command" .= c, "current-directory" .= dir, "no-file" .= f, "timeout" .= tm, "silent" .= s]
+
+instance FromJSON Request where
+	parseJSON = withObject "request" $ \v -> Request <$> v .:: "command" <*> v .:: "current-directory" <*> v .:: "no-file" <*> v .:: "timeout" <*> v .:: "silent"
+
+sendCommand :: ClientOpts -> Bool -> Command -> (Notification -> IO a) -> IO Result
+sendCommand copts noFile c onNotification = do
+	asyncAct <- async sendReceive
+	res <- waitCatch asyncAct
+	case res of
+		Left e -> return $ Error (show e) $ M.fromList []
+		Right r -> return r
+	where
 		encodeValue :: ToJSON a => a -> L.ByteString
 		encodeValue
-			| pretty = encodePretty
+			| clientPretty copts = encodePretty
 			| otherwise = encode
 		sendReceive = do
 			curDir <- getCurrentDirectory
-			input <- if flagSet "stdin" copts
+			input <- if clientStdin copts
 				then liftM Just L.getContents
-				else return $ fmap toUtf8 $ arg "data" copts
+				else return $ fmap toUtf8 $ Nothing -- arg "data" copts
 			let
 				parseData :: L.ByteString -> IO Value
 				parseData cts = case eitherDecode cts of
@@ -301,13 +194,9 @@ sendCmd name (Args args opts) = do
 
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
-			Net.connect s (SockAddrInet (fromIntegral $ fromJust $ iarg "port" copts) addr')
+			Net.connect s (SockAddrInet (fromIntegral $ clientPort copts) addr')
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> do
-				L.hPutStrLn h $ encode $ Message Nothing $ reqCall `M.withOpts` [
-					"current-directory" %-- curDir,
-					"data" %-? (fromUtf8 . encode <$> dat),
-					"timeout" %-? (iarg "timeout" copts :: Maybe Integer),
-					if flagSet "silent" copts then hoist "silent" else mempty]
+				L.hPutStrLn h $ encode $ Message Nothing $ Request c curDir noFile (clientTimeout copts) (clientSilent copts)
 				hFlush h
 				peekResponse h
 
@@ -315,15 +204,159 @@ sendCmd name (Args args opts) = do
 			resp <- hGetLineBS h
 			parseResponse h resp
 
-		parseResponse h str = case decodeLispOrJSON str of
-			Left e -> putStrLn $ "Can't decode response: " ++ e
-			Right (_, Message _ r) -> do
+		parseResponse h str = case eitherDecode str of
+			Left e -> return $ Error e $ M.fromList [("response", toJSON $ fromUtf8 str)]
+			Right (Message _ r) -> do
 				r' <- unMmap r
-				L.putStrLn $ case r' of
-					Left n -> encodeValue n
-					Right (Result v) -> encodeValue v
-					Right e -> encodeValue e
-				when (isLeft r') $ peekResponse h
+				case r' of
+					Left n -> onNotification n >> peekResponse h
+					Right r -> return r
+
+runServerCommand :: ServerCommand -> IO ()
+runServerCommand Version = putStrLn $cabalVersion
+runServerCommand (Start sopts) = do
+#if mingw32_HOST_OS
+	let
+		args = ["run"] ++ serverOptsArgs sopts
+	myExe <- getExecutablePath
+	curDir <- getCurrentDirectory
+	let
+		-- one escape for start-process and other for callable process
+		-- seems, that start-process just concats arguments into one string
+		-- start-process foo 'bar baz' ⇒ foo bar baz -- not expected
+		-- start-process foo '"bar baz"' ⇒ foo "bar baz" -- ok
+		biescape = escape quote . escape quoteDouble
+		script = "try {{ start-process {} {} -WindowStyle Hidden -WorkingDirectory {} }} catch {{ $_.Exception, $_.InvocationInfo.Line }}"
+			~~ escape quote myExe
+			~~ intercalate ", " (map biescape args)
+			~~ escape quote curDir
+	r <- readProcess "powershell" [
+		"-Command",
+		script] ""
+	if all isSpace r
+		then putStrLn $ "Server started at port " ++ show (serverPort sopts)
+		else mapM_ putStrLn [
+			"Failed to start server",
+			"\tCommand: " ++ script,
+			"\tResult: " ++ r]
+#else
+	let
+		forkError :: SomeException -> IO ()
+		forkError e  = putStrLn $ "Failed to start server: " ++ show e
+
+		proxy :: IO ()
+		proxy = do
+			_ <- createSession
+			_ <- forkProcess serverAction
+			exitImmediately ExitSuccess
+
+		serverAction :: IO ()
+		serverAction = do
+			mapM_ closeFd [stdInput, stdOutput, stdError]
+			nullFd <- openFd "/dev/null" ReadWrite Nothing defaultFileFlags
+			mapM_ (dupTo nullFd) [stdInput, stdOutput, stdError]
+			closeFd nullFd
+			runServerCommand (Run sopts)
+
+	handle forkError $ do
+		_ <- forkProcess proxy
+		putStrLn $ "Server started at port " ++ show (serverPort sopts)
+#endif
+runServerCommand (Run sopts) = runServer sopts $ \copts -> do
+	commandLog copts Log.Info $ "Server started at port " ++ show (serverPort sopts)
+
+	waitListen <- newEmptyMVar
+	clientChan <- F.newChan
+
+	void $ forkIO $ do
+		accepter <- myThreadId
+
+		let
+			serverStop :: IO ()
+			serverStop = void $ forkIO $ do
+				void $ tryPutMVar waitListen ()
+				killThread accepter
+
+		s <- socket AF_INET Stream defaultProtocol
+		bind s $ SockAddrInet (fromIntegral $ serverPort sopts) iNADDR_ANY
+		listen s maxListenQueue
+		forever $ logAsync (commandLog copts Log.Fatal) $ logIO "accept client exception: " (commandLog copts Log.Error) $ do
+			s' <- fst <$> accept s
+			void $ forkIO $ logAsync (commandLog copts Log.Fatal) $ logIO (show s' ++ " exception: ") (commandLog copts Log.Error) $
+				flip finally (close s') $
+					bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+						me <- myThreadId
+						let
+							timeoutWait = do
+								notDone <- isEmptyMVar done
+								when notDone $ do
+									void $ forkIO $ do
+										threadDelay 1000000
+										void $ tryPutMVar done ()
+										killThread me
+									takeMVar done
+							-- waitForever = forever $ hGetLineBS h
+						F.putChan clientChan timeoutWait
+						processClientSocket s' (copts {
+							-- commandHold = waitForever,
+							commandExit = serverStop })
+
+	takeMVar waitListen
+	DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
+	F.stopChan clientChan >>= sequence_
+	commandLog copts Log.Info "server stopped"
+runServerCommand (Stop copts) = runServerCommand (Remote copts False Exit)
+runServerCommand (Connect copts) = do
+	curDir <- getCurrentDirectory
+	s <- socket AF_INET Stream defaultProtocol
+	addr' <- inet_addr "127.0.0.1"
+	Net.connect s (SockAddrInet (fromIntegral $ clientPort copts) addr')
+	bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [(1 :: Integer)..] $ \i -> ignoreIO $ do
+		input' <- hGetLineBS stdin
+		case eitherDecode input' of
+			Left _ -> L.putStrLn $ encodeValue $ object ["error" .= ("invalid command" :: String)]
+			Right req' -> do
+				L.hPutStrLn h $ encode $ Message (Just $ show i) $ Request req' curDir True (clientTimeout copts) False
+				waitResp h
+	where
+		pretty = clientPretty copts
+
+		encodeValue :: ToJSON a => a -> L.ByteString
+		encodeValue
+			| pretty = encodePretty
+			| otherwise = encode
+
+		waitResp h = do
+			resp <- hGetLineBS h
+			parseResp h resp
+
+		parseResp h str = case eitherDecode str of
+			Left e -> putStrLn $ "Can't decode response: " ++ e
+			Right (Message i r) -> do
+				r' <- unMmap r
+				putStrLn $ fromMaybe "_" i ++ ":" ++ fromUtf8 (encodeValue r')
+				case r of
+					Left _ -> waitResp h
+					_ -> return ()
+runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue >>= printResult where
+	printValue :: ToJSON a => a -> IO ()
+	printValue = L.putStrLn . encodeValue
+	printResult :: Result -> IO ()
+	printResult (Result r) = printValue r
+	printResult e = printValue e
+	encodeValue :: ToJSON a => a -> L.ByteString
+	encodeValue = if clientPretty copts then encodePretty else encode
+
+portArg = option auto (long "port" <> metavar "number" <> help "connection port")
+timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
+logArg = strOption (long "log" <> short 'l' <> metavar "file" <> help "log file")
+logConfigArg = strOption (long "log-config" <> metavar "rule" <> help "log config: low [low], high [high], set [low] [high], use [default/debug/trace/silent/supress]")
+cacheArg = strOption (long "cache" <> metavar "path" <> help "cache directory")
+noFileFlag = switch (long "no-file" <> help "don't use mmap files")
+loadFlag = switch (long "load" <> help "force load all data from cache on startup")
+prettyFlag = switch (long "pretty" <> help "pretty json output")
+stdinFlag = switch (long "stdin" <> help "pass data to stdin")
+silentFlag = switch (long "silent" <> help "supress notifications")
 
 chaner :: F.Chan String -> Consumer Text
 chaner ch = Consumer withChan where
@@ -332,7 +365,7 @@ chaner ch = Consumer withChan where
 instance FormatBuild Log.Level where
 
 -- | Inits log chan and returns functions (print message, wait channel)
-initLog :: Opts String -> IO (Log, Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
+initLog :: ServerOpts -> IO (Log, Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
 initLog sopts = do
 	msgs <- F.newChan
 	outputDone <- newEmptyMVar
@@ -342,7 +375,7 @@ initLog sopts = do
 	l <- newLog (constant [rule']) $ concat [
 		[logger text console],
 		[logger text (chaner msgs)],
-		maybeToList $ (logger text . file) <$> arg "log" sopts]
+		maybeToList $ (logger text . file) <$> serverLog sopts]
 	Log.writeLog l Log.Info ("Log politics: low = {}, high = {}" ~~ logLow ~~ logHigh)
 	let
 		listenLog f = logException "listen log" (F.putChan msgs) $ do
@@ -351,16 +384,14 @@ initLog sopts = do
 	return (l, \lev -> writeLog l lev . T.pack, listenLog, F.closeChan msgs >> takeMVar outputDone)
 	where
 		rule' :: Log.Rule
-		rule' = fromMaybe (Log.Rule null $ const Log.tracePolitics) $
-			(parseRule_ . T.pack . ("/: " ++)) <$>
-			arg "log-config" sopts
+		rule' = parseRule_ $ T.pack ("/: " ++ serverLogConfig sopts)
 		(Log.Politics logLow logHigh) = Log.rulePolitics rule' Log.defaultPolitics
 
 -- | Run server
-runServer :: Opts String -> (CommandOptions -> IO ()) -> IO ()
+runServer :: ServerOpts -> (CommandOptions -> IO ()) -> IO ()
 runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> Log.scopeLog logger' (T.pack "hsdev") $ Watcher.withWatcher $ \watcher -> do
 	db <- DB.newAsync
-	when (flagSet "load" sopts) $ withCache sopts () $ \cdir -> do
+	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
 		outputStr Log.Info $ "Loading cache from " ++ cdir
 		dbCache <- liftA merge <$> SC.load cdir
 		case dbCache of
@@ -393,8 +424,16 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 			(return ())
 			(return ())
 			(return ())
-	_ <- forkIO $ Update.onEvent watcher (Update.processEvent $ Update.settings copts mempty)
+	_ <- forkIO $ Update.onEvent watcher (Update.processEvent $ Update.settings copts [] False False)
 	act copts
+
+type Server = Worker (ReaderT CommandOptions IO)
+
+startServer :: ServerOpts -> IO Server
+startServer sopts = startWorker (\act -> runServer sopts (runReaderT act)) id id
+
+inServer :: Server -> Command -> IO Result
+inServer srv c = inWorker srv (ReaderT (flip Client.runCommand c))
 
 decodeLispOrJSON :: FromJSON a => ByteString -> Either String (Bool, a)
 decodeLispOrJSON str =
@@ -406,35 +445,22 @@ encodeLispOrJSON True = encodeLisp
 encodeLispOrJSON False = encode
 
 -- | Process request, notifications can be sent during processing
-processRequest :: CommandOptions -> (Notification -> IO ()) -> Request -> IO Result
-processRequest copts onNotify req' =
-	runArgs
-		Client.commands
-		unknownCommand
-		requestError
-		(requestToArgs req')
-		(copts { commandNotify = onNotify })
-	where
-		unknownCommand :: CommandAction
-		unknownCommand _ = return $ Error "Unknown command" M.empty
-
-		requestError :: String -> CommandAction
-		requestError errs _ = return $ Error "Command syntax error" $ M.fromList [
-			("what", toJSON $ lines errs)]
+processRequest :: CommandOptions -> (Notification -> IO ()) -> Command -> IO Result
+processRequest copts onNotify c = Client.runCommand (copts { commandNotify = onNotify }) c
 
 -- | Process client, listen for requests and process them
 processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> CommandOptions -> IO ()
 processClient name receive send' copts = do
 	commandLog copts Log.Info $ name ++ " connected"
 	respChan <- newChan
-	void $ forkIO $ getChanContents respChan >>= mapM_ (send' . uncurry encodeLispOrJSON)
+	void $ forkIO $ getChanContents respChan >>= mapM_ (send' . encode)
 	linkVar <- newMVar $ return ()
 	let
-		answer :: Bool -> Message Response -> IO ()
-		answer isLisp m@(Message _ r) = do
+		answer :: Message Response -> IO ()
+		answer m@(Message _ r) = do
 			when (not $ isNotification r) $
 				commandLog copts Log.Trace $ " << " ++ ellipsis (fromUtf8 (encode r))
-			writeChan respChan (isLisp, m)
+			writeChan respChan m
 			where
 				ellipsis :: String -> String
 				ellipsis s
@@ -443,44 +469,31 @@ processClient name receive send' copts = do
 	flip finally (disconnected linkVar) $ forever $ Log.scopeLog (commandLogger copts) (T.pack name) $ do
 		req' <- receive
 		commandLog copts Log.Trace $ " => " ++ fromUtf8 req'
-		case second (fmap extractMeta) <$> decodeLispOrJSON req' of
+		case eitherDecode req' of
 			Left _ -> do
 				commandLog copts Log.Warning $ "Invalid request: " ++ fromUtf8 req'
-				answer False $ Message Nothing $ responseError "Invalid request" [
+				answer $ Message Nothing $ responseError "Invalid request" [
 					"request" .= fromUtf8 req']
-			Right (isLisp, m) -> Log.scopeLog (commandLogger copts) (T.pack $ fromMaybe "_" (messageId m)) $ do
-				resp' <- flip traverse m $ \(cdir, noFile, silent, tm, reqArgs) -> do
+			Right m -> Log.scopeLog (commandLogger copts) (T.pack $ fromMaybe "_" (messageId m)) $ do
+				resp' <- flip traverse m $ \(Request c cdir noFile tm silent) -> do
 					let
 						onNotify n
 							| silent = return ()
-							| otherwise = traverse (const $ mmap' noFile (Left n)) m >>= answer isLisp
-					commandLog copts Log.Trace $ name ++ " >> " ++ fromUtf8 (encode reqArgs)
+							| otherwise = traverse (const $ mmap' noFile (Left n)) m >>= answer
+					commandLog copts Log.Trace $ name ++ " >> " ++ fromUtf8 (encode c)
 					resp <- fmap Right $ handleTimeout tm $ handleError $
 						processRequest
 							(copts {
 								commandRoot = cdir,
 								commandLink = void (swapMVar linkVar $ commandExit copts) })
 							onNotify
-							reqArgs
+							c
 					mmap' noFile resp
-				answer isLisp resp'
+				answer resp'
 	where
-		extractMeta :: Request -> (FilePath, Bool, Bool, Maybe Int, Request)
-		extractMeta c = (cdir, noFile, silent, tm, c { requestOpts = opts' }) where
-			cdir = fromMaybe (commandRoot copts) $ arg "current-directory" metaOpts
-			noFile = flagSet "no-file" metaOpts
-			silent = flagSet "silent" metaOpts
-			tm = join $ fmap readMaybe $ arg "timeout" metaOpts
-			(metaOpts, opts') = splitOpts [
-				req "current-directory" "path",
-				flag "no-file",
-				flag "silent",
-				req "timeout" "ms"]
-				(requestOpts c)
-
-		handleTimeout :: Maybe Int -> IO Result -> IO Result
-		handleTimeout Nothing = id
-		handleTimeout (Just tm) = fmap (fromMaybe $ Error "Timeout" M.empty) . timeout tm
+		handleTimeout :: Int -> IO Result -> IO Result
+		handleTimeout 0 = id
+		handleTimeout tm = fmap (fromMaybe $ Error "Timeout" M.empty) . timeout tm
 
 		handleError :: IO Result -> IO Result
 		handleError = handle onErr where
@@ -532,12 +545,12 @@ processClientSocket s copts = do
 				when (sent > 0) $ sendAll sock (BS.drop sent bs)
 
 -- | Perform action on cache
-withCache :: Opts String -> a -> (FilePath -> IO a) -> IO a
-withCache sopts v onCache = case arg "cache" sopts of
+withCache :: ServerOpts -> a -> (FilePath -> IO a) -> IO a
+withCache sopts v onCache = case serverCache sopts of
 	Nothing -> return v
 	Just cdir -> onCache cdir
 
-writeCache :: Opts String -> (Log.Level -> String -> IO ()) -> Database -> IO ()
+writeCache :: ServerOpts -> (Log.Level -> String -> IO ()) -> Database -> IO ()
 writeCache sopts logMsg' d = withCache sopts () $ \cdir -> do
 	logMsg' Log.Info $ "writing cache to " ++ cdir
 	logIO "cache writing exception: " (logMsg' Log.Error) $ do
@@ -551,7 +564,7 @@ writeCache sopts logMsg' d = withCache sopts () $ \cdir -> do
 			ms -> logMsg' Log.Debug $ "cache write: " ++ show (length ms) ++ " files"
 	logMsg' Log.Info $ "cache saved to " ++ cdir
 
-readCache :: Opts String -> (Log.Level -> String -> IO ()) -> (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database)
+readCache :: ServerOpts -> (Log.Level -> String -> IO ()) -> (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database)
 readCache sopts logMsg' act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runExceptT . act where
 	cacheErr e = logMsg' Log.Error ("Error reading cache: " ++ e) >> return Nothing
 	cacheOk s = do

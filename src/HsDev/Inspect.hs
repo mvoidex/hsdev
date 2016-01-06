@@ -106,8 +106,8 @@ parseMode file exts = H.defaultParseMode {
 -- | Get exports
 getExports :: H.ExportSpec -> [Export]
 getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule $ fromString m]
-getExports (H.EVar _ n) = [uncurry ExportName (identOfQName n) ExportNothing]
-getExports (H.EAbs n) = [uncurry ExportName (identOfQName n) ExportNothing]
+getExports (H.EVar n) = [uncurry ExportName (identOfQName n) ExportNothing]
+getExports (H.EAbs _ n) = [uncurry ExportName (identOfQName n) ExportNothing]
 getExports (H.EThingAll n) = [uncurry ExportName (identOfQName n) ExportAll]
 getExports (H.EThingWith n ns) = [uncurry ExportName (identOfQName n) $ ExportWith (map toStr ns)] where
 	toStr :: H.CName -> Text
@@ -149,8 +149,8 @@ getDecls decls =
 		mergeInfos l _ = l
 
 -- | Get definitions
-getBinds :: H.Binds -> [Declaration]
-getBinds (H.BDecls decls) = getDecls decls
+getBinds :: Maybe H.Binds -> [Declaration]
+getBinds (Just (H.BDecls decls)) = getDecls decls
 getBinds _ = []
 
 -- | Get declaration and child declarations

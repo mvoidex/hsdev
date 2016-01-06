@@ -18,24 +18,27 @@ import HsDev.Tools.GhcMod.InferType (infer)
 
 import Tool
 
-main :: IO ()
-main = toolMain "hsinspect" [
-	jsonCmd "" ["what"] [ghcOpts] "depending of what <what> is, inspect installed module, source file (.hs), cabal file (.cabal) or contents, passes as input if no <what> specified" inspect']
-	where
-		ghcOpts = list "ghc" "option" `short` ['g'] `desc` "options to pass to GHC"
-		ghcs = listArg "ghc"
+data Opts = Opts {
+	optsWhat :: Maybe String,
+	optsGHC :: [String] }
 
-		inspect' (Args [] opts) = liftIO getContents >>= liftM toJSON . inspectContents "stdin" (ghcs opts)
-		inspect' (Args [fname@(takeExtension -> ".hs")] opts) = do
-			fname' <- liftIO $ canonicalizePath fname
-			im <- scanModule (ghcs opts) (FileModule fname' Nothing) Nothing
-			let
-				scanAdditional =
-					scanModify (\opts' _ -> inspectDocs opts') >=>
-					scanModify infer
-			toJSON <$> scanAdditional im
-		inspect' (Args [fcabal@(takeExtension -> ".cabal")] _) = do
-			fcabal' <- liftIO $ canonicalizePath fcabal
-			toJSON <$> readProject fcabal'
-		inspect' (Args [mname] opts) = toJSON <$> scanModule (ghcs opts) (CabalModule Cabal Nothing mname) Nothing
-		inspect' _ = toolError "Specify module name or file name (.hs or .cabal)"
+opts :: Parser Opts
+opts = Opts <$>
+	optional (strArgument (metavar "what" <> help "depending of what <what> is, inspect installed module, source file (.hs), cabal file (.cabal) or contents, passes as input if no <what> specified")) <*>
+	many (strOption (metavar "GHC_OPT" <> long "ghc" <> short 'g' <> help "options to pass to GHC"))
+
+main :: IO ()
+main = toolMain "hsinspect" "haskell inspect" opts (printExceptT . printResult . inspect') where
+	inspect' (Opts Nothing ghcs) = liftIO getContents >>= liftM toJSON . inspectContents "stdin" ghcs
+	inspect' (Opts (Just fname@(takeExtension -> ".hs")) ghcs) = do
+		fname' <- liftIO $ canonicalizePath fname
+		im <- scanModule ghcs (FileModule fname' Nothing) Nothing
+		let
+			scanAdditional =
+				scanModify (\opts' _ -> inspectDocs opts') >=>
+				scanModify infer
+		toJSON <$> scanAdditional im
+	inspect' (Opts (Just fcabal@(takeExtension -> ".cabal")) _) = do
+		fcabal' <- liftIO $ canonicalizePath fcabal
+		toJSON <$> readProject fcabal'
+	inspect' (Opts (Just mname) ghcs) = toJSON <$> scanModule ghcs (CabalModule Cabal Nothing mname) Nothing

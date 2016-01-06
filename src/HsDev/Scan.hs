@@ -129,7 +129,7 @@ rescanModule opts im = do
 -- | Is module new or recently changed
 changedModule :: Database -> [String] -> ModuleLocation -> ExceptT String IO Bool
 changedModule db opts m = maybe (return True) (liftM not . upToDate opts) m' where
-	m' = M.lookup m (databaseModules db)
+	m' = lookupInspected m db
 
 -- | Returns new (to scan) and changed (to rescan) modules
 changedModules :: Database -> [String] -> [ModuleToScan] -> ExceptT String IO [ModuleToScan]

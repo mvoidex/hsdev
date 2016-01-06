@@ -10,7 +10,7 @@ module HsDev.Util (
 	-- * String utils
 	tab, tabs, trim, split,
 	-- * Other utils
-	ordNub,
+	ordNub, uniqueBy, mapBy,
 	-- * Helper
 	(.::), (.::?), objectUnion, jsonUnion,
 	-- * Exceptions
@@ -20,7 +20,7 @@ module HsDev.Util (
 	-- * UTF-8
 	fromUtf8, toUtf8, readFileUtf8, writeFileUtf8,
 	-- * IO
-	hGetLineBS, logException, logIO, ignoreIO,
+	hGetLineBS, logException, logIO, ignoreIO, logAsync,
 	-- * Async
 	liftAsync,
 
@@ -29,7 +29,7 @@ module HsDev.Util (
 	MonadIO(..)
 	) where
 
-import Control.Arrow (second, left)
+import Control.Arrow (second, left, (&&&))
 import Control.Exception
 import Control.Monad
 import Control.Monad.Except
@@ -38,6 +38,7 @@ import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr)
+import qualified Data.Map as M
 import Data.Maybe (catMaybes)
 import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as HM (HashMap, toList, union)
@@ -123,13 +124,19 @@ trim = p . p where
 split :: (a -> Bool) -> [a] -> [[a]]
 split p = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break p)
 
--- | ordNub is quadratic, https://github.com/nh2/haskell-ordnub/#ordnub
+-- | nub is quadratic, https://github.com/nh2/haskell-ordnub/#ordnub
 ordNub :: Ord a => [a] -> [a]
 ordNub = go Set.empty where
 	go _ [] = []
 	go s (x:xs)
 		| x `Set.member` s = go s xs
 		| otherwise = x : go (Set.insert x s) xs
+
+uniqueBy :: Ord b => (a -> b) -> [a] -> [a]
+uniqueBy f = M.elems . mapBy f
+
+mapBy :: Ord b => (a -> b) -> [a] -> M.Map b a
+mapBy f = M.fromList . map (f &&& id)
 
 -- | Workaround, sometimes we get HM.lookup "foo" v == Nothing, but lookup "foo" (HM.toList v) == Just smth
 (.::) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser a
@@ -151,7 +158,7 @@ jsonUnion x y = objectUnion (toJSON x) (toJSON y)
 
 -- | Lift IO exception to ExceptT
 liftException :: C.MonadCatch m => m a -> ExceptT String m a
-liftException = ExceptT . liftM (left $ \(SomeException e) -> show e) . C.try
+liftException = ExceptT . liftM (left $ \(SomeException e) -> displayException e) . C.try
 
 -- | Same as @liftException@
 liftE :: C.MonadCatch m => m a -> ExceptT String m a
@@ -171,7 +178,7 @@ triesMap f = tries . map f
 -- | Lift IO exception to MonadError
 liftExceptionM :: (C.MonadCatch m, MonadError String m) => m a -> m a
 liftExceptionM act = C.catch act onError where
-	onError = throwError . (\(SomeException e) -> show e)
+	onError = throwError . (\(SomeException e) -> displayException e)
 
 -- | Lift IO exceptions to ExceptT
 liftIOErrors :: C.MonadCatch m => ExceptT String m a -> ExceptT String m a
@@ -208,15 +215,20 @@ hGetLineBS = fmap L.fromStrict . B.hGetLine
 logException :: String -> (String -> IO ()) -> IO () -> IO ()
 logException pre out = handle onErr where
 	onErr :: SomeException -> IO ()
-	onErr e = out $ pre ++ show e
+	onErr e = out $ pre ++ displayException e
 
 logIO :: String -> (String -> IO ()) -> IO () -> IO ()
 logIO pre out = handle onIO where
 	onIO :: IOException -> IO ()
-	onIO e = out $ pre ++ show e
+	onIO e = out $ pre ++ displayException e
+
+logAsync :: (String -> IO ()) -> IO () -> IO ()
+logAsync out = handle onAsync where
+	onAsync :: AsyncException -> IO ()
+	onAsync e = out (displayException e) >> throwIO e
 
 ignoreIO :: IO () -> IO ()
 ignoreIO = handle (const (return ()) :: IOException -> IO ())
 
 liftAsync :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Async a) -> ExceptT String m a
-liftAsync = liftExceptionM . ExceptT . liftIO . liftM (left show) . join . liftM waitCatch
+liftAsync = liftExceptionM . ExceptT . liftIO . liftM (left displayException) . join . liftM waitCatch

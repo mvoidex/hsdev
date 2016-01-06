@@ -24,7 +24,6 @@ import HsDev.Server.Message (Notification(..))
 import HsDev.Symbols
 import HsDev.Util ((.::))
 import HsDev.Watcher.Types
-import System.Console.Args
 
 data Status = StatusWorking | StatusOk | StatusError String
 
@@ -55,31 +54,31 @@ instance FromJSON Progress where
 data Task = Task {
 	taskName :: String,
 	taskStatus :: Status,
-	taskParams :: Object,
-	taskProgress :: Maybe Progress,
-	taskChild :: Maybe Task }
+	taskSubjectType :: String,
+	taskSubjectName :: String,
+	taskProgress :: Maybe Progress }
 
 instance ToJSON Task where
 	toJSON t = object [
-		"status" .= taskStatus t,
 		"task" .= taskName t,
-		"params" .= taskParams t,
-		"progress" .= taskProgress t,
-		"child" .= taskChild t]
+		"status" .= taskStatus t,
+		"type" .= taskSubjectType t,
+		"name" .= taskSubjectName t,
+		"progress" .= taskProgress t]
 
 instance FromJSON Task where
 	parseJSON = withObject "task" $ \v -> Task <$>
 		(v .:: "task") <*>
 		(v .:: "status") <*>
-		(v .:: "params") <*>
-		(v .:: "progress") <*>
-		(v .:: "child")
+		(v .:: "type") <*>
+		(v .:: "name") <*>
+		(v .:: "progress")
 
 data Settings = Settings {
 	database :: Async Database,
 	databaseCacheReader :: (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database),
 	databaseCacheWriter :: Database -> IO (),
-	onStatus :: Task -> IO (),
+	onStatus :: [Task] -> IO (),
 	ghcOptions :: [String],
 	updateDocs :: Bool,
 	runInferTypes :: Bool,
@@ -87,15 +86,15 @@ data Settings = Settings {
 	settingsLogger :: Log.Log,
 	settingsWatcher :: Watcher }
 
-settings :: CommandOptions -> Opts String -> Settings
-settings copts as = Settings
+settings :: CommandOptions -> [String] -> Bool -> Bool -> Settings
+settings copts ghcOpts' docs' infer' = Settings
 	(commandDatabase copts)
 	(commandReadCache copts)
 	(commandWriteCache copts)
 	(commandNotify copts . Notification . toJSON)
-	(listArg "ghc" as)
-	(flagSet "docs" as)
-	(flagSet "infer" as)
+	ghcOpts'
+	docs'
+	infer'
 	(commandGhcMod copts)
 	(commandLogger copts)
 	(commandWatcher copts)

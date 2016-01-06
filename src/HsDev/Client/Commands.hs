@@ -1,34 +1,38 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Client.Commands (
-	commands
+	runCommand
 	) where
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (view, preview, each, _Just)
+import Control.Lens (view, preview, each, _Just, from)
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.State (gets)
 import Control.Monad.Catch (try, SomeException(..))
 import Control.Monad.Trans.Maybe
 import Data.Aeson hiding (Result, Error)
 import Data.List
+import Data.Foldable (toList, find)
 import Data.Maybe
 import qualified Data.Map as M
 import Data.String (fromString)
 import Data.Text (unpack)
-import qualified Data.Text as T (isInfixOf, isPrefixOf)
+import Data.Text.Lens (packed)
+import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
 import System.Directory
 import System.FilePath
 import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
+import Text.Regex.PCRE ((=~))
 
 import HsDev.Cache
 import qualified HsDev.Cache.Structured as SC
 import HsDev.Commands
 import qualified HsDev.Database.Async as DB
 import HsDev.Server.Message as M
-import HsDev.Server.Types hiding (autoScan, cmd)
+import HsDev.Server.Types hiding (cmd)
 import HsDev.Symbols
 import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util
@@ -48,746 +52,306 @@ import System.Console.Cmd
 
 import qualified HsDev.Database.Update as Update
 
--- | Client commands
-commands :: [Cmd CommandAction]
-commands = [
-	-- Ping command
-	cmd' "ping" [] [] "ping server" ping',
-	cmd' "listen" [] [] "listen server log" listen',
-	-- Database commands
-	cmd' "add" [] [dataArg] "add info to database" add',
-	cmd' "scan" [] (sandboxes ++ [
-		manyReq $ projectArg `desc` "project path or .cabal",
-		manyReq $ fileArg `desc` "source file",
-		manyReq $ pathArg `desc` "directory to scan for files and projects",
-		dataArg `desc` "files contents in format {<path>:<contents>, ...}",
-		ghcOpts, docsFlag, inferFlag])
-		"scan sources"
-		scan',
-	cmd' "docs" [] [
-		manyReq $ projectArg `desc` "project path or .cabal",
-		manyReq $ fileArg `desc` "source file",
-		manyReq $ moduleArg `desc` "module name"]
-		"scan docs"
-		docs',
-	cmd' "infer" [] ([
-		manyReq $ projectArg `desc` "project path or .cabal",
-		manyReq $ fileArg `desc` "source file",
-		manyReq $ moduleArg `desc` "module name"] ++ autoScanOpts)
-		"infer types for specified modules"
-		infer',
-	cmdList' "remove" [] (sandboxes ++ [
-		projectArg `desc` "module project",
-		fileArg `desc` "module source file",
-		moduleArg,
-		packageArg, noLastArg, packageVersionArg,
-		allFlag "remove all"])
-		"remove modules info"
-		remove',
-	-- Context free commands
-	cmdList' "modules" [] (sandboxes ++ [
-		manyReq $ projectArg `desc` "projects to list modules from",
-		moduleArg,
-		depsArg,
-		noLastArg,
-		manyReq packageArg,
-		sourced, standaloned])
-		"list modules"
-		listModules',
-	cmdList' "packages" [] [] "list packages" listPackages',
-	cmdList' "projects" [] [] "list projects" listProjects',
-	cmdList' "sandboxes" [] [] "list sandboxes" listSandboxes',
-	cmdList' "symbol" ["name"] (matches ++ sandboxes ++ [
-		projectArg `desc` "related project",
-		fileArg `desc` "source file",
-		moduleArg, localsArg,
-		packageArg, depsArg, noLastArg, packageVersionArg,
-		sourced, standaloned] ++ autoScanOpts)
-		"get symbol info"
-		symbol',
-	cmd' "module" [] (sandboxes ++ [
-		moduleArg, localsArg,
-		packageArg, depsArg, noLastArg, packageVersionArg,
-		projectArg `desc` "module project",
-		fileArg `desc` "module source file",
-		sourced] ++ autoScanOpts)
-		"get module info"
-		modul',
-	cmd' "resolve" [] (sandboxes ++ [
-		moduleArg, localsArg,
-		projectArg `desc` "module project",
-		fileArg `desc` "module source file",
-		exportsArg] ++ autoScanOpts)
-		"resolve module scope (or exports)"
-		resolve',
-	cmd' "project" [] ([
-		projectArg `desc` "project path or name",
-		pathArg `desc` "locate project in parent of this path"] ++ autoScanOpts)
-		"get project info"
-		project',
-	cmd' "sandbox" [] [
-		pathArg `desc` "locate sandbox in parent of this path"]
-		"get sandbox info"
-		sandbox',
-	-- Context commands
-	cmdList' "lookup" ["symbol"] ctx "lookup for symbol" lookup',
-	cmdList' "whois" ["symbol"] ctx "get info for symbol" whois',
-	cmdList' "scope modules" [] ctx "get modules accessible from module or within a project" scopeModules',
-	cmdList' "scope" [] (ctx ++ matches ++ [globalArg]) "get declarations accessible from module or within a project" scope',
-	cmdList' "complete" ["input"] (ctx ++ [wideArg]) "show completions for input" complete',
-	-- Tool commands
-	cmdList' "hayoo" ["query"] hayooArgs "find declarations online via Hayoo" hayoo',
-	cmdList' "cabal list" ["packages..."] [] "list cabal packages" cabalList',
-	cmdList' "lint" ["files..."] ([dataArg] ++ autoScanOpts) "lint source files or file contents" lint',
-	cmdList' "check" ["files..."] ([dataArg, sandboxArg, ghcOpts] ++ autoScanOpts) "check source files or file contents" check',
-	cmdList' "check-lint" ["files..."] ([dataArg, sandboxArg, ghcOpts] ++ autoScanOpts) "check and lint source files or file contents" checkLint',
-	cmdList' "types" ["file"] ([dataArg, sandboxArg, ghcOpts] ++ autoScanOpts) "get types for file expressions" types',
-	cmdList' "ghc-mod lang" [] [] "get LANGUAGE pragmas" ghcmodLang',
-	cmdList' "ghc-mod flags" [] [] "get OPTIONS_GHC pragmas" ghcmodFlags',
-	cmdList' "ghc-mod type" ["line", "column"] (ctx ++ [ghcOpts]) "infer type with 'ghc-mod type'" ghcmodType',
-	cmdList' "ghc-mod check" ["files..."] ([sandboxArg, ghcOpts] ++ autoScanOpts) "check source files" ghcmodCheck',
-	cmdList' "ghc-mod lint" ["files..."] ([hlintOpts] ++ autoScanOpts) "lint source files" ghcmodLint',
-	cmdList' "ghc-mod check-lint" ["files..."] ([sandboxArg, ghcOpts, hlintOpts] ++ autoScanOpts) "check & lint source files" ghcmodCheckLint',
-	-- Autofix
-	cmd' "autofix show" [] [dataArg] "generate corrections for check & lint messages" autofixShow',
-	cmd' "autofix fix" [] [dataArg, restMsgsArg, pureArg] "fix errors and return rest corrections with updated regions" autofixFix',
-	-- Ghc commands
-	cmdList' "ghc eval" ["expr..."] [] "evaluate expression" ghcEval',
-	-- Dump/load commands
-	cmd' "dump" [] (sandboxes ++ [
-		cacheDir, cacheFile,
-		manyReq $ projectArg `desc` "project",
-		manyReq $ fileArg `desc` "file",
-		standaloned,
-		allFlag "dump all"])
-		"dump database info" dump',
-	cmd' "load" [] [cacheDir, cacheFile, dataArg] "load data" load',
-	-- Link
-	cmd' "link" [] [holdArg] "link to server" link',
-	-- Exit
-	cmd' "exit" [] [] "exit" exit']
-	where
-		cmd' :: ToJSON a => String -> [String] -> [Opt] -> String -> ([String] -> Opts String -> CommandActionT a) -> Cmd CommandAction
-		cmd' nm pos named descr act = checkPosArgs $ cmd nm pos named descr act' where
-			act' (Args args os) copts = Log.scopeLog (commandLogger copts) (fromString nm) $ do
-				r <- runExceptT (act args os copts)
-				case r of
-					Left (CommandError e ds) -> return $ Error e $ M.fromList $ map (first unpack) ds
-					Right r' -> return $ Result $ toJSON r'
+runCommandM :: ToJSON a => CommandM a -> IO Result
+runCommandM = liftM toResult . runExceptT where
+	toResult (Left (CommandError e ds)) = Error e $ M.fromList $ map (first unpack) ds
+	toResult (Right r') = Result $ toJSON r'
 
-		cmdList' :: ToJSON a => String -> [String] -> [Opt] -> String -> ([String] -> Opts String -> CommandActionT [a]) -> Cmd CommandAction
-		cmdList' nm pos named descr act = cmd' nm pos (named ++ [splitRes]) descr act' where
-			splitRes = flag "split-result" `desc` "split result list and return it with notifications"
-			act' args os copts = do
-				rs <- act args os' copts
-				if flagSet "split-result" isSplit
-					then do
-						liftIO $ mapM_ (commandNotify copts . resultPart) rs
-						return []
-					else return rs
-				where
-					(isSplit, os') = splitOpts [splitRes] os
-
-		-- Command arguments and flags
-		allFlag d = flag "all" `short` ['a'] `desc` d
-		autoScanFlag = flag "autoscan" `short` ['s'] `desc` "automatically scan related files/projects"
-		autoScanOpts = [autoScanFlag, ghcOpts]
-		cacheDir = req "cache-dir" "path" `desc` "cache path"
-		cacheFile = req "cache-file" "path" `desc` "cache file"
-		ctx = [fileArg `desc` "source file", sandboxArg]
-		dataArg = req "data" "contents" `desc` "data to pass to command"
-		depsArg = req "deps" "object" `desc` "filter to such that in dependency of specified object (file or project)"
-		docsFlag = flag "docs" `desc` "scan source file docs"
-		exportsArg = flag "exports" `short` ['e'] `desc` "resolve module exports"
-		fileArg = req "file" "path" `short` ['f']
-		findArg = req "find" "query" `desc` "infix match"
-		ghcOpts = list "ghc" "option" `short` ['g'] `desc` "options to pass to GHC"
-		globalArg = flag "global" `desc` "scope of project"
-		hayooArgs = [
-			req "page" "n" `short` ['p'] `desc` "page number (0 by default)",
-			req "pages" "count" `short` ['n'] `desc` "pages count (1 by default)"]
-		hlintOpts = list "hlint" "option" `short` ['h'] `desc` "options to pass to hlint"
-		holdArg = flag "hold" `short` ['h'] `desc` "don't return any response"
-		inferFlag = flag "infer" `desc` "infer types"
-		localsArg = flag "locals" `short` ['l'] `desc` "look in local declarations"
-		matches = [prefixArg, findArg]
-		moduleArg = req "module" "name" `short` ['m'] `desc` "module name"
-		noLastArg = flag "no-last" `desc` "select not only last version packages"
-		packageArg = req "package" "name" `desc` "module package"
-		pathArg = req "path" "path" `short` ['p']
-		prefixArg = req "prefix" "prefix" `desc` "prefix match"
-		projectArg = req "project" "project"
-		packageVersionArg = req "version" "id" `short` ['v'] `desc` "package version"
-		pureArg = flag "pure" `desc` "don't modify actual file, just return result"
-		restMsgsArg = req "rest" "corrections" `short` ['r'] `desc` "corrections left unfixed to update locations"
-		sandboxArg = req "sandbox" "path" `desc` "path to cabal sandbox"
-		sandboxList = manyReq sandboxArg
-		sandboxes = [
-			flag "cabal" `desc` "cabal",
-			sandboxList]
-		sourced = flag "src" `desc` "source files"
-		standaloned = flag "stand" `desc` "standalone files"
-		wideArg = flag "wide" `short` ['f'] `desc` "wide mode - complete as if there were no import lists"
-
-		-- | Ping server
-		ping' :: [String] -> Opts String -> CommandActionT Value
-		ping' _ _ _ = return $ object ["message" .= ("pong" :: String)]
-
-		-- | Listen server log
-		listen' :: [String] -> Opts String -> CommandActionT ()
-		listen' _ _ copts = liftIO $ commandListenLog copts $
-			mapM_ (\msg -> commandNotify copts (Notification $ object ["message" .= msg]))
-
-		-- | Add data
-		add' :: [String] -> Opts String -> CommandActionT ()
-		add' _ as copts = do
-			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
-			decodedData <- either
-				(\err -> commandError "Unable to decode data" [
-					"why" .= err,
-					"data" .= jsonData])
-				return $
-				eitherDecode $ toUtf8 jsonData
-
-			let
-				updateData (AddedDatabase db) = DB.update (dbVar copts) $ return db
-				updateData (AddedModule m) = DB.update (dbVar copts) $ return $ fromModule m
-				updateData (AddedProject p) = DB.update (dbVar copts) $ return $ fromProject p
-			mapM_ updateData (decodedData :: [AddedContents])
-
-		-- | Scan sources and installed packages
-		scan' :: [String] -> Opts String -> CommandActionT ()
-		scan' _ as copts = do
-			cabals <- getSandboxes copts as
-			let
-				getData :: String -> CommandM [(FilePath, String)]
-				getData d =
-					either
-						(\err -> commandError "Unable to decode data" [
-							"why" .= err,
-							"data" .= d])
-						(return . M.toList) .
-					eitherDecode . toUtf8 $ d
-			ctsFiles <- traverse getData $ arg "data" as
-			updateProcess copts as $ concat [
-				map (\(f, cts) -> Update.scanFileContents (listArg "ghc" as) f (Just cts)) (fromMaybe [] ctsFiles),
-				concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- listArg n as]) [
-					("project", Update.scanProject),
-					("file", Update.scanFile),
-					("path", Update.scanDirectory)],
-				map (Update.scanCabal (listArg "ghc" as)) cabals]
-
-		-- | Scan docs
-		docs' :: [String] -> Opts String -> CommandActionT ()
-		docs' _ as copts = do
-			files <- traverse (findPath copts) $ listArg "file" as
-			projects <- traverse (findProject copts) $ listArg "project" as
-			dbval <- getDb copts
-			let
-				filters = anyOf $
-					map inProject projects ++
-					map inFile files ++
-					map inModule (listArg "module" as)
-				mods = selectModules (filters . view moduleId) dbval
-			updateProcess copts as [Update.scanDocs $ map (getInspected dbval) mods]
-
-		-- | Infer types
-		infer' :: [String] -> Opts String -> CommandActionT ()
-		infer' _ as copts = do
-			files <- traverse (findPath copts) $ listArg "file" as
-			projects <- traverse (findProject copts) $ listArg "project" as
-			autoScan as copts files projects
-			dbval <- getDb copts
-			let
-				filters = anyOf $
-					map inProject projects ++
-					map inFile files ++
-					map inModule (listArg "module" as)
-				mods = selectModules (filters . view moduleId) dbval
-			updateProcess copts as [Update.inferModTypes $ map (getInspected dbval) mods]
-			
-		-- | Remove data
-		remove' :: [String] -> Opts String -> CommandActionT [ModuleId]
-		remove' _ as copts = do
-			dbval <- getDb copts
-			cabal <- getCabal_ copts as
-			proj <- traverse (findProject copts) $ arg "project" as
-			file <- traverse (findPath copts) $ arg "file" as
-			let
-				cleanAll = flagSet "all" as
-				filters = catMaybes [
-					fmap inProject proj,
-					fmap inFile file,
-					fmap inModule (arg "module" as),
-					fmap inPackage (arg "package" as),
-					fmap inVersion (arg "version" as),
-					fmap inCabal cabal]
-				toClean = newest as $ filter (allOf filters . view moduleId) (allModules dbval)
-				action
-					| null filters && cleanAll = liftIO $ do
-						DB.modifyAsync (dbVar copts) DB.Clear
-						return []
-					| null filters && not cleanAll = commandError "Specify filter or explicitely set flag --all" []
-					| cleanAll = commandError "--all flag can't be set with filters" []
-					| otherwise = liftIO $ do
-						DB.modifyAsync (dbVar copts) $ DB.Remove $ mconcat $ map (fromModule . getInspected dbval) toClean
-						return $ map (view moduleId) toClean
-			action
-
-		-- | List modules
-		listModules' :: [String] -> Opts String -> CommandActionT [ModuleId]
-		listModules' _ as copts = do
-			dbval <- getDb copts
-			projs <- traverse (findProject copts) $ listArg "project" as
-			deps <- traverse (findDep copts) $ listArg "deps" as
-			cabals <- getSandboxes copts as
-			let
-				packages = listArg "package" as
-				hasFilters = not $ null projs && null packages && null cabals && null deps
-				filters = allOf $ catMaybes [
-					if hasFilters
-						then Just $ anyOf $ catMaybes [
-							if null projs then Nothing else Just (\m -> any (`inProject` m) projs),
-							if null deps then Nothing else Just (\m -> any (`inDeps` m) deps),
-							if null packages && null cabals then Nothing
-								else Just (\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals))]
-						else Nothing,
-					fmap (\n m -> fromString n == view moduleIdName m) $ arg "module" as,
-					if flagSet "src" as then Just byFile else Nothing,
-					if flagSet "stand" as then Just standalone else Nothing]
-			return $ map (view moduleId) $ newest as $ selectModules (filters . view moduleId) dbval
-
-		-- | List packages
-		listPackages' :: [String] -> Opts String -> CommandActionT [ModulePackage]
-		listPackages' _ _ copts = do
-			dbval <- getDb copts
-			return $ ordNub $ sort $
-				mapMaybe (preview (moduleLocation . modulePackage . _Just)) $
-				allModules dbval
-
-		-- | List projects
-		listProjects' :: [String] -> Opts String -> CommandActionT [Project]
-		listProjects' _ _ copts = do
-			dbval <- getDb copts
-			return $ M.elems $ databaseProjects dbval
-
-		-- | List sandboxes
-		listSandboxes' :: [String] -> Opts String -> CommandActionT [Cabal]
-		listSandboxes' _ _ copts = (ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
-
-		-- | Get symbol info
-		symbol' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
-		symbol' ns as copts = do
-			dbval <- liftM (localsDatabase as) $ getDb copts
-			proj <- traverse (findProject copts) $ arg "project" as
-			file <- traverse (findPath copts) $ arg "file" as
-			autoScan as copts (maybeToList file) (maybeToList proj)
-			deps <- traverse (findDep copts) $ arg "deps" as
-			cabal <- getCabal_ copts as
-			let
-				filters = checkModule $ allOf $ catMaybes [
-					fmap inProject proj,
-					fmap inFile file,
-					fmap inModule (arg "module" as),
-					fmap inPackage (arg "package" as),
-					fmap inDeps deps,
-					fmap inVersion (arg "version" as),
-					fmap inCabal cabal,
-					if flagSet "src" as then Just byFile else Nothing,
-					if flagSet "stand" as then Just standalone else Nothing]
-				toResult = newest as . filterMatch as . filter filters
-			case ns of
-				[] -> return $ toResult $ allDeclarations dbval
-				[nm] -> liftM toResult $ mapExceptT
-					(liftM $ left (\e -> CommandError ("Can't find symbol: " ++ e) []))
-					(findDeclaration dbval nm)
-				_ -> commandError "Too much arguments" []
-
-		-- | Get module info
-		modul' :: [String] -> Opts String -> CommandActionT Module
-		modul' _ as copts = do
-			dbval <- liftM (localsDatabase as) $ getDb copts
-			proj <- traverse (findProject copts) $ arg "project" as
-			cabal <- getCabal_ copts as
-			file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ arg "file" as
-			autoScan as copts (maybeToList file') (maybeToList proj)
-			deps <- traverse (findDep copts) $ arg "deps" as
-			let
-				filters = allOf $ catMaybes [
-					fmap inProject proj,
-					fmap inCabal cabal,
-					fmap inFile file',
-					fmap inModule (arg "module" as),
-					fmap inPackage (arg "package" as),
-					fmap inDeps deps,
-					fmap inVersion (arg "version" as),
-					if flagSet "src" as then Just byFile else Nothing]
-			rs <- (newest as . filter (filters . view moduleId)) <$> maybe
-				(return $ allModules dbval)
-				(mapCommandErrorStr . findModule dbval)
-				(arg "module" as)
-			case rs of
-				[] -> commandError "Module not found" []
-				[m] -> return m
-				ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
-
-		-- | Resolve module scope
-		resolve' :: [String] -> Opts String -> CommandActionT Module
-		resolve' _ as copts = do
-			dbval <- liftM (localsDatabase as) $ getDb copts
-			proj <- traverse (findProject copts) $ arg "project" as
-			cabal <- getCabal copts as
-			file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ arg "file" as
-			autoScan as copts (maybeToList file') (maybeToList proj)
-			let
-				filters = allOf $ catMaybes [
-					fmap inProject proj,
-					fmap inFile file',
-					fmap inModule (arg "module" as),
-					Just byFile]
-			rs <- (newest as . filter (filters . view moduleId)) <$> maybe
-				(return $ allModules dbval)
-				(mapCommandErrorStr . findModule dbval)
-				(arg "module" as)
-			let
-				cabaldb = filterDB (restrictCabal cabal) (const True) dbval
-				getScope = if flagSet "exports" as then exportsModule else scopeModule
-			case rs of
-				[] -> commandError "Module not found" []
-				[m] -> return $ getScope $ resolveOne cabaldb m
-				ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
-
-		-- | Get project info
-		project' :: [String] -> Opts String -> CommandActionT Project
-		project' _ as copts = do
-			proj <- runMaybeT $ do
-				p <- msum $ map MaybeT [
-					traverse (findProject copts) $ arg "project" as,
-					liftM join $ traverse (liftIO . searchProject) $ arg "path" as]
-				lift $ if flagSet "autoscan" as then mapCommandErrorStr (loadProject p) else return p
-			maybe (commandError "Specify project name, .cabal file or search directory" []) return proj
-
-		-- | Locate sandbox
-		sandbox' :: [String] -> Opts String -> CommandActionT Cabal
-		sandbox' _ as _ = do
-			sbox <- traverse (liftIO . searchSandbox) (arg "path" as)
-			maybe (commandError "Specify search directory" []) return sbox
-
-		-- | Lookup info about symbol
-		lookup' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
-		lookup' [nm] as copts = do
-			dbval <- getDb copts
-			(srcFile, cabal) <- getCtx copts as
-			mapCommandErrorStr $ lookupSymbol dbval cabal srcFile nm
-		lookup' _ _ _ = commandError "Invalid arguments" []
-
-		-- | Get detailed info about symbol in source file
-		whois' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
-		whois' [nm] as copts = do
-			dbval <- getDb copts
-			(srcFile, cabal) <- getCtx copts as
-			mapCommandErrorStr $ whois dbval cabal srcFile nm
-		whois' _ _ _ = commandError "Invalid arguments" []
-
-		-- | Get modules accessible from module or from directory
-		scopeModules' :: [String] -> Opts String -> CommandActionT [ModuleId]
-		scopeModules' [] as copts = do
-			dbval <- getDb copts
-			(srcFile, cabal) <- getCtx copts as
-			liftM (map (view moduleId)) $ mapCommandErrorStr $ scopeModules dbval cabal srcFile
-		scopeModules' _ _ _ = commandError "Invalid arguments" []
-
-		-- | Get declarations accessible from module
-		scope' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
-		scope' [] as copts = do
-			dbval <- getDb copts
-			(srcFile, cabal) <- getCtx copts as
-			liftM (filterMatch as) $ mapCommandErrorStr $ scope dbval cabal srcFile (flagSet "global" as)
-		scope' _ _ _ = commandError "Invalid arguments" []
-
-		-- | Completion
-		complete' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
-		complete' [] as copts = complete' [""] as copts
-		complete' [input] as copts = do
-			dbval <- getDb copts
-			(srcFile, cabal) <- getCtx copts as
-			mapCommandErrorStr $ completions dbval cabal srcFile input (flagSet "wide" as)
-		complete' _ _ _ = commandError "Invalid arguments" []
-
-		-- | Hayoo
-		hayoo' :: [String] -> Opts String -> CommandActionT [ModuleDeclaration]
-		hayoo' [] _ _ = commandError "Query not specified" []
-		hayoo' [query] opts _ = liftM concat $ forM [page .. page + pred pages] $ \i -> liftM
-			(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
-			mapCommandErrorStr $ Hayoo.hayoo query (Just i)
-			where
-				page = fromMaybe 0 $ narg "page" opts
-				pages = fromMaybe 1 $ narg "pages" opts
-		hayoo' _ _ _ = commandError "Too much arguments" []
-
-		-- | Cabal list
-		cabalList' :: [String] -> Opts String -> CommandActionT [Cabal.CabalPackage]
-		cabalList' qs _ _ = mapCommandErrorStr $ Cabal.cabalList qs
-
-		-- | HLint
-		lint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		lint' files as copts = case arg "data" as of
-			Nothing -> do
-				files' <- mapM (findPath copts) files
-				autoScan as copts files' []
-				mapCommandErrorStr $ liftM concat $ mapM HLint.hlintFile files'
-			Just src -> do
-				src' <- either
-					(\err -> commandError "Unable to decode data" [
-						"why" .= err,
-						"data" .= src])
-					return $
-					eitherDecode (toUtf8 src)
-				when (length files > 1) $ commandError_ "Only one file permitted when passing source"
-				file' <- traverse (findPath copts) $ listToMaybe files
-				mapCommandErrorStr $ HLint.hlintSource (fromMaybe "<unnamed>" file') src'
-
-		-- | Check
-		check' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		check' files as copts = case arg "data" as of
-			Nothing -> do
-				files' <- mapM (findPath copts) files
-				autoScan as copts files' []
-				db <- getDb copts
-				cabal <- getCabal copts as
-				liftM concat $ forM files' $ \file' -> do
-					m <- maybe
-						(commandError_ $ "File '" ++ file' ++ "' not found, maybe you forgot to scan it?")
-						return $
-						lookupFile file' db
-					notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
-						(runExceptT $ Check.checkFile (listArg "ghc" as) cabal m)
-					either commandError_ return notes
-			Just src -> do
-				src' <- either
-					(\err -> commandError "Unable to decode data" [
-						"why" .= err,
-						"data" .= src])
-					return $
-					eitherDecode (toUtf8 src)
-				when (length files > 1) $ commandError_ "Only one file permitted when passing source"
-				file' <- maybe (commandError_ "File must be specified") (findPath copts) $ listToMaybe files
-				db <- getDb copts
-				cabal <- getCabal copts as
-				m <- maybe
-					(commandError_ $ "File '" ++ file' ++ "' not found")
-					return $
-					lookupFile file' db
-				notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
-					(runExceptT $ Check.checkSource (listArg "ghc" as) cabal m src')
-				either commandError_ return notes
-
-		-- | Check and lint
-		checkLint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		checkLint' files as copts = liftM2 (++) (check' files as copts) (lint' files as copts)
-
-		-- | Types
-		types' :: [String] -> Opts String -> CommandActionT [Tools.Note Types.TypedExpr]
-		types' [file] as copts = do
-			file' <- findPath copts file
-			autoScan as copts [file'] []
-			db <- getDb copts
-			cabal <- getCabal copts as
-			let
-				decodeData src = either
-					(\err -> commandError "Unable to decode data" ["why" .= err, "data" .= src])
-					return $
-					eitherDecode (toUtf8 src)
-			msrc <- traverse decodeData $ arg "data" as
+-- | Run command
+runCommand :: CommandOptions -> Command -> IO Result
+runCommand copts Ping = runCommandM $ return $ object ["message" .= ("pong" :: String)]
+runCommand copts Listen = runCommandM $ liftIO $ commandListenLog copts $
+	mapM_ (\msg -> commandNotify copts (Notification $ object ["message" .= msg]))
+runCommand copts (AddData cts) = runCommandM $ mapM_ updateData cts where
+	updateData (AddedDatabase db) = DB.update (dbVar copts) $ return db
+	updateData (AddedModule m) = DB.update (dbVar copts) $ return $ fromModule m
+	updateData (AddedProject p) = DB.update (dbVar copts) $ return $ fromProject p
+runCommand copts (Scan projs cabals fs paths fcts ghcs' docs' infer') = runCommandM $ do
+	sboxes <- getSandboxes copts cabals
+	updateProcess copts ghcs' docs' infer' $ concat [
+		map (\(FileContents f cts) -> Update.scanFileContents ghcs' f (Just cts)) fcts,
+		map (\proj -> findPath copts proj >>= Update.scanProject ghcs') projs,
+		map (\f -> findPath copts f >>= Update.scanFile ghcs') fs,
+		map (\path -> findPath copts path >>= Update.scanDirectory ghcs') paths,
+		map (Update.scanCabal ghcs') sboxes]
+runCommand copts (RefineDocs projs fs ms) = runCommandM $ do
+	files <- traverse (findPath copts) fs
+	projects <- traverse (findProject copts) projs
+	dbval <- getDb copts
+	let
+		filters = anyOf $ concat [
+			map inProject projects,
+			map inFile files,
+			map inModule ms]
+		mods = selectModules (filters . view moduleId) dbval
+	updateProcess copts [] False False [Update.scanDocs $ map (getInspected dbval) mods]
+runCommand copts (InferTypes projs fs ms) = runCommandM $ do
+	files <- traverse (findPath copts) fs
+	projects <- traverse (findProject copts) projs
+	dbval <- getDb copts
+	let
+		filters = anyOf $ concat [
+			map inProject projects,
+			map inFile files,
+			map inModule ms]
+		mods = selectModules (filters . view moduleId) dbval
+	updateProcess copts [] False False [Update.inferModTypes $ map (getInspected dbval) mods]
+runCommand copts (Remove projs packages cabals fs) = undefined
+runCommand copts (InfoModules fs) = runCommandM $ do
+	dbval <- getDb copts
+	projs <- traverse (findProject copts) [proj | TargetProject proj <- fs]
+	deps <- traverse (findDep copts) [dep | TargetDepsOf dep <- fs]
+	cabals <- getSandboxes copts [sbox | TargetCabal sbox <- fs]
+	let
+		packages = [package | TargetPackage package <- fs]
+		mods = [m' | TargetModule m' <- fs]
+		files = [file | TargetFile file <- fs]
+		hasFilters = not $ null projs && null packages && null cabals && null deps
+		filters = allOf $ catMaybes [
+			if hasFilters
+				then Just $ anyOf $ catMaybes [
+					if null projs then Nothing else Just (\m -> any (`inProject` m) projs),
+					if null deps then Nothing else Just (\m -> any (`inDeps` m) deps),
+					if null mods then Nothing else Just (\m -> any (`inModule` m) mods),
+					if null files then Nothing else Just (\m -> any (`inFile` m) files),
+					if null packages && null cabals then Nothing
+						else Just (\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals))]
+				else Nothing,
+			if TargetSourced `elem` fs then Just byFile else Nothing,
+			if TargetStandalone `elem` fs then Just standalone else Nothing]
+	return $ map (view moduleId) $ newest (TargetOldToo `notElem` fs) $ selectModules (filters . view moduleId) dbval
+runCommand copts InfoPackages = runCommandM $
+	(ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb copts
+runCommand copts InfoProjects = runCommandM $ (toList . databaseProjects) <$> getDb copts
+runCommand copts InfoSandboxes = runCommandM $
+	(ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
+runCommand copts (InfoSymbol sq fs) = runCommandM $ do
+	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
+	proj <- traverse (findProject copts) $ listToMaybe [p | TargetProject p <- fs]
+	file <- traverse (findPath copts) $ listToMaybe [f | TargetFile f <- fs]
+	deps <- traverse (findDep copts) $ listToMaybe [d | TargetDepsOf d <- fs]
+	cabal <- traverse (findSandbox copts) $ listToMaybe [c | TargetCabal c <- fs]
+	let
+		filters = checkModule $ allOf $ catMaybes [
+			fmap inProject proj,
+			fmap inFile file,
+			fmap inModule $ listToMaybe [m | TargetModule m <- fs],
+			fmap inPackage $ listToMaybe [p | TargetPackage p <- fs],
+			fmap inDeps deps,
+			-- fmap inVersion (arg "version" as), -- FIXME: Where is version argument?
+			fmap inCabal cabal,
+			if TargetSourced `elem` fs then Just byFile else Nothing,
+			if TargetStandalone `elem` fs then Just standalone else Nothing]
+		toResult = newest (TargetOldToo `notElem` fs) . filterMatch sq . filter filters
+	return $ toResult $ allDeclarations dbval
+runCommand copts (InfoModule fs) = runCommandM $ do
+	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
+	proj <- traverse (findProject copts) $ listToMaybe [p | TargetProject p <- fs]
+	cabal <- traverse (findSandbox copts) $ listToMaybe [c | TargetCabal c <- fs]
+	file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ listToMaybe [f | TargetFile f <- fs]
+	deps <- traverse (findDep copts) $ listToMaybe [d | TargetDepsOf d <- fs]
+	let
+		filters = allOf $ catMaybes [
+			fmap inProject proj,
+			fmap inCabal cabal,
+			fmap inFile file',
+			fmap inModule $ listToMaybe [m | TargetModule m <- fs],
+			fmap inPackage $ listToMaybe [p | TargetPackage p <- fs],
+			fmap inDeps deps,
+			-- fmap inVersion (arg "version" as), -- FIXME: Where is version argument?
+			if TargetSourced `elem` fs then Just byFile else Nothing,
+			if TargetStandalone `elem` fs then Just standalone else Nothing]
+	rs <- (newest (TargetOldToo `notElem` fs) . filter (filters . view moduleId)) <$> maybe
+		(return $ allModules dbval)
+		(mapCommandErrorStr . findModule dbval)
+		(listToMaybe [m | TargetModule m <- fs])
+	case rs of
+		[] -> commandError "Module not found" []
+		[m] -> return m
+		ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
+runCommand copts (InfoResolve fs exports) = runCommandM $ do
+	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
+	proj <- traverse (findProject copts) $ listToMaybe [p | TargetProject p <- fs]
+	cabal <- traverse (findSandbox copts) $ listToMaybe [c | TargetCabal c <- fs]
+	file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ listToMaybe [f | TargetFile f <- fs]
+	let
+		filters = allOf $ catMaybes [
+			fmap inProject proj,
+			fmap inFile file',
+			fmap inModule $ listToMaybe [m | TargetModule m <- fs],
+			Just byFile]
+	rs <- (newest (TargetOldToo `notElem` fs) . filter (filters . view moduleId)) <$> maybe
+		(return $ allModules dbval)
+		(mapCommandErrorStr . findModule dbval)
+		(listToMaybe [m | TargetModule m <- fs])
+	let
+		cabaldb = filterDB (restrictCabal $ fromMaybe Cabal cabal) (const True) dbval
+		getScope = if exports then exportsModule else scopeModule
+	case rs of
+		 [] -> commandError "Module not found" []
+		 [m] -> return $ getScope $ resolveOne cabaldb m
+		 ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
+runCommand copts (InfoProject (Left projName)) = runCommandM $ findProject copts projName
+runCommand copts (InfoProject (Right projPath)) = runCommandM $ liftIO $ searchProject projPath
+runCommand copts (InfoSandbox sandbox) = runCommandM $ liftIO $ searchSandbox sandbox
+runCommand copts (Lookup nm fpath) = runCommandM $ do
+	dbval <- getDb copts
+	srcFile <- findPath copts fpath
+	cabal <- liftIO $ getSandbox srcFile
+	mapCommandErrorStr $ lookupSymbol dbval cabal srcFile nm
+runCommand copts (Whois nm fpath) = runCommandM $ do
+	dbval <- getDb copts
+	srcFile <- findPath copts fpath
+	cabal <- liftIO $ getSandbox srcFile
+	mapCommandErrorStr $ whois dbval cabal srcFile nm
+runCommand copts (ResolveScopeModules fpath) = runCommandM $ do
+	dbval <- getDb copts
+	srcFile <- findPath copts fpath
+	cabal <- liftIO $ getSandbox srcFile
+	liftM (map (view moduleId)) $ mapCommandErrorStr $ scopeModules dbval cabal srcFile
+runCommand copts (ResolveScope sq global fpath) = runCommandM $ do
+	dbval <- getDb copts
+	srcFile <- findPath copts fpath
+	cabal <- liftIO $ getSandbox srcFile
+	liftM (filterMatch sq) $ mapCommandErrorStr $ scope dbval cabal srcFile global
+runCommand copts (Complete input wide fpath) = runCommandM $ do
+	dbval <- getDb copts
+	srcFile <- findPath copts fpath
+	cabal <- liftIO $ getSandbox srcFile
+	mapCommandErrorStr $ completions dbval cabal srcFile input wide
+runCommand copts (Hayoo hq p ps) = runCommandM $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
+	(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
+	mapCommandErrorStr $ Hayoo.hayoo hq (Just i)
+runCommand copts (CabalList packages) = runCommandM $ mapCommandErrorStr $ Cabal.cabalList packages
+runCommand copts (Lint fs fcts) = runCommandM $ do
+	files <- mapM (findPath copts) fs
+	cts <- forM fcts $ \(FileContents f c) -> either
+		(\err -> commandError "Unable to decode data" ["why" .= err, "file" .= f, "contents" .= c])
+		(\d -> liftM2 (,) (findPath copts f) (return d))
+		(eitherDecode (toUtf8 c))
+	mapCommandErrorStr $ liftM2 (++)
+		(liftM concat $ mapM HLint.hlintFile files)
+		(liftM concat $ mapM (uncurry HLint.hlintSource) cts)
+runCommand copts (Check fs fcts ghcs') = runCommandM $ do
+	db <- getDb copts
+	files <- mapM (findPath copts) fs
+	cts <- mapM (\(FileContents f c) -> liftM (`FileContents` c) (findPath copts f)) fcts
+	let
+		checkSome file fn = do
+			cabal <- liftIO $ getSandbox file
 			m <- maybe
-				(commandError_ $ "File '" ++ file' ++ "' not found")
-				return $
-				lookupFile file' db
+				(commandError_ $ "File '" ++ file ++ "' not found")
+				return
+				(lookupFile file db)
 			notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
-				(runExceptT $ Types.fileTypes (listArg "ghc" as) cabal m msrc)
+				(runExceptT $ fn cabal m)
 			either commandError_ return notes
-		types' _ _ _ = commandError_ "One file must be specified"
-
-		-- | Ghc-mod lang
-		ghcmodLang' :: [String] -> Opts String -> CommandActionT [String]
-		ghcmodLang' _ _ _ = mapCommandErrorStr GhcMod.langs
-
-		-- | Ghc-mod flags
-		ghcmodFlags' :: [String] -> Opts String -> CommandActionT [String]
-		ghcmodFlags' _ _ _ = mapCommandErrorStr GhcMod.flags
-
-		-- | Ghc-mod type
-		ghcmodType' :: [String] -> Opts String -> CommandActionT [GhcMod.TypedRegion]
-		ghcmodType' [line] as copts = ghcmodType' [line, "1"] as copts
-		ghcmodType' [line, column] as copts = do
-			line' <- maybe (commandError "line must be a number" []) return $ readMaybe line
-			column' <- maybe (commandError "column must be a number" []) return $ readMaybe column
-			dbval <- getDb copts
-			(srcFile, cabal) <- getCtx copts as
-			(srcFile', m', _) <- mapCommandErrorStr $ fileCtx dbval srcFile
-			mapCommandErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) srcFile' $
-				GhcMod.typeOf (listArg "ghc" as ++ moduleOpts (allPackages dbval) m') cabal srcFile' line' column'
-		ghcmodType' [] _ _ = commandError "Specify line" []
-		ghcmodType' _ _ _ = commandError "Too much arguments" []
-
-		-- | Ghc-mod check
-		ghcmodCheck' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		ghcmodCheck' [] _ _ = commandError "Specify at least one file" []
-		ghcmodCheck' files as copts = do
-			files' <- mapM (findPath copts) files
-			autoScan as copts files' []
-			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
-			cabal <- getCabal copts as
-			dbval <- getDb copts
-			mapCommandErrorStr $ liftM concat $ forM files' $ \file' -> do
-				(_, m', _) <- fileCtx dbval file'
-				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
-					GhcMod.check (listArg "ghc" as ++ moduleOpts (allPackages dbval) m') cabal [file'] mproj
-
-		-- | Ghc-mod lint
-		ghcmodLint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		ghcmodLint' [] _ _ = commandError "Specify at least one file to hlint" []
-		ghcmodLint' files as copts = do
-			files' <- mapM (findPath copts) files
-			autoScan as copts files' []
-			mapCommandErrorStr $ liftM concat $ forM files' $ \file' ->
-				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $
-					GhcMod.lint (listArg "hlint" as) file'
-
-		-- | Ghc-mod check & lint
-		ghcmodCheckLint' :: [String] -> Opts String -> CommandActionT [Tools.Note Tools.OutputMessage]
-		ghcmodCheckLint' [] _ _ = commandError "Specify at least one file" []
-		ghcmodCheckLint' files as copts = do
-			files' <- mapM (findPath copts) files
-			autoScan as copts files' []
-			mproj <- (listToMaybe . catMaybes) <$> liftIO (mapM locateProject files')
-			cabal <- getCabal copts as
-			dbval <- getDb copts
-			mapCommandErrorStr $ liftM concat $ forM files' $ \file' -> do
-				(_, m', _) <- fileCtx dbval file'
-				GhcMod.waitMultiGhcMod (commandGhcMod copts) file' $ do
-					checked <- GhcMod.check (listArg "ghc" as ++ moduleOpts (allPackages dbval) m') cabal [file'] mproj
-					linted <- GhcMod.lint (listArg "hlint" as) file'
-					return $ checked ++ linted
-
-		-- | Autofix show
-		autofixShow' :: [String] -> Opts String -> CommandActionT [Tools.Note AutoFix.Correction]
-		autofixShow' _ as _ = do
-			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
-			msgs <- either
-				(\err -> commandError "Unable to decode data" [
-					"why" .= err,
-					"data" .= jsonData])
-				return $
-				eitherDecode $ toUtf8 jsonData
-			return $ AutoFix.corrections msgs
-
-		-- | Autofix fix
-		autofixFix' :: [String] -> Opts String -> CommandActionT [Tools.Note AutoFix.Correction]
-		autofixFix' _ as copts = do
-			let
-				readCorrs cts = either
-					(\err -> commandError "Unable to decode data" [
-						"why" .= err,
-						"data" .= cts])
-					return $
-					eitherDecode $ toUtf8 cts
-			jsonData <- maybe (commandError "Specify --data" []) return $ arg "data" as
-			corrs <- readCorrs jsonData
-			upCorrs <- liftM (fromMaybe []) $ traverse readCorrs $ arg "rest" as
-			files <- liftM (ordNub . sort) $ mapM (findPath copts) $ mapMaybe (preview $ Tools.noteSource . moduleFile) corrs
-			let
-				doFix :: FilePath -> AutoFix.EditM String [Tools.Note AutoFix.Correction]
-				doFix file = AutoFix.grouped $ do
-					AutoFix.autoFix_ fCorrs
-					(each . Tools.note) AutoFix.update fUpCorrs
-					where
-						findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
-						findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
-						fCorrs = map (view Tools.note) $ findCorrs file corrs
-						fUpCorrs = findCorrs file upCorrs
-				runFix file
-					| flagSet "pure" as = return $ fst $ AutoFix.edit "" $ doFix file
-					| otherwise = do
-						(corrs', cts') <- liftM (`AutoFix.edit` doFix file) $ liftE $ readFileUtf8 file
-						liftE $ writeFileUtf8 file cts'
-						return corrs'
-			mapCommandErrorStr $ liftM concat $ mapM runFix files
-
-		-- | Evaluate expression
-		ghcEval' :: [String] -> Opts String -> CommandActionT [Value]
-		ghcEval' exprs _ copts = mapCommandErrorStr $ liftM (map toValue) $ liftAsync $
-			pushTask (commandGhci copts) $ mapM (try . evaluate) exprs
+	liftM concat $ mapM (uncurry checkSome) $
+		[(f, Check.checkFile ghcs') | f <- files] ++
+		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- cts]
+runCommand copts (CheckLint fs fcts ghcs') = runCommandM $ do
+	db <- getDb copts
+	files <- mapM (findPath copts) fs
+	cts <- mapM (\(FileContents f c) -> liftM (`FileContents` c) (findPath copts f)) fcts
+	let
+		checkSome file fn = do
+			cabal <- liftIO $ getSandbox file
+			m <- maybe
+				(commandError_ $ "File '" ++ file ++ "' not found")
+				return
+				(lookupFile file db)
+			notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
+				(runExceptT $ fn cabal m)
+			either commandError_ return notes
+	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
+		[(f, Check.checkFile ghcs') | f <- files] ++
+		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- cts]
+	lintMsgs <- mapCommandErrorStr $ liftM2 (++)
+		(liftM concat $ mapM HLint.hlintFile files)
+		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) cts)
+	return $ checkMsgs ++ lintMsgs
+runCommand copts (Types fs fcts ghcs') = runCommandM $ do
+	db <- getDb copts
+	files <- mapM (findPath copts) fs
+	cts <- mapM (\(FileContents f c) -> liftM (`FileContents` c) (findPath copts f)) fcts
+	let
+		fcts = [(f, Nothing) | f <- files] ++ [(f, Just src) | FileContents f src <- cts]
+	liftM concat $ forM fcts $ \(file, msrc) -> do
+		cabal <- liftIO $ getSandbox file
+		m <- maybe
+			(commandError_ $ "File '" ++ file ++ "' not found")
+			return
+			(lookupFile file db)
+		notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
+			(runExceptT $ Types.fileTypes ghcs' cabal m msrc)
+		either commandError_ return notes
+runCommand copts (GhcMod GhcModLang) = runCommandM $ mapCommandErrorStr GhcMod.langs
+runCommand copts (GhcMod GhcModFlags) = runCommandM $ mapCommandErrorStr GhcMod.flags
+runCommand copts (GhcMod (GhcModType (Position line column) fpath ghcs')) = runCommandM $ do
+	dbval <- getDb copts
+	srcFile <- findPath copts fpath
+	cabal <- liftIO $ getSandbox srcFile
+	(srcFile', m', _) <- mapCommandErrorStr $ fileCtx dbval srcFile
+	mapCommandErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) srcFile' $
+		GhcMod.typeOf (ghcs' ++ moduleOpts (allPackages dbval) m') cabal srcFile' line column
+runCommand copts (GhcMod (GhcModLint fs hlints')) = runCommandM $ do
+	files <- mapM (findPath copts) fs
+	mapCommandErrorStr $ liftM concat $ forM files $ \file ->
+		GhcMod.waitMultiGhcMod (commandGhcMod copts) file $
+			GhcMod.lint hlints' file
+runCommand copts (GhcMod (GhcModCheck fs ghcs')) = runCommandM $ do
+	files <- mapM (findPath copts) fs
+	dbval <- getDb copts
+	mapCommandErrorStr $ liftM concat $ forM files $ \file -> do
+		mproj <- liftIO $ locateProject file
+		cabal <- liftIO $ getSandbox file
+		(_, m', _) <- fileCtx dbval file
+		GhcMod.waitMultiGhcMod (commandGhcMod copts) file $
+			GhcMod.check (ghcs' ++ moduleOpts (allPackages dbval) m') cabal [file] mproj
+runCommand copts (GhcMod (GhcModCheckLint fs ghcs' hlints')) = runCommandM $ do
+	files <- mapM (findPath copts) fs
+	dbval <- getDb copts
+	mapCommandErrorStr $ liftM concat $ forM files $ \file -> do
+		mproj <- liftIO $ locateProject file
+		cabal <- liftIO $ getSandbox file
+		(_, m', _) <- fileCtx dbval file
+		GhcMod.waitMultiGhcMod (commandGhcMod copts) file $ do
+			checked <- GhcMod.check (ghcs' ++ moduleOpts (allPackages dbval) m') cabal [file] mproj
+			linted <- GhcMod.lint hlints' file
+			return $ checked ++ linted
+runCommand copts (AutoFix (AutoFixShow ns)) = runCommandM $ return $ AutoFix.corrections ns
+runCommand copts (AutoFix (AutoFixFix ns rest isPure)) = runCommandM $ do
+	files <- liftM (ordNub . sort) $ mapM (findPath copts) $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
+	let
+		doFix :: FilePath -> String -> ([Tools.Note AutoFix.Correction], String)
+		doFix file cts = AutoFix.edit cts fUpCorrs $ do
+			AutoFix.autoFix fCorrs
+			gets (view AutoFix.regions)
 			where
-				toValue :: Either SomeException String -> Value
-				toValue (Left (SomeException e)) = object ["fail" .= show e]
-				toValue (Right s) = toJSON s
-
-		-- | Dump database info
-		dump' :: [String] -> Opts String -> CommandActionT ()
-		dump' [] as copts = do
-			dbval <- getDb copts
-
-			cabals <- getSandboxes copts as
-			ps' <- traverse (findProject copts) $ listArg "project" as
-			fs' <- traverse (findPath copts) $ listArg "file" as
-
-			let
-				dat = mconcat [
-					if flagSet "all" as then dbval else mempty,
-					if flagSet "stand" as then standaloneDB dbval else mempty,
-					mconcat $ map (`cabalDB` dbval) cabals,
-					mconcat $ map (`projectDB` dbval) ps',
-					filterDB (\m -> any (`inFile` m) fs') (const False) dbval]
-
-			void $ runMaybeT $ msum [
-				do
-					p <- MaybeT $ traverse (findPath copts) $ arg "path" as
-					fork $ SC.dump p $ structurize dat,
-				do
-					f <- MaybeT $ traverse (findPath copts) $ arg "file" as
-					fork $ dump f dat]
-		dump' _ _ _ = commandError "Invalid arguments" []
-
-		-- | Load database
-		load' :: [String] -> Opts String -> CommandActionT ()
-		load' _ as copts = do
-			void $ liftM (maybe (commandError "Specify one of: --path, --file or --data" []) return) $ runMaybeT $ msum [
-				do
-					p <- MaybeT $ return $ arg "path" as
-					lift $ cacheLoad copts (liftA merge <$> SC.load p),
-				do
-					f <- MaybeT $ return $ arg "file" as
-					e <- liftIO $ doesFileExist f
-					when e $ lift $ cacheLoad copts (load f),
-				do
-					dat <- MaybeT $ return $ arg "data" as
-					lift $ cacheLoad copts (return $ eitherDecode (toUtf8 dat))]
-			waitDb copts as
-
-		-- | Link to server
-		link' :: [String] -> Opts String -> CommandActionT ()
-		link' _ as copts = liftIO $ do
-			commandLink copts
-			when (flagSet "hold" as) $ commandHold copts
-
-		-- | Exit
-		exit' :: [String] -> Opts String -> CommandActionT ()
-		exit' _ _ copts = liftIO $ commandExit copts
+				findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
+				findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
+				fCorrs = map (view Tools.note) $ findCorrs file ns
+				fUpCorrs = findCorrs file rest
+		runFix file
+			| isPure = return $ fst $ doFix file ""
+			| otherwise = do
+				(corrs', cts') <- liftM (doFix file) $ liftE $ readFileUtf8 file
+				liftE $ writeFileUtf8 file cts'
+				return corrs'
+	mapCommandErrorStr $ liftM concat $ mapM runFix files
+runCommand copts (GhcEval exprs) = runCommandM $ mapCommandErrorStr $ liftM (map toValue) $ liftAsync $
+	pushTask (commandGhci copts) $ mapM (try . evaluate) exprs
+	where
+		toValue :: Either SomeException String -> Value
+		toValue (Left (SomeException e)) = object ["fail" .= show e]
+		toValue (Right s) = toJSON s
+runCommand copts (Link hold) = runCommandM $ liftIO $ commandLink copts >> when hold (commandHold copts)
+runCommand copts Exit = runCommandM $ liftIO $ commandExit copts
 
 -- Helper functions
 
 commandStrMsg :: String -> CommandError
 commandStrMsg m = CommandError m []
-
--- | Automatically scan files and projects
-autoScan :: Opts String -> CommandOptions -> [FilePath] -> [Project] -> CommandM ()
-autoScan as copts srcs projs
-	| flagSet "autoscan" as = updateProcess copts as $
-		concatMap (\(n, f) -> [findPath copts v >>= f (listArg "ghc" as) | v <- n]) [
-			(srcs, Update.scanFile),
-			(map (view projectCabal) projs, Update.scanProject)]
-	| otherwise = return ()
 
 -- | Check positional args count
 checkPosArgs :: Cmd a -> Cmd a
@@ -800,10 +364,9 @@ checkPosArgs c = validateArgs pos' c where
 			(failMatch ("unexpected positional arguments: " ++ unwords (drop (length $ cmdArgs c) args)))
 
 -- | Find sandbox by path
-findSandbox :: MonadIO m => CommandOptions -> Maybe FilePath -> ExceptT CommandError m Cabal
-findSandbox copts = maybe
-	(return Cabal)
-	(findPath copts >=> mapCommandErrorStr . liftIO . getSandbox)
+findSandbox :: MonadIO m => CommandOptions -> Cabal -> ExceptT CommandError m Cabal
+findSandbox copts Cabal = return Cabal
+findSandbox copts (Sandbox f) = (findPath copts >=> mapCommandErrorStr . liftIO . getSandbox) f
 
 -- | Canonicalize path
 findPath :: MonadIO m => CommandOptions -> FilePath -> ExceptT e m FilePath
@@ -812,34 +375,9 @@ findPath copts f = liftIO $ canonicalizePath (normalise f') where
 		| isRelative f = commandRoot copts </> f
 		| otherwise = f
 
--- | Get context: file and sandbox
-getCtx :: (MonadIO m, Functor m) => CommandOptions -> Opts String -> ExceptT CommandError m (FilePath, Cabal)
-getCtx copts as = do
-	f <- forceJust "No file specified" $ traverse (findPath copts) $ arg "file" as
-	c <- getCabal_ copts as >>= maybe (liftIO $ getSandbox f) return
-	return (f, c)
-
--- | Get current sandbox set, user-db by default
-getCabal :: MonadIO m => CommandOptions -> Opts String -> ExceptT CommandError m Cabal
-getCabal copts as
-	| flagSet "cabal" as = findSandbox copts Nothing
-	| otherwise  = findSandbox copts $ arg "sandbox" as
-
--- | Get current sandbox if set
-getCabal_ :: (MonadIO m, Functor m) => CommandOptions -> Opts String -> ExceptT CommandError m (Maybe Cabal)
-getCabal_ copts as
-	| flagSet "cabal" as = Just <$> findSandbox copts Nothing
-	| otherwise = case arg "sandbox" as of
-		Just f -> Just <$> findSandbox copts (Just f)
-		Nothing -> return Nothing
-
 -- | Get list of enumerated sandboxes
-getSandboxes :: (MonadIO m, Functor m) => CommandOptions -> Opts String -> ExceptT CommandError m [Cabal]
-getSandboxes copts as = traverse (findSandbox copts) paths where
-	paths
-		| flagSet "cabal" as = Nothing : sboxes
-		| otherwise = sboxes
-	sboxes = map Just $ listArg "sandbox" as
+getSandboxes :: (MonadIO m, Functor m) => CommandOptions -> [Cabal] -> ExceptT CommandError m [Cabal]
+getSandboxes copts cs = traverse (findSandbox copts) cs
 
 -- | Find project by name of path
 findProject :: MonadIO m => CommandOptions -> String -> ExceptT CommandError m Project
@@ -848,8 +386,8 @@ findProject copts proj = do
 	proj' <- liftM addCabal $ findPath copts proj
 	let
 		resultProj =
-			M.lookup proj' (databaseProjects db') <|>
-			find ((== proj) . view projectName) (M.elems $ databaseProjects db')
+			refineProject db' (project proj') <|>
+			find ((== proj) . view projectName) (databaseProjects db')
 	maybe (throwError $ commandStrMsg $ "Projects " ++ proj ++ " not found") return resultProj
 	where
 		addCabal p
@@ -894,16 +432,14 @@ cacheLoad copts act = liftIO $ do
 		Right database -> DB.update (dbVar copts) (return database)
 
 -- | Bring locals to top scope to search within them if 'locals' flag set
-localsDatabase :: Opts String -> Database -> Database
-localsDatabase as
-	| flagSet "locals" as = databaseLocals
-	| otherwise = id
+localsDatabase :: Bool -> Database -> Database
+localsDatabase True = databaseLocals
+localsDatabase False = id
 
 -- | Select newest packages if 'no-last' flag not set
-newest :: Symbol a => Opts String -> [a] -> [a]
-newest as
-	| flagSet "no-last" as = id
-	| otherwise = newestPackage
+newest :: Symbol a => Bool -> [a] -> [a]
+newest True = newestPackage
+newest False = id
 
 -- | Convert from just of throw
 forceJust :: MonadIO m => String -> ExceptT CommandError m (Maybe a) -> ExceptT CommandError m a
@@ -921,29 +457,17 @@ mapCommandErrorStr :: (Monad m) => ExceptT String m a -> ExceptT CommandError m 
 mapCommandErrorStr = mapExceptT (liftM $ left commandStrMsg)
 
 -- | Run DB update action
-updateProcess :: CommandOptions -> Opts String -> [ExceptT String (Update.UpdateDB IO) ()] -> CommandM ()
-updateProcess copts as acts = lift $ Update.updateDB (Update.settings copts as) $ sequence_ [act `catchError` logErr | act <- acts] where
+updateProcess :: CommandOptions -> [String] -> Bool -> Bool -> [ExceptT String (Update.UpdateDB IO) ()] -> CommandM ()
+updateProcess copts ghcOpts' docs' infer' acts = lift $ Update.updateDB (Update.settings copts ghcOpts' docs' infer') $ sequence_ [act `catchError` logErr | act <- acts] where
 	logErr :: String -> ExceptT String (Update.UpdateDB IO) ()
 	logErr e = liftIO $ commandLog copts Log.Error e
 
 -- | Filter declarations with prefix and infix
-filterMatch :: Opts String -> [ModuleDeclaration] -> [ModuleDeclaration]
-filterMatch as = findMatch as . prefMatch as
-
--- | Filter declarations with infix match
-findMatch :: Opts String -> [ModuleDeclaration] -> [ModuleDeclaration]
-findMatch as = case arg "find" as of
-	Nothing -> id
-	Just str -> filter (match' str)
-	where
-		match' str m = fromString str `T.isInfixOf` view (moduleDeclaration . declarationName) m
-
--- | Filter declarations with prefix match
-prefMatch :: Opts String -> [ModuleDeclaration] -> [ModuleDeclaration]
-prefMatch as = case fmap splitIdentifier (arg "prefix" as) of
-	Nothing -> id
-	Just (qname, pref) -> filter (match' qname pref)
-	where
-		match' qname pref m =
-			fromString pref `T.isPrefixOf` view (moduleDeclaration . declarationName) m &&
-			maybe True (view (declarationModuleId . moduleIdName) m ==) (fmap fromString qname)
+filterMatch :: SearchQuery -> [ModuleDeclaration] -> [ModuleDeclaration]
+filterMatch (SearchQuery q st) = filter match' where
+	match' m = case st of
+		SearchExact -> fromString q == view (moduleDeclaration . declarationName) m
+		SearchPrefix -> fromString q `T.isPrefixOf` view (moduleDeclaration . declarationName) m
+		SearchInfix -> fromString q `T.isInfixOf` view (moduleDeclaration . declarationName) m
+		SearchSuffix -> fromString q `T.isSuffixOf` view (moduleDeclaration . declarationName) m
+		SearchRegex -> view (moduleDeclaration . declarationName . from packed) m =~ q

@@ -35,6 +35,7 @@ import Control.Monad.Writer
 import Control.Monad.Trans.Control
 import Data.Aeson
 import Data.Aeson.Types
+import Data.Foldable (toList)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
@@ -89,7 +90,7 @@ updateDB sets act = Log.scopeLog (settingsLogger sets) "update" $ do
 				getMods :: (MonadIO m) => m [InspectedModule]
 				getMods = do
 					db' <- liftIO $ readAsync $ database sets
-					return $ catMaybes [M.lookup mloc' (databaseModules db') | mloc' <- mlocs']
+					return $ filter ((`elem` mlocs') . view inspectedId) $ toList $ databaseModules db'
 			when (updateDocs sets) $ do
 				Log.log Log.Trace "forking inspecting source docs"
 				void $ fork (getMods >>= waiter . mapM_ scanDocs_)
@@ -115,7 +116,7 @@ updateDB sets act = Log.scopeLog (settingsLogger sets) "update" $ do
 postStatus :: (MonadIO m, MonadReader Settings m) => Task -> m ()
 postStatus s = do
 	on' <- asks onStatus
-	liftIO $ on' s
+	liftIO $ on' [s]
 
 -- | Wait DB to complete actions
 waiter :: (MonadIO m, MonadReader Settings m) => m () -> m ()
@@ -159,8 +160,8 @@ getCache act check = do
 			return dbval
 
 -- | Run one task
-runTask :: (MonadIO m, NFData a, MonadCatchIO m) => String -> [Pair] -> ExceptT String (UpdateDB m) a -> ExceptT String (UpdateDB m) a
-runTask action params act = Log.scope "task" $ do
+runTask :: (Display t, MonadIO m, NFData a, MonadCatchIO m) => String -> t -> ExceptT String (UpdateDB m) a -> ExceptT String (UpdateDB m) a
+runTask action subj act = Log.scope "task" $ do
 	postStatus $ task { taskStatus = StatusWorking }
 	x <- local childTask act
 	x `deepseq` (postStatus $ task { taskStatus = StatusOk })
@@ -171,11 +172,11 @@ runTask action params act = Log.scope "task" $ do
 		task = Task {
 			taskName = action,
 			taskStatus = StatusWorking,
-			taskParams = HM.fromList params,
-			taskProgress = Nothing,
-			taskChild = Nothing }
+			taskSubjectType = displayType subj,
+			taskSubjectName = display subj,
+			taskProgress = Nothing }
 		childTask st = st {
-			onStatus = \t -> onStatus st (task { taskChild = Just t }) }
+			onStatus = \t -> onStatus st (task : t) }
 
 -- | Run many tasks with numeration
 runTasks :: Monad m => [ExceptT String (UpdateDB m) ()] -> ExceptT String (UpdateDB m) ()
@@ -183,7 +184,7 @@ runTasks ts = zipWithM_ taskNum [1..] (map noErr ts) where
 	total = length ts
 	taskNum n = local setProgress where
 		setProgress st = st {
-			onStatus = \t -> onStatus st (t { taskProgress = Just (Progress n total) }) }
+			onStatus = \(t:tl) -> onStatus st ((t { taskProgress = Just (Progress n total) }) : tl) }
 	noErr v = v `mplus` return ()
 
 -- | Get database value
@@ -192,7 +193,7 @@ readDB = asks database >>= liftIO . readAsync
 
 -- | Scan module
 scanModule :: (MonadIO m, MonadCatch m, MonadCatchIO m) => [String] -> ModuleLocation -> Maybe String -> ExceptT String (UpdateDB m) ()
-scanModule opts mloc mcts = runTask "scanning" (subject mloc ["module" .= mloc]) $ Log.scope "module" $ do
+scanModule opts mloc mcts = runTask "scanning" mloc $ Log.scope "module" $ do
 	im <- liftExceptT $ S.scanModule opts mloc mcts
 	updater $ return $ fromModule im
 	_ <- ExceptT $ return $ view inspectionResult im
@@ -239,15 +240,12 @@ scanFileContents opts fpath mcts = Log.scope "file" $ do
 
 -- | Scan cabal modules
 scanCabal :: (MonadIO m, MonadCatch m, MonadCatchIO m) => [String] -> Cabal -> ExceptT String (UpdateDB m) ()
-scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox" .= cabalSandbox]) $ Log.scope "cabal" $ do
+scanCabal opts cabalSandbox = runTask "scanning" cabalSandbox $ Log.scope "cabal" $ do
 	watch (\w -> watchSandbox w cabalSandbox opts)
-	mlocs <- runTask "getting list of cabal modules" [] $ 
-		liftExceptT $ listModules opts cabalSandbox
+	mlocs <- liftExceptT $ listModules opts cabalSandbox
 	scan (Cache.loadCabal cabalSandbox) (cabalDB cabalSandbox) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- runTask "loading modules" [] $
-			liftExceptT $ browseModules opts cabalSandbox (mlocs' ^.. each . _1)
-		docs <- runTask "loading docs" [] $
-			liftExceptT $ hdocsCabal cabalSandbox opts
+		ms <- liftExceptT $ browseModules opts cabalSandbox (mlocs' ^.. each . _1)
+		docs <- liftExceptT $ hdocsCabal cabalSandbox opts
 		updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
@@ -255,11 +253,11 @@ scanCabal opts cabalSandbox = runTask "scanning" (subject cabalSandbox ["sandbox
 
 -- | Scan project file
 scanProjectFile :: (MonadIO m, MonadCatch m, MonadCatchIO m) => [String] -> FilePath -> ExceptT String (UpdateDB m) Project
-scanProjectFile opts cabal = runTask "scanning" (subject cabal ["file" .= cabal]) $ liftExceptT $ S.scanProjectFile opts cabal
+scanProjectFile opts cabal = runTask "scanning" cabal $ liftExceptT $ S.scanProjectFile opts cabal
 
 -- | Scan project
 scanProject :: (MonadIO m, MonadCatch m, MonadCatchIO m) => [String] -> FilePath -> ExceptT String (UpdateDB m) ()
-scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" .= cabal]) $ Log.scope "project" $ do
+scanProject opts cabal = runTask "scanning" (project cabal) $ Log.scope "project" $ do
 	proj <- scanProjectFile opts cabal
 	watch (\w -> watchProject w proj opts)
 	(_, sources) <- liftExceptT $ S.enumProject proj
@@ -269,9 +267,8 @@ scanProject opts cabal = runTask "scanning" (subject (project cabal) ["project" 
 
 -- | Scan directory for source files and projects
 scanDirectory :: (MonadIO m, MonadCatch m, MonadCatchIO m) => [String] -> FilePath -> ExceptT String (UpdateDB m) ()
-scanDirectory opts dir = runTask "scanning" (subject dir ["path" .= dir]) $ Log.scope "directory" $ do
-	S.ScanContents standSrcs projSrcs sboxes <- runTask "getting list of sources" [] $
-		liftExceptT $ S.enumDirectory dir
+scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
+	S.ScanContents standSrcs projSrcs sboxes <- liftExceptT $ S.enumDirectory dir
 	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks $ map (scanCabal opts) sboxes
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
@@ -285,7 +282,7 @@ scanDocs ims = do
 	w <- liftIO $ ghcWorker ["-haddock"] (return ())
 	runTasks $ map (scanDocs' w) ims
 	where
-		scanDocs' w im = runTask "scanning docs" (subject (view inspectedId im) []) $ Log.scope "docs" $ do
+		scanDocs' w im = runTask "scanning docs" (view inspectedId im) $ Log.scope "docs" $ do
 			Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
 			im' <- liftExceptT $ S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im
 			Log.log Log.Trace $ "Docs for {} updated" ~~ view inspectedId im
@@ -294,7 +291,7 @@ scanDocs ims = do
 
 inferModTypes :: (MonadIO m, MonadCatchIO m) => [InspectedModule] -> ExceptT String (UpdateDB m) ()
 inferModTypes = runTasks . map inferModTypes' where
-	inferModTypes' im = runTask "inferring types" (subject (view inspectedId im) []) $ Log.scope "infer" $ do
+	inferModTypes' im = runTask "inferring types" (view inspectedId im) $ Log.scope "infer" $ do
 		-- TODO: locate sandbox
 		sets <- ask
 		Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
@@ -324,8 +321,8 @@ scan cache' part' mlocs opts act = Log.scope "scan" $ do
 	dbval <- getCache cache' part'
 	let
 		obsolete = filterDB (\m -> view moduleIdLocation m `notElem` (mlocs ^.. each . _1)) (const False) dbval
-	changed <- runTask "getting list of changed modules" [] $ liftExceptT $ S.changedModules dbval opts mlocs
-	runTask "removing obsolete modules" ["modules" .= map (view moduleLocation) (allModules obsolete)] $ cleaner $ return obsolete
+	changed <- liftExceptT $ S.changedModules dbval opts mlocs
+	cleaner $ return obsolete
 	act changed
 
 updateEvent :: (MonadIO m, MonadCatch m, MonadCatchIO m) => Watched -> Event -> ExceptT String (UpdateDB m) ()
@@ -369,9 +366,6 @@ processEvent s w e = updateDB s $ updateEvent w e
 -- | Lift errors
 liftExceptT :: MonadIO m => ExceptT String IO a -> ExceptT String m a
 liftExceptT = mapExceptT liftIO
-
-subject :: Display a => a -> [Pair] -> [Pair]
-subject x ps = ["name" .= display x, "type" .= displayType x] ++ ps
 
 watch :: (MonadIO m, MonadReader Settings m) => (Watcher -> IO ()) -> m ()
 watch f = do

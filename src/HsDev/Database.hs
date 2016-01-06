@@ -6,7 +6,7 @@ module HsDev.Database (
 	fromModule, fromProject,
 	filterDB,
 	projectDB, cabalDB, standaloneDB,
-	selectModules, selectDeclarations, lookupModule, lookupFile, refineProject,
+	selectModules, selectDeclarations, lookupModule, lookupInspected, lookupFile, refineProject,
 	getInspected,
 
 	append, remove,
@@ -17,25 +17,27 @@ module HsDev.Database (
 	Map
 	) where
 
-import Control.Lens (set, view, preview, _Just)
+import Control.Lens (set, view, preview, _Just, each, (^..))
 import Control.Monad (msum, join)
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Either (rights)
+import Data.Foldable (toList, find)
 import Data.Function (on)
 import Data.Group (Group(..))
 import Data.Map (Map)
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.Sequence as S
 
 import HsDev.Symbols
 import HsDev.Symbols.Util
-import HsDev.Util ((.::), ordNub)
+import HsDev.Util ((.::), ordNub, mapBy)
 
 -- | HsDev database
 data Database = Database {
-	databaseModules :: Map ModuleLocation InspectedModule,
-	databaseProjects :: Map FilePath Project }
+	databaseModules :: [InspectedModule],
+	databaseProjects :: [Project] }
 		deriving (Eq, Ord)
 
 instance NFData Database where
@@ -43,14 +45,16 @@ instance NFData Database where
 
 instance Group Database where
 	add old new = Database {
-		databaseModules = databaseModules new `M.union` databaseModules old,
-		databaseProjects = M.unionWith mergeProject (databaseProjects new) (databaseProjects old) }
+		databaseModules = M.elems $ mapBy (view inspectedId) (databaseModules new) `M.union` mapBy (view inspectedId) (databaseModules old),
+		databaseProjects = M.elems $ M.unionWith mergeProject
+			(mapBy (view projectCabal) (databaseProjects new))
+			(mapBy (view projectCabal) (databaseProjects old)) }
 		where
 			mergeProject pl pr = set projectDescription (msum [view projectDescription pl, view projectDescription pr]) pl
 	sub old new = Database {
-		databaseModules = databaseModules old `M.difference` databaseModules new,
-		databaseProjects = databaseProjects old `M.difference` databaseProjects new }
-	zero = Database M.empty M.empty
+		databaseModules = M.elems $ mapBy (view inspectedId) (databaseModules old) `M.difference` mapBy (view inspectedId) (databaseModules new),
+		databaseProjects = M.elems $ mapBy (view projectCabal) (databaseProjects old) `M.difference` mapBy (view projectCabal) (databaseProjects new) }
+	zero = Database [] []
 
 instance Monoid Database where
 	mempty = zero
@@ -58,35 +62,32 @@ instance Monoid Database where
 
 instance ToJSON Database where
 	toJSON (Database ms ps) = object [
-		"modules" .= M.elems ms,
-		"projects" .= M.elems ps]
+		"modules" .= ms,
+		"projects" .= ps]
 
 instance FromJSON Database where
 	parseJSON = withObject "database" $ \v -> Database <$>
-		((M.unions . map mkModule) <$> v .:: "modules") <*>
-		((M.unions . map mkProject) <$> v .:: "projects")
-		where
-			mkModule m = M.singleton (view inspectedId m) m
-			mkProject p = M.singleton (view projectCabal p) p
+		(v .:: "modules") <*>
+		(v .:: "projects")
 
 -- | Database intersection, prefers first database data
 databaseIntersection :: Database -> Database -> Database
 databaseIntersection l r = mempty {
-	databaseModules = databaseModules l `M.intersection` databaseModules r,
-	databaseProjects = databaseProjects l `M.intersection` databaseProjects r }
+	databaseModules = M.elems $ mapBy (view inspectedId) (databaseModules l) `M.intersection` mapBy (view inspectedId) (databaseModules r),
+	databaseProjects = M.elems $ mapBy (view projectCabal) (databaseProjects l) `M.intersection` mapBy (view projectCabal) (databaseProjects r) }
 
 -- | Check if database is empty
 nullDatabase :: Database -> Bool
-nullDatabase db = M.null (databaseModules db) && M.null (databaseProjects db)
+nullDatabase db = null (databaseModules db) && null (databaseProjects db)
 
 -- | Bring all locals to scope
 databaseLocals :: Database -> Database
 databaseLocals db = db {
-	databaseModules = M.map (fmap moduleLocals) (databaseModules db) }
+	databaseModules = fmap (fmap moduleLocals) (databaseModules db) }
 
 -- | All modules
 allModules :: Database -> [Module]
-allModules = rights . map (view inspectionResult) . M.elems . databaseModules
+allModules = rights . fmap (view inspectionResult) . databaseModules
 
 -- | All declarations
 allDeclarations :: Database -> [ModuleDeclaration]
@@ -101,18 +102,18 @@ allPackages = ordNub . mapMaybe (preview (moduleLocation . modulePackage . _Just
 -- | Make database from module
 fromModule :: InspectedModule -> Database
 fromModule m = zero {
-	databaseModules = M.singleton (view inspectedId m) m }
+	databaseModules = [m] }
 
 -- | Make database from project
 fromProject :: Project -> Database
 fromProject p = zero {
-	databaseProjects = M.singleton (view projectCabal p) p }
+	databaseProjects = [p] }
 
 -- | Filter database by predicate
 filterDB :: (ModuleId -> Bool) -> (Project -> Bool) -> Database -> Database
 filterDB m p db = mempty {
-	databaseModules = M.filter (either (const False) (m . view moduleId) . view inspectionResult) (databaseModules db),
-	databaseProjects = M.filter p (databaseProjects db) }
+	databaseModules = filter (either (const False) (m . view moduleId) . view inspectionResult) (databaseModules db),
+	databaseProjects = filter p (databaseProjects db) }
 
 -- | Project database
 projectDB :: Project -> Database -> Database
@@ -138,8 +139,12 @@ selectDeclarations p = filter p . allDeclarations
 -- | Lookup module by its location and name
 lookupModule :: ModuleLocation -> Database -> Maybe Module
 lookupModule mloc db = do
-	m <- M.lookup mloc $ databaseModules db
+	m <- find ((== mloc) . view inspectedId) $ databaseModules db
 	either (const Nothing) Just $ view inspectionResult m
+
+-- | Lookup inspected module
+lookupInspected :: ModuleLocation -> Database -> Maybe InspectedModule
+lookupInspected mloc db = find ((== mloc) . view inspectedId) $ databaseModules db
 
 -- | Lookup module by its source file
 lookupFile :: FilePath -> Database -> Maybe Module
@@ -147,11 +152,11 @@ lookupFile f = listToMaybe . selectModules (inFile f . view moduleId)
 
 -- | Refine project
 refineProject :: Database -> Project -> Maybe Project
-refineProject db proj = M.lookup (view projectCabal proj) $ databaseProjects db
+refineProject db proj = find ((== view projectCabal proj) . view projectCabal) $ databaseProjects db
 
 -- | Get inspected module
 getInspected :: Database -> Module -> InspectedModule
-getInspected db m = fromMaybe err $ M.lookup (view moduleLocation m) $ databaseModules db where
+getInspected db m = fromMaybe err $ find ((== view moduleLocation m) . view inspectedId) $ databaseModules db where
 	err = error "Impossible happened: getInspected"
 
 -- | Append database
@@ -219,7 +224,7 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 	keyProj db = unique
 		"No project"
 		"Different module projects"
-		(return (M.keys (databaseProjects db)))
+		(return (databaseProjects db ^.. each . projectCabal))
 	-- Check that list results in one element
 	unique :: (Eq a) => String -> String -> Either String [a] -> Either String a
 	unique _ _ (Left e) = Left e
@@ -230,7 +235,7 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 structurize :: Database -> Structured
 structurize db = Structured cs ps fs where
 	cs = M.fromList [(c, cabalDB c db) | c <- ordNub (mapMaybe modCabal (allModules db))]
-	ps = M.fromList [(pname, projectDB (project pname) db) | pname <- M.keys (databaseProjects db)]
+	ps = M.fromList [(pname, projectDB (project pname) db) | pname <- (databaseProjects db ^.. each . projectCabal)]
 	fs = standaloneDB db
 
 merge :: Structured -> Database

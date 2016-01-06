@@ -4,22 +4,23 @@ module HsDev.Server.Types (
 	CommandOptions(..), CommandError(..), commandError_, commandError,
 	CommandAction, CommandM, CommandActionT,
 
-	Command(..), AddedContents(..), RefineCommand(..), InfoCommand(..),
-	AutoScan(..), ContextCommand(..), GhcModCommand(..),
-	AutoFixCommand(..), ScanTarget(..), SourceTarget(..),
-	ActiveFile(..), TargetFilter(..), SearchQuery(..), SearchType(..),
+	Command(..), AddedContents(..),
+	GhcModCommand(..),
+	AutoFixCommand(..),
+	FileContents(..), TargetFilter(..), SearchQuery(..), SearchType(..),
+	FromCmd(..),
 	parseArgs, cmd,
-	FromCmd(..)
 	) where
 
 import Control.Applicative
 import Control.Monad.Except
 import Control.Monad.Reader
-import Data.Aeson hiding (Result, Error)
+import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Foldable (asum)
 import Options.Applicative
+import Options.Applicative.Help (parserHelp)
 import System.Log.Simple hiding (Command)
 
 import HsDev.Database
@@ -79,47 +80,68 @@ type CommandActionT a = CommandOptions -> CommandM a
 
 
 
+-- FIXME: Why so much commands in options?
+-- | Command from client
 data Command =
 	Ping |
 	Listen |
 	AddData { addedContents :: [AddedContents] } |
 	Scan {
-		scanTargets :: [ScanTarget],
+		scanProjects :: [FilePath],
+		scanSandboxes :: [Cabal],
+		scanFiles :: [FilePath],
 		scanPaths :: [FilePath],
-		scanContents :: [ActiveFile],
+		scanContents :: [FileContents],
 		scanGhcOpts :: [String],
 		scanDocs :: Bool,
 		scanInferTypes :: Bool } |
-	Refine {
-		refineCommand :: RefineCommand,
-		refineTargets :: [SourceTarget] } |
+	RefineDocs {
+		docsProjects :: [FilePath],
+		docsFiles :: [FilePath],
+		docsModules :: [String] } |
+	InferTypes {
+		inferProjects :: [FilePath],
+		inferFiles :: [FilePath],
+		inferModules :: [String] } |
 	Remove {
-		removeTarget :: ScanTarget } |
-	GetInfo { getInfoCommand :: InfoCommand } |
-	Context {
-		contextCommand :: ContextCommand,
-		contextFile :: FilePath,
-		contextAutoScan :: AutoScan } |
+		removeProjects :: [FilePath],
+		removePackages :: [String],
+		removeSandboxes :: [Cabal],
+		removeFiles :: [FilePath] } |
+	InfoModules [TargetFilter] |
+	InfoPackages |
+	InfoProjects |
+	InfoSandboxes |
+	InfoSymbol SearchQuery [TargetFilter] |
+	InfoModule [TargetFilter] |
+	InfoResolve [TargetFilter] Bool |
+	InfoProject (Either String FilePath) |
+	InfoSandbox FilePath |
+	Lookup String FilePath |
+	Whois String FilePath |
+	ResolveScopeModules FilePath |
+	ResolveScope SearchQuery Bool FilePath |
+	Complete String Bool FilePath |
 	Hayoo {
 		hayooQuery :: String,
 		hayooPage :: Int,
 		hayooPages :: Int } |
 	CabalList { cabalListPackages :: [String] } |
 	Lint {
-		lintFiles :: [ActiveFile],
-		lintAutoScan :: AutoScan } |
+		lintFiles :: [FilePath],
+		lintContents :: [FileContents] } |
 	Check {
-		checkFiles :: [ActiveFile],
-		checkGhcOpts :: [String],
-		checkAutoScan :: AutoScan } |
+		checkFiles :: [FilePath],
+		checkContents :: [FileContents],
+		checkGhcOpts :: [String] } |
 	CheckLint {
-		checkLintFiles :: [ActiveFile],
-		checkLintGhcOpts :: [String],
-		checkLintAutoScan :: AutoScan } |
+		checkLintFiles :: [FilePath],
+		checkLintContents :: [FileContents],
+		checkLintGhcOpts :: [String] } |
 	Types {
-		typesFile :: ActiveFile,
-		typesGhcOpts :: [String],
-		typesAutoScan :: AutoScan } |
+		typesFiles :: [FilePath],
+		typesContents :: [FileContents],
+		typesGhcOpts :: [String] } |
 	GhcMod { ghcModCommand :: GhcModCommand } |
 	AutoFix { autoFixCommand :: AutoFixCommand } |
 	GhcEval { ghcEvalExpressions :: [String] } |
@@ -135,37 +157,13 @@ data AddedContents =
 instance Show AddedContents where
 	show = L.unpack . encode
 
-data RefineCommand = Docs | Infer deriving (Show)
-
-data InfoCommand =
-	InfoModules [TargetFilter] |
-	InfoPackages |
-	InfoProjects |
-	InfoSandboxes |
-	InfoSymbol SearchQuery [TargetFilter] |
-	InfoModule [TargetFilter] |
-	InfoResolve [TargetFilter] Bool |
-	InfoProject (Either String FilePath) |
-	InfoSandbox FilePath
-		deriving (Show)
-
-data AutoScan = AutoScan { autoScan :: Bool, autoScanGhcOpts :: [String] } deriving (Show)
-
-data ContextCommand =
-	Lookup String |
-	Whois String |
-	ResolveScopeModules |
-	ResolveScope SearchQuery Bool |
-	Complete String Bool
-		deriving (Show)
-
 data GhcModCommand =
 	GhcModLang |
 	GhcModFlags |
 	GhcModType Position FilePath [String] |
-	GhcModLint [FilePath] [String] Bool | -- FIXME: Why autoscan is Bool?
-	GhcModCheck [FilePath] [String] Bool | -- FIXME: Why autoscan is Bool?
-	GhcModCheckLint [FilePath] [String] [String] Bool -- FIXME: Why autoscan is Bool?
+	GhcModLint [FilePath] [String] |
+	GhcModCheck [FilePath] [String] |
+	GhcModCheckLint [FilePath] [String] [String]
 		deriving (Show)
 
 data AutoFixCommand =
@@ -173,97 +171,82 @@ data AutoFixCommand =
 	AutoFixFix [Note Correction] [Note Correction] Bool
 		deriving (Show)
 
-data ScanTarget = ScanProject FilePath | ScanPackage String | ScanCabal Cabal | ScanFile FilePath deriving (Show)
-data SourceTarget = SourceProject FilePath | SourceFile FilePath | SourceModule String deriving (Show)
-data ActiveFile = ActiveFile FilePath (Maybe String) deriving (Show)
+data FileContents = FileContents FilePath String deriving (Show)
 -- TODO: Why deps is just string?
-data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone | TargetOldToo deriving (Show)
+data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone | TargetOldToo deriving (Eq, Show)
 data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
-
-parseArgs :: Parser a -> [String] -> Either String a
-parseArgs p c = maybe (Left $ unwords c) Right $ getParseResult . execParserPure (prefs mempty) (info p mempty) $ c
-
-cmd :: String -> Parser a -> Parser a
-cmd n p = subparser (command n (info p mempty))
 
 class FromCmd a where
 	cmdP :: Parser a
 
 instance FromCmd Command where
-	cmdP = asum [
-		cmd "ping" (pure Ping),
-		cmd "listen" (pure Listen),
-		cmd "add" (AddData <$> option readJSON idm),
-		cmd "scan" (Scan <$> many cmdP <*> many (pathArg $ help "path") <*> many cmdP <*> ghcOpts <*> docsFlag <*> inferFlag),
-		Refine <$> cmdP <*> many cmdP,
-		cmd "remove" (Remove <$> cmdP),
-		GetInfo <$> cmdP,
-		Context <$> cmdP <*> ctx <*> cmdP,
-		cmd "hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
-		cmd "cabal" (cmd "list" (CabalList <$> many (strArgument idm))),
-		cmd "lint" (Lint <$> many cmdP <*> cmdP),
-		cmd "check" (Check <$> many cmdP <*> ghcOpts <*> cmdP),
-		cmd "check-lint" (CheckLint <$> many cmdP <*> ghcOpts <*> cmdP),
-		cmd "types" (Types <$> cmdP <*> ghcOpts <*> cmdP),
-		cmd "ghc-mod" (GhcMod <$> cmdP),
-		cmd "autofix" (AutoFix <$> cmdP),
-		cmd "ghc" (cmd "eval" (GhcEval <$> many (strArgument idm))),
-		cmd "link" (Link <$> holdFlag),
-		cmd "exit" (pure Exit)]
-
-instance FromCmd RefineCommand where
-	cmdP = cmd "docs" (pure Docs) <|> cmd "infer" (pure Infer)
-
-instance FromCmd InfoCommand where
-	cmdP = asum [
-		cmd "modules" (InfoModules <$> many cmdP),
-		cmd "packages" (pure InfoPackages),
-		cmd "projects" (pure InfoProjects),
-		cmd "sandboxes" (pure InfoSandboxes),
-		cmd "symbol" (InfoSymbol <$> cmdP <*> many cmdP),
-		cmd "module" (InfoModule <$> many cmdP),
-		cmd "resolve" (InfoResolve <$> many cmdP <*> exportsFlag),
-		cmd "project" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
-		cmd "sandbox" (InfoSandbox <$> (pathArg $ help "locate sandbox in parent of this path"))]
-
-instance FromCmd AutoScan where
-	cmdP = AutoScan <$> autoScanFlag <*> ghcOpts
-
-instance FromCmd ContextCommand where
-	cmdP = asum [
-		cmd "lookup" (Lookup <$> strArgument idm),
-		cmd "whois" (Whois <$> strArgument idm),
-		cmd "scope" (
-			cmd "modules" (pure ResolveScopeModules) <|>
-			ResolveScope <$> cmdP <*> globalFlag),
-		cmd "complete" (Complete <$> strArgument idm <*> wideFlag)]
+	cmdP = subparser $ mconcat [
+		cmd "ping" "ping server" (pure Ping),
+		cmd "listen" "listen server log" (pure Listen),
+		cmd "add" "add info to database" (AddData <$> option readJSON idm),
+		cmd "scan" "scan sources" $ Scan <$>
+			many projectArg <*>
+			many cabalArg <*>
+			many fileArg <*>
+			many (pathArg $ help "path") <*>
+			many cmdP <*>
+			ghcOpts <*>
+			docsFlag <*>
+			inferFlag,
+		cmd "docs" "scan docs" $ RefineDocs <$> many projectArg <*> many fileArg <*> many moduleArg,
+		cmd "infer" "infer types" $ InferTypes <$> many projectArg <*> many fileArg <*> many moduleArg,
+		cmd "remove" "remove modules info" $ Remove <$>
+			many projectArg <*>
+			many packageArg <*>
+			many cabalArg <*>
+			many fileArg,
+		cmd "modules" "list modules" (InfoModules <$> many cmdP),
+		cmd "packages" "list packages" (pure InfoPackages),
+		cmd "projects" "list projects" (pure InfoProjects),
+		cmd "sandboxes" "list sandboxes" (pure InfoSandboxes),
+		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> many cmdP),
+		cmd "module" "get module info" (InfoModule <$> many cmdP),
+		cmd "resolve" "resolve module scope (or exports)" (InfoResolve <$> many cmdP <*> exportsFlag),
+		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
+		cmd "sandbox" "get sandbox info" (InfoSandbox <$> (pathArg $ help "locate sandbox in parent of this path")),
+		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
+		cmd "whois" "get info for symbol" (Whois <$> strArgument idm <*> ctx),
+		cmd "scope" "get declarations accessible from module or within a project" (
+			subparser (cmd "modules" "get modules accessible from module or within a project" (ResolveScopeModules <$> ctx)) <|>
+			ResolveScope <$> cmdP <*> globalFlag <*> ctx),
+		cmd "complete" "show completions for input" (Complete <$> strArgument idm <*> wideFlag <*> ctx),
+		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
+		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (strArgument idm))),
+		cmd "lint" "lint source files or file contents" (Lint <$> many fileArg <*> many cmdP),
+		cmd "check" "check source files or file contents" (Check <$> many fileArg <*> many cmdP <*> ghcOpts),
+		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many fileArg <*> many cmdP <*> ghcOpts),
+		cmd "types" "get types for file expressions" (Types <$> many fileArg <*> many cmdP <*> ghcOpts),
+		cmd "ghc-mod" "ghc-mod commands" (GhcMod <$> cmdP),
+		cmd "autofix" "autofix commands" (AutoFix <$> cmdP),
+		cmd "ghc" "ghc commands" (subparser $ cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm))),
+		cmd "link" "link to server" (Link <$> holdFlag),
+		cmd "exit" "exit" (pure Exit)]
 
 instance FromCmd GhcModCommand where
-	cmdP = asum [
-		cmd "lang" (pure GhcModLang),
-		cmd "flags" (pure GhcModFlags),
-		cmd "type" (GhcModType <$> (Position <$> argument auto idm <*> argument auto idm) <*> fileArg <*> ghcOpts),
-		cmd "lint" (GhcModLint <$> many (strArgument idm) <*> hlintOpts <*> autoScanFlag),
-		cmd "check" (GhcModCheck <$> many (strArgument idm) <*> ghcOpts <*> autoScanFlag),
-		cmd "check-lint" (GhcModCheckLint <$> many (strArgument idm) <*> ghcOpts <*> hlintOpts <*> autoScanFlag)]
+	cmdP = subparser $ mconcat [
+		cmd "lang" "get LANGUAGE pragmas" (pure GhcModLang),
+		cmd "flags" "get OPTIONS_GHC pragmas" (pure GhcModFlags),
+		cmd "type" "infer type with 'ghc-mod type'" (GhcModType <$> (Position <$> argument auto idm <*> argument auto idm) <*> fileArg <*> ghcOpts),
+		cmd "lint" "lint source files" (GhcModLint <$> many (strArgument idm) <*> hlintOpts),
+		cmd "check" "check source files" (GhcModCheck <$> many (strArgument idm) <*> ghcOpts),
+		cmd "check-lint" "check & lint source files" (GhcModCheckLint <$> many (strArgument idm) <*> ghcOpts <*> hlintOpts)]
 
 instance FromCmd AutoFixCommand where
-	cmdP =
-		cmd "show" (AutoFixShow <$> option readJSON (long "data" <> metavar "message" <> help "messages to make fixes for")) <|>
-		cmd "fix" (AutoFixFix <$>
+	cmdP = subparser $ mconcat [
+		cmd "show" "generate corrections for check & lint messages" (AutoFixShow <$> option readJSON (long "data" <> metavar "message" <> help "messages to make fixes for")),
+		cmd "fix" "fix errors and return rest corrections with updated regions" (AutoFixFix <$>
 			option readJSON (long "data" <> metavar "message" <> help "messages to fix") <*>
 			option readJSON (long "rest" <> metavar "correction" <> short 'r' <> help "update corrections") <*>
-			pureFlag)
+			pureFlag)]
 
-instance FromCmd ScanTarget where
-	cmdP = asum [ScanProject <$> projectArg, ScanPackage <$> packageArg, ScanCabal <$> (flag' Cabal idm <|> (Sandbox <$> sandboxArg)), ScanFile <$> fileArg]
-
-instance FromCmd SourceTarget where
-	cmdP = asum [SourceProject <$> projectArg, SourceFile <$> fileArg, SourceModule <$> moduleArg]
-
-instance FromCmd ActiveFile where
-	cmdP = (ActiveFile <$> strArgument idm <*> pure Nothing) <|> (option readJSON (long "contents"))
+instance FromCmd FileContents where
+	cmdP = option readJSON (long "contents")
 
 instance FromCmd TargetFilter where
 	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> (flag' Cabal idm <|> (Sandbox <$> sandboxArg)), TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand"), flag' TargetOldToo (long "no-last")]
@@ -280,9 +263,9 @@ readJSON :: FromJSON a => ReadM a
 readJSON = str >>= maybe (readerError "Can't parse JSON argument") return . decode . L.pack
 
 allFlag d = switch (long "all" <> short 'a' <> help d)
-autoScanFlag = switch (long "autoscan" <> short 's' <> help "automatically scan related files/projects")
 cacheDir = strOption (long "cache-dir" <> metavar "path" <> help "cache path")
 cacheFile = strOption (long "cache-file" <> metavar "path" <> help "cache file")
+cabalArg = flag' Cabal (long "cabal") <|> (Sandbox <$> sandboxArg)
 ctx = fileArg
 dataArg = strOption (long "data" <> metavar "contents" <> help "data to pass to command")
 depsArg = strOption (long "deps" <> metavar "object" <> help "filter to such that in dependency of specified object (file or project)")
@@ -327,17 +310,38 @@ instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
 	toJSON Listen = cmdJson "listen" []
 	toJSON (AddData cts) = cmdJson "add" ["data" .= cts]
-	toJSON (Scan ts fs as ghcs docs' infer') = cmdJson "scan" ["targets" .= ts, "paths" .= fs, "contents" .= as, "ghc-opts" .= ghcs, "docs" .= docs', "infer" .= infer']
-	toJSON (Refine rcmd ts) = object ["targets" .= ts] `jsonUnion` rcmd
-	toJSON (Remove t) = cmdJson "remove" [] `jsonUnion` t
-	toJSON (GetInfo gcmd) = toJSON gcmd
-	toJSON (Context ccmd f as) = toJSON ccmd `jsonUnion` object ["file" .= f, "autoscan" .= as]
+	toJSON (Scan projs cabals fs ps contents ghcs docs' infer') = cmdJson "scan" [
+		"projects" .= projs,
+		"sandboxes" .= cabals,
+		"files" .= fs,
+		"paths" .= ps,
+		"contents" .= contents,
+		"ghc-opts" .= ghcs,
+		"docs" .= docs',
+		"infer" .= infer']
+	toJSON (RefineDocs projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
+	toJSON (InferTypes projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
+	toJSON (Remove projs packages cabals fs) = cmdJson "remove" ["projects" .= projs, "packages" .= packages, "sandboxes" .= cabals, "files" .= fs]
+	toJSON (InfoModules tf) = cmdJson "modules" ["filters" .= tf]
+	toJSON InfoPackages = cmdJson "packages" []
+	toJSON InfoProjects = cmdJson "projects" []
+	toJSON InfoSandboxes = cmdJson "sandboxes" []
+	toJSON (InfoSymbol q tf) = cmdJson "symbol" ["query" .= q, "filters" .= tf]
+	toJSON (InfoModule tf) = cmdJson "module" ["filters" .= tf]
+	toJSON (InfoResolve tf es) = cmdJson "resolve" ["filters" .= tf, "exports" .= es]
+	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
+	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
+	toJSON (Lookup n f) = cmdJson "lookup" ["name" .= n, "file" .= f]
+	toJSON (Whois n f) = cmdJson "whois" ["name" .= n, "file" .= f]
+	toJSON (ResolveScopeModules f) = cmdJson "scope modules" ["file" .= f]
+	toJSON (ResolveScope q g f) = cmdJson "scope" ["query" .= q, "global" .= g, "file" .= f]
+	toJSON (Complete q w f) = cmdJson "complete" ["prefix" .= q, "wide" .= w, "file" .= f]
 	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
 	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
-	toJSON (Lint fs as) = cmdJson "lint" ["files" .= fs, "autoscan" .= as]
-	toJSON (Check fs ghcs as) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs, "autoscan" .= as]
-	toJSON (CheckLint fs ghcs as) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "autoscan" .= as]
-	toJSON (Types f ghcs as) = cmdJson "types" ["file" .= f, "ghc-opts" .= ghcs, "autoscan" .= as]
+	toJSON (Lint fs cs) = cmdJson "lint" ["files" .= fs, "contents" .= cs]
+	toJSON (Check fs cs ghcs) = cmdJson "check" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
+	toJSON (CheckLint fs cs ghcs) = cmdJson "check-lint" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
+	toJSON (Types fs cs ghcs) = cmdJson "types" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
 	toJSON (GhcMod gcmd) = toJSON gcmd
 	toJSON (AutoFix acmd) = toJSON acmd
 	toJSON (GhcEval exprs) = cmdJson "ghc eval" ["exprs" .= exprs]
@@ -349,17 +353,42 @@ instance FromJSON Command where
 		guardCmd "ping" v *> pure Ping,
 		guardCmd "listen" v *> pure Listen,
 		guardCmd "add" v *> (AddData <$> v .:: "data"),
-		guardCmd "scan" v *> (Scan <$> v .:: "targets" <*> v .:: "paths" <*> v .:: "contents" <*> v .:: "ghc-opts" <*> v .:: "docs" <*> v .:: "infer"),
-		Refine <$> parseJSON (Object v) <*> v .:: "targets",
-		guardCmd "remove" v *> (Remove <$> parseJSON (Object v)),
-		GetInfo <$> parseJSON (Object v),
-		Context <$> parseJSON (Object v) <*> v .:: "file" <*> v .:: "autoscan",
+		guardCmd "scan" v *> (Scan <$>
+			v .:: "projects" <*>
+			v .:: "sandboxes" <*>
+			v .:: "files" <*>
+			v .:: "paths" <*>
+			v .:: "contents" <*>
+			v .:: "ghc-opts" <*>
+			v .:: "docs" <*>
+			v .:: "infer"),
+		guardCmd "docs" v *> (RefineDocs <$> v .:: "projects" <*> v .:: "files" <*> v .:: "modules"),
+		guardCmd "infer" v *> (InferTypes <$> v .:: "projects" <*> v .:: "files" <*> v .:: "modules"),
+		guardCmd "remove" v *> (Remove <$>
+			v .:: "projects" <*>
+			v .:: "packages" <*>
+			v .:: "sandboxes" <*>
+			v .:: "files"),
+		guardCmd "modules" v *> (InfoModules <$> v .:: "filters"),
+		guardCmd "packages" v *> pure InfoPackages,
+		guardCmd "projects" v *> pure InfoProjects,
+		guardCmd "sandboxes" v *> pure InfoSandboxes,
+		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .:: "filters"),
+		guardCmd "module" v *> (InfoModule <$> v .:: "filters"),
+		guardCmd "resolve" v *> (InfoResolve <$> v .:: "filters" <*> v .:: "exports"),
+		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
+		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
+		guardCmd "lookup" v *> (Lookup <$> v .:: "name" <*> v .:: "file"),
+		guardCmd "whois" v *> (Whois <$> v .:: "name" <*> v .:: "file"),
+		guardCmd "scope modules" v *> (ResolveScopeModules <$> v .:: "file"),
+		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> v .:: "global" <*> v .:: "file"),
+		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> v .:: "wide" <*> v .:: "file"),
 		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> v .:: "page" <*> v .:: "pages"),
 		guardCmd "cabal list" v *> (CabalList <$> v .:: "packages"),
-		guardCmd "lint" v *> (Lint <$> v .:: "files" <*> v .:: "autoscan"),
-		guardCmd "check" v *> (Check <$> v .:: "files" <*> v .:: "ghc-opts" <*> v .:: "autoscan"),
-		guardCmd "check-lint" v *> (CheckLint <$> v .:: "files" <*> v .:: "ghc-opts" <*> v .:: "autoscan"),
-		guardCmd "types" v *> (Types <$> v .:: "file" <*> v .:: "ghc-opts" <*> v .:: "autoscan"),
+		guardCmd "lint" v *> (Lint <$> v .:: "files" <*> v .:: "contents"),
+		guardCmd "check" v *> (Check <$> v .:: "files" <*> v .:: "contents" <*> v .:: "ghc-opts"),
+		guardCmd "check-lint" v *> (CheckLint <$> v .:: "files" <*> v .:: "contents" <*> v .:: "ghc-opts"),
+		guardCmd "types" v *> (Types <$> v .:: "files" <*> v .:: "contents" <*> v .:: "ghc-opts"),
 		GhcMod <$> parseJSON (Object v),
 		AutoFix <$> parseJSON (Object v),
 		guardCmd "ghc eval" v *> (GhcEval <$> v .:: "exprs"),
@@ -377,114 +406,37 @@ instance FromJSON AddedContents where
 		AddedModule <$> v .:: "module",
 		AddedProject <$> v .:: "project"]
 
-instance ToJSON RefineCommand where
-	toJSON Docs = cmdJson "docs" []
-	toJSON Infer = cmdJson "infer" []
-
-instance FromJSON RefineCommand where
-	parseJSON = withObject "refine-command" $ \v -> asum [
-		guardCmd "docs" v *> pure Docs,
-		guardCmd "infer" v *> pure Infer]
-
-instance ToJSON InfoCommand where
-	toJSON (InfoModules tf) = cmdJson "modules" ["filters" .= tf]
-	toJSON InfoPackages = cmdJson "packages" []
-	toJSON InfoProjects = cmdJson "projects" []
-	toJSON InfoSandboxes = cmdJson "sandboxes" []
-	toJSON (InfoSymbol q tf) = cmdJson "symbol" ["query" .= q, "filters" .= tf]
-	toJSON (InfoModule tf) = cmdJson "module" ["filters" .= tf]
-	toJSON (InfoResolve tf es) = cmdJson "resolve" ["filters" .= tf, "exports" .= es]
-	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
-	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
-
-instance FromJSON InfoCommand where
-	parseJSON = withObject "info-command" $ \v -> asum [
-		guardCmd "modules" v *> (InfoModules <$> v .:: "filters"),
-		guardCmd "packages" v *> pure InfoPackages,
-		guardCmd "projects" v *> pure InfoProjects,
-		guardCmd "sandboxes" v *> pure InfoSandboxes,
-		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .:: "filters"),
-		guardCmd "module" v *> (InfoModule <$> v .:: "filters"),
-		guardCmd "resolve" v *> (InfoResolve <$> v .:: "filters" <*> v .:: "exports"),
-		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
-		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path")]
-
-instance ToJSON AutoScan where
-	toJSON (AutoScan f ghcs) = object ["do" .= f, "ghc-opts" .= ghcs]
-
-instance FromJSON AutoScan where
-	parseJSON = withObject "auto-scan" $ \v -> AutoScan <$> v .:: "do" <*> v .:: "ghc-opts"
-
-instance ToJSON ContextCommand where
-	toJSON (Lookup n) = cmdJson "lookup" ["name" .= n]
-	toJSON (Whois n) = cmdJson "whois" ["name" .= n]
-	toJSON ResolveScopeModules = cmdJson "scope modules" []
-	toJSON (ResolveScope q g) = cmdJson "scope" ["query" .= q, "global" .= g]
-	toJSON (Complete q w) = cmdJson "complete" ["prefix" .= q, "wide" .= w]
-
-instance FromJSON ContextCommand where
-	parseJSON = withObject "context-command" $ \v -> asum [
-		guardCmd "lookup" v *> (Lookup <$> v .:: "name"),
-		guardCmd "whois" v *> (Whois <$> v .:: "name"),
-		guardCmd "scope modules" v *> pure ResolveScopeModules,
-		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> v .:: "global"),
-		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> v .:: "wide")]
-
 instance ToJSON GhcModCommand where
 	toJSON GhcModLang = cmdJson "ghc-mod lang" []
 	toJSON GhcModFlags = cmdJson "ghc-mod flags" []
 	toJSON (GhcModType pos f ghcs) = cmdJson "ghc-mod type" ["position" .= pos, "file" .= f, "ghc-opts" .= ghcs]
-	toJSON (GhcModLint fs lints as) = cmdJson "ghc-mod lint" ["files" .= fs, "hlint-opts" .= lints, "autoscan" .= as]
-	toJSON (GhcModCheck fs ghcs as) = cmdJson "ghc-mod check" ["files" .= fs, "ghc-opts" .= ghcs, "autoscan" .= as]
-	toJSON (GhcModCheckLint fs ghcs lints as) = cmdJson "ghc-mod check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "hlint-opts" .= lints, "autoscan" .= as]
+	toJSON (GhcModLint fs lints) = cmdJson "ghc-mod lint" ["files" .= fs, "hlint-opts" .= lints]
+	toJSON (GhcModCheck fs ghcs) = cmdJson "ghc-mod check" ["files" .= fs, "ghc-opts" .= ghcs]
+	toJSON (GhcModCheckLint fs ghcs lints) = cmdJson "ghc-mod check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "hlint-opts" .= lints]
 
 instance FromJSON GhcModCommand where
 	parseJSON = withObject "ghc-mod-command" $ \v -> asum [
 		guardCmd "ghc-mod lang" v *> pure GhcModLang,
 		guardCmd "ghc-mod flags" v *> pure GhcModFlags,
 		guardCmd "ghc-mod type" v *> (GhcModType <$> v .:: "position" <*> v .:: "file" <*> v .:: "ghc-opts"),
-		guardCmd "ghc-mod lint" v *> (GhcModLint <$> v .:: "files" <*> v .:: "hlint-opts" <*> v .:: "autoscan"),
-		guardCmd "ghc-mod check" v *> (GhcModCheck <$> v .:: "files" <*> v .:: "ghc-opts" <*> v .:: "autoscan"),
-		guardCmd "ghc-mod check-lint" v *> (GhcModCheckLint <$> v .:: "files" <*> v .:: "ghc-opts" <*> v .:: "hlint-opts" <*> v .:: "autoscan")]
+		guardCmd "ghc-mod lint" v *> (GhcModLint <$> v .:: "files" <*> v .:: "hlint-opts"),
+		guardCmd "ghc-mod check" v *> (GhcModCheck <$> v .:: "files" <*> v .:: "ghc-opts"),
+		guardCmd "ghc-mod check-lint" v *> (GhcModCheckLint <$> v .:: "files" <*> v .:: "ghc-opts" <*> v .:: "hlint-opts")]
 
 instance ToJSON AutoFixCommand where
 	toJSON (AutoFixShow ns) = cmdJson "autofix show" ["messages" .= ns]
-	toJSON (AutoFixFix ns rests pure) = cmdJson "autofix fix" ["messages" .= ns, "rest" .= rests, "pure" .= pure]
+	toJSON (AutoFixFix ns rests pure') = cmdJson "autofix fix" ["messages" .= ns, "rest" .= rests, "pure" .= pure']
 
 instance FromJSON AutoFixCommand where
 	parseJSON = withObject "auto-fix-command" $ \v -> asum [
 		guardCmd "autofix show" v *> (AutoFixShow <$> v .:: "messages"),
 		guardCmd "autofix fix" v *> (AutoFixFix <$> v .:: "messages" <*> v .:: "rest" <*> v .:: "pure")]
 
-instance ToJSON ScanTarget where
-	toJSON (ScanProject fpath) = object ["project" .= fpath]
-	toJSON (ScanPackage pname) = object ["package" .= pname]
-	toJSON (ScanCabal cabal) = toJSON ["cabal" .= cabal]
-	toJSON (ScanFile fpath) = object ["file" .= fpath]
+instance ToJSON FileContents where
+	toJSON (FileContents fpath cts) = object ["file" .= fpath, "contents" .= cts]
 
-instance FromJSON ScanTarget where
-	parseJSON = withObject "scan-target" $ \v -> asum [
-		ScanProject <$> v .:: "project",
-		ScanPackage <$> v .:: "package",
-		ScanCabal <$> v .:: "cabal",
-		ScanFile <$> v .:: "file"]
-
-instance ToJSON SourceTarget where
-	toJSON (SourceProject fpath) = object ["project" .= fpath]
-	toJSON (SourceFile fpath) = object ["file" .= fpath]
-	toJSON (SourceModule mname) = object ["module" .= mname]
-
-instance FromJSON SourceTarget where
-	parseJSON = withObject "source-target" $ \v -> asum [
-		SourceProject <$> v .:: "project",
-		SourceFile <$> v .:: "file",
-		SourceModule <$> v .:: "module"]
-
-instance ToJSON ActiveFile where
-	toJSON (ActiveFile fpath mcts) = object ["file" .= fpath, "contents" .= mcts]
-
-instance FromJSON ActiveFile where
-	parseJSON = withObject "active-file" $ \v -> ActiveFile <$> v .:: "file" <*> v .:: "contents"
+instance FromJSON FileContents where
+	parseJSON = withObject "file-contents" $ \v -> FileContents <$> v .:: "file" <*> v .:: "contents"
 
 instance ToJSON TargetFilter where
 	toJSON (TargetProject pname) = object ["project" .= pname]
@@ -529,11 +481,28 @@ instance ToJSON SearchType where
 
 instance FromJSON SearchType where
 	parseJSON v = do
-		str <- parseJSON v :: A.Parser String
-		case str of
+		str' <- parseJSON v :: A.Parser String
+		case str' of
 			"exact" -> return SearchExact
 			"prefix" -> return SearchPrefix
 			"infix" -> return SearchInfix
 			"suffix" -> return SearchInfix
 			"regex" -> return SearchRegex
 			_ -> empty
+
+-- | Add help command to parser
+withHelp :: Parser a -> Parser a
+withHelp = (helper' <*>) where
+	helper' = abortOption ShowHelpText $ long "help" <> short '?' <> help "show help" <> hidden
+
+-- | Subcommand
+cmd :: String -> String -> Parser a -> Mod CommandFields a
+cmd n d p = command n (info (withHelp p) (progDesc d))
+
+-- | Parse arguments or return help
+parseArgs :: String -> ParserInfo a -> [String] -> Either String a
+parseArgs nm p = handle' . execParserPure (prefs mempty) (p { infoParser = withHelp (infoParser p) }) where
+	handle' :: ParserResult a -> Either String a
+	handle' (Success r) = Right r
+	handle' (Failure f) = Left $ fst $ renderFailure f nm
+	handle' _ = Left "error: completion invoked result"

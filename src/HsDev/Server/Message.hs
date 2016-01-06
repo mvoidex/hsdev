@@ -3,8 +3,6 @@
 module HsDev.Server.Message (
 	Message(..),
 	messagesById,
-	Request(..), requestToArgs,
-	withOpts, withoutOpts,
 	Notification(..), Result(..), ResultPart(..),
 	Response, isNotification, notification, result, responseError, resultPart,
 	groupResponses, responsesById
@@ -22,7 +20,6 @@ import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Text (unpack)
 
-import System.Console.Args hiding (withOpts)
 import HsDev.Util ((.::), (.::?), objectUnion)
 
 -- | Message with id to link request and response
@@ -48,37 +45,6 @@ instance Traversable Message where
 messagesById :: Maybe String -> [Message a] -> [a]
 messagesById i = map message . filter ((== i) . messageId)
 
--- | Request from client
-data Request = Request {
-	requestCommand :: String,
-	requestArgs :: [String],
-	requestOpts :: Opts String }
-
-requestToArgs :: Request -> Args
-requestToArgs (Request c as opts) = Args (words c ++ as) opts
-
-instance ToJSON Request where
-	toJSON (Request c as os) = object [
-		"command" .= c,
-		"args" .= as,
-		"opts" .= os]
-
-instance FromJSON Request where
-	parseJSON = withObject "request" $ \v -> Request <$>
-		v .:: "command" <*>
-		(fromMaybe [] <$> v .::? "args") <*>
-		(fromMaybe mempty <$> v .::? "opts")
-
--- | Add options to request
-withOpts :: Request -> [Opts String] -> Request
-withOpts r os = r {
-	requestOpts = mconcat (requestOpts r : os) }
-
--- | Remove options from request
-withoutOpts :: Request -> [String] -> Request
-withoutOpts r os = r {
-	requestOpts = Opts $ foldr (.) id (map M.delete os) $ getOpts (requestOpts r) }
-
 -- | Notification from server
 data Notification = Notification Value
 
@@ -96,16 +62,15 @@ data Result =
 	-- ^ Error
 
 instance ToJSON Result where
-	toJSON (Result r) = object [
-		"result" .= r]
+	toJSON (Result r) = object ["result" .= r]
 	toJSON (Error msg rs) = object [
 		"error" .= msg,
 		"details" .= toJSON rs]
 
 instance FromJSON Result where
-	parseJSON = withObject "result" $ \v -> foldr1 (<|>) [
-		Result <$> v .:: "result",
-		Error <$> v .:: "error" <*> v .:: "details"]
+	parseJSON = withObject "result" $ \v ->
+		(Result <$> v .:: "result") <|>
+		(Error <$> v .:: "error" <*> v .:: "details")
 
 -- | Part of result list, returns via notification
 data ResultPart = ResultPart Value
