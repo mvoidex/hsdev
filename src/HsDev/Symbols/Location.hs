@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), ModuleLocation(..), moduleStandalone, noLocation,
+	ModulePackage(..), ModuleLocation(..), moduleStandalone, locationId, noLocation,
 	Position(..), Region(..), region, regionAt, regionLines, regionStr,
 	Location(..),
 
@@ -82,6 +82,11 @@ makeLenses ''ModuleLocation
 
 moduleStandalone :: ModuleLocation -> Bool
 moduleStandalone = (== Just Nothing) . preview moduleProject
+
+locationId :: ModuleLocation -> String
+locationId (FileModule fpath _) = fpath
+locationId (CabalModule cabal mpack nm) = intercalate ":" [show cabal, maybe "" show mpack, nm]
+locationId (ModuleSource msrc) = fromMaybe "" msrc
 
 instance NFData ModuleLocation where
 	rnf (FileModule f p) = rnf f `seq` rnf p

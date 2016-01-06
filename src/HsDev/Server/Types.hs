@@ -96,7 +96,7 @@ data ServerOpts = ServerOpts {
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts 1234 0 Nothing "use default" Nothing False
+	def = ServerOpts 4567 0 Nothing "use default" Nothing False
 
 -- | Client options
 data ClientOpts = ClientOpts {
@@ -108,7 +108,7 @@ data ClientOpts = ClientOpts {
 		deriving (Show)
 
 instance Default ClientOpts where
-	def = ClientOpts 1234 False False 0 False
+	def = ClientOpts 4567 False False 0 False
 
 instance FromCmd ServerCommand where
 	cmdP = serv <|> remote where
@@ -169,10 +169,15 @@ data Request = Request {
 	requestSilent :: Bool }
 
 instance ToJSON Request where
-	toJSON (Request c dir f tm s) = object ["command" .= c, "current-directory" .= dir, "no-file" .= f, "timeout" .= tm, "silent" .= s]
+	toJSON (Request c dir f tm s) = object ["current-directory" .= dir, "no-file" .= f, "timeout" .= tm, "silent" .= s] `objectUnion` toJSON c
 
 instance FromJSON Request where
-	parseJSON = withObject "request" $ \v -> Request <$> v .:: "command" <*> v .:: "current-directory" <*> v .:: "no-file" <*> v .:: "timeout" <*> v .:: "silent"
+	parseJSON = withObject "request" $ \v -> Request <$>
+		parseJSON (Object v) <*>
+		((v .:: "current-directory") <|> pure ".") <*>
+		((v .:: "no-file") <|> pure False) <*>
+		((v .:: "timeout") <|> pure 0) <*>
+		((v .:: "silent") <|> pure False)
 
 -- FIXME: Why so much commands in options?
 -- | Command from client
@@ -207,7 +212,7 @@ data Command =
 	InfoProjects |
 	InfoSandboxes |
 	InfoSymbol SearchQuery TargetFilter |
-	InfoModule TargetFilter |
+	InfoModule SearchQuery TargetFilter |
 	InfoResolve FilePath Bool |
 	InfoProject (Either String FilePath) |
 	InfoSandbox FilePath |
@@ -267,7 +272,17 @@ data AutoFixCommand =
 
 data FileContents = FileContents FilePath String deriving (Show)
 -- TODO: Why deps is just string?
-data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone | TargetAny deriving (Eq, Show)
+data TargetFilter =
+	TargetProject String |
+	TargetFile FilePath |
+	TargetModule String |
+	TargetDepsOf String |
+	TargetCabal Cabal |
+	TargetPackage String |
+	TargetSourced |
+	TargetStandalone |
+	TargetAny
+		deriving (Eq, Show)
 data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
 
@@ -297,7 +312,7 @@ instance FromCmd Command where
 		cmd "projects" "list projects" (pure InfoProjects),
 		cmd "sandboxes" "list sandboxes" (pure InfoSandboxes),
 		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> cmdP),
-		cmd "module" "get module info" (InfoModule <$> cmdP),
+		cmd "module" "get module info" (InfoModule <$> cmdP <*> cmdP),
 		cmd "resolve" "resolve module scope (or exports)" (InfoResolve <$> fileArg <*> exportsFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> (pathArg $ help "locate sandbox in parent of this path")),
@@ -340,10 +355,10 @@ instance FromCmd FileContents where
 	cmdP = option readJSON (long "contents")
 
 instance FromCmd TargetFilter where
-	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> (flag' Cabal idm <|> (Sandbox <$> sandboxArg)), TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand"), pure TargetAny]
+	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> cabalArg, TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand"), pure TargetAny]
 
 instance FromCmd SearchQuery where
-	cmdP = SearchQuery <$> strArgument idm <*> (asum [
+	cmdP = SearchQuery <$> (strArgument idm <|> pure "") <*> (asum [
 		flag' SearchExact (long "exact"),
 		flag' SearchRegex (long "regex"),
 		flag' SearchInfix (long "infix"),
@@ -396,7 +411,7 @@ instance ToJSON Command where
 	toJSON InfoProjects = cmdJson "projects" []
 	toJSON InfoSandboxes = cmdJson "sandboxes" []
 	toJSON (InfoSymbol q tf) = cmdJson "symbol" ["query" .= q, "filter" .= tf]
-	toJSON (InfoModule tf) = cmdJson "module" ["filter" .= tf]
+	toJSON (InfoModule q tf) = cmdJson "module" ["query" .= q, "filter" .= tf]
 	toJSON (InfoResolve f es) = cmdJson "resolve" ["file" .= f, "exports" .= es]
 	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
 	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
@@ -443,7 +458,7 @@ instance FromJSON Command where
 		guardCmd "projects" v *> pure InfoProjects,
 		guardCmd "sandboxes" v *> pure InfoSandboxes,
 		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .:: "filter"),
-		guardCmd "module" v *> (InfoModule <$> v .:: "filter"),
+		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .:: "filter"),
 		guardCmd "resolve" v *> (InfoResolve <$> v .:: "file" <*> v .:: "exports"),
 		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),

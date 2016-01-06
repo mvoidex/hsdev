@@ -104,14 +104,10 @@ runCommand copts (InfoSymbol sq f) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
 	filter' <- targetFilter copts f
 	return $ newestPackage $ filterMatch sq $ filter (checkModule filter') $ allDeclarations dbval
-runCommand copts (InfoModule f) = runCommandM $ do
+runCommand copts (InfoModule sq f) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
 	filter' <- targetFilter copts f
-	rs <- return $ newestPackage $ filter (filter' . view moduleId) $ allModules dbval
-	case rs of
-		[] -> commandError "Module not found" []
-		[m] -> return m
-		ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
+	return $ newestPackage $ filterMatch sq $ filter (filter' . view moduleId) $ allModules dbval
 runCommand copts (InfoResolve fpath exports) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
 	srcFile <- findPath copts fpath
@@ -391,11 +387,11 @@ updateProcess copts ghcOpts' docs' infer' acts = lift $ Update.updateDB (Update.
 	logErr e = liftIO $ commandLog copts Log.Error e
 
 -- | Filter declarations with prefix and infix
-filterMatch :: SearchQuery -> [ModuleDeclaration] -> [ModuleDeclaration]
+filterMatch :: Symbol a => SearchQuery -> [a] -> [a]
 filterMatch (SearchQuery q st) = filter match' where
 	match' m = case st of
-		SearchExact -> fromString q == view (moduleDeclaration . declarationName) m
-		SearchPrefix -> fromString q `T.isPrefixOf` view (moduleDeclaration . declarationName) m
-		SearchInfix -> fromString q `T.isInfixOf` view (moduleDeclaration . declarationName) m
-		SearchSuffix -> fromString q `T.isSuffixOf` view (moduleDeclaration . declarationName) m
-		SearchRegex -> view (moduleDeclaration . declarationName . from packed) m =~ q
+		SearchExact -> fromString q == symbolName m
+		SearchPrefix -> fromString q `T.isPrefixOf` symbolName m
+		SearchInfix -> fromString q `T.isInfixOf` symbolName m
+		SearchSuffix -> fromString q `T.isSuffixOf` symbolName m
+		SearchRegex -> unpack (symbolName m) =~ q

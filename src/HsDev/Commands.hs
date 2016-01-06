@@ -26,6 +26,7 @@ module HsDev.Commands (
 import Control.Applicative
 import Control.Lens (view, set, each)
 import Control.Monad.Except
+import Data.List (delete)
 import Data.Maybe
 import Data.String (fromString)
 import qualified Data.Text as T (isPrefixOf, split, unpack)
@@ -104,7 +105,7 @@ scopeModules db cabal file = do
 				inProject proj,
 				\m -> any (`inPackage` m) deps']
 	where
-		deps f p = concatMap (view infoDepends) $ fileTargets p f
+		deps f p = delete (view projectName p) $ concatMap (view infoDepends) $ fileTargets p f
 
 -- | Symbols in scope
 scope :: Database -> Cabal -> FilePath -> Bool -> ExceptT String IO [ModuleDeclaration]
