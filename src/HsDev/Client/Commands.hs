@@ -6,15 +6,14 @@ module HsDev.Client.Commands (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (view, preview, each, _Just, from)
+import Control.Lens (view, preview, _Just, from)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.State (gets)
 import Control.Monad.Catch (try, SomeException(..))
-import Control.Monad.Trans.Maybe
 import Data.Aeson hiding (Result, Error)
 import Data.List
-import Data.Foldable (toList, find)
+import Data.Foldable (toList)
 import Data.Maybe
 import qualified Data.Map as M
 import Data.String (fromString)
@@ -24,15 +23,13 @@ import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
 import System.Directory
 import System.FilePath
 import qualified System.Log.Simple.Base as Log
-import Text.Read (readMaybe)
 import Text.Regex.PCRE ((=~))
 
 import HsDev.Cache
-import qualified HsDev.Cache.Structured as SC
 import HsDev.Commands
 import qualified HsDev.Database.Async as DB
 import HsDev.Server.Message as M
-import HsDev.Server.Types hiding (cmd)
+import HsDev.Server.Types
 import HsDev.Symbols
 import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util
@@ -46,8 +43,6 @@ import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Tools.HLint as HLint
 import qualified HsDev.Tools.Types as Tools
 import HsDev.Util
-
-import Control.Concurrent.Util
 
 import qualified HsDev.Database.Update as Update
 
@@ -96,100 +91,63 @@ runCommand copts (InferTypes projs fs ms) = runCommandM $ do
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess copts [] False False [Update.inferModTypes $ map (getInspected dbval) mods]
 runCommand copts (Remove projs packages cabals fs) = undefined
-runCommand copts (InfoModules fs) = runCommandM $ do
+runCommand copts (InfoModules f) = runCommandM $ do
 	dbval <- getDb copts
-	projs <- traverse (findProject copts) [proj | TargetProject proj <- fs]
-	deps <- traverse (findDep copts) [dep | TargetDepsOf dep <- fs]
-	cabals <- getSandboxes copts [sbox | TargetCabal sbox <- fs]
-	let
-		packages = [package | TargetPackage package <- fs]
-		mods = [m' | TargetModule m' <- fs]
-		files = [file | TargetFile file <- fs]
-		hasFilters = not $ null projs && null packages && null cabals && null deps
-		filters = allOf $ catMaybes [
-			if hasFilters
-				then Just $ anyOf $ catMaybes [
-					if null projs then Nothing else Just (\m -> any (`inProject` m) projs),
-					if null deps then Nothing else Just (\m -> any (`inDeps` m) deps),
-					if null mods then Nothing else Just (\m -> any (`inModule` m) mods),
-					if null files then Nothing else Just (\m -> any (`inFile` m) files),
-					if null packages && null cabals then Nothing
-						else Just (\m -> (any (`inPackage` m) packages || null packages) && (any (`inCabal` m) cabals || null cabals))]
-				else Nothing,
-			if TargetSourced `elem` fs then Just byFile else Nothing,
-			if TargetStandalone `elem` fs then Just standalone else Nothing]
-	return $ map (view moduleId) $ newest (TargetOldToo `notElem` fs) $ selectModules (filters . view moduleId) dbval
+	targetFilter <- case f of
+		TargetProject proj -> liftM inProject $ findProject copts proj
+		TargetFile file -> liftM inFile $ findPath copts file
+		TargetModule mname -> return $ inModule mname
+		TargetDepsOf dep -> liftM inDeps $ findDep copts dep
+		TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
+		TargetPackage pack -> return $ inPackage pack
+		TargetSourced -> return byFile
+		TargetStandalone -> return standalone
+	return $ map (view moduleId) $ newestPackage $ selectModules (targetFilter . view moduleId) dbval
 runCommand copts InfoPackages = runCommandM $
 	(ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb copts
 runCommand copts InfoProjects = runCommandM $ (toList . databaseProjects) <$> getDb copts
 runCommand copts InfoSandboxes = runCommandM $
 	(ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
-runCommand copts (InfoSymbol sq fs) = runCommandM $ do
+runCommand copts (InfoSymbol sq f) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
-	proj <- traverse (findProject copts) $ listToMaybe [p | TargetProject p <- fs]
-	file <- traverse (findPath copts) $ listToMaybe [f | TargetFile f <- fs]
-	deps <- traverse (findDep copts) $ listToMaybe [d | TargetDepsOf d <- fs]
-	cabal <- traverse (findSandbox copts) $ listToMaybe [c | TargetCabal c <- fs]
-	let
-		filters = checkModule $ allOf $ catMaybes [
-			fmap inProject proj,
-			fmap inFile file,
-			fmap inModule $ listToMaybe [m | TargetModule m <- fs],
-			fmap inPackage $ listToMaybe [p | TargetPackage p <- fs],
-			fmap inDeps deps,
-			-- fmap inVersion (arg "version" as), -- FIXME: Where is version argument?
-			fmap inCabal cabal,
-			if TargetSourced `elem` fs then Just byFile else Nothing,
-			if TargetStandalone `elem` fs then Just standalone else Nothing]
-		toResult = newest (TargetOldToo `notElem` fs) . filterMatch sq . filter filters
-	return $ toResult $ allDeclarations dbval
-runCommand copts (InfoModule fs) = runCommandM $ do
+	targetFilter <- case f of
+		TargetProject proj -> liftM inProject $ findProject copts proj
+		TargetFile file -> liftM inFile $ findPath copts file
+		TargetModule mname -> return $ inModule mname
+		TargetDepsOf dep -> liftM inDeps $ findDep copts dep
+		TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
+		TargetPackage pack -> return $ inPackage pack
+		TargetSourced -> return byFile
+		TargetStandalone -> return standalone
+	return $ newestPackage $ filterMatch sq $ filter (checkModule targetFilter) $ allDeclarations dbval
+runCommand copts (InfoModule f) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
-	proj <- traverse (findProject copts) $ listToMaybe [p | TargetProject p <- fs]
-	cabal <- traverse (findSandbox copts) $ listToMaybe [c | TargetCabal c <- fs]
-	file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ listToMaybe [f | TargetFile f <- fs]
-	deps <- traverse (findDep copts) $ listToMaybe [d | TargetDepsOf d <- fs]
-	let
-		filters = allOf $ catMaybes [
-			fmap inProject proj,
-			fmap inCabal cabal,
-			fmap inFile file',
-			fmap inModule $ listToMaybe [m | TargetModule m <- fs],
-			fmap inPackage $ listToMaybe [p | TargetPackage p <- fs],
-			fmap inDeps deps,
-			-- fmap inVersion (arg "version" as), -- FIXME: Where is version argument?
-			if TargetSourced `elem` fs then Just byFile else Nothing,
-			if TargetStandalone `elem` fs then Just standalone else Nothing]
-	rs <- (newest (TargetOldToo `notElem` fs) . filter (filters . view moduleId)) <$> maybe
-		(return $ allModules dbval)
-		(mapCommandErrorStr . findModule dbval)
-		(listToMaybe [m | TargetModule m <- fs])
+	targetFilter <- case f of
+		TargetProject proj -> liftM inProject $ findProject copts proj
+		TargetFile file -> liftM inFile $ findPath copts file
+		TargetModule mname -> return $ inModule mname
+		TargetDepsOf dep -> liftM inDeps $ findDep copts dep
+		TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
+		TargetPackage pack -> return $ inPackage pack
+		TargetSourced -> return byFile
+		TargetStandalone -> return standalone
+	rs <- return $ newestPackage $ filter (targetFilter . view moduleId) $ allModules dbval
 	case rs of
 		[] -> commandError "Module not found" []
 		[m] -> return m
 		ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
-runCommand copts (InfoResolve fs exports) = runCommandM $ do
+runCommand copts (InfoResolve fpath exports) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
-	proj <- traverse (findProject copts) $ listToMaybe [p | TargetProject p <- fs]
-	cabal <- traverse (findSandbox copts) $ listToMaybe [c | TargetCabal c <- fs]
-	file' <- mapExceptT (fmap $ left commandStrMsg) $ traverse (findPath copts) $ listToMaybe [f | TargetFile f <- fs]
+	srcFile <- findPath copts fpath
+	cabal <- liftIO $ getSandbox srcFile
 	let
-		filters = allOf $ catMaybes [
-			fmap inProject proj,
-			fmap inFile file',
-			fmap inModule $ listToMaybe [m | TargetModule m <- fs],
-			Just byFile]
-	rs <- (newest (TargetOldToo `notElem` fs) . filter (filters . view moduleId)) <$> maybe
-		(return $ allModules dbval)
-		(mapCommandErrorStr . findModule dbval)
-		(listToMaybe [m | TargetModule m <- fs])
-	let
-		cabaldb = filterDB (restrictCabal $ fromMaybe Cabal cabal) (const True) dbval
-		getScope = if exports then exportsModule else scopeModule
-	case rs of
-		 [] -> commandError "Module not found" []
-		 [m] -> return $ getScope $ resolveOne cabaldb m
-		 ms' -> commandError "Ambiguous modules" ["modules" .= map (view moduleId) ms']
+		cabaldb = filterDB (restrictCabal cabal) (const True) dbval
+		getScope
+			| exports = exportsModule
+			| otherwise = scopeModule
+	case lookupFile srcFile dbval of
+		Nothing -> commandError "File not found" []
+		Just m -> return $ getScope $ resolveOne cabaldb m
 runCommand copts (InfoProject (Left projName)) = runCommandM $ findProject copts projName
 runCommand copts (InfoProject (Right projPath)) = runCommandM $ liftIO $ searchProject projPath
 runCommand copts (InfoSandbox sandbox) = runCommandM $ liftIO $ searchSandbox sandbox

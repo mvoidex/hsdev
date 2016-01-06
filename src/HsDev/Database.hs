@@ -22,13 +22,12 @@ import Control.Monad (msum, join)
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Either (rights)
-import Data.Foldable (toList, find)
+import Data.Foldable (find)
 import Data.Function (on)
 import Data.Group (Group(..))
 import Data.Map (Map)
 import Data.Maybe
 import qualified Data.Map as M
-import qualified Data.Sequence as S
 
 import HsDev.Symbols
 import HsDev.Symbols.Util

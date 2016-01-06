@@ -11,7 +11,6 @@ import Data.Aeson
 import Data.List (partition, sort)
 import Data.Maybe (mapMaybe)
 import System.Directory (canonicalizePath)
-import Text.Read (readMaybe)
 
 import HsDev.Symbols (Canonicalize(..), moduleFile)
 import HsDev.Tools.Base
@@ -32,9 +31,9 @@ fixP = subparser $ mconcat [
 
 main :: IO ()
 main = toolMain "hsautofix" "automatically fix some errors" fixP (printExceptT . printResult . go) where
-	go (ShowCmd json) = do
+	go (ShowCmd isJson) = do
 		input <- liftE getContents
-		msgs <- if json
+		msgs <- if isJson
 			then maybe (throwError "Can't parse messages") return $ decode (toUtf8 input)
 			else return $ parseOutputMessages input
 		mapM (liftE . canonicalize) $ corrections msgs

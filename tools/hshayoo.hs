@@ -2,9 +2,7 @@ module Main (
 	main
 	) where
 
-import Data.Aeson (encode)
 import Data.Maybe
-import qualified Data.ByteString.Lazy.Char8 as L (putStrLn)
 
 import HsDev.Tools.Hayoo
 

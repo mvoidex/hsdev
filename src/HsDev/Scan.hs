@@ -17,7 +17,6 @@ import Control.Applicative ((<|>))
 import Control.DeepSeq
 import Control.Lens (view, preview, set, _Right, _1, _2, _3, (^.))
 import Control.Monad.Except
-import qualified Data.Map as M
 import Data.Maybe (catMaybes, fromMaybe, isJust)
 import System.Directory
 
@@ -93,8 +92,8 @@ scanProjectFile _ f = do
 	loadProject proj
 
 -- | Scan module
-scanModule :: [String] -> ModuleLocation -> Maybe String -> ExceptT String IO InspectedModule
-scanModule opts (FileModule f p) mcts = liftM setProj $ inspectFile opts f mcts where
+scanModule :: [(String, String)] -> [String] -> ModuleLocation -> Maybe String -> ExceptT String IO InspectedModule
+scanModule defines opts (FileModule f p) mcts = liftM setProj $ inspectFile defines opts f mcts where
 	setProj =
 		set (inspectedId . moduleProject) p .
 		set (inspectionResult . _Right . moduleLocation . moduleProject) p
@@ -102,8 +101,8 @@ scanModule opts (FileModule f p) mcts = liftM setProj $ inspectFile opts f mcts 
 -- 	infer' m = tryInfer <|> return m where
 -- 		tryInfer = mapExceptT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
 -- 			runGhcMod defaultOptions $ inferTypes opts Cabal m
-scanModule opts (CabalModule c p n) _ = browse opts c n p
-scanModule _ (ModuleSource _) _ = throwError "Can inspect only modules in file or cabal"
+scanModule _ opts (CabalModule c p n) _ = browse opts c n p
+scanModule _ _ (ModuleSource _) _ = throwError "Can inspect only modules in file or cabal"
 
 -- | Scan additional info and modify scanned module. Dones't fail on error, just left module unchanged
 scanModify :: ([String] -> Cabal -> Module -> ExceptT String IO Module) -> InspectedModule -> ExceptT String IO InspectedModule
@@ -119,12 +118,12 @@ upToDate opts (Inspected insp m _) = case m of
 	_ -> return False
 
 -- | Rescan inspected module
-rescanModule :: [String] -> InspectedModule -> ExceptT String IO (Maybe InspectedModule)
-rescanModule opts im = do
+rescanModule :: [(String, String)] -> [String] -> InspectedModule -> ExceptT String IO (Maybe InspectedModule)
+rescanModule defines opts im = do
 	up <- upToDate opts im
 	if up
 		then return Nothing
-		else fmap Just $ scanModule opts (view inspectedId im) Nothing
+		else fmap Just $ scanModule defines opts (view inspectedId im) Nothing
 
 -- | Is module new or recently changed
 changedModule :: Database -> [String] -> ModuleLocation -> ExceptT String IO Bool

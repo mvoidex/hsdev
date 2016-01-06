@@ -97,6 +97,7 @@ library
     bytestring >= 0.10.0,
     Cabal >= 1.22.0,
     containers >= 0.5.0,
+    cpphs >= 1.19.0,
     data-default >= 0.5.0,
     deepseq >= 1.4.0,
     directory >= 1.2.0,

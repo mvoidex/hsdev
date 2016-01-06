@@ -15,7 +15,6 @@ import Data.Aeson hiding (Error, Result)
 import Data.Aeson.Types (Pair)
 import Data.Either (lefts, isRight)
 import Data.List (unfoldr)
-import Data.Maybe
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Text (unpack)

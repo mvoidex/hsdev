@@ -36,9 +36,8 @@ import Control.Monad.Trans.Control
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
-import qualified Data.HashMap.Strict as HM
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
+import Data.Maybe (mapMaybe, isJust, fromMaybe)
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath, doesFileExist)
 import qualified System.Log.Simple as Log
@@ -49,7 +48,7 @@ import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async hiding (Event)
 import HsDev.Display
-import HsDev.Inspect (inspectDocs, inspectDocsGhc)
+import HsDev.Inspect (inspectDocs, inspectDocsGhc, getDefines)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker (ghcWorker)
@@ -194,7 +193,8 @@ readDB = asks database >>= liftIO . readAsync
 -- | Scan module
 scanModule :: (MonadIO m, MonadCatch m, MonadCatchIO m) => [String] -> ModuleLocation -> Maybe String -> ExceptT String (UpdateDB m) ()
 scanModule opts mloc mcts = runTask "scanning" mloc $ Log.scope "module" $ do
-	im <- liftExceptT $ S.scanModule opts mloc mcts
+	defs <- asks settingsDefines
+	im <- liftExceptT $ S.scanModule defs opts mloc mcts
 	updater $ return $ fromModule im
 	_ <- ExceptT $ return $ view inspectionResult im
 	return ()

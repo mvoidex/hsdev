@@ -59,7 +59,7 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Base
 import HsDev.Tools.Types
-import HsDev.Util ((.::), liftIOErrors, liftThrow, withCurrentDirectory, readFileUtf8, ordNub)
+import HsDev.Util ((.::), liftIOErrors, liftThrow, readFileUtf8, ordNub)
 
 list :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]
 list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.optGhcUserOptions = opts }) $ do

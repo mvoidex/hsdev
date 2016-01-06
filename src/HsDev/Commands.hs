@@ -27,7 +27,6 @@ import Control.Applicative
 import Control.Lens (view, set, each)
 import Control.Monad.Except
 import Data.Maybe
-import qualified Data.Map as M (lookup)
 import Data.String (fromString)
 import qualified Data.Text as T (isPrefixOf, split, unpack)
 import System.Directory (canonicalizePath)

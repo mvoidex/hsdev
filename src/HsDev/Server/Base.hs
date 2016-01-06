@@ -9,43 +9,20 @@ module HsDev.Server.Base (
 	) where
 
 import Control.Applicative
-import Control.Arrow (second)
 import Control.Concurrent
-import Control.Concurrent.Async
 import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
-import Data.Aeson hiding (Result, Error)
-import Data.Aeson.Encode.Pretty
-import qualified Data.ByteString.Char8 as BS
-import Data.ByteString.Lazy.Char8 (ByteString)
-import Data.Default
-import qualified Data.ByteString.Lazy.Char8 as L
-import Data.Either (isLeft)
 import qualified Data.Map as M
-import Data.Foldable (asum)
 import Data.Maybe
-import Data.Monoid
 import Data.Text (Text)
 import qualified Data.Text as T (pack, unpack)
-import Network.Socket hiding (connect)
-import qualified Network.Socket as Net hiding (send)
-import qualified Network.Socket.ByteString as Net (send)
-import qualified Network.Socket.ByteString.Lazy as Net (getContents)
-import Options.Applicative
-import System.Directory
-import System.Exit
-import System.IO
 import System.Log.Simple hiding (Level(..), Message(..), Command(..))
 import System.Log.Simple.Base (writeLog)
 import qualified System.Log.Simple.Base as Log
-import Text.Read (readMaybe)
 
-import Control.Apply.Util
-import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
-import Data.Lisp
 import qualified System.Directory.Watcher as Watcher
 import Text.Format ((~~), FormatBuild(..))
 
@@ -54,6 +31,7 @@ import qualified HsDev.Client.Commands as Client
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
 import qualified HsDev.Database.Update as Update
+import HsDev.Inspect (getDefines)
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.GhcMod (ghcModMultiWorker)
 import HsDev.Server.Types
@@ -61,14 +39,7 @@ import HsDev.Server.Message
 import HsDev.Util
 
 #if mingw32_HOST_OS
-import Data.Aeson.Types hiding (Result, Error)
-import Data.Char
-import Data.List
-import System.Environment
-import System.Process
-import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
-import System.Win32.PowerShell (escape, quote, quoteDouble)
 #else
 import System.Posix.Process
 import System.Posix.IO
@@ -116,6 +87,7 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 	ghcw <- ghcWorker [] (return ())
 	ghciw <- ghciWorker
 	ghcmodw <- ghcModMultiWorker
+	defs <- getDefines
 	let
 		copts = CommandOptions
 			db
@@ -137,6 +109,7 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 			(return ())
 			(return ())
 			(return ())
+			defs
 	_ <- forkIO $ Update.onEvent watcher (Update.processEvent $ Update.settings copts [] False False)
 	act copts
 

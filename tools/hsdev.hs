@@ -5,19 +5,14 @@ module Main (
 	) where
 
 import Control.Exception
-import Control.Monad
 import Network.Socket (withSocketsDo)
 import Options.Applicative
 import System.Environment (getArgs)
 import System.Exit
 import System.IO
-import Text.Read (readMaybe)
 
-import Control.Apply.Util (chain)
-
-import HsDev.Server.Commands (ServerCommand, runServerCommand)
+import HsDev.Server.Commands (runServerCommand)
 import HsDev.Server.Types
-import HsDev.Version
 import HsDev.Util
 
 main :: IO ()

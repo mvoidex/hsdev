@@ -29,9 +29,9 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
-import HsDev.Tools.GhcMod (OutputMessage, TypedRegion, WorkerMap)
+import HsDev.Tools.GhcMod (OutputMessage, WorkerMap)
 import HsDev.Tools.Ghc.Worker (Worker, Ghc)
-import HsDev.Tools.Types (Note, OutputMessage)
+import HsDev.Tools.Types (Note)
 import HsDev.Tools.AutoFix (Correction)
 import HsDev.Util
 
@@ -58,7 +58,8 @@ data CommandOptions = CommandOptions {
 	commandNotify :: Notification -> IO (),
 	commandLink :: IO (),
 	commandHold :: IO (),
-	commandExit :: IO () }
+	commandExit :: IO (),
+	commandDefines :: [(String, String)] }
 
 data CommandError = CommandError String [A.Pair]
 
@@ -201,13 +202,13 @@ data Command =
 		removePackages :: [String],
 		removeSandboxes :: [Cabal],
 		removeFiles :: [FilePath] } |
-	InfoModules [TargetFilter] |
+	InfoModules TargetFilter |
 	InfoPackages |
 	InfoProjects |
 	InfoSandboxes |
-	InfoSymbol SearchQuery [TargetFilter] |
-	InfoModule [TargetFilter] |
-	InfoResolve [TargetFilter] Bool |
+	InfoSymbol SearchQuery TargetFilter |
+	InfoModule TargetFilter |
+	InfoResolve FilePath Bool |
 	InfoProject (Either String FilePath) |
 	InfoSandbox FilePath |
 	Lookup String FilePath |
@@ -266,7 +267,7 @@ data AutoFixCommand =
 
 data FileContents = FileContents FilePath String deriving (Show)
 -- TODO: Why deps is just string?
-data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone | TargetOldToo deriving (Eq, Show)
+data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone deriving (Eq, Show)
 data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
 
@@ -291,13 +292,13 @@ instance FromCmd Command where
 			many packageArg <*>
 			many cabalArg <*>
 			many fileArg,
-		cmd "modules" "list modules" (InfoModules <$> many cmdP),
+		cmd "modules" "list modules" (InfoModules <$> cmdP),
 		cmd "packages" "list packages" (pure InfoPackages),
 		cmd "projects" "list projects" (pure InfoProjects),
 		cmd "sandboxes" "list sandboxes" (pure InfoSandboxes),
-		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> many cmdP),
-		cmd "module" "get module info" (InfoModule <$> many cmdP),
-		cmd "resolve" "resolve module scope (or exports)" (InfoResolve <$> many cmdP <*> exportsFlag),
+		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> cmdP),
+		cmd "module" "get module info" (InfoModule <$> cmdP),
+		cmd "resolve" "resolve module scope (or exports)" (InfoResolve <$> fileArg <*> exportsFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> (pathArg $ help "locate sandbox in parent of this path")),
 		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
@@ -339,7 +340,7 @@ instance FromCmd FileContents where
 	cmdP = option readJSON (long "contents")
 
 instance FromCmd TargetFilter where
-	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> (flag' Cabal idm <|> (Sandbox <$> sandboxArg)), TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand"), flag' TargetOldToo (long "no-last")]
+	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> (flag' Cabal idm <|> (Sandbox <$> sandboxArg)), TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand")]
 
 instance FromCmd SearchQuery where
 	cmdP = SearchQuery <$> strArgument idm <*> (asum [
@@ -352,17 +353,12 @@ instance FromCmd SearchQuery where
 readJSON :: FromJSON a => ReadM a
 readJSON = str >>= maybe (readerError "Can't parse JSON argument") return . decode . L.pack
 
-allFlag d = switch (long "all" <> short 'a' <> help d)
-cacheDir = strOption (long "cache-dir" <> metavar "path" <> help "cache path")
-cacheFile = strOption (long "cache-file" <> metavar "path" <> help "cache file")
 cabalArg = flag' Cabal (long "cabal") <|> (Sandbox <$> sandboxArg)
 ctx = fileArg
-dataArg = strOption (long "data" <> metavar "contents" <> help "data to pass to command")
 depsArg = strOption (long "deps" <> metavar "object" <> help "filter to such that in dependency of specified object (file or project)")
 docsFlag = switch (long "docs" <> help "scan source file docs")
 exportsFlag = switch (long "exports" <> short 'e' <> help "resolve module exports")
 fileArg = strOption (long "file" <> metavar "path" <> short 'f')
-findArg = strOption (long "find" <> metavar "query" <> help "infix match")
 ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "options to pass to GHC"))
 globalFlag = switch (long "global" <> help "scope of project")
 hayooPageArg = option auto (long "page" <> metavar "n" <> short 'p' <> help "page number (0 by default)" <> value 0)
@@ -370,19 +366,13 @@ hayooPagesArg = option auto (long "pages" <> metavar "count" <> short 'n' <> hel
 hlintOpts = many (strOption (long "hlint" <> metavar "option" <> short 'h' <> help "options to pass to hlint"))
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
-localsArg = switch (long "locals" <> short 'l' <> help "look in local declarations")
+-- localsArg = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = strOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
-noLastFlag = switch (long "no-last" <> help "select not only last version packages")
 packageArg = strOption (long "package" <> metavar "name" <> help "module package")
 pathArg f = strOption (long "path" <> metavar "path" <> short 'p' <> f)
 projectArg = strOption (long "project" <> long "proj" <> metavar "project")
-packageVersionArg = strOption (long "version" <> metavar "id" <> short 'v' <> help "package version")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
 sandboxArg = strOption (long "sandbox" <> metavar "path" <> help "path to cabal sandbox")
-sandboxList = many sandboxArg
-sandboxes = (++) <$> flag [] [Cabal] (long "cabal" <> help "cabal") <*> (map Sandbox <$> sandboxList)
-sourced = switch (long "src" <> help "source files")
-standaloned = switch (long "stand" <> help "standalone files")
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
 
 instance ToJSON Command where
@@ -401,13 +391,13 @@ instance ToJSON Command where
 	toJSON (RefineDocs projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
 	toJSON (InferTypes projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
 	toJSON (Remove projs packages cabals fs) = cmdJson "remove" ["projects" .= projs, "packages" .= packages, "sandboxes" .= cabals, "files" .= fs]
-	toJSON (InfoModules tf) = cmdJson "modules" ["filters" .= tf]
+	toJSON (InfoModules tf) = cmdJson "modules" ["filter" .= tf]
 	toJSON InfoPackages = cmdJson "packages" []
 	toJSON InfoProjects = cmdJson "projects" []
 	toJSON InfoSandboxes = cmdJson "sandboxes" []
-	toJSON (InfoSymbol q tf) = cmdJson "symbol" ["query" .= q, "filters" .= tf]
-	toJSON (InfoModule tf) = cmdJson "module" ["filters" .= tf]
-	toJSON (InfoResolve tf es) = cmdJson "resolve" ["filters" .= tf, "exports" .= es]
+	toJSON (InfoSymbol q tf) = cmdJson "symbol" ["query" .= q, "filter" .= tf]
+	toJSON (InfoModule tf) = cmdJson "module" ["filter" .= tf]
+	toJSON (InfoResolve f es) = cmdJson "resolve" ["file" .= f, "exports" .= es]
 	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
 	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
 	toJSON (Lookup n f) = cmdJson "lookup" ["name" .= n, "file" .= f]
@@ -448,13 +438,13 @@ instance FromJSON Command where
 			v .:: "packages" <*>
 			v .:: "sandboxes" <*>
 			v .:: "files"),
-		guardCmd "modules" v *> (InfoModules <$> v .:: "filters"),
+		guardCmd "modules" v *> (InfoModules <$> v .:: "filter"),
 		guardCmd "packages" v *> pure InfoPackages,
 		guardCmd "projects" v *> pure InfoProjects,
 		guardCmd "sandboxes" v *> pure InfoSandboxes,
-		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .:: "filters"),
-		guardCmd "module" v *> (InfoModule <$> v .:: "filters"),
-		guardCmd "resolve" v *> (InfoResolve <$> v .:: "filters" <*> v .:: "exports"),
+		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .:: "filter"),
+		guardCmd "module" v *> (InfoModule <$> v .:: "filter"),
+		guardCmd "resolve" v *> (InfoResolve <$> v .:: "file" <*> v .:: "exports"),
 		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
 		guardCmd "lookup" v *> (Lookup <$> v .:: "name" <*> v .:: "file"),
@@ -526,7 +516,6 @@ instance ToJSON TargetFilter where
 	toJSON (TargetPackage pname) = object ["package" .= pname]
 	toJSON TargetSourced = toJSON ("sourced" :: String)
 	toJSON TargetStandalone = toJSON ("standalone" :: String)
-	toJSON TargetOldToo = toJSON ("old-too" :: String)
 
 instance FromJSON TargetFilter where
 	parseJSON j = obj j <|> str' where
@@ -542,7 +531,6 @@ instance FromJSON TargetFilter where
 			case s of
 				"sourced" -> return TargetSourced
 				"standalone" -> return TargetStandalone
-				"old-too" -> return TargetOldToo
 				_ -> empty
 
 instance ToJSON SearchQuery where

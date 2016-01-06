@@ -84,7 +84,8 @@ data Settings = Settings {
 	runInferTypes :: Bool,
 	settingsGhcModWorker :: Worker (ReaderT WorkerMap IO),
 	settingsLogger :: Log.Log,
-	settingsWatcher :: Watcher }
+	settingsWatcher :: Watcher,
+	settingsDefines :: [(String, String)] }
 
 settings :: CommandOptions -> [String] -> Bool -> Bool -> Settings
 settings copts ghcOpts' docs' infer' = Settings
@@ -98,6 +99,7 @@ settings copts ghcOpts' docs' infer' = Settings
 	(commandGhcMod copts)
 	(commandLogger copts)
 	(commandWatcher copts)
+	(commandDefines copts)
 
 newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [ModuleLocation] m) a }
 	deriving (Applicative, Monad, MonadIO, MonadCatchIO, MonadThrow, MonadCatch, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
