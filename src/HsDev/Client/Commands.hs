@@ -48,7 +48,6 @@ import qualified HsDev.Tools.Types as Tools
 import HsDev.Util
 
 import Control.Concurrent.Util
-import System.Console.Cmd
 
 import qualified HsDev.Database.Update as Update
 
@@ -353,16 +352,6 @@ runCommand copts Exit = runCommandM $ liftIO $ commandExit copts
 commandStrMsg :: String -> CommandError
 commandStrMsg m = CommandError m []
 
--- | Check positional args count
-checkPosArgs :: Cmd a -> Cmd a
-checkPosArgs c = validateArgs pos' c where
-	pos' (Args args _) = case cmdArgs c of
-		[ellipsis]
-			| "..." `isSuffixOf` ellipsis -> return ()
-		_ -> mplus
-			(guard (length args <= length (cmdArgs c)))
-			(failMatch ("unexpected positional arguments: " ++ unwords (drop (length $ cmdArgs c) args)))
-
 -- | Find sandbox by path
 findSandbox :: MonadIO m => CommandOptions -> Cabal -> ExceptT CommandError m Cabal
 findSandbox copts Cabal = return Cabal
@@ -416,13 +405,6 @@ inDeps (proj, src, cabal) = liftM2 (&&) (restrictCabal cabal) deps' where
 	deps' = case src of
 		Nothing -> inDepsOfProject proj
 		Just src' -> inDepsOfFile proj src'
-
--- | Wait for DB to complete update
-waitDb :: CommandOptions -> Opts String -> CommandM ()
-waitDb copts as = when (flagSet "wait" as) $ liftIO $ do
-	commandLog copts Log.Trace "wait for db"
-	DB.wait (dbVar copts)
-	commandLog copts Log.Trace "db done"
 
 cacheLoad :: CommandOptions -> IO (Either String Database) -> CommandM ()
 cacheLoad copts act = liftIO $ do

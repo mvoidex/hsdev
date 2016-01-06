@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
 
 module HsDev.Util (
 	withCurrentDirectory,
@@ -23,6 +23,10 @@ module HsDev.Util (
 	hGetLineBS, logException, logIO, ignoreIO, logAsync,
 	-- * Async
 	liftAsync,
+	-- * Command line
+	FromCmd(..),
+	cmdJson, withCmd, guardCmd,
+	withHelp, cmd, parseArgs,
 
 	-- * Reexportss
 	module Control.Monad.Except,
@@ -34,8 +38,8 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Catch as C
-import Data.Aeson
-import Data.Aeson.Types (Parser)
+import Data.Aeson hiding (Result(..), Error)
+import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr)
 import qualified Data.Map as M
@@ -48,6 +52,7 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Text (Text)
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
+import Options.Applicative
 import System.Directory
 import System.FilePath
 import System.IO
@@ -139,10 +144,10 @@ mapBy :: Ord b => (a -> b) -> [a] -> M.Map b a
 mapBy f = M.fromList . map (f &&& id)
 
 -- | Workaround, sometimes we get HM.lookup "foo" v == Nothing, but lookup "foo" (HM.toList v) == Just smth
-(.::) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser a
+(.::) :: FromJSON a => HM.HashMap Text Value -> Text -> A.Parser a
 v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lookup name $ HM.toList v
 
-(.::?) :: FromJSON a => HM.HashMap Text Value -> Text -> Parser (Maybe a)
+(.::?) :: FromJSON a => HM.HashMap Text Value -> Text -> A.Parser (Maybe a)
 v .::? name = traverse parseJSON $ lookup name $ HM.toList v
 
 -- | Union two JSON objects
@@ -232,3 +237,34 @@ ignoreIO = handle (const (return ()) :: IOException -> IO ())
 
 liftAsync :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Async a) -> ExceptT String m a
 liftAsync = liftExceptionM . ExceptT . liftIO . liftM (left displayException) . join . liftM waitCatch
+
+class FromCmd a where
+	cmdP :: Parser a
+
+cmdJson :: String -> [A.Pair] -> Value
+cmdJson nm ps = object $ ("command" .= nm) : ps
+
+withCmd :: String -> (Object -> A.Parser a) -> Value -> A.Parser a
+withCmd nm fn = withObject ("command " ++ nm) $ \v -> guardCmd nm v *> fn v
+
+guardCmd :: String -> Object -> A.Parser ()
+guardCmd nm obj = do
+	cmdName <- obj .:: "command"
+	guard (nm == cmdName)
+
+-- | Add help command to parser
+withHelp :: Parser a -> Parser a
+withHelp = (helper' <*>) where
+	helper' = abortOption ShowHelpText $ long "help" <> short '?' <> help "show help" <> hidden
+
+-- | Subcommand
+cmd :: String -> String -> Parser a -> Mod CommandFields a
+cmd n d p = command n (info (withHelp p) (progDesc d))
+
+-- | Parse arguments or return help
+parseArgs :: String -> ParserInfo a -> [String] -> Either String a
+parseArgs nm p = handle' . execParserPure (prefs mempty) (p { infoParser = withHelp (infoParser p) }) where
+	handle' :: ParserResult a -> Either String a
+	handle' (Success r) = Right r
+	handle' (Failure f) = Left $ fst $ renderFailure f nm
+	handle' _ = Left "error: completion invoked result"

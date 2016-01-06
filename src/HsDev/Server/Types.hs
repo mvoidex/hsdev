@@ -2,14 +2,14 @@
 
 module HsDev.Server.Types (
 	CommandOptions(..), CommandError(..), commandError_, commandError,
-	CommandAction, CommandM, CommandActionT,
+	CommandM,
+	ServerCommand(..), ServerOpts(..), ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..), AddedContents(..),
 	GhcModCommand(..),
 	AutoFixCommand(..),
 	FileContents(..), TargetFilter(..), SearchQuery(..), SearchType(..),
 	FromCmd(..),
-	parseArgs, cmd,
 	) where
 
 import Control.Applicative
@@ -18,9 +18,9 @@ import Control.Monad.Reader
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy.Char8 as L
+import Data.Default
 import Data.Foldable (asum)
 import Options.Applicative
-import Options.Applicative.Help (parserHelp)
 import System.Log.Simple hiding (Command)
 
 import HsDev.Database
@@ -33,7 +33,7 @@ import HsDev.Tools.GhcMod (OutputMessage, TypedRegion, WorkerMap)
 import HsDev.Tools.Ghc.Worker (Worker, Ghc)
 import HsDev.Tools.Types (Note, OutputMessage)
 import HsDev.Tools.AutoFix (Correction)
-import HsDev.Util ((.::), (.::?), jsonUnion)
+import HsDev.Util
 
 #if mingw32_HOST_OS
 import System.Win32.FileMapping.NamePool (Pool)
@@ -72,13 +72,106 @@ commandError_ m = commandError m []
 commandError :: String -> [A.Pair] -> ExceptT CommandError IO a
 commandError m ps = throwError $ CommandError m ps
 
-type CommandAction = CommandOptions -> IO Result
-
 type CommandM a = ExceptT CommandError IO a
 
-type CommandActionT a = CommandOptions -> CommandM a
+-- | Server control command
+data ServerCommand =
+	Version |
+	Start ServerOpts |
+	Run ServerOpts |
+	Stop ClientOpts |
+	Connect ClientOpts |
+	Remote ClientOpts Bool Command
+		deriving (Show)
 
+-- | Server options
+data ServerOpts = ServerOpts {
+	serverPort :: Int,
+	serverTimeout :: Int,
+	serverLog :: Maybe FilePath,
+	serverLogConfig :: String,
+	serverCache :: Maybe FilePath,
+	serverLoad :: Bool }
+		deriving (Show)
 
+instance Default ServerOpts where
+	def = ServerOpts 1234 0 Nothing "use default" Nothing False
+
+-- | Client options
+data ClientOpts = ClientOpts {
+	clientPort :: Int,
+	clientPretty :: Bool,
+	clientStdin :: Bool,
+	clientTimeout :: Int,
+	clientSilent :: Bool }
+		deriving (Show)
+
+instance Default ClientOpts where
+	def = ClientOpts 1234 False False 0 False
+
+instance FromCmd ServerCommand where
+	cmdP = serv <|> remote where
+		serv = subparser $ mconcat [
+			cmd "version" "hsdev version" (pure Version),
+			cmd "start" "start remote server" (Start <$> cmdP),
+			cmd "run" "run server" (Run <$> cmdP),
+			cmd "stop" "stop remote server" (Stop <$> cmdP),
+			cmd "connect" "connect to send commands directly" (Connect <$> cmdP)]
+		remote = Remote <$> cmdP <*> noFileFlag <*> cmdP
+
+instance FromCmd ServerOpts where
+	cmdP = ServerOpts <$>
+		(portArg <|> pure (serverPort def)) <*>
+		(timeoutArg <|> pure (serverTimeout def)) <*>
+		optional logArg <*>
+		(logConfigArg <|> pure (serverLogConfig def)) <*>
+		optional cacheArg <*>
+		loadFlag
+
+instance FromCmd ClientOpts where
+	cmdP = ClientOpts <$>
+		(portArg <|> pure (clientPort def)) <*>
+		prettyFlag <*>
+		stdinFlag <*>
+		(timeoutArg <|> pure (clientTimeout def)) <*>
+		silentFlag
+
+portArg = option auto (long "port" <> metavar "number" <> help "connection port")
+timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
+logArg = strOption (long "log" <> short 'l' <> metavar "file" <> help "log file")
+logConfigArg = strOption (long "log-config" <> metavar "rule" <> help "log config: low [low], high [high], set [low] [high], use [default/debug/trace/silent/supress]")
+cacheArg = strOption (long "cache" <> metavar "path" <> help "cache directory")
+noFileFlag = switch (long "no-file" <> help "don't use mmap files")
+loadFlag = switch (long "load" <> help "force load all data from cache on startup")
+prettyFlag = switch (long "pretty" <> help "pretty json output")
+stdinFlag = switch (long "stdin" <> help "pass data to stdin")
+silentFlag = switch (long "silent" <> help "supress notifications")
+
+serverOptsArgs :: ServerOpts -> [String]
+serverOptsArgs sopts = concat [
+	["--port", show $ serverPort sopts],
+	["--timeout", show $ serverTimeout sopts],
+	marg "--log" (serverLog sopts),
+	["--log-config", serverLogConfig sopts],
+	marg "--cache" (serverCache sopts),
+	if serverLoad sopts then ["--load"] else []]
+	where
+		marg :: String -> Maybe String -> [String]
+		marg n (Just v) = [n, v]
+		marg _ _ = []
+
+data Request = Request {
+	requestCommand :: Command,
+	requestDirectory :: FilePath,
+	requestNoFile :: Bool,
+	requestTimeout :: Int,
+	requestSilent :: Bool }
+
+instance ToJSON Request where
+	toJSON (Request c dir f tm s) = object ["command" .= c, "current-directory" .= dir, "no-file" .= f, "timeout" .= tm, "silent" .= s]
+
+instance FromJSON Request where
+	parseJSON = withObject "request" $ \v -> Request <$> v .:: "command" <*> v .:: "current-directory" <*> v .:: "no-file" <*> v .:: "timeout" <*> v .:: "silent"
 
 -- FIXME: Why so much commands in options?
 -- | Command from client
@@ -176,9 +269,6 @@ data FileContents = FileContents FilePath String deriving (Show)
 data TargetFilter = TargetProject String | TargetFile FilePath | TargetModule String | TargetDepsOf String | TargetCabal Cabal | TargetPackage String | TargetSourced | TargetStandalone | TargetOldToo deriving (Eq, Show)
 data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
-
-class FromCmd a where
-	cmdP :: Parser a
 
 instance FromCmd Command where
 	cmdP = subparser $ mconcat [
@@ -294,17 +384,6 @@ sandboxes = (++) <$> flag [] [Cabal] (long "cabal" <> help "cabal") <*> (map San
 sourced = switch (long "src" <> help "source files")
 standaloned = switch (long "stand" <> help "standalone files")
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
-
-cmdJson :: String -> [A.Pair] -> Value
-cmdJson nm ps = object $ ("command" .= nm) : ps
-
-withCmd :: String -> (Object -> A.Parser a) -> Value -> A.Parser a
-withCmd nm fn = withObject ("command " ++ nm) $ \v -> guardCmd nm v *> fn v
-
-guardCmd :: String -> Object -> A.Parser ()
-guardCmd nm obj = do
-	cmdName <- obj .:: "command"
-	guard (nm == cmdName)
 
 instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
@@ -489,20 +568,3 @@ instance FromJSON SearchType where
 			"suffix" -> return SearchInfix
 			"regex" -> return SearchRegex
 			_ -> empty
-
--- | Add help command to parser
-withHelp :: Parser a -> Parser a
-withHelp = (helper' <*>) where
-	helper' = abortOption ShowHelpText $ long "help" <> short '?' <> help "show help" <> hidden
-
--- | Subcommand
-cmd :: String -> String -> Parser a -> Mod CommandFields a
-cmd n d p = command n (info (withHelp p) (progDesc d))
-
--- | Parse arguments or return help
-parseArgs :: String -> ParserInfo a -> [String] -> Either String a
-parseArgs nm p = handle' . execParserPure (prefs mempty) (p { infoParser = withHelp (infoParser p) }) where
-	handle' :: ParserResult a -> Either String a
-	handle' (Success r) = Right r
-	handle' (Failure f) = Left $ fst $ renderFailure f nm
-	handle' _ = Left "error: completion invoked result"

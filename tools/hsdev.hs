@@ -18,6 +18,7 @@ import Control.Apply.Util (chain)
 import HsDev.Server.Commands (ServerCommand, runServerCommand)
 import HsDev.Server.Types
 import HsDev.Version
+import HsDev.Util
 
 main :: IO ()
 main = handle logErr' $ withSocketsDo $ do

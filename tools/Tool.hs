@@ -5,7 +5,7 @@ module Tool (
 	ToolM, toolMain, printExceptT, printResult,
 
 	module Options.Applicative,
-	module HsDev.Server.Types
+	module HsDev.Util
 	) where
 
 import Control.Monad.Except (ExceptT, runExceptT)
@@ -18,7 +18,7 @@ import System.Environment
 import System.IO
 
 import HsDev.Tools.Base (ToolM)
-import HsDev.Server.Types (cmd, parseArgs)
+import HsDev.Util (cmd, parseArgs)
 
 -- | Run tool with commands
 toolMain :: String -> String -> Parser a -> (a -> IO ()) -> IO ()

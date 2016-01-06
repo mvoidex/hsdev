@@ -44,6 +44,7 @@ library
     HsDev.Project
     HsDev.Scan
     HsDev.Scan.Browse
+    HsDev.Server.Base
     HsDev.Server.Commands
     HsDev.Server.Message
     HsDev.Server.Types
@@ -266,7 +267,16 @@ test-suite test
   ghc-options: -Wall -fno-warn-tabs
   type: exitcode-stdio-1.0
   build-depends:
-    base >= 4.7 && < 5
+    base >= 4.7 && < 5,
+    hsdev,
+    async >= 2.0,
+    data-default >= 0.5.0,
+    containers >= 0.5.0,
+    deepseq >= 1.4.0,
+    hformat >= 0.1,
+    lens >= 4.8,
+    mtl >= 2.2.0,
+    text >= 1.2.0
 
 source-repository head
   type: git

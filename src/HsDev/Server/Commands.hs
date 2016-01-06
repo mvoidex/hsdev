@@ -5,9 +5,7 @@ module HsDev.Server.Commands (
 	ServerCommand(..), ServerOpts(..), ClientOpts(..),
 	Request(..),
 	sendCommand, runServerCommand,
-	initLog, runServer, startServer, inServer,
 	processRequest, processClient, processClientSocket,
-	withCache, writeCache, readCache,
 	module HsDev.Server.Types
 	) where
 
@@ -50,8 +48,6 @@ import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
 import qualified System.Directory.Watcher as Watcher
-import System.Console.Cmd hiding (run, cmd, flag, short, help)
-import qualified System.Console.Cmd as C (cmd, flag, short, help)
 import Text.Format ((~~), FormatBuild(..))
 
 import qualified HsDev.Cache.Structured as SC
@@ -61,6 +57,7 @@ import qualified HsDev.Database.Async as DB
 import qualified HsDev.Database.Update as Update
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.GhcMod (ghcModMultiWorker)
+import HsDev.Server.Base
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Util
@@ -79,94 +76,6 @@ import System.Win32.PowerShell (escape, quote, quoteDouble)
 import System.Posix.Process
 import System.Posix.IO
 #endif
-
--- | Server control command
-data ServerCommand =
-	Version |
-	Start ServerOpts |
-	Run ServerOpts |
-	Stop ClientOpts |
-	Connect ClientOpts |
-	Remote ClientOpts Bool Command
-		deriving (Show)
-
--- | Server options
-data ServerOpts = ServerOpts {
-	serverPort :: Int,
-	serverTimeout :: Int,
-	serverLog :: Maybe FilePath,
-	serverLogConfig :: String,
-	serverCache :: Maybe FilePath,
-	serverLoad :: Bool }
-		deriving (Show)
-
-instance Default ServerOpts where
-	def = ServerOpts 1234 0 Nothing "use default" Nothing False
-
--- | Client options
-data ClientOpts = ClientOpts {
-	clientPort :: Int,
-	clientPretty :: Bool,
-	clientStdin :: Bool,
-	clientTimeout :: Int,
-	clientSilent :: Bool }
-		deriving (Show)
-
-instance Default ClientOpts where
-	def = ClientOpts 1234 False False 0 False
-
-instance FromCmd ServerCommand where
-	cmdP = serv <|> remote where
-		serv = subparser $ mconcat [
-			cmd "version" "hsdev version" (pure Version),
-			cmd "start" "start remote server" (Start <$> cmdP),
-			cmd "run" "run server" (Run <$> cmdP),
-			cmd "stop" "stop remote server" (Stop <$> cmdP),
-			cmd "connect" "connect to send commands directly" (Connect <$> cmdP)]
-		remote = Remote <$> cmdP <*> noFileFlag <*> cmdP
-
-instance FromCmd ServerOpts where
-	cmdP = ServerOpts <$>
-		(portArg <|> pure (serverPort def)) <*>
-		(timeoutArg <|> pure (serverTimeout def)) <*>
-		optional logArg <*>
-		(logConfigArg <|> pure (serverLogConfig def)) <*>
-		optional cacheArg <*>
-		loadFlag
-
-instance FromCmd ClientOpts where
-	cmdP = ClientOpts <$>
-		(portArg <|> pure (clientPort def)) <*>
-		prettyFlag <*>
-		stdinFlag <*>
-		(timeoutArg <|> pure (clientTimeout def)) <*>
-		silentFlag
-
-serverOptsArgs :: ServerOpts -> [String]
-serverOptsArgs sopts = concat [
-	["--port", show $ serverPort sopts],
-	["--timeout", show $ serverTimeout sopts],
-	marg "--log" (serverLog sopts),
-	["--log-config", serverLogConfig sopts],
-	marg "--cache" (serverCache sopts),
-	if serverLoad sopts then ["--load"] else []]
-	where
-		marg :: String -> Maybe String -> [String]
-		marg n (Just v) = [n, v]
-		marg _ _ = []
-
-data Request = Request {
-	requestCommand :: Command,
-	requestDirectory :: FilePath,
-	requestNoFile :: Bool,
-	requestTimeout :: Int,
-	requestSilent :: Bool }
-
-instance ToJSON Request where
-	toJSON (Request c dir f tm s) = object ["command" .= c, "current-directory" .= dir, "no-file" .= f, "timeout" .= tm, "silent" .= s]
-
-instance FromJSON Request where
-	parseJSON = withObject "request" $ \v -> Request <$> v .:: "command" <*> v .:: "current-directory" <*> v .:: "no-file" <*> v .:: "timeout" <*> v .:: "silent"
 
 sendCommand :: ClientOpts -> Bool -> Command -> (Notification -> IO a) -> IO Result
 sendCommand copts noFile c onNotification = do
@@ -347,103 +256,6 @@ runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue
 	encodeValue :: ToJSON a => a -> L.ByteString
 	encodeValue = if clientPretty copts then encodePretty else encode
 
-portArg = option auto (long "port" <> metavar "number" <> help "connection port")
-timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
-logArg = strOption (long "log" <> short 'l' <> metavar "file" <> help "log file")
-logConfigArg = strOption (long "log-config" <> metavar "rule" <> help "log config: low [low], high [high], set [low] [high], use [default/debug/trace/silent/supress]")
-cacheArg = strOption (long "cache" <> metavar "path" <> help "cache directory")
-noFileFlag = switch (long "no-file" <> help "don't use mmap files")
-loadFlag = switch (long "load" <> help "force load all data from cache on startup")
-prettyFlag = switch (long "pretty" <> help "pretty json output")
-stdinFlag = switch (long "stdin" <> help "pass data to stdin")
-silentFlag = switch (long "silent" <> help "supress notifications")
-
-chaner :: F.Chan String -> Consumer Text
-chaner ch = Consumer withChan where
-	withChan f = f (F.putChan ch . T.unpack)
-
-instance FormatBuild Log.Level where
-
--- | Inits log chan and returns functions (print message, wait channel)
-initLog :: ServerOpts -> IO (Log, Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
-initLog sopts = do
-	msgs <- F.newChan
-	outputDone <- newEmptyMVar
-	void $ forkIO $ finally
-		(F.readChan msgs >>= mapM_ (const $ return ()))
-		(putMVar outputDone ())
-	l <- newLog (constant [rule']) $ concat [
-		[logger text console],
-		[logger text (chaner msgs)],
-		maybeToList $ (logger text . file) <$> serverLog sopts]
-	Log.writeLog l Log.Info ("Log politics: low = {}, high = {}" ~~ logLow ~~ logHigh)
-	let
-		listenLog f = logException "listen log" (F.putChan msgs) $ do
-			msgs' <- F.dupChan msgs
-			F.readChan msgs' >>= f
-	return (l, \lev -> writeLog l lev . T.pack, listenLog, F.closeChan msgs >> takeMVar outputDone)
-	where
-		rule' :: Log.Rule
-		rule' = parseRule_ $ T.pack ("/: " ++ serverLogConfig sopts)
-		(Log.Politics logLow logHigh) = Log.rulePolitics rule' Log.defaultPolitics
-
--- | Run server
-runServer :: ServerOpts -> (CommandOptions -> IO ()) -> IO ()
-runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> Log.scopeLog logger' (T.pack "hsdev") $ Watcher.withWatcher $ \watcher -> do
-	db <- DB.newAsync
-	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
-		outputStr Log.Info $ "Loading cache from " ++ cdir
-		dbCache <- liftA merge <$> SC.load cdir
-		case dbCache of
-			Left err -> outputStr Log.Error $ "Failed to load cache: " ++ err
-			Right dbCache' -> DB.update db (return dbCache')
-#if mingw32_HOST_OS
-	mmapPool <- Just <$> createPool "hsdev"
-#endif
-	ghcw <- ghcWorker [] (return ())
-	ghciw <- ghciWorker
-	ghcmodw <- ghcModMultiWorker
-	let
-		copts = CommandOptions
-			db
-			(writeCache sopts outputStr)
-			(readCache sopts outputStr)
-			"."
-			outputStr
-			logger'
-			listenLog
-			waitOutput
-			watcher
-#if mingw32_HOST_OS
-			mmapPool
-#endif
-			ghcw
-			ghciw
-			ghcmodw
-			(const $ return ())
-			(return ())
-			(return ())
-			(return ())
-	_ <- forkIO $ Update.onEvent watcher (Update.processEvent $ Update.settings copts [] False False)
-	act copts
-
-type Server = Worker (ReaderT CommandOptions IO)
-
-startServer :: ServerOpts -> IO Server
-startServer sopts = startWorker (\act -> runServer sopts (runReaderT act)) id id
-
-inServer :: Server -> Command -> IO Result
-inServer srv c = inWorker srv (ReaderT (flip Client.runCommand c))
-
-decodeLispOrJSON :: FromJSON a => ByteString -> Either String (Bool, a)
-decodeLispOrJSON str =
-	((,) <$> pure False <*> eitherDecode str) <|>
-	((,) <$> pure True <*> decodeLisp str)
-
-encodeLispOrJSON :: ToJSON a => Bool -> a -> ByteString
-encodeLispOrJSON True = encodeLisp
-encodeLispOrJSON False = encode
-
 -- | Process request, notifications can be sent during processing
 processRequest :: CommandOptions -> (Notification -> IO ()) -> Command -> IO Result
 processRequest copts onNotify c = Client.runCommand (copts { commandNotify = onNotify }) c
@@ -512,12 +324,6 @@ processClient name receive send' copts = do
 			commandLog copts Log.Info $ name ++ " disconnected"
 			join $ takeMVar var
 
-{-
--- | Process client by Handle
-processClientHandle :: Show a => a -> Handle -> CommandOptions -> IO ()
-processClientHandle n h = processClient (show n) (hGetLineBS h) (\s -> L.hPutStrLn h s >> hFlush h)
--}
-
 -- | Process client by socket
 processClientSocket :: Socket -> CommandOptions -> IO ()
 processClientSocket s copts = do
@@ -543,37 +349,6 @@ processClientSocket s copts = do
 			| otherwise = do
 				sent <- Net.send sock bs
 				when (sent > 0) $ sendAll sock (BS.drop sent bs)
-
--- | Perform action on cache
-withCache :: ServerOpts -> a -> (FilePath -> IO a) -> IO a
-withCache sopts v onCache = case serverCache sopts of
-	Nothing -> return v
-	Just cdir -> onCache cdir
-
-writeCache :: ServerOpts -> (Log.Level -> String -> IO ()) -> Database -> IO ()
-writeCache sopts logMsg' d = withCache sopts () $ \cdir -> do
-	logMsg' Log.Info $ "writing cache to " ++ cdir
-	logIO "cache writing exception: " (logMsg' Log.Error) $ do
-		let
-			sd = structurize d
-		SC.dump cdir sd
-		forM_ (M.keys (structuredCabals sd)) $ \c -> logMsg' Log.Debug ("cache write: cabal " ++ show c)
-		forM_ (M.keys (structuredProjects sd)) $ \p -> logMsg' Log.Debug ("cache write: project " ++ p)
-		case allModules (structuredFiles sd) of
-			[] -> return ()
-			ms -> logMsg' Log.Debug $ "cache write: " ++ show (length ms) ++ " files"
-	logMsg' Log.Info $ "cache saved to " ++ cdir
-
-readCache :: ServerOpts -> (Log.Level -> String -> IO ()) -> (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database)
-readCache sopts logMsg' act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runExceptT . act where
-	cacheErr e = logMsg' Log.Error ("Error reading cache: " ++ e) >> return Nothing
-	cacheOk s = do
-		forM_ (M.keys (structuredCabals s)) $ \c -> logMsg' Log.Debug ("cache read: cabal " ++ show c)
-		forM_ (M.keys (structuredProjects s)) $ \p -> logMsg' Log.Debug ("cache read: project " ++ p)
-		case allModules (structuredFiles s) of
-			[] -> return ()
-			ms -> logMsg' Log.Debug $ "cache read: " ++ show (length ms) ++ " files"
-		return $ Just $ merge s
 
 #if mingw32_HOST_OS
 data MmapFile = MmapFile String
