@@ -23,6 +23,7 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import qualified Data.Map as M
 import Data.Maybe
 import qualified Data.Text as T (pack)
+import Data.Traversable (for)
 import Network.Socket hiding (connect)
 import qualified Network.Socket as Net hiding (send)
 import qualified Network.Socket.ByteString as Net (send)
