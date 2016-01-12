@@ -11,7 +11,8 @@ import Control.Lens (makeLenses)
 import Control.Monad
 import Data.Aeson hiding (Error)
 
-import HsDev.Symbols (Canonicalize(..))
+import System.Directory.Paths
+import HsDev.Symbols ()
 import HsDev.Symbols.Location
 import HsDev.Util ((.::), (.::?))
 
@@ -71,8 +72,8 @@ instance RecalcTabs (Note a) where
 	recalcTabs cts n' (Note s r l n) = Note s (recalcTabs cts n' r) l n
 	calcTabs cts n' (Note s r l n) = Note s (calcTabs cts n' r) l n
 
-instance Canonicalize (Note a) where
-	canonicalize (Note s r l n) = Note <$> canonicalize s <*> pure r <*> pure l <*> pure n
+instance Paths (Note a) where
+	paths f (Note s r l n) = Note <$> paths f s <*> pure r <*> pure l <*> pure n
 
 -- | Output message from some tool (ghc, ghc-mod, hlint) with optional suggestion
 data OutputMessage = OutputMessage {

@@ -5,6 +5,7 @@ module HsDev.Server.Commands (
 	ServerCommand(..), ServerOpts(..), ClientOpts(..),
 	Request(..),
 	sendCommand, runServerCommand,
+	findPath,
 	processRequest, processClient, processClientSocket,
 	module HsDev.Server.Types
 	) where
@@ -28,12 +29,14 @@ import qualified Network.Socket.ByteString as Net (send)
 import qualified Network.Socket.ByteString.Lazy as Net (getContents)
 import System.Directory
 import System.Exit
+import System.FilePath
 import System.IO
 import qualified System.Log.Simple.Base as Log
 
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Text.Format ((~~))
+import System.Directory.Paths
 
 import qualified HsDev.Client.Commands as Client
 import qualified HsDev.Database.Async as DB
@@ -235,9 +238,15 @@ runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue
 	encodeValue :: ToJSON a => a -> L.ByteString
 	encodeValue = if clientPretty copts then encodePretty else encode
 
+findPath :: MonadIO m => CommandOptions -> FilePath -> m FilePath
+findPath copts f = liftIO $ canonicalizePath (normalise f') where
+	f'
+		| isRelative f = commandRoot copts </> f
+		| otherwise = f
+
 -- | Process request, notifications can be sent during processing
 processRequest :: CommandOptions -> (Notification -> IO ()) -> Command -> IO Result
-processRequest copts onNotify c = Client.runCommand (copts { commandNotify = onNotify }) c
+processRequest copts onNotify c = paths (findPath copts) c >>= Client.runCommand (copts { commandNotify = onNotify })
 
 -- | Process client, listen for requests and process them
 processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> CommandOptions -> IO ()

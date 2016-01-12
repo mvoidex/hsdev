@@ -32,6 +32,8 @@ import Data.String (fromString)
 import qualified Data.Text as T (isPrefixOf, split, unpack)
 import System.Directory (canonicalizePath)
 
+import System.Directory.Paths
+
 import HsDev.Database
 import HsDev.Project
 import HsDev.Symbols

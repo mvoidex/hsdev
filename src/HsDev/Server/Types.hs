@@ -13,6 +13,7 @@ module HsDev.Server.Types (
 	) where
 
 import Control.Applicative
+import Control.Lens (each)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Data.Aeson hiding (Result(..), Error)
@@ -22,6 +23,8 @@ import Data.Default
 import Data.Foldable (asum)
 import Options.Applicative
 import System.Log.Simple hiding (Command)
+
+import System.Directory.Paths
 
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
@@ -285,6 +288,52 @@ data TargetFilter =
 		deriving (Eq, Show)
 data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
+
+instance Paths Command where
+	paths f (Scan projs cs fs ps fcts ghcs docs infer) = Scan <$>
+		each f projs <*>
+		(each . paths) f cs <*>
+		each f fs <*>
+		each f ps <*>
+		(each . paths) f fcts <*>
+		pure ghcs <*>
+		pure docs <*>
+		pure infer
+	paths f (RefineDocs projs fs ms) = RefineDocs <$> each f projs <*> each f fs <*> pure ms
+	paths f (InferTypes projs fs ms) = InferTypes <$> each f projs <*> each f fs <*> pure ms
+	paths f (Remove projs ps cs fs) = Remove <$> each f projs <*> pure ps <*> (each . paths) f cs <*> each f fs
+	paths f (InfoModules t) = InfoModules <$> paths f t
+	paths f (InfoSymbol q t) = InfoSymbol <$> pure q <*> paths f t
+	paths f (InfoModule q t) = InfoModule <$> pure q <*> paths f t
+	paths f (InfoResolve fpath es) = InfoResolve <$> f fpath <*> pure es
+	paths f (InfoProject (Right proj)) = InfoProject <$> (Right <$> f proj)
+	paths f (InfoSandbox fpath) = InfoSandbox <$> f fpath
+	paths f (Lookup n fpath) = Lookup <$> pure n <*> f fpath
+	paths f (Whois n fpath) = Whois <$> pure n <*> f fpath
+	paths f (ResolveScopeModules fpath) = ResolveScopeModules <$> f fpath
+	paths f (ResolveScope q g fpath) = ResolveScope q g <$> f fpath
+	paths f (Complete n g fpath) = Complete n g <$> f fpath
+	paths f (Lint fs fcts) = Lint <$> each f fs <*> (each . paths) f fcts
+	paths f (Check fs fcts ghcs) = Check <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
+	paths f (CheckLint fs fcts ghcs) = CheckLint <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
+	paths f (Types fs fcts ghcs) = Types <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
+	paths f (GhcMod g) = GhcMod <$> paths f g
+	paths _ c = pure c
+
+instance Paths GhcModCommand where
+	paths f (GhcModType pos fpath opts) = GhcModType <$> pure pos <*> f fpath <*> pure opts
+	paths f (GhcModLint fs hlints) = GhcModLint <$> traverse f fs <*> pure hlints
+	paths f (GhcModCheck fs ghcs) = GhcModCheck <$> traverse f fs <*> pure ghcs
+	paths f (GhcModCheckLint fs ghcs hlints) = GhcModCheckLint <$> traverse f fs <*> pure ghcs <*> pure hlints
+	paths _ g = pure g
+
+instance Paths FileContents where
+	paths f (FileContents fpath cts) = FileContents <$> f fpath <*> pure cts
+
+instance Paths TargetFilter where
+	paths f (TargetFile fpath) = TargetFile <$> f fpath
+	paths f (TargetCabal c) = TargetCabal <$> paths f c
+	paths _ t = pure t
 
 instance FromCmd Command where
 	cmdP = subparser $ mconcat [

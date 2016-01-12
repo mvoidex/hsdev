@@ -12,7 +12,8 @@ import Data.List (partition, sort)
 import Data.Maybe (mapMaybe)
 import System.Directory (canonicalizePath)
 
-import HsDev.Symbols (Canonicalize(..), moduleFile)
+import System.Directory.Paths (canonicalize)
+import HsDev.Symbols (moduleFile)
 import HsDev.Tools.Base
 import HsDev.Tools.AutoFix
 import HsDev.Tools.GhcMod (parseOutputMessages)

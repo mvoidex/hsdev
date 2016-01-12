@@ -25,6 +25,7 @@ import Outputable
 import PprTyThing
 import Pretty
 
+import System.Directory.Paths (canonicalize)
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.Types

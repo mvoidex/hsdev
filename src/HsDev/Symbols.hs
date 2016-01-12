@@ -19,7 +19,6 @@ module HsDev.Symbols (
 	importQualifier,
 
 	-- * Utility
-	Canonicalize(..),
 	locateProject, searchProject,
 	locateSourceDir,
 	moduleOpts,
@@ -49,6 +48,8 @@ import Data.Text (Text)
 import qualified Data.Text as T (concat)
 import System.Directory
 import System.FilePath
+
+import System.Directory.Paths
 
 import HsDev.Symbols.Types
 import HsDev.Symbols.Class
@@ -165,24 +166,17 @@ mergeExported =
 		merge' [] = error "mergeExported: impossible"
 		merge' ds@(d:_) = ExportedDeclaration (map (view declarationModuleId) ds) (view moduleDeclaration d)
 
--- | Canonicalize all paths within something
-class Canonicalize a where
-	canonicalize :: a -> IO a
+instance Paths Cabal where
+	paths _ Cabal = pure Cabal
+	paths f (Sandbox p) = Sandbox <$> f p
 
-instance Canonicalize FilePath where
-	canonicalize = canonicalizePath
+instance Paths Project where
+	paths f (Project nm p c desc) = Project nm <$> f p <*> f c <*> pure desc
 
-instance Canonicalize Cabal where
-	canonicalize Cabal = return Cabal
-	canonicalize (Sandbox p) = fmap Sandbox $ canonicalizePath p
-
-instance Canonicalize Project where
-	canonicalize (Project nm p c desc) = liftM3 (Project nm) (canonicalizePath p) (canonicalizePath c) (return desc)
-
-instance Canonicalize ModuleLocation where
-	canonicalize (FileModule f p) = liftM2 FileModule (canonicalizePath f) (traverse canonicalize p)
-	canonicalize (CabalModule c p n) = fmap (\c' -> CabalModule c' p n) $ canonicalize c
-	canonicalize (ModuleSource m) = return $ ModuleSource m
+instance Paths ModuleLocation where
+	paths f (FileModule fpath p) = FileModule <$> f fpath <*> traverse (paths f) p
+	paths f (CabalModule c p n) = CabalModule <$> paths f c <*> pure p <*> pure n
+	paths _ (ModuleSource m) = pure $ ModuleSource m
 
 -- | Find project file is related to
 locateProject :: FilePath -> IO (Maybe Project)

@@ -73,6 +73,7 @@ library
     HsDev.Version
     HsDev.Watcher
     HsDev.Watcher.Types
+    System.Directory.Paths
     System.Directory.Watcher
 
   if os(windows)

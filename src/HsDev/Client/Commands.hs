@@ -6,7 +6,7 @@ module HsDev.Client.Commands (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (view, preview, _Just, from)
+import Control.Lens (view, preview, _Just, from, each)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.State (gets)
@@ -25,6 +25,7 @@ import System.FilePath
 import qualified System.Log.Simple.Base as Log
 import Text.Regex.PCRE ((=~))
 
+import System.Directory.Paths
 import HsDev.Cache
 import HsDev.Commands
 import qualified HsDev.Database.Async as DB
@@ -64,29 +65,27 @@ runCommand copts (Scan projs cabals fs paths fcts ghcs' docs' infer') = runComma
 	sboxes <- getSandboxes copts cabals
 	updateProcess copts ghcs' docs' infer' $ concat [
 		map (\(FileContents f cts) -> Update.scanFileContents ghcs' f (Just cts)) fcts,
-		map (\proj -> findPath copts proj >>= Update.scanProject ghcs') projs,
-		map (\f -> findPath copts f >>= Update.scanFile ghcs') fs,
-		map (\path -> findPath copts path >>= Update.scanDirectory ghcs') paths,
+		map (Update.scanProject ghcs') projs,
+		map (Update.scanFile ghcs') fs,
+		map (Update.scanDirectory ghcs') paths,
 		map (Update.scanCabal ghcs') sboxes]
 runCommand copts (RefineDocs projs fs ms) = runCommandM $ do
-	files <- traverse (findPath copts) fs
 	projects <- traverse (findProject copts) projs
 	dbval <- getDb copts
 	let
 		filters = anyOf $ concat [
 			map inProject projects,
-			map inFile files,
+			map inFile fs,
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess copts [] False False [Update.scanDocs $ map (getInspected dbval) mods]
 runCommand copts (InferTypes projs fs ms) = runCommandM $ do
-	files <- traverse (findPath copts) fs
 	projects <- traverse (findProject copts) projs
 	dbval <- getDb copts
 	let
 		filters = anyOf $ concat [
 			map inProject projects,
-			map inFile files,
+			map inFile fs,
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess copts [] False False [Update.inferModTypes $ map (getInspected dbval) mods]
@@ -110,14 +109,13 @@ runCommand copts (InfoModule sq f) = runCommandM $ do
 	return $ newestPackage $ filterMatch sq $ filter (filter' . view moduleId) $ allModules dbval
 runCommand copts (InfoResolve fpath exports) = runCommandM $ do
 	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
-	srcFile <- findPath copts fpath
-	cabal <- liftIO $ getSandbox srcFile
+	cabal <- liftIO $ getSandbox fpath
 	let
 		cabaldb = filterDB (restrictCabal cabal) (const True) dbval
 		getScope
 			| exports = exportsModule
 			| otherwise = scopeModule
-	case lookupFile srcFile dbval of
+	case lookupFile fpath dbval of
 		Nothing -> commandError "File not found" []
 		Just m -> return $ getScope $ resolveOne cabaldb m
 runCommand copts (InfoProject (Left projName)) = runCommandM $ findProject copts projName
@@ -125,46 +123,34 @@ runCommand copts (InfoProject (Right projPath)) = runCommandM $ liftIO $ searchP
 runCommand copts (InfoSandbox sandbox) = runCommandM $ liftIO $ searchSandbox sandbox
 runCommand copts (Lookup nm fpath) = runCommandM $ do
 	dbval <- getDb copts
-	srcFile <- findPath copts fpath
-	cabal <- liftIO $ getSandbox srcFile
-	mapCommandErrorStr $ lookupSymbol dbval cabal srcFile nm
+	cabal <- liftIO $ getSandbox fpath
+	mapCommandErrorStr $ lookupSymbol dbval cabal fpath nm
 runCommand copts (Whois nm fpath) = runCommandM $ do
 	dbval <- getDb copts
-	srcFile <- findPath copts fpath
-	cabal <- liftIO $ getSandbox srcFile
-	mapCommandErrorStr $ whois dbval cabal srcFile nm
+	cabal <- liftIO $ getSandbox fpath
+	mapCommandErrorStr $ whois dbval cabal fpath nm
 runCommand copts (ResolveScopeModules fpath) = runCommandM $ do
 	dbval <- getDb copts
-	srcFile <- findPath copts fpath
-	cabal <- liftIO $ getSandbox srcFile
-	liftM (map (view moduleId)) $ mapCommandErrorStr $ scopeModules dbval cabal srcFile
+	cabal <- liftIO $ getSandbox fpath
+	liftM (map (view moduleId)) $ mapCommandErrorStr $ scopeModules dbval cabal fpath
 runCommand copts (ResolveScope sq global fpath) = runCommandM $ do
 	dbval <- getDb copts
-	srcFile <- findPath copts fpath
-	cabal <- liftIO $ getSandbox srcFile
-	liftM (filterMatch sq) $ mapCommandErrorStr $ scope dbval cabal srcFile global
+	cabal <- liftIO $ getSandbox fpath
+	liftM (filterMatch sq) $ mapCommandErrorStr $ scope dbval cabal fpath global
 runCommand copts (Complete input wide fpath) = runCommandM $ do
 	dbval <- getDb copts
-	srcFile <- findPath copts fpath
-	cabal <- liftIO $ getSandbox srcFile
-	mapCommandErrorStr $ completions dbval cabal srcFile input wide
+	cabal <- liftIO $ getSandbox fpath
+	mapCommandErrorStr $ completions dbval cabal fpath input wide
 runCommand copts (Hayoo hq p ps) = runCommandM $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
 	mapCommandErrorStr $ Hayoo.hayoo hq (Just i)
 runCommand copts (CabalList packages) = runCommandM $ mapCommandErrorStr $ Cabal.cabalList packages
 runCommand copts (Lint fs fcts) = runCommandM $ do
-	files <- mapM (findPath copts) fs
-	cts <- forM fcts $ \(FileContents f c) -> either
-		(\err -> commandError "Unable to decode data" ["why" .= err, "file" .= f, "contents" .= c])
-		(\d -> liftM2 (,) (findPath copts f) (return d))
-		(eitherDecode (toUtf8 c))
 	mapCommandErrorStr $ liftM2 (++)
-		(liftM concat $ mapM HLint.hlintFile files)
-		(liftM concat $ mapM (uncurry HLint.hlintSource) cts)
+		(liftM concat $ mapM HLint.hlintFile fs)
+		(liftM concat $ mapM (\(FileContents f c) -> HLint.hlintSource f c) fcts)
 runCommand copts (Check fs fcts ghcs') = runCommandM $ do
 	db <- getDb copts
-	files <- mapM (findPath copts) fs
-	cts <- mapM (\(FileContents f c) -> liftM (`FileContents` c) (findPath copts f)) fcts
 	let
 		checkSome file fn = do
 			cabal <- liftIO $ getSandbox file
@@ -176,12 +162,10 @@ runCommand copts (Check fs fcts ghcs') = runCommandM $ do
 				(runExceptT $ fn cabal m)
 			either commandError_ return notes
 	liftM concat $ mapM (uncurry checkSome) $
-		[(f, Check.checkFile ghcs') | f <- files] ++
-		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- cts]
+		[(f, Check.checkFile ghcs') | f <- fs] ++
+		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- fcts]
 runCommand copts (CheckLint fs fcts ghcs') = runCommandM $ do
 	db <- getDb copts
-	files <- mapM (findPath copts) fs
-	cts <- mapM (\(FileContents f c) -> liftM (`FileContents` c) (findPath copts f)) fcts
 	let
 		checkSome file fn = do
 			cabal <- liftIO $ getSandbox file
@@ -193,19 +177,17 @@ runCommand copts (CheckLint fs fcts ghcs') = runCommandM $ do
 				(runExceptT $ fn cabal m)
 			either commandError_ return notes
 	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
-		[(f, Check.checkFile ghcs') | f <- files] ++
-		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- cts]
+		[(f, Check.checkFile ghcs') | f <- fs] ++
+		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- fcts]
 	lintMsgs <- mapCommandErrorStr $ liftM2 (++)
-		(liftM concat $ mapM HLint.hlintFile files)
-		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) cts)
+		(liftM concat $ mapM HLint.hlintFile fs)
+		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) fcts)
 	return $ checkMsgs ++ lintMsgs
 runCommand copts (Types fs fcts ghcs') = runCommandM $ do
 	db <- getDb copts
-	files <- mapM (findPath copts) fs
-	cts <- mapM (\(FileContents f c) -> liftM (`FileContents` c) (findPath copts f)) fcts
 	let
-		fcts = [(f, Nothing) | f <- files] ++ [(f, Just src) | FileContents f src <- cts]
-	liftM concat $ forM fcts $ \(file, msrc) -> do
+		cts = [(f, Nothing) | f <- fs] ++ [(f, Just src) | FileContents f src <- fcts]
+	liftM concat $ forM cts $ \(file, msrc) -> do
 		cabal <- liftIO $ getSandbox file
 		m <- maybe
 			(commandError_ $ "File '" ++ file ++ "' not found")
@@ -218,29 +200,25 @@ runCommand copts (GhcMod GhcModLang) = runCommandM $ mapCommandErrorStr GhcMod.l
 runCommand copts (GhcMod GhcModFlags) = runCommandM $ mapCommandErrorStr GhcMod.flags
 runCommand copts (GhcMod (GhcModType (Position line column) fpath ghcs')) = runCommandM $ do
 	dbval <- getDb copts
-	srcFile <- findPath copts fpath
-	cabal <- liftIO $ getSandbox srcFile
-	(srcFile', m', _) <- mapCommandErrorStr $ fileCtx dbval srcFile
-	mapCommandErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) srcFile' $
-		GhcMod.typeOf (ghcs' ++ moduleOpts (allPackages dbval) m') cabal srcFile' line column
+	cabal <- liftIO $ getSandbox fpath
+	(fpath', m', _) <- mapCommandErrorStr $ fileCtx dbval fpath
+	mapCommandErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) fpath' $
+		GhcMod.typeOf (ghcs' ++ moduleOpts (allPackages dbval) m') cabal fpath' line column
 runCommand copts (GhcMod (GhcModLint fs hlints')) = runCommandM $ do
-	files <- mapM (findPath copts) fs
-	mapCommandErrorStr $ liftM concat $ forM files $ \file ->
+	mapCommandErrorStr $ liftM concat $ forM fs $ \file ->
 		GhcMod.waitMultiGhcMod (commandGhcMod copts) file $
 			GhcMod.lint hlints' file
 runCommand copts (GhcMod (GhcModCheck fs ghcs')) = runCommandM $ do
-	files <- mapM (findPath copts) fs
 	dbval <- getDb copts
-	mapCommandErrorStr $ liftM concat $ forM files $ \file -> do
+	mapCommandErrorStr $ liftM concat $ forM fs $ \file -> do
 		mproj <- liftIO $ locateProject file
 		cabal <- liftIO $ getSandbox file
 		(_, m', _) <- fileCtx dbval file
 		GhcMod.waitMultiGhcMod (commandGhcMod copts) file $
 			GhcMod.check (ghcs' ++ moduleOpts (allPackages dbval) m') cabal [file] mproj
 runCommand copts (GhcMod (GhcModCheckLint fs ghcs' hlints')) = runCommandM $ do
-	files <- mapM (findPath copts) fs
 	dbval <- getDb copts
-	mapCommandErrorStr $ liftM concat $ forM files $ \file -> do
+	mapCommandErrorStr $ liftM concat $ forM fs $ \file -> do
 		mproj <- liftIO $ locateProject file
 		cabal <- liftIO $ getSandbox file
 		(_, m', _) <- fileCtx dbval file
@@ -280,7 +258,7 @@ runCommand copts Exit = runCommandM $ liftIO $ commandExit copts
 targetFilter :: MonadIO m => CommandOptions -> TargetFilter -> ExceptT CommandError m (ModuleId -> Bool)
 targetFilter copts f = case f of
 	TargetProject proj -> liftM inProject $ findProject copts proj
-	TargetFile file -> liftM inFile $ findPath copts file
+	TargetFile file -> return $ inFile file
 	TargetModule mname -> return $ inModule mname
 	TargetDepsOf dep -> liftM inDeps $ findDep copts dep
 	TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
@@ -299,12 +277,14 @@ findSandbox :: MonadIO m => CommandOptions -> Cabal -> ExceptT CommandError m Ca
 findSandbox copts Cabal = return Cabal
 findSandbox copts (Sandbox f) = (findPath copts >=> mapCommandErrorStr . liftIO . getSandbox) f
 
--- | Canonicalize path
-findPath :: MonadIO m => CommandOptions -> FilePath -> ExceptT e m FilePath
-findPath copts f = liftIO $ canonicalizePath (normalise f') where
-	f'
-		| isRelative f = commandRoot copts </> f
-		| otherwise = f
+-- | Canonicalize paths
+findPath :: (MonadIO m, Paths a) => CommandOptions -> a -> ExceptT e m a
+findPath copts = paths findPath' where
+	findPath' :: MonadIO m => FilePath -> ExceptT e m FilePath
+	findPath' f = liftIO $ canonicalizePath (normalise f') where
+		f'
+			| isRelative f = commandRoot copts </> f
+			| otherwise = f
 
 -- | Get list of enumerated sandboxes
 getSandboxes :: (MonadIO m, Functor m) => CommandOptions -> [Cabal] -> ExceptT CommandError m [Cabal]

@@ -24,7 +24,8 @@ import Outputable
 import FastString (unpackFS)
 import qualified ErrUtils as E
 
-import HsDev.Symbols (Canonicalize(..), moduleOpts)
+import System.Directory.Paths
+import HsDev.Symbols (moduleOpts)
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
 import HsDev.Tools.Base

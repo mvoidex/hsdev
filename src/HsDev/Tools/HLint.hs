@@ -15,7 +15,7 @@ import Language.Haskell.HLint3 (autoSettings, parseModuleEx, applyHints, Idea(..
 import Language.Haskell.Exts.SrcLoc
 import qualified Language.Haskell.HLint3 as HL (Severity(..))
 
-import HsDev.Symbols (Canonicalize(..))
+import System.Directory.Paths (canonicalize)
 import HsDev.Symbols.Location
 import HsDev.Tools.Base
 import HsDev.Util (readFileUtf8, split)
