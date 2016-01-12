@@ -200,7 +200,7 @@ getConDecl t as (H.QualConDecl loc _ _ cdecl) = case cdecl of
 
 -- | Get GADT constructor and record fields declarations
 getGConDecl :: H.GadtDecl -> [Declaration]
-getGConDecl (H.GadtDecl loc n fields r) = mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` r) [] Nothing) : concatMap (uncurry (getRec loc r)) fields where
+getGConDecl (H.GadtDecl loc n fields r) = mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` r) [] Nothing) : concatMap (uncurry (getRec loc r)) fields
 
 -- | Get record field declaration
 getRec :: H.SrcLoc -> H.Type -> [H.Name] -> H.Type -> [Declaration]
@@ -414,12 +414,12 @@ getDefines = do
 preprocess :: [(String, String)] -> FilePath -> String -> ExceptT String IO String
 preprocess defines fpath cts = do
 	cts' <- liftE $ Cpphs.cppIfdef fpath defines [] Cpphs.defaultBoolOptions cts
-	return $ unlines $ map snd $ cts'
+	return $ unlines $ map snd cts'
 
 preprocess_ :: [(String, String)] -> [String] -> FilePath -> String -> IO String
 preprocess_ defines exts fpath cts
 	| hasCPP = runExceptT (preprocess defines fpath cts) >>= either (const $ return cts) return
 	| otherwise = return cts
 	where
-		exts' = map H.parseExtension exts ++ fromMaybe [] (fmap snd $ H.readExtensions cts)
+		exts' = map H.parseExtension exts ++ maybe [] snd (H.readExtensions cts)
 		hasCPP = H.EnableExtension H.CPP `elem` exts'

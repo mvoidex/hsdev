@@ -209,12 +209,11 @@ instance Show Info where
 		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ _infoLanguage i
 		exts
 			| null (_infoExtensions i) = []
-			| otherwise = ["extensions:"] ++ map (tab 1 . display) (_infoExtensions i)
+			| otherwise = "extensions:" : map (tab 1 . display) (_infoExtensions i)
 		opts
 			| null (_infoGHCOptions i) = []
-			| otherwise = ["ghc-options:"] ++ map (tab 1) (_infoGHCOptions i)
-		sources = ["source-dirs:"] ++
-			(map (tab 1) $ _infoSourceDirs i)
+			| otherwise = "ghc-options:" : map (tab 1) (_infoGHCOptions i)
+		sources = "source-dirs:" : (map (tab 1) $ _infoSourceDirs i)
 
 instance ToJSON Info where
 	toJSON i = object [

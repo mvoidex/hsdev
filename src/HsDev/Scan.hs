@@ -79,7 +79,7 @@ enumDirectory dir = do
 	projs <- triesMap (enumProject . project) projects
 	let
 		projPaths = map (view projectPath . fst) projs
-		standalone = map ((`FileModule` Nothing)) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
+		standalone = map (`FileModule` Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
 	return ScanContents {
 		modulesToScan = [(s, [], Nothing) | s <- standalone],
 		projectsToScan = projs,

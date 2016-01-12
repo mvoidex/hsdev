@@ -108,7 +108,7 @@ runServerCommand Version = putStrLn $cabalVersion
 runServerCommand (Start sopts) = do
 #if mingw32_HOST_OS
 	let
-		args = ["run"] ++ serverOptsArgs sopts
+		args = "run" : serverOptsArgs sopts
 	myExe <- getExecutablePath
 	curDir <- getCurrentDirectory
 	let
@@ -258,7 +258,7 @@ processClient name receive send' copts = do
 	let
 		answer :: Message Response -> IO ()
 		answer m@(Message _ r) = do
-			when (not $ isNotification r) $
+			unless (isNotification r) $
 				commandLog copts Log.Trace $ " << " ++ ellipsis (fromUtf8 (encode r))
 			writeChan respChan m
 			where
@@ -275,7 +275,7 @@ processClient name receive send' copts = do
 				answer $ Message Nothing $ responseError "Invalid request" [
 					"request" .= fromUtf8 req']
 			Right m -> Log.scopeLog (commandLogger copts) (T.pack $ fromMaybe "_" (messageId m)) $ do
-				resp' <- flip traverse m $ \(Request c cdir noFile tm silent) -> do
+				resp' <- for m $ \(Request c cdir noFile tm silent) -> do
 					let
 						onNotify n
 							| silent = return ()

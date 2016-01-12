@@ -108,7 +108,7 @@ loadTargets ts = setTargets ts >> load LoadAllTargets >> return ()
 
 -- | Get list of installed packages
 listPackages :: Ghc [ModulePackage]
-listPackages = getSessionDynFlags >>= return . mapMaybe readPackage . fromMaybe [] . pkgDatabase
+listPackages = liftM (mapMaybe readPackage . fromMaybe [] . pkgDatabase) getSessionDynFlags
 
 readPackage :: PackageConfig -> Maybe ModulePackage
 readPackage pc = readMaybe $ packageNameString pc ++ "-" ++ showVersion (packageVersion pc)

@@ -43,7 +43,7 @@ instance FromJSON CabalPackage where
 		(v .:: "name") <*>
 		(v .:: "synopsis") <*>
 		((join . fmap simpleParse) <$> (v .:: "default-version")) <*>
-		((mapMaybe simpleParse) <$> (v .:: "installed-versions")) <*>
+		(mapMaybe simpleParse <$> (v .:: "installed-versions")) <*>
 		(v .:: "homepage") <*>
 		((join . fmap simpleParse) <$> (v .:: "license"))
 

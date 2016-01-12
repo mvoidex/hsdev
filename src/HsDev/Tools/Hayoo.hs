@@ -64,7 +64,7 @@ instance Symbol HayooSymbol where
 		[] -> hayooName f
 		(m:_) -> m ++ "." ++ hayooName f
 	symbolDocs = Just . fromString . hayooDescription
-	symbolLocation r = Location (ModuleSource $ Just $ resultUri r) Nothing where
+	symbolLocation r = Location (ModuleSource $ Just $ resultUri r) Nothing
 
 instance Documented HayooSymbol where
 	brief f

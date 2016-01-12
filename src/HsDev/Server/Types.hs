@@ -158,7 +158,7 @@ serverOptsArgs sopts = concat [
 	marg "--log" (serverLog sopts),
 	["--log-config", serverLogConfig sopts],
 	marg "--cache" (serverCache sopts),
-	if serverLoad sopts then ["--load"] else []]
+	["--load" | serverLoad sopts]]
 	where
 		marg :: String -> Maybe String -> [String]
 		marg n (Just v) = [n, v]

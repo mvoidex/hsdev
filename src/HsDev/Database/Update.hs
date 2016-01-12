@@ -163,7 +163,7 @@ runTask :: (Display t, MonadIO m, NFData a, MonadCatchIO m) => String -> t -> Ex
 runTask action subj act = Log.scope "task" $ do
 	postStatus $ task { taskStatus = StatusWorking }
 	x <- local childTask act
-	x `deepseq` (postStatus $ task { taskStatus = StatusOk })
+	x `deepseq` postStatus (task { taskStatus = StatusOk })
 	return x
 	`catchError`
 	(\e -> postStatus (task { taskStatus = StatusError e }) >> throwError e)

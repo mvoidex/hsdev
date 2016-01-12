@@ -116,10 +116,10 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 type Server = Worker (ReaderT CommandOptions IO)
 
 startServer :: ServerOpts -> IO Server
-startServer sopts = startWorker (\act -> runServer sopts (runReaderT act)) id id
+startServer sopts = startWorker (runServer sopts . runReaderT) id id
 
 inServer :: Server -> Command -> IO Result
-inServer srv c = inWorker srv (ReaderT (flip Client.runCommand c))
+inServer srv c = inWorker srv (ReaderT (`Client.runCommand` c))
 
 chaner :: F.Chan String -> Consumer Text
 chaner ch = Consumer withChan where

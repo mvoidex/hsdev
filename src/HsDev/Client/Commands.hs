@@ -158,7 +158,7 @@ runCommand copts (Check fs fcts ghcs') = runCommandM $ do
 				(commandError_ $ "File '" ++ file ++ "' not found")
 				return
 				(lookupFile file db)
-			notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
+			notes <- inWorkerWith (commandError_ . show) (commandGhc copts)
 				(runExceptT $ fn cabal m)
 			either commandError_ return notes
 	liftM concat $ mapM (uncurry checkSome) $
@@ -173,7 +173,7 @@ runCommand copts (CheckLint fs fcts ghcs') = runCommandM $ do
 				(commandError_ $ "File '" ++ file ++ "' not found")
 				return
 				(lookupFile file db)
-			notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
+			notes <- inWorkerWith (commandError_ . show) (commandGhc copts)
 				(runExceptT $ fn cabal m)
 			either commandError_ return notes
 	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
@@ -193,7 +193,7 @@ runCommand copts (Types fs fcts ghcs') = runCommandM $ do
 			(commandError_ $ "File '" ++ file ++ "' not found")
 			return
 			(lookupFile file db)
-		notes <- inWorkerWith (commandError_ . show) (commandGhc copts) $
+		notes <- inWorkerWith (commandError_ . show) (commandGhc copts)
 			(runExceptT $ Types.fileTypes ghcs' cabal m msrc)
 		either commandError_ return notes
 runCommand copts (GhcMod GhcModLang) = runCommandM $ mapCommandErrorStr GhcMod.langs
@@ -288,7 +288,7 @@ findPath copts = paths findPath' where
 
 -- | Get list of enumerated sandboxes
 getSandboxes :: (MonadIO m, Functor m) => CommandOptions -> [Cabal] -> ExceptT CommandError m [Cabal]
-getSandboxes copts cs = traverse (findSandbox copts) cs
+getSandboxes copts = traverse (findSandbox copts)
 
 -- | Find project by name of path
 findProject :: MonadIO m => CommandOptions -> String -> ExceptT CommandError m Project

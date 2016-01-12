@@ -174,8 +174,7 @@ preferredModule cabal proj ms = listToMaybe $ concatMap (`filter` ms) order wher
 -- | Remove duplicate modules, leave only `preferredModule`
 uniqueModules :: Cabal -> Maybe Project -> [ModuleId] -> [ModuleId]
 uniqueModules cabal proj =
-	catMaybes .
-	map (preferredModule cabal proj) .
+	mapMaybe (preferredModule cabal proj) .
 	groupBy ((==) `on` view moduleIdName) .
 	sortBy (comparing (view moduleIdName))
 

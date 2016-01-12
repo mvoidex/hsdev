@@ -24,7 +24,7 @@ createPool baseName = liftM2 Pool (newMVar []) mkNewName where
 
 -- | Use free name from pool
 withName :: Pool -> (String -> IO a) -> IO a
-withName p act = bracket getName freeName act where
+withName p = bracket getName freeName where
 	getName = modifyMVar (poolFreeNames p) $ \names -> case names of
 		[] -> liftM ((,) []) $ poolNewName p
 		(n:ns) -> return (ns, n)
