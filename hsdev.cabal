@@ -15,7 +15,9 @@ maintainer:          voidex@live.com
 category:            Development
 build-type:          Simple
 cabal-version:       >=1.8
-data-dir: tests/test-package
+extra-source-files:
+    tests/test-package/*.hs
+    tests/test-package/test-package.cabal
 
 library
   hs-source-dirs: src
