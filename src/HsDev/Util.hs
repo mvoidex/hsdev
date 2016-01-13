@@ -12,7 +12,7 @@ module HsDev.Util (
 	-- * Other utils
 	ordNub, uniqueBy, mapBy,
 	-- * Helper
-	(.::), (.::?), objectUnion, jsonUnion,
+	(.::), (.::?), (.::?!), objectUnion, jsonUnion, noNulls,
 	-- * Exceptions
 	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
 	eitherT,
@@ -43,7 +43,7 @@ import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr)
 import qualified Data.Map as M
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as HM (HashMap, toList, union)
 import qualified Data.ByteString.Char8 as B
@@ -150,6 +150,9 @@ v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lo
 (.::?) :: FromJSON a => HM.HashMap Text Value -> Text -> A.Parser (Maybe a)
 v .::? name = traverse parseJSON $ lookup name $ HM.toList v
 
+(.::?!) :: FromJSON a => HM.HashMap Text Value -> Text -> A.Parser [a]
+v .::?! name = fromMaybe [] <$> (v .::? name)
+
 -- | Union two JSON objects
 objectUnion :: Value -> Value -> Value
 objectUnion (Object l) (Object r) = Object $ HM.union l r
@@ -160,6 +163,12 @@ objectUnion _ _ = Null
 -- | Union two JSON objects
 jsonUnion :: (ToJSON a, ToJSON b) => a -> b -> Value
 jsonUnion x y = objectUnion (toJSON x) (toJSON y)
+
+-- | No Nulls in JSON object
+noNulls :: [A.Pair] -> [A.Pair]
+noNulls = filter (not . isNull . snd) where
+	isNull Null = True
+	isNull v = v == A.emptyArray || v == A.emptyObject
 
 -- | Lift IO exception to ExceptT
 liftException :: C.MonadCatch m => m a -> ExceptT String m a

@@ -24,7 +24,7 @@ module HsDev.Commands (
 	) where
 
 import Control.Applicative
-import Control.Lens (view, set, each)
+import Control.Lens (view, set, each, toListOf)
 import Control.Monad.Except
 import Data.List (delete)
 import Data.Maybe
@@ -84,13 +84,12 @@ lookupSymbol db cabal file ident = do
 		(qname, iname) = splitIdentifier ident
 
 -- | Whois symbol in scope
-whois :: Database -> Cabal -> FilePath -> String -> ExceptT String IO [ModuleDeclaration]
+whois :: Database -> Cabal -> FilePath -> String -> ExceptT String IO [Declaration]
 whois db cabal file ident = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
-		newestPackage $ filter (checkDecl . view moduleDeclaration) $
-		moduleModuleDeclarations $ scopeModule $
-		resolveOne (fileDeps file cabal mproj db) $
+		newestPackage $ filter checkDecl $
+		view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) $
 		moduleLocals mthis
 	where
 		(qname, iname) = splitIdentifier ident
@@ -110,20 +109,19 @@ scopeModules db cabal file = do
 		deps f p = delete (view projectName p) $ concatMap (view infoDepends) $ fileTargets p f
 
 -- | Symbols in scope
-scope :: Database -> Cabal -> FilePath -> Bool -> ExceptT String IO [ModuleDeclaration]
+scope :: Database -> Cabal -> FilePath -> Bool -> ExceptT String IO [Declaration]
 scope db cabal file False = do
 	(_, mthis, mproj) <- fileCtx db file
-	return $ moduleModuleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) mthis
-scope db cabal file True = concatMap moduleModuleDeclarations <$> scopeModules db cabal file
+	return $ view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) mthis
+scope db cabal file True = concatMap (view moduleDeclarations) <$> scopeModules db cabal file
 
 -- | Completions
-completions :: Database -> Cabal -> FilePath -> String -> Bool -> ExceptT String IO [ModuleDeclaration]
+completions :: Database -> Cabal -> FilePath -> String -> Bool -> ExceptT String IO [Declaration]
 completions db cabal file prefix wide = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
-		newestPackage $ filter (checkDecl . view moduleDeclaration) $
-		moduleModuleDeclarations $ scopeModule $
-		resolveOne (fileDeps file cabal mproj db) $
+		toListOf (each . minimalDecl) $ newestPackage $ filter checkDecl $
+		view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) $
 		dropImportLists mthis
 	where
 		(qname, iname) = splitIdentifier prefix
@@ -161,7 +159,7 @@ visibleFrom Nothing this m = view moduleId this == m || byCabal m
 splitIdentifier :: String -> (Maybe String, String)
 splitIdentifier name = fromMaybe (Nothing, name) $ do
 	groups <- matchRx "(([A-Z][\\w']*\\.)*)(.*)" name
-	return (fmap dropDot $ groups 1, groups `at_` 3)
+	return (dropDot <$> groups 1, groups `at_` 3)
 	where
 		dropDot :: String -> String
 		dropDot "" = ""

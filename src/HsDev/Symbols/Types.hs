@@ -8,7 +8,7 @@ module HsDev.Symbols.Types (
 	Import(..),
 	ModuleId(..),
 	Module(..), moduleContents, moduleId,
-	Declaration(..),
+	Declaration(..), minimalDecl,
 	TypeInfo(..), showTypeInfo,
 	DeclarationInfo(..), declarationInfo, declarationTypeCtor, declarationTypeName,
 	ModuleDeclaration(..),
@@ -36,7 +36,7 @@ module HsDev.Symbols.Types (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (makeLenses, view, set, Simple, Lens, lens)
+import Control.Lens (makeLenses, view, set, Simple, Lens, Lens', lens)
 import Control.Monad
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
@@ -50,7 +50,7 @@ import HsDev.Cabal
 import HsDev.Project
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented
-import HsDev.Util (tab, tabs, (.::))
+import HsDev.Util (tab, tabs, (.::), (.::?), (.::?!), noNulls)
 
 -- | What to export for data/class etc
 data ExportPart = ExportNothing | ExportAll | ExportWith [Text] deriving (Eq, Ord)
@@ -150,7 +150,7 @@ instance Show Import where
 		maybe "" ((" " ++) . show) (_importList i)]
 
 instance ToJSON Import where
-	toJSON i = object [
+	toJSON i = object $ noNulls [
 		"name" .= _importModuleName i,
 		"qualified" .= _importIsQualified i,
 		"as" .= _importAs i,
@@ -161,9 +161,9 @@ instance FromJSON Import where
 	parseJSON = withObject "import" $ \v -> Import <$>
 		v .:: "name" <*>
 		v .:: "qualified" <*>
-		v .:: "as" <*>
-		v .:: "import-list" <*>
-		v .:: "pos"
+		v .::? "as" <*>
+		v .::? "import-list" <*>
+		v .::? "pos"
 
 -- | Module id
 data ModuleId = ModuleId {
@@ -198,7 +198,7 @@ data Module = Module {
 		deriving (Ord)
 
 instance ToJSON Module where
-	toJSON m = object [
+	toJSON m = object $ noNulls [
 		"name" .= _moduleName m,
 		"docs" .= _moduleDocs m,
 		"location" .= _moduleLocation m,
@@ -209,11 +209,11 @@ instance ToJSON Module where
 instance FromJSON Module where
 	parseJSON = withObject "module" $ \v -> Module <$>
 		v .:: "name" <*>
-		v .:: "docs" <*>
+		v .::? "docs" <*>
 		v .:: "location" <*>
-		v .:: "exports" <*>
-		v .:: "imports" <*>
-		v .:: "declarations"
+		v .::? "exports" <*>
+		v .::?! "imports" <*>
+		v .::?! "declarations"
 
 instance NFData Module where
 	rnf (Module n d s e i ds) = rnf n `seq` rnf d `seq` rnf s `seq` rnf e `seq` rnf i `seq` rnf ds
@@ -263,7 +263,7 @@ instance Show Declaration where
 		maybe "" (("\tlocation: " ++ ) . show) $ _declarationPosition d]
 
 instance ToJSON Declaration where
-	toJSON d = object [
+	toJSON d = object $ noNulls [
 		"name" .= _declarationName d,
 		"defined" .= _declarationDefined d,
 		"imported" .= _declarationImported d,
@@ -274,11 +274,19 @@ instance ToJSON Declaration where
 instance FromJSON Declaration where
 	parseJSON = withObject "declaration" $ \v -> Declaration <$>
 		v .:: "name" <*>
-		v .:: "defined" <*>
-		v .:: "imported" <*>
-		v .:: "docs" <*>
-		v .:: "pos" <*>
+		v .::? "defined" <*>
+		v .::? "imported" <*>
+		v .::? "docs" <*>
+		v .::? "pos" <*>
 		v .:: "decl"
+
+-- | Minimal declaration info without defined, docs and position
+minimalDecl :: Lens' Declaration Declaration
+minimalDecl = lens to' from' where
+	to' :: Declaration -> Declaration
+	to' decl' = decl' { _declarationDefined = Nothing, _declarationDocs = Nothing, _declarationPosition = Nothing }
+	from' :: Declaration -> Declaration -> Declaration
+	from' decl' mdecl = decl' { _declarationName = _declarationName mdecl, _declarationImported = _declarationImported mdecl, _declaration = _declaration mdecl }
 
 -- | Common info for type, newtype, data and class
 data TypeInfo = TypeInfo {
@@ -292,7 +300,7 @@ instance NFData TypeInfo where
 	rnf (TypeInfo c a d f) = rnf c `seq` rnf a `seq` rnf d `seq` rnf f
 
 instance ToJSON TypeInfo where
-	toJSON t = object [
+	toJSON t = object $ noNulls [
 		"ctx" .= _typeInfoContext t,
 		"args" .= _typeInfoArgs t,
 		"def" .= _typeInfoDefinition t,
@@ -300,10 +308,10 @@ instance ToJSON TypeInfo where
 
 instance FromJSON TypeInfo where
 	parseJSON = withObject "type info" $ \v -> TypeInfo <$>
-		v .:: "ctx" <*>
-		v .:: "args" <*>
-		v .:: "def" <*>
-		v .:: "funs"
+		v .::? "ctx" <*>
+		v .::?! "args" <*>
+		v .::? "def" <*>
+		v .::?! "funs"
 
 showTypeInfo :: TypeInfo -> String -> String -> String
 showTypeInfo ti pre name = concat [
@@ -361,14 +369,14 @@ instance Eq DeclarationInfo where
 
 instance ToJSON DeclarationInfo where
 	toJSON i = case declarationInfo i of
-		Left (t, ds, r) -> object ["what" .= ("function" :: String), "type" .= t, "locals" .= ds, "related" .= r]
+		Left (t, ds, r) -> object $ noNulls ["what" .= ("function" :: String), "type" .= t, "locals" .= ds, "related" .= r]
 		Right ti -> object ["what" .= declarationTypeName i, "info" .= ti]
 
 instance FromJSON DeclarationInfo where
 	parseJSON = withObject "declaration info" $ \v -> do
 		w <- fmap (id :: String -> String) $ v .:: "what"
 		if w == "function"
-			then Function <$> v .:: "type" <*> v .:: "locals" <*> v .:: "related"
+			then Function <$> v .::? "type" <*> v .::?! "locals" <*> v .::? "related"
 			else declarationTypeCtor w <$> v .:: "info"
 
 -- | Symbol in context of some module
