@@ -19,7 +19,7 @@ data-dir: tests/test-package
 
 library
   hs-source-dirs: src
-  ghc-options: -threaded -Wall -fno-warn-tabs
+  ghc-options: -Wall -fno-warn-tabs
   exposed-modules:
     Control.Apply.Util
     Control.Concurrent.FiniteChan
@@ -267,7 +267,7 @@ executable hsautofix
 test-suite test
   main-is: Test.hs
   hs-source-dirs: tests
-  ghc-options: -Wall -fno-warn-tabs
+  ghc-options: -threaded -Wall -fno-warn-tabs
   type: exitcode-stdio-1.0
   build-depends:
     base >= 4.7 && < 5,

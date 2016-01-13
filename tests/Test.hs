@@ -35,4 +35,5 @@ main = hspec $ do
 			two <- call s $ InfoResolve "tests\\test-package\\ModuleTwo.hs" True
 			when (["f", "twice"] /= exports two) $
 				expectationFailure "invalid exports of ModuleTwo.hs"
+			_ <- call s Exit
 			return ()
