@@ -453,7 +453,7 @@ instance ToJSON Command where
 		"docs" .= docs',
 		"infer" .= infer']
 	toJSON (RefineDocs projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
-	toJSON (InferTypes projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
+	toJSON (InferTypes projs fs ms) = cmdJson "infer" ["projects" .= projs, "files" .= fs, "modules" .= ms]
 	toJSON (Remove projs packages cabals fs) = cmdJson "remove" ["projects" .= projs, "packages" .= packages, "sandboxes" .= cabals, "files" .= fs]
 	toJSON (InfoModules tf) = cmdJson "modules" ["filter" .= tf]
 	toJSON InfoPackages = cmdJson "packages" []

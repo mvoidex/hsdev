@@ -23,6 +23,7 @@ import System.Log.Simple.Base (writeLog)
 import qualified System.Log.Simple.Base as Log
 
 import qualified Control.Concurrent.FiniteChan as F
+import System.Directory.Paths (canonicalize)
 import qualified System.Directory.Watcher as Watcher
 import Text.Format ((~~), FormatBuild(..))
 
@@ -119,7 +120,9 @@ startServer :: ServerOpts -> IO Server
 startServer sopts = startWorker (runServer sopts . runReaderT) id id
 
 inServer :: Server -> Command -> IO Result
-inServer srv c = inWorker srv (ReaderT (`Client.runCommand` c))
+inServer srv c = do
+	c' <- canonicalize c
+	inWorker srv (ReaderT (`Client.runCommand` c'))
 
 chaner :: F.Chan String -> Consumer Text
 chaner ch = Consumer withChan where

@@ -15,6 +15,7 @@ maintainer:          voidex@live.com
 category:            Development
 build-type:          Simple
 cabal-version:       >=1.8
+data-dir: tests/test-package
 
 library
   hs-source-dirs: src
@@ -271,11 +272,14 @@ test-suite test
   build-depends:
     base >= 4.7 && < 5,
     hsdev,
+    aeson >= 0.7.0,
+    aeson-lens >= 0.5.0,
     async >= 2.0,
     data-default >= 0.5.0,
     containers >= 0.5.0,
     deepseq >= 1.4.0,
     hformat >= 0.1,
+    hspec,
     lens >= 4.8,
     mtl >= 2.2.0,
     text >= 1.2.0
