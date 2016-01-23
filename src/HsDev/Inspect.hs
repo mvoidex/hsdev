@@ -400,16 +400,18 @@ inspectProject defines opts p = do
 
 -- | Get actual defines
 getDefines :: IO [(String, String)]
-getDefines = do
+getDefines = handle onIO $ do
 	tmp <- Dir.getTemporaryDirectory
 	writeFile (tmp </> "defines.hs") ""
-	_ <- runWait "ghc.exe" ["-E", "-optP-dM", "-cpp", tmp </> "defines.hs"] ""
+	_ <- runWait "ghc" ["-E", "-optP-dM", "-cpp", tmp </> "defines.hs"] ""
 	cts <- readFileUtf8 (tmp </> "defines.hspp")
 	Dir.removeFile (tmp </> "defines.hs")
 	Dir.removeFile (tmp </> "defines.hspp")
 	return $ mapMaybe (\g -> (,) <$> g 1 <*> g 2) $ mapMaybe (matchRx rx) $ lines cts
 	where
 		rx = "#define ([^\\s]+) (.*)"
+		onIO :: IOException -> IO [(String, String)]
+		onIO _ = return []
 
 preprocess :: [(String, String)] -> FilePath -> String -> ExceptT String IO String
 preprocess defines fpath cts = do
