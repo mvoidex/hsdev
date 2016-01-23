@@ -400,7 +400,7 @@ inspectProject defines opts p = do
 
 -- | Get actual defines
 getDefines :: IO [(String, String)]
-getDefines = handle onIO $ do
+getDefines = E.handle onIO $ do
 	tmp <- Dir.getTemporaryDirectory
 	writeFile (tmp </> "defines.hs") ""
 	_ <- runWait "ghc" ["-E", "-optP-dM", "-cpp", tmp </> "defines.hs"] ""
@@ -410,7 +410,7 @@ getDefines = handle onIO $ do
 	return $ mapMaybe (\g -> (,) <$> g 1 <*> g 2) $ mapMaybe (matchRx rx) $ lines cts
 	where
 		rx = "#define ([^\\s]+) (.*)"
-		onIO :: IOException -> IO [(String, String)]
+		onIO :: E.IOException -> IO [(String, String)]
 		onIO _ = return []
 
 preprocess :: [(String, String)] -> FilePath -> String -> ExceptT String IO String
