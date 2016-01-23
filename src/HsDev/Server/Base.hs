@@ -19,7 +19,6 @@ import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T (pack, unpack)
 import System.Log.Simple hiding (Level(..), Message(..), Command(..))
-import System.Log.Simple.Base (writeLog)
 import qualified System.Log.Simple.Base as Log
 
 import qualified Control.Concurrent.FiniteChan as F
@@ -64,7 +63,7 @@ initLog sopts = do
 		listenLog f = logException "listen log" (F.putChan msgs) $ do
 			msgs' <- F.dupChan msgs
 			F.readChan msgs' >>= f
-	return (l, \lev -> writeLog l lev . T.pack, listenLog, F.closeChan msgs >> takeMVar outputDone)
+	return (l, \lev -> writeLog l lev . T.pack, listenLog, stopLog l >> F.closeChan msgs >> takeMVar outputDone)
 	where
 		rule' :: Log.Rule
 		rule' = parseRule_ $ T.pack ("/: " ++ serverLogConfig sopts)
