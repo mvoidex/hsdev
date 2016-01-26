@@ -50,10 +50,6 @@ import System.Posix.IO
 initLog :: ServerOpts -> IO (Log, Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
 initLog sopts = do
 	msgs <- F.newChan
-	outputDone <- newEmptyMVar
-	void $ forkIO $ finally
-		(F.readChan msgs >>= mapM_ (const $ return ()))
-		(putMVar outputDone ())
 	l <- newLog (constant [rule']) $ concat [
 		[logger text console],
 		[logger text (chaner msgs)],
@@ -63,7 +59,7 @@ initLog sopts = do
 		listenLog f = logException "listen log" (F.putChan msgs) $ do
 			msgs' <- F.dupChan msgs
 			F.readChan msgs' >>= f
-	return (l, \lev -> writeLog l lev . T.pack, listenLog, stopLog l >> F.closeChan msgs >> takeMVar outputDone)
+	return (l, \lev -> writeLog l lev . T.pack, listenLog, stopLog l)
 	where
 		rule' :: Log.Rule
 		rule' = parseRule_ $ T.pack ("/: " ++ serverLogConfig sopts)

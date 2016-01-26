@@ -3,7 +3,7 @@ module System.Win32.FileMapping.Memory (
 	withMapFile, readMapFile
 	) where
 
-import Control.Arrow (left)
+import Control.Concurrent
 import Control.Monad.Catch
 import Control.Monad.Cont
 import Control.Monad.Except
@@ -15,27 +15,25 @@ import System.Win32.FileMapping hiding (mapFile)
 import System.Win32.Types
 import System.Win32.Mem
 
-createMap :: Maybe HANDLE -> ProtectFlags -> DDWORD -> Maybe String -> ContT r IO HANDLE
-createMap mh pf sz mn = ContT $ bracket
-	(verify iNVALID_HANDLE_VALUE "Invalid handle" $
-		createFileMapping mh pf sz mn)
+createMap :: Maybe HANDLE -> ProtectFlags -> DDWORD -> Maybe String -> ExceptT String (ContT r IO) HANDLE
+createMap mh pf sz mn = verify (/= iNVALID_HANDLE_VALUE) "Invalid handle" $ ContT $ bracket
+	(createFileMapping mh pf sz mn)
 	closeHandle
 
-openMap :: FileMapAccess -> Bool -> Maybe String -> ContT r IO HANDLE
-openMap f i mn = ContT $ bracket
-	(verify iNVALID_HANDLE_VALUE "Invalid handle" $
-		openFileMapping f i mn)
+openMap :: FileMapAccess -> Bool -> Maybe String -> ExceptT String (ContT r IO) HANDLE
+openMap f i mn = verify (/= iNVALID_HANDLE_VALUE) "Invalid handle" $ ContT $ bracket
+	(openFileMapping f i mn)
 	closeHandle
 
-mapFile :: HANDLE -> FileMapAccess -> DDWORD -> SIZE_T -> IO (Ptr a)
-mapFile h f off sz = verify nullPtr "null pointer" $ mapViewOfFile h f off sz
+mapFile :: HANDLE -> FileMapAccess -> DDWORD -> SIZE_T -> ExceptT String IO (Ptr a)
+mapFile h f off sz = verify (/= nullPtr) "null pointer" $ mapViewOfFile h f off sz
 
 -- | Write data to named map view of file
 withMapFile :: String -> ByteString -> IO a -> ExceptT String IO a
-withMapFile name str act = liftE $ flip runContT return $ do
-	p <- ContT $ BS.useAsCString str
+withMapFile name str act = mapExceptT (`runContT` return) $ do
+	p <- lift $ ContT $ BS.useAsCString str
 	h <- createMap Nothing pAGE_READWRITE (fromIntegral len) (Just name)
-	ptr <- lift $ mapFile h fILE_MAP_ALL_ACCESS 0 0
+	ptr <- mapExceptT lift $ mapFile h fILE_MAP_ALL_ACCESS 0 0
 	liftIO $ do
 		copyMemory ptr p (fromIntegral len)
 		unmapViewOfFile ptr
@@ -45,17 +43,12 @@ withMapFile name str act = liftE $ flip runContT return $ do
 
 -- | Read data from named map view of file
 readMapFile :: String -> ExceptT String IO ByteString
-readMapFile name = liftE $ flip runContT return $ do
+readMapFile name = mapExceptT (`runContT` return) $ do
 	h <- openMap fILE_MAP_ALL_ACCESS True (Just name)
-	ptr <- lift $ mapFile h fILE_MAP_ALL_ACCESS 0 0
+	ptr <- mapExceptT lift $ mapFile h fILE_MAP_ALL_ACCESS 0 0
 	liftIO $ BS.packCString ptr
 
-verify :: Eq a => a -> String -> IO a -> IO a
-verify v str act = do
-	x <- act
-	if x == v
-		then ioError (userError str)
-		else return x
-
-liftE :: MonadCatch m => m a -> ExceptT String m a
-liftE = ExceptT . liftM (left (\(SomeException e) -> show e)) . try
+verify :: (Eq a, Monad m) => (a -> Bool) -> String -> m a -> ExceptT String m a
+verify p str act = do
+	x <- lift act
+	if p x then return x else throwError str

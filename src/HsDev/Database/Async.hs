@@ -26,4 +26,5 @@ wait :: MonadIO m => Async Database -> m ()
 wait db = liftIO $ do
 	waitVar <- newEmptyMVar
 	modifyAsync db (Action $ \d -> putMVar waitVar () >> return d)
+	-- FIXME: what if async process is dead?
 	takeMVar waitVar

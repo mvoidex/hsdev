@@ -82,7 +82,7 @@ sendCommand copts noFile c onNotification = do
 				parseData cts = case eitherDecode cts of
 					Left err -> putStrLn ("Invalid data: " ++ err) >> exitFailure
 					Right v -> return v
-			dat <- traverse parseData input
+			dat <- traverse parseData input -- FIXME: Not used!
 
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
@@ -102,7 +102,7 @@ sendCommand copts noFile c onNotification = do
 				r' <- unMmap r
 				case r' of
 					Left n -> onNotification n >> peekResponse h
-					Right r -> return r
+					Right res -> return res
 
 runServerCommand :: ServerCommand -> IO ()
 runServerCommand Version = putStrLn $cabalVersion
@@ -156,45 +156,46 @@ runServerCommand (Start sopts) = do
 #endif
 runServerCommand (Run sopts) = runServer sopts $ \copts -> do
 	commandLog copts Log.Info $ "Server started at port " ++ show (serverPort sopts)
-
-	waitListen <- newEmptyMVar
 	clientChan <- F.newChan
-
-	void $ forkIO $ do
-		accepter <- myThreadId
-
+	listenerSem <- newQSem 0
+	_ <- async $ Log.scopeLog (commandLogger copts) "listener" $ flip finally (signalQSem listenerSem) $ do
 		let
 			serverStop :: IO ()
-			serverStop = void $ forkIO $ do
-				void $ tryPutMVar waitListen ()
-				killThread accepter
+			serverStop = void $ do
+				commandLog copts Log.Trace "stopping server"
+				-- NOTE: killing listener doesn't work on Windows, because accept blocks async exceptions
+				signalQSem listenerSem
 
 		s <- socket AF_INET Stream defaultProtocol
 		bind s $ SockAddrInet (fromIntegral $ serverPort sopts) iNADDR_ANY
 		listen s maxListenQueue
-		forever $ logAsync (commandLog copts Log.Fatal) $ logIO "accept client exception: " (commandLog copts Log.Error) $ do
+		forever $ logAsync (commandLog copts Log.Fatal) $ logIO "exception: " (commandLog copts Log.Error) $ do
+			commandLog copts Log.Trace "accepting connection"
 			s' <- fst <$> accept s
-			void $ forkIO $ logAsync (commandLog copts Log.Fatal) $ logIO (show s' ++ " exception: ") (commandLog copts Log.Error) $
-				flip finally (close s') $
-					bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-						me <- myThreadId
-						let
-							timeoutWait = do
-								notDone <- isEmptyMVar done
-								when notDone $ do
-									void $ forkIO $ do
-										threadDelay 1000000
-										void $ tryPutMVar done ()
-										killThread me
-									takeMVar done
-							-- waitForever = forever $ hGetLineBS h
-						F.putChan clientChan timeoutWait
-						processClientSocket s' (copts {
-							-- commandHold = waitForever,
-							commandExit = serverStop })
+			commandLog copts Log.Trace $ "accepted " ++ show s'
+			void $ forkIO $ Log.scopeLog (commandLogger copts) (T.pack $ show s') $
+				logAsync (commandLog copts Log.Fatal) $ logIO ("exception: ") (commandLog copts Log.Error) $
+					flip finally (close s') $
+						bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+							me <- myThreadId
+							let
+								timeoutWait = do
+									notDone <- isEmptyMVar done
+									when notDone $ do
+										commandLog copts Log.Trace $ "waiting for " ++ show s' ++ " to complete"
+										waitAsync <- async $ do
+											threadDelay 1000000
+											killThread me
+										void $ waitCatch waitAsync
+							F.putChan clientChan timeoutWait
+							processClientSocket s' (copts {
+								commandExit = serverStop })
 
-	takeMVar waitListen
+	commandLog copts Log.Trace "waiting for accept thread"
+	waitQSem listenerSem
+	commandLog copts Log.Trace "accept thread stopped"
 	DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
+	commandLog copts Log.Trace "waiting for clients"
 	F.stopChan clientChan >>= sequence_
 	commandLog copts Log.Info "server stopped"
 runServerCommand (Stop copts) = runServerCommand (Remote copts False Exit)
@@ -267,7 +268,8 @@ processClient name receive send' copts = do
 				ellipsis s
 					| length s < 100 = s
 					| otherwise = take 100 s ++ "..."
-	flip finally (disconnected linkVar) $ forever $ Log.scopeLog (commandLogger copts) (T.pack name) $ do
+	-- flip finally (disconnected linkVar) $ forever $ Log.scopeLog (commandLogger copts) (T.pack name) $ do
+	flip finally (disconnected linkVar) $ forever $ do
 		req' <- receive
 		commandLog copts Log.Trace $ " => " ++ fromUtf8 req'
 		case eitherDecode req' of
@@ -308,6 +310,7 @@ processClient name receive send' copts = do
 #endif
 		mmap' _ = return
 
+		-- Call on disconnected, either no action or exit command
 		disconnected :: MVar (IO ()) -> IO ()
 		disconnected var = do
 			commandLog copts Log.Info $ name ++ " disconnected"
@@ -352,14 +355,15 @@ instance FromJSON MmapFile where
 mmap :: Pool -> Response -> IO Response
 mmap mmapPool r
 	| L.length msg <= 1024 = return r
-	| otherwise = withSync (responseError "timeout" []) $ \sync -> timeout 10000000 $
-		withName mmapPool $ \mmapName -> do
-			runExceptT $ flip catchError
-				(\e -> liftIO $ sync $ responseError e [])
-				(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
-					sync $ result $ MmapFile mmapName
-					-- give 10 seconds for client to read data
-					threadDelay 10000000)
+	| otherwise = do
+		rvar <- newEmptyMVar
+		_ <- forkIO $ flip finally (tryPutMVar rvar r) $ void $ withName mmapPool $ \mmapName -> runExceptT $ flip catchError
+			(\e -> liftIO $ void $ tryPutMVar rvar r)
+			(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
+				_ <- tryPutMVar rvar $ result $ MmapFile mmapName
+				-- give 10 seconds for client to read data
+				threadDelay 10000000)
+		takeMVar rvar
 	where
 		msg = encode r
 #endif
