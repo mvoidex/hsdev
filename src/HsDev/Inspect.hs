@@ -68,8 +68,11 @@ analyzeModule_ exts file source = do
 		_moduleName = fromString mname,
 		_moduleDocs = Nothing,
 		_moduleLocation = ModuleSource Nothing,
-		_moduleExports = Nothing,
-		_moduleImports = [],
+		_moduleExports = do
+			H.PragmasAndModuleHead _ (_, _, mexports) <- parseModuleHead' source'
+			exports <- mexports
+			return $ concatMap getExports exports,
+		_moduleImports = map getImport $ mapMaybe (uncurry parseImport') parts,
 		_moduleDeclarations = sortDeclarations $ getDecls $ mapMaybe (uncurry parseDecl') parts }
 	where
 		parts :: [(Int, String)]
@@ -87,12 +90,22 @@ analyzeModule_ exts file source = do
 			g 1
 
 		parseDecl' :: Int -> String -> Maybe H.Decl
-		parseDecl' offset cts = fmap (transformBi addOffset) $ case H.parseDeclWithMode (parseMode file exts) cts of
-			H.ParseFailed _ _ -> Nothing
-			H.ParseOk decl' -> Just decl'
-			where
-				addOffset :: H.SrcLoc -> H.SrcLoc
-				addOffset src = src { H.srcLine = H.srcLine src + offset }
+		parseDecl' offset cts = maybeResult $ fmap (transformBi $ addOffset offset) $
+			H.parseDeclWithMode (parseMode file exts) cts
+
+		parseImport' :: Int -> String -> Maybe H.ImportDecl
+		parseImport' offset cts = maybeResult $ fmap (transformBi $ addOffset offset) $
+			H.parseImportDeclWithMode (parseMode file exts) cts
+
+		parseModuleHead' :: String -> Maybe H.PragmasAndModuleHead
+		parseModuleHead' = maybeResult . fmap H.unNonGreedy . H.parseWithMode (parseMode file exts)
+
+		maybeResult :: H.ParseResult a -> Maybe a
+		maybeResult (H.ParseFailed _ _) = Nothing
+		maybeResult (H.ParseOk r) = Just r
+
+		addOffset :: Int -> H.SrcLoc -> H.SrcLoc
+		addOffset offset src = src { H.srcLine = H.srcLine src + offset }
 
 		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
 		source' = map untab source
