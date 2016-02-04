@@ -41,6 +41,7 @@ fromIdea idea = Note {
 	_noteRegion = Region (Position (srcSpanStartLine src) (srcSpanStartColumn src)) (Position (srcSpanEndLine src) (srcSpanEndColumn src)),
 	_noteLevel = Just $ case ideaSeverity idea of
 		HL.Ignore -> Hint
+		HL.Suggestion -> Hint
 		HL.Warning -> Warning
 		HL.Error -> Error,
 	_note = OutputMessage {
