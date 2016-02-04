@@ -2,7 +2,7 @@
 --  see http://haskell.org/cabal/users-guide/
 
 name:                hsdev
-version:             0.1.5.5
+version:             0.1.5.6
 synopsis:            Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references etc.
 description:
   Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
@@ -109,7 +109,7 @@ library
     filepath >= 1.4.0,
     fsnotify >= 0.2.1,
     ghc >= 7.10.0 && < 7.11.0,
-    ghc-mod >= 5.4.0.0 && < 5.5.0.0,
+    ghc-mod >= 5.5.0.0 && < 5.6.0.0,
     ghc-paths >= 0.1.0,
     ghc-syb-utils >= 0.2.3,
     haddock-api >= 2.16.0 && < 2.17.0,
@@ -129,7 +129,7 @@ library
     process >= 1.2.0,
     regex-pcre-builtin >= 0.94,
     scientific >= 0.3,
-    simple-log >= 0.3.3,
+    simple-log >= 0.3.4,
     syb >= 0.5.1,
     template-haskell,
     text >= 1.2.0,
