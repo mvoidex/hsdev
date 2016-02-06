@@ -2,16 +2,19 @@
 
 module HsDev.Tools.Ghc.Types (
 	TypedExpr(..), typedExpr, typedType,
-	moduleTypes, fileTypes
+	moduleTypes, fileTypes,
+	setModuleTypes, inferTypes
 	) where
 
 import Control.DeepSeq
-import Control.Lens (over, view, preview, makeLenses, _Just)
+import Control.Lens (over, view, set, each, preview, makeLenses, _Just)
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Aeson
 import Data.Generics
+import Data.List (find)
 import Data.Maybe
+import Data.String (fromString)
 import System.Directory
 import System.FilePath
 
@@ -92,6 +95,7 @@ instance FromJSON TypedExpr where
 		v .:: "expr" <*>
 		v .:: "type"
 
+-- | Get all types in module
 fileTypes :: [String] -> Cabal -> Module -> Maybe String -> ExceptT String Ghc [Note TypedExpr]
 fileTypes opts cabal m msrc = case view moduleLocation m of
 	FileModule file proj -> do
@@ -127,3 +131,16 @@ fileTypes opts cabal m msrc = case view moduleLocation m of
 		showType df = showDoc OneLineMode 80 . withPprStyleDoc df unqualStyle . pprTypeForUser
 		unqualStyle :: PprStyle
 		unqualStyle = mkUserStyle neverQualify AllTheWay
+
+-- | Set types to module
+setModuleTypes :: [Note TypedExpr] -> Module -> Module
+setModuleTypes ts = over (moduleDeclarations . each) setType where
+	setType :: Declaration -> Declaration
+	setType d = fromMaybe d $ do
+		pos <- view declarationPosition d
+		tnote <- find ((== pos) . view (noteRegion . regionFrom)) ts
+		return $ set (declaration . functionType) (Just $ fromString $ view (note . typedType) tnote) d
+
+-- | Infer types in module
+inferTypes :: [String] -> Cabal -> Module -> Maybe String -> ExceptT String Ghc Module
+inferTypes opts cabal m msrc = liftM (`setModuleTypes` m) $ fileTypes opts cabal m msrc

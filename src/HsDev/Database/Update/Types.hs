@@ -25,6 +25,8 @@ import HsDev.Symbols
 import HsDev.Util ((.::))
 import HsDev.Watcher.Types
 
+import GHC (Ghc)
+
 data Status = StatusWorking | StatusOk | StatusError String
 
 instance ToJSON Status where
@@ -82,6 +84,7 @@ data Settings = Settings {
 	ghcOptions :: [String],
 	updateDocs :: Bool,
 	runInferTypes :: Bool,
+	settingsGhcWorker :: Worker Ghc,
 	settingsGhcModWorker :: Worker (ReaderT WorkerMap IO),
 	settingsLogger :: Log.Log,
 	settingsWatcher :: Watcher,
@@ -96,6 +99,7 @@ settings copts ghcOpts' docs' infer' = Settings
 	ghcOpts'
 	docs'
 	infer'
+	(commandGhc copts)
 	(commandGhcMod copts)
 	(commandLogger copts)
 	(commandWatcher copts)

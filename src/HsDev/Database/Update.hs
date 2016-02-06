@@ -52,8 +52,8 @@ import HsDev.Inspect (inspectDocs, inspectDocsGhc, getDefines)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker (ghcWorker)
+import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
-import HsDev.Tools.GhcMod.InferType (inferTypes)
 import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
@@ -108,8 +108,8 @@ updateDB sets act = Log.scopeLog (settingsLogger sets) "update" $ do
 		infer' :: [String] -> Cabal -> Module -> ExceptT String IO Module
 		infer' opts cabal m = case preview (moduleLocation . moduleFile) m of
 			Nothing -> return m
-			Just f -> GhcMod.waitMultiGhcMod (settingsGhcModWorker sets) f $
-				inferTypes opts cabal m
+			Just _ -> inWorkerT (settingsGhcWorker sets) $ inferTypes opts cabal m Nothing
+		inWorkerT w = ExceptT . inWorker w . runExceptT 
 
 -- | Post status
 postStatus :: (MonadIO m, MonadReader Settings m) => Task -> m ()
@@ -291,18 +291,13 @@ scanDocs ims = do
 
 inferModTypes :: (MonadIO m, MonadCatchIO m) => [InspectedModule] -> ExceptT String (UpdateDB m) ()
 inferModTypes = runTasks . map inferModTypes' where
-	inferModTypes' im = runTask "inferring types" (view inspectedId im) $ Log.scope "infer" $ do
-		-- TODO: locate sandbox
-		sets <- ask
+	inferModTypes' im = runTask "inferring types" (view inspectedId im) $ Log.scope "docs" $ do
+		w <- asks settingsGhcWorker
 		Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
-		im' <- liftExceptT $ S.scanModify (infer' sets) im
+		im' <- liftExceptT $ S.scanModify (\opts cabal m -> inWorkerT w (inferTypes opts cabal m Nothing)) im
 		Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
 		updater $ return $ fromModule im'
-	infer' :: Settings -> [String] -> Cabal -> Module -> ExceptT String IO Module
-	infer' sets opts cabal m = case preview (moduleLocation . moduleFile) m of
-		Nothing -> return m
-		Just f -> GhcMod.waitMultiGhcMod (settingsGhcModWorker sets) f $
-			inferTypes opts cabal m
+	inWorkerT w = ExceptT . inWorker w . runExceptT
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
 scan :: (MonadIO m, MonadCatch m, MonadCatchIO m)
