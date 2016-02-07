@@ -5,7 +5,7 @@ module HsDev.Symbols (
 	-- * Information
 	export,
 	passImportList,
-	importName, import_,
+	importNames, import_,
 	Symbol(..),
 	unnamedModuleId,
 	sortDeclarations, moduleLocals,
@@ -68,9 +68,9 @@ passImportList (ImportList hiding names) n
 	| hiding = n `notElem` names
 	| otherwise = n `elem` names
 
--- | Get import module name
-importName :: Import -> Text
-importName i = fromMaybe (view importModuleName i) $ view importAs i
+-- | Get import module names - full and synonym
+importNames :: Import -> [Text]
+importNames i = view importModuleName i : maybe [] return (view importAs i)
 
 -- | Simple import
 import_ :: Text -> Import
@@ -141,7 +141,7 @@ declarationLocals d = locals $ view declaration d
 
 -- | Get scopes of @Declaration@, where @Nothing@ is global scope
 scopes :: Declaration -> [Maybe Text]
-scopes d = globalScope $ map (Just . importName) is where
+scopes d = globalScope $ concatMap (map Just . importNames) is where
 	is = fromMaybe [] $ view declarationImported d
 	globalScope
 		| any (not . view importIsQualified) is = (Nothing :)

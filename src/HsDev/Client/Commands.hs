@@ -89,26 +89,26 @@ runCommand copts (InferTypes projs fs ms) = runCommandM $ do
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess copts [] False False [Update.inferModTypes $ map (getInspected dbval) mods]
-runCommand copts (Remove projs packages cabals fs) = undefined
-runCommand copts (InfoModules f) = runCommandM $ do
+runCommand copts (Remove projs packages cabals fs) = runCommandM $ return $ object ["message" .= ("not implemented" :: String)]
+runCommand copts (InfoModules fs) = runCommandM $ do
 	dbval <- getDb copts
-	filter' <- targetFilter copts f
+	filter' <- targetFilters copts fs
 	return $ map (view moduleId) $ newestPackage $ selectModules (filter' . view moduleId) dbval
 runCommand copts InfoPackages = runCommandM $
 	(ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb copts
 runCommand copts InfoProjects = runCommandM $ (toList . databaseProjects) <$> getDb copts
 runCommand copts InfoSandboxes = runCommandM $
 	(ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
-runCommand copts (InfoSymbol sq f) = runCommandM $ do
-	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
-	filter' <- targetFilter copts f
+runCommand copts (InfoSymbol sq fs locals) = runCommandM $ do
+	dbval <- liftM (localsDatabase locals) $ getDb copts
+	filter' <- targetFilters copts fs
 	return $ newestPackage $ filterMatch sq $ filter (checkModule filter') $ allDeclarations dbval
-runCommand copts (InfoModule sq f) = runCommandM $ do
-	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
-	filter' <- targetFilter copts f
+runCommand copts (InfoModule sq fs) = runCommandM $ do
+	dbval <- getDb copts
+	filter' <- targetFilters copts fs
 	return $ newestPackage $ filterMatch sq $ filter (filter' . view moduleId) $ allModules dbval
 runCommand copts (InfoResolve fpath exports) = runCommandM $ do
-	dbval <- liftM (localsDatabase False) $ getDb copts -- FIXME: Where is arg locals?
+	dbval <- getDb copts
 	cabal <- liftIO $ getSandbox fpath
 	let
 		cabaldb = filterDB (restrictCabal cabal) (const True) dbval
@@ -129,10 +129,10 @@ runCommand copts (Whois nm fpath) = runCommandM $ do
 	dbval <- getDb copts
 	cabal <- liftIO $ getSandbox fpath
 	mapCommandErrorStr $ whois dbval cabal fpath nm
-runCommand copts (ResolveScopeModules fpath) = runCommandM $ do
+runCommand copts (ResolveScopeModules sq fpath) = runCommandM $ do
 	dbval <- getDb copts
 	cabal <- liftIO $ getSandbox fpath
-	liftM (map (view moduleId)) $ mapCommandErrorStr $ scopeModules dbval cabal fpath
+	liftM (filterMatch sq . map (view moduleId)) $ mapCommandErrorStr $ scopeModules dbval cabal fpath
 runCommand copts (ResolveScope sq global fpath) = runCommandM $ do
 	dbval <- getDb copts
 	cabal <- liftIO $ getSandbox fpath
@@ -255,6 +255,11 @@ runCommand copts (GhcEval exprs) = runCommandM $ mapCommandErrorStr $ liftM (map
 runCommand copts (Link hold) = runCommandM $ liftIO $ commandLink copts >> when hold (commandHold copts)
 runCommand copts Exit = runCommandM $ liftIO $ commandExit copts
 
+targetFilters :: MonadIO m => CommandOptions -> [TargetFilter] -> ExceptT CommandError m (ModuleId -> Bool)
+targetFilters copts fs = do
+	fs_ <- mapM (targetFilter copts) fs
+	return $ foldr (liftM2 (&&)) (const True) fs_
+
 targetFilter :: MonadIO m => CommandOptions -> TargetFilter -> ExceptT CommandError m (ModuleId -> Bool)
 targetFilter copts f = case f of
 	TargetProject proj -> liftM inProject $ findProject copts proj
@@ -265,7 +270,6 @@ targetFilter copts f = case f of
 	TargetPackage pack -> return $ inPackage pack
 	TargetSourced -> return byFile
 	TargetStandalone -> return standalone
-	TargetAny -> return (const True)
 
 -- Helper functions
 
@@ -290,7 +294,7 @@ findPath copts = paths findPath' where
 getSandboxes :: (MonadIO m, Functor m) => CommandOptions -> [Cabal] -> ExceptT CommandError m [Cabal]
 getSandboxes copts = traverse (findSandbox copts)
 
--- | Find project by name of path
+-- | Find project by name or path
 findProject :: MonadIO m => CommandOptions -> String -> ExceptT CommandError m Project
 findProject copts proj = do
 	db' <- getDb copts
@@ -299,7 +303,7 @@ findProject copts proj = do
 		resultProj =
 			refineProject db' (project proj') <|>
 			find ((== proj) . view projectName) (databaseProjects db')
-	maybe (throwError $ commandStrMsg $ "Projects " ++ proj ++ " not found") return resultProj
+	maybe (throwError $ commandStrMsg $ "Project " ++ proj ++ " not found") return resultProj
 	where
 		addCabal p
 			| takeExtension p == ".cabal" = p
@@ -321,6 +325,7 @@ findDep copts depName = do
 	sbox <- liftIO $ searchSandbox $ view projectPath proj
 	return (proj, src, sbox)
 
+-- FIXME: Doesn't work for file without project
 -- | Check if project or source depends from this module
 inDeps :: (Project, Maybe FilePath, Cabal) -> ModuleId -> Bool
 inDeps (proj, src, cabal) = liftM2 (&&) (restrictCabal cabal) deps' where

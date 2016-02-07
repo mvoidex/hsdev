@@ -70,7 +70,7 @@ getProject db p = do
 	maybe (throwError $ "Project " ++ view projectCabal p' ++ " not found") return $
 		refineProject db p'
 
--- | Lookup visible within project symbol
+-- | Lookup visible within project/cabal symbol
 lookupSymbol :: Database -> Cabal -> FilePath -> String -> ExceptT String IO [ModuleDeclaration]
 lookupSymbol db cabal file ident = do
 	(_, mthis, mproj) <- fileCtx db file

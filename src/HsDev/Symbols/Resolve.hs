@@ -103,10 +103,10 @@ exported decl' (ExportName q n p)
 	where
 		checkImport = case q of
 			Nothing -> any (not . view importIsQualified) $ fromMaybe [] $ view declarationImported decl'
-			Just q' -> any ((== q') . importName) $ fromMaybe [] $ view declarationImported decl'
+			Just q' -> any ((q' `elem`) . importNames) $ fromMaybe [] $ view declarationImported decl'
 exported decl' (ExportModule m) = decl' `justWhen` (any (unqualBy m) . fromMaybe [] . view declarationImported) where
 	unqualBy :: Text -> Import -> Bool
-	unqualBy m' i = importName i == m' && not (view importIsQualified i)
+	unqualBy m' i = m' `elem` importNames i && not (view importIsQualified i)
 
 -- | Bring declarations into scope
 resolveImport :: Module -> Import -> ResolveM [Declaration]

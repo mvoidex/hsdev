@@ -182,7 +182,6 @@ instance FromJSON Request where
 		((v .:: "timeout") <|> pure 0) <*>
 		((v .:: "silent") <|> pure False)
 
--- FIXME: Why so much commands in options?
 -- | Command from client
 data Command =
 	Ping |
@@ -210,18 +209,18 @@ data Command =
 		removePackages :: [String],
 		removeSandboxes :: [Cabal],
 		removeFiles :: [FilePath] } |
-	InfoModules TargetFilter |
+	InfoModules [TargetFilter] |
 	InfoPackages |
 	InfoProjects |
 	InfoSandboxes |
-	InfoSymbol SearchQuery TargetFilter |
-	InfoModule SearchQuery TargetFilter |
+	InfoSymbol SearchQuery [TargetFilter] Bool |
+	InfoModule SearchQuery [TargetFilter] |
 	InfoResolve FilePath Bool |
 	InfoProject (Either String FilePath) |
 	InfoSandbox FilePath |
 	Lookup String FilePath |
 	Whois String FilePath |
-	ResolveScopeModules FilePath |
+	ResolveScopeModules SearchQuery FilePath |
 	ResolveScope SearchQuery Bool FilePath |
 	Complete String Bool FilePath |
 	Hayoo {
@@ -274,7 +273,6 @@ data AutoFixCommand =
 		deriving (Show)
 
 data FileContents = FileContents FilePath String deriving (Show)
--- TODO: Why deps is just string?
 data TargetFilter =
 	TargetProject String |
 	TargetFile FilePath |
@@ -283,8 +281,7 @@ data TargetFilter =
 	TargetCabal Cabal |
 	TargetPackage String |
 	TargetSourced |
-	TargetStandalone |
-	TargetAny
+	TargetStandalone
 		deriving (Eq, Show)
 data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
@@ -303,14 +300,14 @@ instance Paths Command where
 	paths f (InferTypes projs fs ms) = InferTypes <$> each f projs <*> each f fs <*> pure ms
 	paths f (Remove projs ps cs fs) = Remove <$> each f projs <*> pure ps <*> (each . paths) f cs <*> each f fs
 	paths f (InfoModules t) = InfoModules <$> paths f t
-	paths f (InfoSymbol q t) = InfoSymbol <$> pure q <*> paths f t
+	paths f (InfoSymbol q t l) = InfoSymbol <$> pure q <*> paths f t <*> pure l
 	paths f (InfoModule q t) = InfoModule <$> pure q <*> paths f t
 	paths f (InfoResolve fpath es) = InfoResolve <$> f fpath <*> pure es
 	paths f (InfoProject (Right proj)) = InfoProject <$> (Right <$> f proj)
 	paths f (InfoSandbox fpath) = InfoSandbox <$> f fpath
 	paths f (Lookup n fpath) = Lookup <$> pure n <*> f fpath
 	paths f (Whois n fpath) = Whois <$> pure n <*> f fpath
-	paths f (ResolveScopeModules fpath) = ResolveScopeModules <$> f fpath
+	paths f (ResolveScopeModules q fpath) = ResolveScopeModules q <$> f fpath
 	paths f (ResolveScope q g fpath) = ResolveScope q g <$> f fpath
 	paths f (Complete n g fpath) = Complete n g <$> f fpath
 	paths f (Lint fs fcts) = Lint <$> each f fs <*> (each . paths) f fcts
@@ -335,6 +332,9 @@ instance Paths TargetFilter where
 	paths f (TargetCabal c) = TargetCabal <$> paths f c
 	paths _ t = pure t
 
+instance Paths [TargetFilter] where
+	paths = each . paths
+
 instance FromCmd Command where
 	cmdP = subparser $ mconcat [
 		cmd "ping" "ping server" (pure Ping),
@@ -356,19 +356,19 @@ instance FromCmd Command where
 			many packageArg <*>
 			many cabalArg <*>
 			many fileArg,
-		cmd "modules" "list modules" (InfoModules <$> cmdP),
+		cmd "modules" "list modules" (InfoModules <$> many cmdP),
 		cmd "packages" "list packages" (pure InfoPackages),
 		cmd "projects" "list projects" (pure InfoProjects),
 		cmd "sandboxes" "list sandboxes" (pure InfoSandboxes),
-		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> cmdP),
-		cmd "module" "get module info" (InfoModule <$> cmdP <*> cmdP),
+		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> many cmdP <*> localsFlag),
+		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP),
 		cmd "resolve" "resolve module scope (or exports)" (InfoResolve <$> fileArg <*> exportsFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> (pathArg $ help "locate sandbox in parent of this path")),
 		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
 		cmd "whois" "get info for symbol" (Whois <$> strArgument idm <*> ctx),
 		cmd "scope" "get declarations accessible from module or within a project" (
-			subparser (cmd "modules" "get modules accessible from module or within a project" (ResolveScopeModules <$> ctx)) <|>
+			subparser (cmd "modules" "get modules accessible from module or within a project" (ResolveScopeModules <$> cmdP <*> ctx)) <|>
 			ResolveScope <$> cmdP <*> globalFlag <*> ctx),
 		cmd "complete" "show completions for input" (Complete <$> strArgument idm <*> wideFlag <*> ctx),
 		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
@@ -404,7 +404,7 @@ instance FromCmd FileContents where
 	cmdP = option readJSON (long "contents")
 
 instance FromCmd TargetFilter where
-	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> cabalArg, TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand"), pure TargetAny]
+	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> cabalArg, TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand")]
 
 instance FromCmd SearchQuery where
 	cmdP = SearchQuery <$> (strArgument idm <|> pure "") <*> (asum [
@@ -430,7 +430,7 @@ hayooPagesArg = option auto (long "pages" <> metavar "count" <> short 'n' <> hel
 hlintOpts = many (strOption (long "hlint" <> metavar "option" <> short 'h' <> help "options to pass to hlint"))
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
--- localsArg = switch (long "locals" <> short 'l' <> help "look in local declarations")
+localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = strOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
 packageArg = strOption (long "package" <> metavar "name" <> help "module package")
 pathArg f = strOption (long "path" <> metavar "path" <> short 'p' <> f)
@@ -455,18 +455,18 @@ instance ToJSON Command where
 	toJSON (RefineDocs projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
 	toJSON (InferTypes projs fs ms) = cmdJson "infer" ["projects" .= projs, "files" .= fs, "modules" .= ms]
 	toJSON (Remove projs packages cabals fs) = cmdJson "remove" ["projects" .= projs, "packages" .= packages, "sandboxes" .= cabals, "files" .= fs]
-	toJSON (InfoModules tf) = cmdJson "modules" ["filter" .= tf]
+	toJSON (InfoModules tf) = cmdJson "modules" ["filters" .= tf]
 	toJSON InfoPackages = cmdJson "packages" []
 	toJSON InfoProjects = cmdJson "projects" []
 	toJSON InfoSandboxes = cmdJson "sandboxes" []
-	toJSON (InfoSymbol q tf) = cmdJson "symbol" ["query" .= q, "filter" .= tf]
-	toJSON (InfoModule q tf) = cmdJson "module" ["query" .= q, "filter" .= tf]
+	toJSON (InfoSymbol q tf l) = cmdJson "symbol" ["query" .= q, "filters" .= tf, "locals" .= l]
+	toJSON (InfoModule q tf) = cmdJson "module" ["query" .= q, "filters" .= tf]
 	toJSON (InfoResolve f es) = cmdJson "resolve" ["file" .= f, "exports" .= es]
 	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
 	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
 	toJSON (Lookup n f) = cmdJson "lookup" ["name" .= n, "file" .= f]
 	toJSON (Whois n f) = cmdJson "whois" ["name" .= n, "file" .= f]
-	toJSON (ResolveScopeModules f) = cmdJson "scope modules" ["file" .= f]
+	toJSON (ResolveScopeModules q f) = cmdJson "scope modules" ["query" .= q, "file" .= f]
 	toJSON (ResolveScope q g f) = cmdJson "scope" ["query" .= q, "global" .= g, "file" .= f]
 	toJSON (Complete q w f) = cmdJson "complete" ["prefix" .= q, "wide" .= w, "file" .= f]
 	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
@@ -502,18 +502,18 @@ instance FromJSON Command where
 			v .:: "packages" <*>
 			v .:: "sandboxes" <*>
 			v .:: "files"),
-		guardCmd "modules" v *> (InfoModules <$> v .:: "filter"),
+		guardCmd "modules" v *> (InfoModules <$> v .:: "filters"),
 		guardCmd "packages" v *> pure InfoPackages,
 		guardCmd "projects" v *> pure InfoProjects,
 		guardCmd "sandboxes" v *> pure InfoSandboxes,
-		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .:: "filter"),
-		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .:: "filter"),
+		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .:: "filters" <*> v .:: "locals"),
+		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .:: "filters"),
 		guardCmd "resolve" v *> (InfoResolve <$> v .:: "file" <*> v .:: "exports"),
 		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
 		guardCmd "lookup" v *> (Lookup <$> v .:: "name" <*> v .:: "file"),
 		guardCmd "whois" v *> (Whois <$> v .:: "name" <*> v .:: "file"),
-		guardCmd "scope modules" v *> (ResolveScopeModules <$> v .:: "file"),
+		guardCmd "scope modules" v *> (ResolveScopeModules <$> v .:: "query" <*> v .:: "file"),
 		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> v .:: "global" <*> v .:: "file"),
 		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> v .:: "wide" <*> v .:: "file"),
 		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> v .:: "page" <*> v .:: "pages"),
@@ -580,10 +580,9 @@ instance ToJSON TargetFilter where
 	toJSON (TargetPackage pname) = object ["package" .= pname]
 	toJSON TargetSourced = toJSON ("sourced" :: String)
 	toJSON TargetStandalone = toJSON ("standalone" :: String)
-	toJSON TargetAny = toJSON ()
 
 instance FromJSON TargetFilter where
-	parseJSON j = obj j <|> str' <|> any' where
+	parseJSON j = obj j <|> str' where
 		obj = withObject "target-filter" $ \v -> asum [
 			TargetProject <$> v .:: "project",
 			TargetFile <$> v .:: "file",
@@ -597,7 +596,6 @@ instance FromJSON TargetFilter where
 				"sourced" -> return TargetSourced
 				"standalone" -> return TargetStandalone
 				_ -> empty
-		any' = (\() -> TargetAny) <$> parseJSON j
 
 instance ToJSON SearchQuery where
 	toJSON (SearchQuery q st) = object ["input" .= q, "type" .= st]
