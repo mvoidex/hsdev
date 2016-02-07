@@ -40,10 +40,9 @@ fromIdea idea = Note {
 	_noteSource = FileModule (srcSpanFilename src) Nothing,
 	_noteRegion = Region (Position (srcSpanStartLine src) (srcSpanStartColumn src)) (Position (srcSpanEndLine src) (srcSpanEndColumn src)),
 	_noteLevel = Just $ case ideaSeverity idea of
-		HL.Ignore -> Hint
-		HL.Suggestion -> Hint
 		HL.Warning -> Warning
-		HL.Error -> Error,
+		HL.Error -> Error
+		_ -> Hint,
 	_note = OutputMessage {
 		_message = ideaHint idea,
 		_messageSuggestion = ideaTo idea } }
