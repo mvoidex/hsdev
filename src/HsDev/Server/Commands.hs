@@ -285,7 +285,7 @@ processClient name receive send' copts = do
 							| silent = return ()
 							| otherwise = traverse (const $ mmap' noFile (Response $ Left n)) m >>= answer
 					commandLog copts Log.Trace $ name ++ " >> " ++ fromUtf8 (encode c)
-					resp <- fmap result $ handleTimeout tm $ handleError $
+					resp <- fmap (Response . Right) $ handleTimeout tm $ handleError $
 						processRequest
 							(copts {
 								commandRoot = cdir,
