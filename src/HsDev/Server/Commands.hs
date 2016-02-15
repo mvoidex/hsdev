@@ -99,7 +99,7 @@ sendCommand copts noFile c onNotification = do
 		parseResponse h str = case eitherDecode str of
 			Left e -> return $ Error e $ M.fromList [("response", toJSON $ fromUtf8 str)]
 			Right (Message _ r) -> do
-				r' <- unMmap r
+				Response r' <- unMmap r
 				case r' of
 					Left n -> onNotification n >> peekResponse h
 					Right res -> return res
@@ -227,9 +227,9 @@ runServerCommand (Connect copts) = do
 		parseResp h str = case eitherDecode str of
 			Left e -> putStrLn $ "Can't decode response: " ++ e
 			Right (Message i r) -> do
-				r' <- unMmap r
+				Response r' <- unMmap r
 				putStrLn $ fromMaybe "_" i ++ ":" ++ fromUtf8 (encodeValue r')
-				case r of
+				case unResponse r of
 					Left _ -> waitResp h
 					_ -> return ()
 runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue >>= printResult where
@@ -283,9 +283,9 @@ processClient name receive send' copts = do
 					let
 						onNotify n
 							| silent = return ()
-							| otherwise = traverse (const $ mmap' noFile (Left n)) m >>= answer
+							| otherwise = traverse (const $ mmap' noFile (Response $ Left n)) m >>= answer
 					commandLog copts Log.Trace $ name ++ " >> " ++ fromUtf8 (encode c)
-					resp <- fmap Right $ handleTimeout tm $ handleError $
+					resp <- fmap result $ handleTimeout tm $ handleError $
 						processRequest
 							(copts {
 								commandRoot = cdir,
@@ -372,7 +372,7 @@ mmap mmapPool r
 -- | If response points to mmap, get its contents and parse
 unMmap :: Response -> IO Response
 #if mingw32_HOST_OS
-unMmap (Right (Result v))
+unMmap (Response (Right (Result v)))
 	| Just (MmapFile f) <- parseMaybe parseJSON v = do
 		cts <- runExceptT (fmap L.fromStrict (readMapFile f))
 		case cts of

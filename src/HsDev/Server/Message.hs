@@ -4,7 +4,7 @@ module HsDev.Server.Message (
 	Message(..),
 	messagesById,
 	Notification(..), Result(..), ResultPart(..),
-	Response, isNotification, notification, result, responseError, resultPart,
+	Response(..), isNotification, notification, result, responseError, resultPart,
 	groupResponses, responsesById
 	) where
 
@@ -80,38 +80,38 @@ instance ToJSON ResultPart where
 instance FromJSON ResultPart where
 	parseJSON = withObject "result-part" $ \v -> ResultPart <$> v .:: "result-part"
 
-type Response = Either Notification Result
+newtype Response = Response { unResponse :: Either Notification Result }
 
 isNotification :: Response -> Bool
-isNotification = either (const True) (const False)
+isNotification = either (const True) (const False) . unResponse
 
 notification :: ToJSON a => a -> Response
-notification = Left . Notification . toJSON
+notification = Response . Left . Notification . toJSON
 
 result :: ToJSON a => a -> Response
-result = Right . Result . toJSON
+result = Response . Right . Result . toJSON
 
 responseError :: String -> [Pair] -> Response
-responseError e ds = Right $ Error e $ M.fromList $ map (first unpack) ds
+responseError e ds = Response $ Right $ Error e $ M.fromList $ map (first unpack) ds
 
 resultPart :: ToJSON a => a  -> Notification
 resultPart = Notification . toJSON . ResultPart . toJSON
 
 instance ToJSON Response where
-	toJSON (Left n) = toJSON n
-	toJSON (Right r) = toJSON r
+	toJSON (Response (Left n)) = toJSON n
+	toJSON (Response (Right r)) = toJSON r
 
 instance FromJSON Response where
-	parseJSON v = (Left <$> parseJSON v) <|> (Right <$> parseJSON v)
+	parseJSON v = Response <$> ((Left <$> parseJSON v) <|> (Right <$> parseJSON v))
 
 groupResponses :: [Response] -> [([Notification], Result)]
 groupResponses = unfoldr break' where
 	break' :: [Response] -> Maybe (([Notification], Result), [Response])
 	break' [] = Nothing
-	break' cs =  Just ((lefts ns, r), drop 1 cs') where
-		(ns, cs') = break isRight cs
+	break' cs =  Just ((lefts (map unResponse ns), r), drop 1 cs') where
+		(ns, cs') = break (isRight . unResponse) cs
 		r = case cs' of
-			(Right r' : _) -> r'
+			(Response (Right r') : _) -> r'
 			[] -> Error "groupResponses: no result" mempty
 			_ -> error "groupResponses: impossible happened"
 
