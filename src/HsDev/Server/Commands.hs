@@ -166,30 +166,31 @@ runServerCommand (Run sopts) = runServer sopts $ \copts -> do
 				-- NOTE: killing listener doesn't work on Windows, because accept blocks async exceptions
 				signalQSem listenerSem
 
-		s <- socket AF_INET Stream defaultProtocol
-		bind s $ SockAddrInet (fromIntegral $ serverPort sopts) iNADDR_ANY
-		listen s maxListenQueue
-		forever $ logAsync (commandLog copts Log.Fatal) $ logIO "exception: " (commandLog copts Log.Error) $ do
-			commandLog copts Log.Trace "accepting connection"
-			s' <- fst <$> accept s
-			commandLog copts Log.Trace $ "accepted " ++ show s'
-			void $ forkIO $ Log.scopeLog (commandLogger copts) (T.pack $ show s') $
-				logAsync (commandLog copts Log.Fatal) $ logIO ("exception: ") (commandLog copts Log.Error) $
-					flip finally (close s') $
-						bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-							me <- myThreadId
-							let
-								timeoutWait = do
-									notDone <- isEmptyMVar done
-									when notDone $ do
-										commandLog copts Log.Trace $ "waiting for " ++ show s' ++ " to complete"
-										waitAsync <- async $ do
-											threadDelay 1000000
-											killThread me
-										void $ waitCatch waitAsync
-							F.putChan clientChan timeoutWait
-							processClientSocket s' (copts {
-								commandExit = serverStop })
+		bracket (socket AF_INET Stream defaultProtocol) close $ \s -> do
+			setSocketOption s ReuseAddr 1
+			bind s $ SockAddrInet (fromIntegral $ serverPort sopts) iNADDR_ANY
+			listen s maxListenQueue
+			forever $ logAsync (commandLog copts Log.Fatal) $ logIO "exception: " (commandLog copts Log.Error) $ do
+				commandLog copts Log.Trace "accepting connection"
+				s' <- fst <$> accept s
+				commandLog copts Log.Trace $ "accepted " ++ show s'
+				void $ forkIO $ Log.scopeLog (commandLogger copts) (T.pack $ show s') $
+					logAsync (commandLog copts Log.Fatal) $ logIO ("exception: ") (commandLog copts Log.Error) $
+						flip finally (close s') $
+							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
+								me <- myThreadId
+								let
+									timeoutWait = do
+										notDone <- isEmptyMVar done
+										when notDone $ do
+											commandLog copts Log.Trace $ "waiting for " ++ show s' ++ " to complete"
+											waitAsync <- async $ do
+												threadDelay 1000000
+												killThread me
+											void $ waitCatch waitAsync
+								F.putChan clientChan timeoutWait
+								processClientSocket s' (copts {
+									commandExit = serverStop })
 
 	commandLog copts Log.Trace "waiting for accept thread"
 	waitQSem listenerSem
