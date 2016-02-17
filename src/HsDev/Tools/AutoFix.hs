@@ -75,7 +75,7 @@ type CorrectorMatch = Note OutputMessage -> Maybe (Note Correction)
 
 correctors :: [CorrectorMatch]
 correctors = [
-	match "^The (?:qualified )?import of `([\\w\\.]+)' is redundant" $ \_ rgn -> Correction
+	match "^The (?:qualified )?import of .([\\w\\.]+). is redundant" $ \_ rgn -> Correction -- There are different quotes in Windows/Linux
 		"Redundant import"
 		(cut
 			(expandLines rgn)),
