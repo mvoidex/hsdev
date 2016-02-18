@@ -75,18 +75,12 @@ unwatchDir w f = do
 	maybe (return ()) snd stop
 	return $ isJust stop
 
--- | Check if dir is watching
+-- | Check if we are watching dir
 isWatchingDir :: Watcher a -> FilePath -> IO Bool
 isWatchingDir w f = do
 	f' <- canonicalizePath f
 	dirs <- readMVar (watcherDirs w)
-	return $ isWatchingDir' dirs f'
-	where
-		isWatchingDir' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
-		isWatchingDir' m dir
-			| Just (_, _) <- M.lookup dir m = True
-			| isDrive dir = False
-			| otherwise = isWatchingDir' m (takeDirectory dir)
+	return $ isWatchingDir' dirs f' || isWatchingParents' dirs f'
 
 -- | Watch directory tree
 watchTree :: Watcher a -> FilePath -> (Event -> Bool) -> a -> IO ()
@@ -114,18 +108,12 @@ unwatchTree w f = do
 	maybe (return ()) snd stop
 	return $ isJust stop
 
--- | Check if tree is watching
+-- | Check if we are watching tree
 isWatchingTree :: Watcher a -> FilePath -> IO Bool
 isWatchingTree w f = do
 	f' <- canonicalizePath f
 	dirs <- readMVar (watcherDirs w)
-	return $ isWatchingTree' dirs f'
-	where
-		isWatchingTree' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
-		isWatchingTree' m dir
-			| Just (True, _) <- M.lookup dir m = True
-			| isDrive dir = False
-			| otherwise = isWatchingTree' m (takeDirectory dir)
+	return $ isWatchingTree' dirs f' || isWatchingParents' dirs f'
 
 -- | Read next event
 readEvent :: Watcher a -> IO (a, Event)
@@ -145,3 +133,19 @@ fromEvent e = Event t (FS.eventPath e) (utcTimeToPOSIXSeconds $ FS.eventTime e) 
 		FS.Added _ _ -> Added
 		FS.Modified _ _ -> Modified
 		FS.Removed _ _ -> Removed
+
+isWatchingDir' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
+isWatchingDir' m dir
+	| Just (_, _) <- M.lookup dir m = True
+	| isDrive dir = False
+	| otherwise = isWatchingDir' m (takeDirectory dir)
+
+isWatchingTree' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
+isWatchingTree' m dir
+	| Just (True, _) <- M.lookup dir m = True
+	| isDrive dir = False
+	| otherwise = isWatchingTree' m (takeDirectory dir)
+
+isWatchingParents' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
+isWatchingParents' m dir = or (map (isWatchingTree' m) parents) where
+	parents = takeWhile (not . isDrive) $ iterate takeDirectory dir

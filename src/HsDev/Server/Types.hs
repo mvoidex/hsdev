@@ -140,6 +140,17 @@ instance FromCmd ClientOpts where
 		(timeoutArg <|> pure (clientTimeout def)) <*>
 		silentFlag
 
+portArg :: Parser Int
+timeoutArg :: Parser Int
+logArg :: Parser FilePath
+logConfigArg :: Parser String
+cacheArg :: Parser FilePath
+noFileFlag :: Parser Bool
+loadFlag :: Parser Bool
+prettyFlag :: Parser Bool
+stdinFlag :: Parser Bool
+silentFlag :: Parser Bool
+
 portArg = option auto (long "port" <> metavar "number" <> help "connection port")
 timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
 logArg = strOption (long "log" <> short 'l' <> metavar "file" <> help "log file")
@@ -416,6 +427,28 @@ instance FromCmd SearchQuery where
 
 readJSON :: FromJSON a => ReadM a
 readJSON = str >>= maybe (readerError "Can't parse JSON argument") return . decode . L.pack
+
+cabalArg :: Parser Cabal
+ctx :: Parser FilePath
+depsArg :: Parser String
+docsFlag :: Parser Bool
+exportsFlag :: Parser Bool
+fileArg :: Parser FilePath
+ghcOpts :: Parser [String]
+globalFlag :: Parser Bool
+hayooPageArg :: Parser Int
+hayooPagesArg :: Parser Int
+hlintOpts :: Parser [String]
+holdFlag :: Parser Bool
+inferFlag :: Parser Bool
+localsFlag :: Parser Bool
+moduleArg :: Parser String
+packageArg :: Parser String
+pathArg :: Mod OptionFields String -> Parser FilePath
+projectArg :: Parser String
+pureFlag :: Parser Bool
+sandboxArg :: Parser String
+wideFlag :: Parser Bool
 
 cabalArg = flag' Cabal (long "cabal") <|> (Sandbox <$> sandboxArg)
 ctx = fileArg

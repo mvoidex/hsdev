@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP, OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Base (
 	initLog, runServer, Server, startServer, inServer,

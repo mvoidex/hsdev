@@ -18,9 +18,7 @@ import HsDev.Tools.GhcMod.InferType (infer)
 
 import Tool
 
-data Opts = Opts {
-	optsWhat :: Maybe String,
-	optsGHC :: [String] }
+data Opts = Opts (Maybe String) [String]
 
 opts :: Parser Opts
 opts = Opts <$>

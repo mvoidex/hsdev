@@ -8,10 +8,7 @@ import HsDev.Tools.Hayoo
 
 import Tool
 
-data HayooOpts = HayooOpts {
-	optsQuery :: String,
-	optsPage :: Int,
-	optsPages :: Int }
+data HayooOpts = HayooOpts String Int Int
 
 hayooOpts :: Parser HayooOpts
 hayooOpts = HayooOpts <$>

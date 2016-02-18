@@ -68,10 +68,6 @@ sendCommand copts noFile c onNotification = do
 		Left e -> return $ Error (show e) $ M.fromList []
 		Right r -> return r
 	where
-		encodeValue :: ToJSON a => a -> L.ByteString
-		encodeValue
-			| clientPretty copts = encodePretty
-			| otherwise = encode
 		sendReceive = do
 			curDir <- getCurrentDirectory
 			input <- if clientStdin copts
@@ -82,7 +78,7 @@ sendCommand copts noFile c onNotification = do
 				parseData cts = case eitherDecode cts of
 					Left err -> putStrLn ("Invalid data: " ++ err) >> exitFailure
 					Right v -> return v
-			dat <- traverse parseData input -- FIXME: Not used!
+			_ <- traverse parseData input -- FIXME: Not used!
 
 			s <- socket AF_INET Stream defaultProtocol
 			addr' <- inet_addr "127.0.0.1"
@@ -359,7 +355,7 @@ mmap mmapPool r
 	| otherwise = do
 		rvar <- newEmptyMVar
 		_ <- forkIO $ flip finally (tryPutMVar rvar r) $ void $ withName mmapPool $ \mmapName -> runExceptT $ flip catchError
-			(\e -> liftIO $ void $ tryPutMVar rvar r)
+			(\_ -> liftIO $ void $ tryPutMVar rvar r)
 			(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
 				_ <- tryPutMVar rvar $ result $ MmapFile mmapName
 				-- give 10 seconds for client to read data

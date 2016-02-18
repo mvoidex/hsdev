@@ -6,7 +6,7 @@ module HsDev.Client.Commands (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (view, preview, _Just, from, each)
+import Control.Lens (view, preview, _Just)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.State (gets)
@@ -18,7 +18,6 @@ import Data.Maybe
 import qualified Data.Map as M
 import Data.String (fromString)
 import Data.Text (unpack)
-import Data.Text.Lens (packed)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
 import System.Directory
 import System.FilePath
@@ -54,20 +53,20 @@ runCommandM = liftM toResult . runExceptT where
 
 -- | Run command
 runCommand :: CommandOptions -> Command -> IO Result
-runCommand copts Ping = runCommandM $ return $ object ["message" .= ("pong" :: String)]
+runCommand _ Ping = runCommandM $ return $ object ["message" .= ("pong" :: String)]
 runCommand copts Listen = runCommandM $ liftIO $ commandListenLog copts $
 	mapM_ (\msg -> commandNotify copts (Notification $ object ["message" .= msg]))
 runCommand copts (AddData cts) = runCommandM $ mapM_ updateData cts where
 	updateData (AddedDatabase db) = DB.update (dbVar copts) $ return db
 	updateData (AddedModule m) = DB.update (dbVar copts) $ return $ fromModule m
 	updateData (AddedProject p) = DB.update (dbVar copts) $ return $ fromProject p
-runCommand copts (Scan projs cabals fs paths fcts ghcs' docs' infer') = runCommandM $ do
+runCommand copts (Scan projs cabals fs paths' fcts ghcs' docs' infer') = runCommandM $ do
 	sboxes <- getSandboxes copts cabals
 	updateProcess copts ghcs' docs' infer' $ concat [
 		map (\(FileContents f cts) -> Update.scanFileContents ghcs' f (Just cts)) fcts,
 		map (Update.scanProject ghcs') projs,
 		map (Update.scanFile ghcs') fs,
-		map (Update.scanDirectory ghcs') paths,
+		map (Update.scanDirectory ghcs') paths',
 		map (Update.scanCabal ghcs') sboxes]
 runCommand copts (RefineDocs projs fs ms) = runCommandM $ do
 	projects <- traverse (findProject copts) projs
@@ -89,7 +88,7 @@ runCommand copts (InferTypes projs fs ms) = runCommandM $ do
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess copts [] False False [Update.inferModTypes $ map (getInspected dbval) mods]
-runCommand copts (Remove projs packages cabals fs) = runCommandM $ return $ object ["message" .= ("not implemented" :: String)]
+runCommand _ (Remove _ _ _ _) = runCommandM $ return $ object ["message" .= ("not implemented" :: String)]
 runCommand copts (InfoModules fs) = runCommandM $ do
 	dbval <- getDb copts
 	filter' <- targetFilters copts fs
@@ -99,8 +98,8 @@ runCommand copts InfoPackages = runCommandM $
 runCommand copts InfoProjects = runCommandM $ (toList . databaseProjects) <$> getDb copts
 runCommand copts InfoSandboxes = runCommandM $
 	(ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
-runCommand copts (InfoSymbol sq fs locals) = runCommandM $ do
-	dbval <- liftM (localsDatabase locals) $ getDb copts
+runCommand copts (InfoSymbol sq fs locals') = runCommandM $ do
+	dbval <- liftM (localsDatabase locals') $ getDb copts
 	filter' <- targetFilters copts fs
 	return $ newestPackage $ filterMatch sq $ filter (checkModule filter') $ allDeclarations dbval
 runCommand copts (InfoModule sq fs) = runCommandM $ do
@@ -119,8 +118,8 @@ runCommand copts (InfoResolve fpath exports) = runCommandM $ do
 		Nothing -> commandError "File not found" []
 		Just m -> return $ getScope $ resolveOne cabaldb m
 runCommand copts (InfoProject (Left projName)) = runCommandM $ findProject copts projName
-runCommand copts (InfoProject (Right projPath)) = runCommandM $ liftIO $ searchProject projPath
-runCommand copts (InfoSandbox sandbox) = runCommandM $ liftIO $ searchSandbox sandbox
+runCommand _ (InfoProject (Right projPath)) = runCommandM $ liftIO $ searchProject projPath
+runCommand _ (InfoSandbox sandbox') = runCommandM $ liftIO $ searchSandbox sandbox'
 runCommand copts (Lookup nm fpath) = runCommandM $ do
 	dbval <- getDb copts
 	cabal <- liftIO $ getSandbox fpath
@@ -141,11 +140,11 @@ runCommand copts (Complete input wide fpath) = runCommandM $ do
 	dbval <- getDb copts
 	cabal <- liftIO $ getSandbox fpath
 	mapCommandErrorStr $ completions dbval cabal fpath input wide
-runCommand copts (Hayoo hq p ps) = runCommandM $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
+runCommand _ (Hayoo hq p ps) = runCommandM $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
 	mapCommandErrorStr $ Hayoo.hayoo hq (Just i)
-runCommand copts (CabalList packages) = runCommandM $ mapCommandErrorStr $ Cabal.cabalList packages
-runCommand copts (Lint fs fcts) = runCommandM $ do
+runCommand _ (CabalList packages) = runCommandM $ mapCommandErrorStr $ Cabal.cabalList packages
+runCommand _ (Lint fs fcts) = runCommandM $ do
 	mapCommandErrorStr $ liftM2 (++)
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f c) -> HLint.hlintSource f c) fcts)
@@ -196,8 +195,8 @@ runCommand copts (Types fs fcts ghcs') = runCommandM $ do
 		notes <- inWorkerWith (commandError_ . show) (commandGhc copts)
 			(runExceptT $ Types.fileTypes ghcs' cabal m msrc)
 		either commandError_ return notes
-runCommand copts (GhcMod GhcModLang) = runCommandM $ mapCommandErrorStr GhcMod.langs
-runCommand copts (GhcMod GhcModFlags) = runCommandM $ mapCommandErrorStr GhcMod.flags
+runCommand _ (GhcMod GhcModLang) = runCommandM $ mapCommandErrorStr GhcMod.langs
+runCommand _ (GhcMod GhcModFlags) = runCommandM $ mapCommandErrorStr GhcMod.flags
 runCommand copts (GhcMod (GhcModType (Position line column) fpath ghcs')) = runCommandM $ do
 	dbval <- getDb copts
 	cabal <- liftIO $ getSandbox fpath
@@ -226,7 +225,7 @@ runCommand copts (GhcMod (GhcModCheckLint fs ghcs' hlints')) = runCommandM $ do
 			checked <- GhcMod.check (ghcs' ++ moduleOpts (allPackages dbval) m') cabal [file] mproj
 			linted <- GhcMod.lint hlints' file
 			return $ checked ++ linted
-runCommand copts (AutoFix (AutoFixShow ns)) = runCommandM $ return $ AutoFix.corrections ns
+runCommand _ (AutoFix (AutoFixShow ns)) = runCommandM $ return $ AutoFix.corrections ns
 runCommand copts (AutoFix (AutoFixFix ns rest isPure)) = runCommandM $ do
 	files <- liftM (ordNub . sort) $ mapM (findPath copts) $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
 	let
@@ -278,7 +277,7 @@ commandStrMsg m = CommandError m []
 
 -- | Find sandbox by path
 findSandbox :: MonadIO m => CommandOptions -> Cabal -> ExceptT CommandError m Cabal
-findSandbox copts Cabal = return Cabal
+findSandbox _ Cabal = return Cabal
 findSandbox copts (Sandbox f) = (findPath copts >=> mapCommandErrorStr . liftIO . getSandbox) f
 
 -- | Canonicalize paths
@@ -333,26 +332,10 @@ inDeps (proj, src, cabal) = liftM2 (&&) (restrictCabal cabal) deps' where
 		Nothing -> inDepsOfProject proj
 		Just src' -> inDepsOfFile proj src'
 
-cacheLoad :: CommandOptions -> IO (Either String Database) -> CommandM ()
-cacheLoad copts act = liftIO $ do
-	db' <- act
-	case db' of
-		Left e -> commandLog copts Log.Error e
-		Right database -> DB.update (dbVar copts) (return database)
-
 -- | Bring locals to top scope to search within them if 'locals' flag set
 localsDatabase :: Bool -> Database -> Database
 localsDatabase True = databaseLocals
 localsDatabase False = id
-
--- | Select newest packages if 'no-last' flag not set
-newest :: Symbol a => Bool -> [a] -> [a]
-newest True = newestPackage
-newest False = id
-
--- | Convert from just of throw
-forceJust :: MonadIO m => String -> ExceptT CommandError m (Maybe a) -> ExceptT CommandError m a
-forceJust msg act = act >>= maybe (throwError $ commandStrMsg msg) return
 
 -- | Get actual DB state
 getDb :: MonadIO m => CommandOptions -> m Database

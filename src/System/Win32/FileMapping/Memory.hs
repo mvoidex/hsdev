@@ -3,7 +3,6 @@ module System.Win32.FileMapping.Memory (
 	withMapFile, readMapFile
 	) where
 
-import Control.Concurrent
 import Control.Monad.Catch
 import Control.Monad.Cont
 import Control.Monad.Except

@@ -41,20 +41,18 @@ import Data.Maybe (mapMaybe, isJust, fromMaybe)
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath, doesFileExist)
 import qualified System.Log.Simple as Log
-import qualified System.Log.Simple.Base as Log (scopeLog)
 
 import Control.Concurrent.Worker (inWorker)
 import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async hiding (Event)
 import HsDev.Display
-import HsDev.Inspect (inspectDocs, inspectDocsGhc, getDefines)
+import HsDev.Inspect (inspectDocs, inspectDocsGhc)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker (ghcWorker)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
-import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (liftEIO, isParent, ordNub)
