@@ -57,7 +57,7 @@ lisp n = R.choice [
 
 		string :: R.ReadP P.String
 		string = (R.<++ R.pfail) $ do
-			('"':_) <- R.look
+			('\"':_) <- R.look
 			readable n
 
 		number :: R.ReadP Scientific

@@ -10,9 +10,11 @@ module HsDev.Server.Commands (
 	module HsDev.Server.Types
 	) where
 
+import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Exception
+import Control.Lens (set, traverseOf, view, over, Lens', Lens, _1, _2, _Left)
 import Control.Monad
 import Control.Monad.Except
 import Data.Aeson hiding (Result, Error)
@@ -23,7 +25,6 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import qualified Data.Map as M
 import Data.Maybe
 import qualified Data.Text as T (pack)
-import Data.Traversable (for)
 import Network.Socket hiding (connect)
 import qualified Network.Socket as Net hiding (send)
 import qualified Network.Socket.ByteString as Net (send)
@@ -36,6 +37,7 @@ import qualified System.Log.Simple.Base as Log
 
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
+import Data.Lisp
 import Text.Format ((~~))
 import System.Directory.Paths
 
@@ -243,6 +245,36 @@ findPath copts f = liftIO $ canonicalizePath (normalise f') where
 		| isRelative f = commandRoot copts </> f
 		| otherwise = f
 
+type Msg a = (Bool, a)
+
+isLisp :: Lens' (Msg a) Bool
+isLisp = _1
+
+msg :: Lens (Msg a) (Msg b) a b
+msg = _2
+
+jsonMsg :: a -> Msg a
+jsonMsg = (,) False
+
+lispMsg :: a -> Msg a
+lispMsg = (,) True
+
+-- | Decode lisp or json request
+decodeMessage :: FromJSON a => ByteString -> Either (Msg String) (Msg (Message a))
+decodeMessage bstr = over _Left decodeType' decodeMsg' where
+	decodeType'
+		| isLisp' = lispMsg
+		| otherwise = jsonMsg
+	decodeMsg' = (lispMsg <$> decodeLisp bstr) <|> (jsonMsg <$> eitherDecode bstr)
+	isLisp' = fromMaybe False $ mplus (try' eitherDecode False) (try' decodeLisp True)
+	try' :: (ByteString -> Either String Value) -> Bool -> Maybe Bool
+	try' f l = either (const Nothing) (const $ Just l) $ f bstr
+
+encodeMessage :: ToJSON a => Msg (Message a) -> ByteString
+encodeMessage m
+	| view isLisp m = encodeLisp $ view msg m
+	| otherwise = encode $ view msg m
+
 -- | Process request, notifications can be sent during processing
 processRequest :: CommandOptions -> (Notification -> IO ()) -> Command -> IO Result
 processRequest copts onNotify c = paths (findPath copts) c >>= Client.runCommand (copts { commandNotify = onNotify })
@@ -252,13 +284,13 @@ processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> CommandOpti
 processClient name receive send' copts = do
 	commandLog copts Log.Info $ name ++ " connected"
 	respChan <- newChan
-	void $ forkIO $ getChanContents respChan >>= mapM_ (send' . encode)
+	void $ forkIO $ getChanContents respChan >>= mapM_ (send' . encodeMessage)
 	linkVar <- newMVar $ return ()
 	let
-		answer :: Message Response -> IO ()
-		answer m@(Message _ r) = do
-			unless (isNotification r) $
-				commandLog copts Log.Trace $ " << " ++ ellipsis (fromUtf8 (encode r))
+		answer :: Msg (Message Response) -> IO ()
+		answer m = do
+			unless (isNotification $ view (msg . message) m) $
+				commandLog copts Log.Trace $ " << " ++ ellipsis (fromUtf8 (encode $ view (msg . message) m))
 			writeChan respChan m
 			where
 				ellipsis :: String -> String
@@ -269,18 +301,17 @@ processClient name receive send' copts = do
 	flip finally (disconnected linkVar) $ forever $ do
 		req' <- receive
 		commandLog copts Log.Trace $ " => " ++ fromUtf8 req'
-		case eitherDecode req' of
-			Left _ -> do
-				commandLog copts Log.Warning $ "Invalid request: " ++ fromUtf8 req'
-				answer $ Message Nothing $ responseError "Invalid request" [
-					"request" .= fromUtf8 req']
-			Right m -> Log.scopeLog (commandLogger copts) (T.pack $ fromMaybe "_" (messageId m)) $ do
-				resp' <- for m $ \(Request c cdir noFile tm silent) -> do
+		case decodeMessage req' of
+			Left em -> do
+				commandLog copts Log.Warning $ "Invalid request {}" ~~ fromUtf8 req'
+				answer $ set msg (Message Nothing $ responseError "Invalid request" ["request" .= fromUtf8 req']) em
+			Right m -> Log.scopeLog (commandLogger copts) (T.pack $ fromMaybe "_" (view (msg . messageId) m)) $ do
+				resp' <- flip (traverseOf (msg . message)) m $ \(Request c cdir noFile tm silent) -> do
 					let
 						onNotify n
 							| silent = return ()
-							| otherwise = traverse (const $ mmap' noFile (Response $ Left n)) m >>= answer
-					commandLog copts Log.Trace $ name ++ " >> " ++ fromUtf8 (encode c)
+							| otherwise = traverseOf (msg . message) (const $ mmap' noFile (Response $ Left n)) m >>= answer
+					commandLog copts Log.Trace $ "{} >> {}" ~~ name ~~ fromUtf8 (encode c)
 					resp <- fmap (Response . Right) $ handleTimeout tm $ handleError $
 						processRequest
 							(copts {
@@ -351,18 +382,18 @@ instance FromJSON MmapFile where
 -- | Push message to mmap and return response which points to this mmap
 mmap :: Pool -> Response -> IO Response
 mmap mmapPool r
-	| L.length msg <= 1024 = return r
+	| L.length msg' <= 1024 = return r
 	| otherwise = do
 		rvar <- newEmptyMVar
 		_ <- forkIO $ flip finally (tryPutMVar rvar r) $ void $ withName mmapPool $ \mmapName -> runExceptT $ flip catchError
 			(\_ -> liftIO $ void $ tryPutMVar rvar r)
-			(withMapFile mmapName (L.toStrict msg) $ liftIO $ do
+			(withMapFile mmapName (L.toStrict msg') $ liftIO $ do
 				_ <- tryPutMVar rvar $ result $ MmapFile mmapName
 				-- give 10 seconds for client to read data
 				threadDelay 10000000)
 		takeMVar rvar
 	where
-		msg = encode r
+		msg' = encode r
 #endif
 
 -- | If response points to mmap, get its contents and parse

@@ -1,7 +1,7 @@
-{-# LANGUAGE OverloadedStrings, DeriveFunctor, TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings, DeriveFunctor, TypeSynonymInstances, FlexibleInstances, TemplateHaskell #-}
 
 module HsDev.Server.Message (
-	Message(..),
+	Message(..), messageId, message,
 	messagesById,
 	Notification(..), Result(..), ResultPart(..),
 	Response(..), isNotification, notification, result, responseError, resultPart,
@@ -10,6 +10,7 @@ module HsDev.Server.Message (
 
 import Control.Arrow (first)
 import Control.Applicative
+import Control.Lens (makeLenses)
 import Control.Monad (join)
 import Data.Aeson hiding (Error, Result)
 import Data.Aeson.Types (Pair)
@@ -23,9 +24,11 @@ import HsDev.Util ((.::), (.::?), objectUnion)
 
 -- | Message with id to link request and response
 data Message a = Message {
-	messageId :: Maybe String,
-	message :: a }
+	_messageId :: Maybe String,
+	_message :: a }
 		deriving (Eq, Ord, Functor)
+
+makeLenses ''Message
 
 instance ToJSON a => ToJSON (Message a) where
 	toJSON (Message i m) = object ["id" .= i] `objectUnion` toJSON m
@@ -42,7 +45,7 @@ instance Traversable Message where
 
 -- | Get messages by id
 messagesById :: Maybe String -> [Message a] -> [a]
-messagesById i = map message . filter ((== i) . messageId)
+messagesById i = map _message . filter ((== i) . _messageId)
 
 -- | Notification from server
 data Notification = Notification Value
