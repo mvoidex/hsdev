@@ -15,12 +15,15 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
+import Data.Default
 import qualified Data.Map as M
 import Data.Maybe
+import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T (pack, unpack)
 import System.Log.Simple hiding (Level(..), Message(..), Command(..))
 import qualified System.Log.Simple.Base as Log
+import qualified System.Log.Simple as Log
 
 import qualified Control.Concurrent.FiniteChan as F
 import System.Directory.Paths (canonicalize)
@@ -46,9 +49,8 @@ import System.Posix.Process
 import System.Posix.IO
 #endif
 
-
 -- | Inits log chan and returns functions (print message, wait channel)
-initLog :: ServerOpts -> IO (Log, Log.Level -> String -> IO (), ([String] -> IO ()) -> IO (), IO ())
+initLog :: ServerOpts -> IO (Log, Log.Level -> String -> IO (), IO [String], IO ())
 initLog sopts = do
 	msgs <- F.newChan
 	l <- newLog (constant [rule']) $ concat [
@@ -57,9 +59,7 @@ initLog sopts = do
 		maybeToList $ (logger text . file) <$> serverLog sopts]
 	Log.writeLog l Log.Info ("Log politics: low = {}, high = {}" ~~ logLow ~~ logHigh)
 	let
-		listenLog f = logException "listen log" (F.putChan msgs) $ do
-			msgs' <- F.dupChan msgs
-			F.readChan msgs' >>= f
+		listenLog = F.dupChan msgs >>= F.readChan
 	return (l, \lev -> writeLog l lev . T.pack, listenLog, stopLog l)
 	where
 		rule' :: Log.Rule
@@ -69,8 +69,9 @@ initLog sopts = do
 instance FormatBuild Log.Level where
 
 -- | Run server
-runServer :: ServerOpts -> (CommandOptions -> IO ()) -> IO ()
+runServer :: ServerOpts -> ServerM IO () -> IO ()
 runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> Log.scopeLog logger' (T.pack "hsdev") $ Watcher.withWatcher $ \watcher -> do
+	waitSem <- newQSem 0
 	db <- DB.newAsync
 	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
 		outputStr Log.Info $ "Loading cache from " ++ cdir
@@ -86,11 +87,10 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 	ghcmodw <- ghcModMultiWorker
 	defs <- getDefines
 	let
-		copts = CommandOptions
+		session = Session
 			db
-			(writeCache sopts outputStr)
-			(readCache sopts outputStr)
-			"."
+			(writeCache sopts)
+			(readCache sopts)
 			outputStr
 			logger'
 			listenLog
@@ -102,55 +102,61 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 			ghcw
 			ghciw
 			ghcmodw
-			(const $ return ())
-			(return ())
-			(return ())
-			(return ())
+			(do
+				outputStr Log.Trace "stopping server"
+				signalQSem waitSem)
+			(waitQSem waitSem)
 			defs
-	_ <- forkIO $ Update.onEvent watcher (Update.processEvent $ Update.settings copts [] False False)
-	act copts
+	_ <- forkIO $ Update.onEvent watcher $ \w e -> withSession session $
+		void $ Client.runClient def $ Update.processEvent def w e
+	runReaderT (runServerM act) session
 
-type Server = Worker (ReaderT CommandOptions IO)
+type Server = Worker (ServerM IO)
 
 startServer :: ServerOpts -> IO Server
-startServer sopts = startWorker (runServer sopts . runReaderT) id id
+startServer sopts = startWorker (runServer sopts) id id
 
-inServer :: Server -> Command -> IO Result
-inServer srv c = do
+inServer :: Server -> CommandOptions -> Command -> IO Result
+inServer srv copts c = do
 	c' <- canonicalize c
-	inWorker srv (ReaderT (`Client.runCommand` c'))
+	inWorker srv (Client.runClient copts $ Client.runCommand c')
 
 chaner :: F.Chan String -> Consumer Text
 chaner ch = Consumer withChan where
 	withChan f = f (F.putChan ch . T.unpack)
 
 -- | Perform action on cache
-withCache :: ServerOpts -> a -> (FilePath -> IO a) -> IO a
+withCache :: Monad m => ServerOpts -> a -> (FilePath -> m a) -> m a
 withCache sopts v onCache = case serverCache sopts of
 	Nothing -> return v
 	Just cdir -> onCache cdir
 
-writeCache :: ServerOpts -> (Log.Level -> String -> IO ()) -> Database -> IO ()
-writeCache sopts logMsg' d = withCache sopts () $ \cdir -> do
-	logMsg' Log.Info $ "writing cache to " ++ cdir
-	logIO "cache writing exception: " (logMsg' Log.Error) $ do
+writeCache :: SessionMonad m => ServerOpts -> Database -> m ()
+writeCache sopts db = withCache sopts () $ \cdir -> do
+	Log.log Log.Info $ "writing cache to {}" ~~ cdir
+	logIO "cache writing exception: " (Log.log Log.Error . fromString) $ do
 		let
-			sd = structurize d
-		SC.dump cdir sd
-		forM_ (M.keys (structuredCabals sd)) $ \c -> logMsg' Log.Debug ("cache write: cabal " ++ show c)
-		forM_ (M.keys (structuredProjects sd)) $ \p -> logMsg' Log.Debug ("cache write: project " ++ p)
+			sd = structurize db
+		liftIO $ SC.dump cdir sd
+		forM_ (M.keys (structuredCabals sd)) $ \c -> Log.log Log.Debug ("cache write: cabal {}" ~~ show c)
+		forM_ (M.keys (structuredProjects sd)) $ \p -> Log.log Log.Debug ("cache write: project {}" ~~ p)
 		case allModules (structuredFiles sd) of
 			[] -> return ()
-			ms -> logMsg' Log.Debug $ "cache write: " ++ show (length ms) ++ " files"
-	logMsg' Log.Info $ "cache saved to " ++ cdir
+			ms -> Log.log Log.Debug $ "cache write: {} files" ~~ length ms
+	Log.log Log.Info $ "cache saved to {}" ~~ cdir
 
-readCache :: ServerOpts -> (Log.Level -> String -> IO ()) -> (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database)
-readCache sopts logMsg' act = withCache sopts Nothing $ join . liftM (either cacheErr cacheOk) . runExceptT . act where
-	cacheErr e = logMsg' Log.Error ("Error reading cache: " ++ e) >> return Nothing
-	cacheOk s = do
-		forM_ (M.keys (structuredCabals s)) $ \c -> logMsg' Log.Debug ("cache read: cabal " ++ show c)
-		forM_ (M.keys (structuredProjects s)) $ \p -> logMsg' Log.Debug ("cache read: project " ++ p)
-		case allModules (structuredFiles s) of
-			[] -> return ()
-			ms -> logMsg' Log.Debug $ "cache read: " ++ show (length ms) ++ " files"
-		return $ Just $ merge s
+readCache :: SessionMonad m => ServerOpts -> (FilePath -> ExceptT String IO Structured) -> m (Maybe Database)
+readCache sopts act = do
+	s <- getSession
+	liftIO $ withSession s $ withCache sopts Nothing $ \fpath -> do
+		res <- liftIO $ runExceptT $ act fpath
+		either cacheErr cacheOk res
+	where
+		cacheErr e = Log.log Log.Error ("Error reading cache: {}" ~~ e) >> return Nothing
+		cacheOk s = do
+			forM_ (M.keys (structuredCabals s)) $ \c -> Log.log Log.Debug ("cache read: cabal {}" ~~ show c)
+			forM_ (M.keys (structuredProjects s)) $ \p -> Log.log Log.Debug ("cache read: project {}" ~~ p)
+			case allModules (structuredFiles s) of
+				[] -> return ()
+				ms -> Log.log Log.Debug $ "cache read: {} files" ~~ length ms
+			return $ Just $ merge s

@@ -1,31 +1,27 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, FlexibleInstances, MultiParamTypeClasses, TypeFamilies, UndecidableInstances #-}
-{-# OPTIONS_GHC -fno-warn-orphans #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, FlexibleInstances, MultiParamTypeClasses, TypeFamilies, UndecidableInstances, ConstraintKinds, FlexibleContexts, TemplateHaskell #-}
 
 module HsDev.Database.Update.Types (
-	Status(..), Progress(..), Task(..), Settings(..), settings, UpdateDB(..)
+	Status(..), Progress(..), Task(..), UpdateOptions(..), UpdateM(..), UpdateMonad,
+	taskName, taskStatus, taskSubjectType, taskSubjectName, taskProgress, updateTasks, updateGhcOpts, updateDocs, updateInfer,
+
+	module HsDev.Server.Types
 	) where
 
+import Control.Applicative
+import Control.Lens (makeLenses)
 import Control.Monad.Base
-import Control.Monad.Catch
 import Control.Monad.CatchIO
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Trans.Control
 import Data.Aeson
+import Data.Default
 import qualified System.Log.Simple as Log
 
-import Control.Concurrent.Worker (Worker)
-import HsDev.Database
-import HsDev.Database.Async hiding (Event)
-import HsDev.Tools.GhcMod (WorkerMap)
-import HsDev.Server.Types (CommandOptions(..))
-import HsDev.Server.Message (Notification(..))
+import HsDev.Server.Types (ServerMonadBase, Session(..), CommandOptions(..), SessionMonad(..), askSession, CommandError, CommandMonad(..), ClientM(..))
 import HsDev.Symbols
 import HsDev.Util ((.::))
-import HsDev.Watcher.Types
-
-import GHC (Ghc)
 
 data Status = StatusWorking | StatusOk | StatusError String
 
@@ -54,19 +50,21 @@ instance FromJSON Progress where
 	parseJSON = withObject "progress" $ \v -> Progress <$> (v .:: "current") <*> (v .:: "total")
 
 data Task = Task {
-	taskName :: String,
-	taskStatus :: Status,
-	taskSubjectType :: String,
-	taskSubjectName :: String,
-	taskProgress :: Maybe Progress }
+	_taskName :: String,
+	_taskStatus :: Status,
+	_taskSubjectType :: String,
+	_taskSubjectName :: String,
+	_taskProgress :: Maybe Progress }
+
+makeLenses ''Task
 
 instance ToJSON Task where
 	toJSON t = object [
-		"task" .= taskName t,
-		"status" .= taskStatus t,
-		"type" .= taskSubjectType t,
-		"name" .= taskSubjectName t,
-		"progress" .= taskProgress t]
+		"task" .= _taskName t,
+		"status" .= _taskStatus t,
+		"type" .= _taskSubjectType t,
+		"name" .= _taskSubjectName t,
+		"progress" .= _taskProgress t]
 
 instance FromJSON Task where
 	parseJSON = withObject "task" $ \v -> Task <$>
@@ -76,53 +74,50 @@ instance FromJSON Task where
 		(v .:: "name") <*>
 		(v .:: "progress")
 
-data Settings = Settings {
-	database :: Async Database,
-	databaseCacheReader :: (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database),
-	databaseCacheWriter :: Database -> IO (),
-	onStatus :: [Task] -> IO (),
-	ghcOptions :: [String],
-	updateDocs :: Bool,
-	runInferTypes :: Bool,
-	settingsGhcWorker :: Worker Ghc,
-	settingsGhcModWorker :: Worker (ReaderT WorkerMap IO),
-	settingsLogger :: Log.Log,
-	settingsWatcher :: Watcher,
-	settingsDefines :: [(String, String)] }
+data UpdateOptions = UpdateOptions {
+	_updateTasks :: [Task],
+	_updateGhcOpts :: [String],
+	_updateDocs :: Bool,
+	_updateInfer :: Bool }
 
-settings :: CommandOptions -> [String] -> Bool -> Bool -> Settings
-settings copts ghcOpts' docs' infer' = Settings
-	(commandDatabase copts)
-	(commandReadCache copts)
-	(commandWriteCache copts)
-	(commandNotify copts . Notification . toJSON)
-	ghcOpts'
-	docs'
-	infer'
-	(commandGhc copts)
-	(commandGhcMod copts)
-	(commandLogger copts)
-	(commandWatcher copts)
-	(commandDefines copts)
+instance Default UpdateOptions where
+	def = UpdateOptions [] [] False False
 
-newtype UpdateDB m a = UpdateDB { runUpdateDB :: ReaderT Settings (WriterT [ModuleLocation] m) a }
-	deriving (Applicative, Monad, MonadIO, MonadCatchIO, MonadThrow, MonadCatch, Functor, MonadReader Settings, MonadWriter [ModuleLocation])
+makeLenses ''UpdateOptions
 
-instance MonadCatchIO m => MonadCatchIO (ExceptT e m) where
-	catch act onError = ExceptT $ Control.Monad.CatchIO.catch (runExceptT act) (runExceptT . onError)
-	block = ExceptT . block . runExceptT
-	unblock = ExceptT . unblock . runExceptT
+type UpdateMonad m = (CommandMonad m, MonadReader UpdateOptions m, MonadWriter [ModuleLocation] m)
 
-instance MonadCatchIO m => Log.MonadLog (UpdateDB m) where
-	askLog = liftM settingsLogger ask
+newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateOptions (WriterT [ModuleLocation] (ClientM m)) a }
+	deriving (Applicative, Monad, MonadIO, MonadCatchIO, Functor, MonadReader UpdateOptions, MonadWriter [ModuleLocation])
 
-instance Log.MonadLog m => Log.MonadLog (ExceptT e m) where
-	askLog = lift Log.askLog
+instance MonadTrans UpdateM where
+	lift = UpdateM . lift . lift . lift
 
-instance MonadBase b m => MonadBase b (UpdateDB m) where
-	liftBase = UpdateDB . liftBase
+instance MonadCatchIO m => Log.MonadLog (UpdateM m) where
+	askLog = UpdateM $ lift $ lift Log.askLog
 
-instance MonadBaseControl b m => MonadBaseControl b (UpdateDB m) where
-	type StM (UpdateDB m) a = StM (ReaderT Settings (WriterT [ModuleLocation] m)) a
-	liftBaseWith f = UpdateDB $ liftBaseWith (\f' -> f (f' . runUpdateDB))
-	restoreM = UpdateDB . restoreM
+instance ServerMonadBase m => SessionMonad (UpdateM m) where
+	getSession = UpdateM $ lift $ lift getSession
+
+instance ServerMonadBase m => CommandMonad (UpdateM m) where
+	getOptions = UpdateM $ lift $ lift getOptions
+
+instance Monad m => MonadError CommandError (UpdateM m) where
+	throwError = UpdateM . lift . lift . throwError
+	catchError act handler = UpdateM $ catchError (runUpdateM act) (runUpdateM . handler)
+
+instance Monad m => Alternative (UpdateM m) where
+	empty = UpdateM empty
+	x <|> y = UpdateM $ runUpdateM x <|> runUpdateM y
+
+instance Monad m => MonadPlus (UpdateM m) where
+	mzero = UpdateM mzero
+	mplus l r = UpdateM $ runUpdateM l `mplus` runUpdateM r
+
+instance MonadBase b m => MonadBase b (UpdateM m) where
+	liftBase = UpdateM . liftBase
+
+instance MonadBaseControl b m => MonadBaseControl b (UpdateM m) where
+	type StM (UpdateM m) a = StM (ReaderT UpdateOptions (WriterT [ModuleLocation] (ClientM m))) a
+	liftBaseWith f = UpdateM $ liftBaseWith (\f' -> f (f' . runUpdateM))
+	restoreM = UpdateM . restoreM

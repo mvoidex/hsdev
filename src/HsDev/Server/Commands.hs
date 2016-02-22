@@ -13,9 +13,10 @@ module HsDev.Server.Commands (
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.Async
-import Control.Exception
+import Control.Exception (SomeException)
 import Control.Lens (set, traverseOf, view, over, Lens', Lens, _1, _2, _Left)
 import Control.Monad
+import Control.Monad.CatchIO
 import Control.Monad.Except
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
@@ -24,6 +25,7 @@ import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
 import qualified Data.Map as M
 import Data.Maybe
+import Data.String (fromString)
 import qualified Data.Text as T (pack)
 import Network.Socket hiding (connect)
 import qualified Network.Socket as Net hiding (send)
@@ -33,7 +35,7 @@ import System.Directory
 import System.Exit
 import System.FilePath
 import System.IO
-import qualified System.Log.Simple.Base as Log
+import qualified System.Log.Simple as Log
 
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
@@ -150,53 +152,46 @@ runServerCommand (Start sopts) = do
 
 	handle forkError $ do
 		_ <- forkProcess proxy
-		putStrLn $ "Server started at port " ++ show (serverPort sopts)
+		putStrLn $ "Server started at port {}" ~~ serverPort sopts
 #endif
-runServerCommand (Run sopts) = runServer sopts $ \copts -> do
-	commandLog copts Log.Info $ "Server started at port " ++ show (serverPort sopts)
-	clientChan <- F.newChan
-	listenerSem <- newQSem 0
-	_ <- async $ Log.scopeLog (commandLogger copts) "listener" $ flip finally (signalQSem listenerSem) $ do
-		let
-			serverStop :: IO ()
-			serverStop = void $ do
-				commandLog copts Log.Trace "stopping server"
-				-- NOTE: killing listener doesn't work on Windows, because accept blocks async exceptions
-				signalQSem listenerSem
-
-		bracket (socket AF_INET Stream defaultProtocol) close $ \s -> do
-			setSocketOption s ReuseAddr 1
-			bind s $ SockAddrInet (fromIntegral $ serverPort sopts) iNADDR_ANY
-			listen s maxListenQueue
-			forever $ logAsync (commandLog copts Log.Fatal) $ logIO "exception: " (commandLog copts Log.Error) $ do
-				commandLog copts Log.Trace "accepting connection"
-				s' <- fst <$> accept s
-				commandLog copts Log.Trace $ "accepted " ++ show s'
-				void $ forkIO $ Log.scopeLog (commandLogger copts) (T.pack $ show s') $
-					logAsync (commandLog copts Log.Fatal) $ logIO ("exception: ") (commandLog copts Log.Error) $
-						flip finally (close s') $
-							bracket newEmptyMVar (`putMVar` ()) $ \done -> do
-								me <- myThreadId
+runServerCommand (Run sopts) = runServer sopts $ do
+	Log.log Log.Info $ "Server started at port {}" ~~ serverPort sopts
+	clientChan <- liftIO F.newChan
+	session <- getSession
+	_ <- liftIO $ async $ withSession session $ Log.scope "listener" $ flip finally serverExit $ do
+		bracket (liftIO $ socket AF_INET Stream defaultProtocol) (liftIO . close) $ \s -> do
+			liftIO $ do
+				setSocketOption s ReuseAddr 1
+				bind s $ SockAddrInet (fromIntegral $ serverPort sopts) iNADDR_ANY
+				listen s maxListenQueue
+			forever $ logAsync (Log.log Log.Fatal . fromString) $ logIO "exception: " (Log.log Log.Error . fromString) $ do
+				Log.log Log.Trace "accepting connection"
+				s' <- liftIO $ fst <$> accept s
+				Log.log Log.Trace $ "accepted {}" ~~ show s'
+				void $ liftIO $ forkIO $ withSession session $ Log.scope (T.pack $ show s') $
+					logAsync (Log.log Log.Fatal . fromString) $ logIO ("exception: ") (Log.log Log.Error . fromString) $
+						flip finally (liftIO $ close s') $
+							bracket (liftIO newEmptyMVar) (liftIO . (`putMVar` ())) $ \done -> do
+								me <- liftIO myThreadId
 								let
-									timeoutWait = do
-										notDone <- isEmptyMVar done
+									timeoutWait = withSession session $ do
+										notDone <- liftIO $ isEmptyMVar done
 										when notDone $ do
-											commandLog copts Log.Trace $ "waiting for " ++ show s' ++ " to complete"
-											waitAsync <- async $ do
+											Log.log Log.Trace $ "waiting for {} to complete" ~~ show s'
+											waitAsync <- liftIO $ async $ do
 												threadDelay 1000000
 												killThread me
-											void $ waitCatch waitAsync
-								F.putChan clientChan timeoutWait
-								processClientSocket s' (copts {
-									commandExit = serverStop })
+											liftIO $ void $ waitCatch waitAsync
+								liftIO $ F.putChan clientChan timeoutWait
+								processClientSocket s'
 
-	commandLog copts Log.Trace "waiting for accept thread"
-	waitQSem listenerSem
-	commandLog copts Log.Trace "accept thread stopped"
-	DB.readAsync (commandDatabase copts) >>= writeCache sopts (commandLog copts)
-	commandLog copts Log.Trace "waiting for clients"
-	F.stopChan clientChan >>= sequence_
-	commandLog copts Log.Info "server stopped"
+	Log.log Log.Trace "waiting for accept thread"
+	serverWait
+	Log.log Log.Trace "accept thread stopped"
+	askSession sessionDatabase >>= liftIO . DB.readAsync >>= writeCache sopts
+	Log.log Log.Trace "waiting for clients"
+	liftIO (F.stopChan clientChan) >>= sequence_
+	Log.log Log.Info "server stopped"
 runServerCommand (Stop copts) = runServerCommand (Remote copts False Exit)
 runServerCommand (Connect copts) = do
 	curDir <- getCurrentDirectory
@@ -242,7 +237,7 @@ runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue
 findPath :: MonadIO m => CommandOptions -> FilePath -> m FilePath
 findPath copts f = liftIO $ canonicalizePath (normalise f') where
 	f'
-		| isRelative f = commandRoot copts </> f
+		| isRelative f = commandOptionsRoot copts </> f
 		| otherwise = f
 
 type Msg a = (Bool, a)
@@ -276,88 +271,93 @@ encodeMessage m
 	| otherwise = encode $ view msg m
 
 -- | Process request, notifications can be sent during processing
-processRequest :: CommandOptions -> (Notification -> IO ()) -> Command -> IO Result
-processRequest copts onNotify c = paths (findPath copts) c >>= Client.runCommand (copts { commandNotify = onNotify })
+processRequest :: SessionMonad m => CommandOptions -> Command -> m Result
+processRequest copts c = do
+	c' <- paths (findPath copts) c
+	s <- getSession
+	withSession s $ Client.runClient copts $ Client.runCommand c'
 
 -- | Process client, listen for requests and process them
-processClient :: String -> IO ByteString -> (ByteString -> IO ()) -> CommandOptions -> IO ()
-processClient name receive send' copts = do
-	commandLog copts Log.Info $ name ++ " connected"
-	respChan <- newChan
-	void $ forkIO $ getChanContents respChan >>= mapM_ (send' . encodeMessage)
-	linkVar <- newMVar $ return ()
+processClient :: SessionMonad m => String -> F.Chan ByteString -> (ByteString -> IO ()) -> m ()
+processClient name rchan send' = do
+	Log.log Log.Info $ "{} connected" ~~ name
+	respChan <- liftIO newChan
+	liftIO $ void $ forkIO $ getChanContents respChan >>= mapM_ (send' . encodeMessage)
+	linkVar <- liftIO $ newMVar $ return ()
+	s <- getSession
+	exit <- askSession sessionExit
 	let
-		answer :: Msg (Message Response) -> IO ()
+		answer :: SessionMonad m => Msg (Message Response) -> m ()
 		answer m = do
 			unless (isNotification $ view (msg . message) m) $
-				commandLog copts Log.Trace $ " << " ++ ellipsis (fromUtf8 (encode $ view (msg . message) m))
-			writeChan respChan m
+				Log.log Log.Trace $ " << {}" ~~ ellipsis (fromUtf8 (encode $ view (msg . message) m))
+			liftIO $ writeChan respChan m
 			where
 				ellipsis :: String -> String
-				ellipsis s
-					| length s < 100 = s
-					| otherwise = take 100 s ++ "..."
+				ellipsis str
+					| length str < 100 = str
+					| otherwise = take 100 str ++ "..."
 	-- flip finally (disconnected linkVar) $ forever $ Log.scopeLog (commandLogger copts) (T.pack name) $ do
-	flip finally (disconnected linkVar) $ forever $ do
-		req' <- receive
-		commandLog copts Log.Trace $ " => " ++ fromUtf8 req'
-		case decodeMessage req' of
-			Left em -> do
-				commandLog copts Log.Warning $ "Invalid request {}" ~~ fromUtf8 req'
-				answer $ set msg (Message Nothing $ responseError "Invalid request" ["request" .= fromUtf8 req']) em
-			Right m -> Log.scopeLog (commandLogger copts) (T.pack $ fromMaybe "_" (view (msg . messageId) m)) $ do
-				resp' <- flip (traverseOf (msg . message)) m $ \(Request c cdir noFile tm silent) -> do
-					let
-						onNotify n
-							| silent = return ()
-							| otherwise = traverseOf (msg . message) (const $ mmap' noFile (Response $ Left n)) m >>= answer
-					commandLog copts Log.Trace $ "{} >> {}" ~~ name ~~ fromUtf8 (encode c)
-					resp <- fmap (Response . Right) $ handleTimeout tm $ handleError $
-						processRequest
-							(copts {
-								commandRoot = cdir,
-								commandLink = void (swapMVar linkVar $ commandExit copts) })
-							onNotify
-							c
-					mmap' noFile resp
-				answer resp'
+	reqs <- liftIO $ F.readChan rchan
+	flip finally (disconnected linkVar) $ Log.scope (T.pack name) $ do
+		forM_ reqs $ \req' -> do
+			Log.log Log.Trace $ " => {}" ~~ fromUtf8 req'
+			case decodeMessage req' of
+				Left em -> do
+					Log.log Log.Warning $ "Invalid request {}" ~~ fromUtf8 req'
+					answer $ set msg (Message Nothing $ responseError "Invalid request" ["request" .= fromUtf8 req']) em
+				Right m -> Log.scope (T.pack $ fromMaybe "_" (view (msg . messageId) m)) $ do
+					resp' <- flip (traverseOf (msg . message)) m $ \(Request c cdir noFile tm silent) -> do
+						let
+							onNotify n
+								| silent = return ()
+								| otherwise = traverseOf (msg . message) (const $ mmap' noFile (Response $ Left n)) m >>= answer
+						Log.log Log.Trace $ "{} >> {}" ~~ name ~~ fromUtf8 (encode c)
+						resp <- liftIO $ fmap (Response . Right) $ handleTimeout tm $ handleError $ withSession s $
+							processRequest
+								(CommandOptions {
+									commandOptionsRoot = cdir,
+									commandOptionsNotify = withSession s . onNotify,
+									commandOptionsLink = void (swapMVar linkVar exit),
+									commandOptionsHold = forever (F.getChan rchan) })
+								c
+						mmap' noFile resp
+					answer resp'
 	where
 		handleTimeout :: Int -> IO Result -> IO Result
 		handleTimeout 0 = id
 		handleTimeout tm = fmap (fromMaybe $ Error "Timeout" M.empty) . timeout tm
 
 		handleError :: IO Result -> IO Result
-		handleError = handle onErr where
+		handleError = flip catch onErr where
 			onErr :: SomeException -> IO Result
 			onErr e = return $ Error "Exception" $ M.fromList [("what", toJSON $ show e)]
 
-		mmap' :: Bool -> Response -> IO Response
+		mmap' :: SessionMonad m => Bool -> Response -> m Response
 #if mingw32_HOST_OS
-		mmap' False
-			| Just pool <- commandMmapPool copts = mmap pool
+		mmap' False r = do
+			mpool <- askSession sessionMmapPool
+			case mpool of
+				Just pool -> liftIO $ mmap pool r
+				Nothing -> return r
 #endif
-		mmap' _ = return
+		mmap' _ r = return r
 
 		-- Call on disconnected, either no action or exit command
-		disconnected :: MVar (IO ()) -> IO ()
+		disconnected :: SessionMonad m => MVar (IO ()) -> m ()
 		disconnected var = do
-			commandLog copts Log.Info $ name ++ " disconnected"
-			join $ takeMVar var
+			Log.log Log.Info $ "{} disconnected" ~~ name
+			liftIO $ join $ takeMVar var
 
 -- | Process client by socket
-processClientSocket :: Socket -> CommandOptions -> IO ()
-processClientSocket s copts = do
-	recvChan <- F.newChan
-	void $ forkIO $ finally
+processClientSocket :: SessionMonad m => Socket -> m ()
+processClientSocket s = do
+	recvChan <- liftIO F.newChan
+	liftIO $ void $ forkIO $ finally
 		(Net.getContents s >>= mapM_ (F.putChan recvChan) . L.lines)
 		(F.closeChan recvChan)
-	processClient (show s) (getChan_ recvChan) (sendLine s) (copts {
-		commandHold = forever (getChan_ recvChan) })
+	processClient (show s) recvChan (sendLine s)
 	where
-		getChan_ :: F.Chan a -> IO a
-		getChan_ = F.getChan >=> maybe noData return
-		noData :: IO a
-		noData = throwIO $ userError "Receive chan closed"
 		-- NOTE: Network version of `sendAll` goes to infinite loop on client socket close
 		-- when server's send is blocked, see https://github.com/haskell/network/issues/155
 		-- After that issue fixed we may revert to `processClientHandle`

@@ -1,14 +1,16 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, FlexibleContexts #-}
 
 module HsDev.Client.Commands (
-	runCommand
+	runClient, runCommand
 	) where
 
 import Control.Applicative
 import Control.Arrow
+import Control.Exception (displayException)
 import Control.Lens (view, preview, _Just)
 import Control.Monad
 import Control.Monad.Except
+import Control.Monad.Reader
 import Control.Monad.State (gets)
 import Control.Monad.Catch (try, SomeException(..))
 import Data.Aeson hiding (Result, Error)
@@ -19,12 +21,14 @@ import qualified Data.Map as M
 import Data.String (fromString)
 import Data.Text (unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
+import Data.Text.Lens (packed)
 import System.Directory
 import System.FilePath
-import qualified System.Log.Simple.Base as Log
+import qualified System.Log.Simple as Log
 import Text.Regex.PCRE ((=~))
 
 import System.Directory.Paths
+import Text.Format
 import HsDev.Cache
 import HsDev.Commands
 import qualified HsDev.Database.Async as DB
@@ -46,68 +50,73 @@ import HsDev.Util
 
 import qualified HsDev.Database.Update as Update
 
-runCommandM :: ToJSON a => CommandM a -> IO Result
-runCommandM = liftM toResult . runExceptT where
-	toResult (Left (CommandError e ds)) = Error e $ M.fromList $ map (first unpack) ds
-	toResult (Right r') = Result $ toJSON r'
+runClient :: (ToJSON a, ServerMonadBase m) => CommandOptions -> ClientM m a -> ServerM m Result
+runClient copts = mapServerM toResult . runClientM where
+	toResult :: (ToJSON a, ServerMonadBase m) => ExceptT CommandError (ReaderT CommandOptions m) a -> m Result
+	toResult act = liftM asResult $ runReaderT (runExceptT act) copts
+	asResult :: ToJSON a => Either CommandError a -> Result
+	asResult (Left (CommandError e ds)) = Error e $ M.fromList $ map (first unpack) ds
+	asResult (Right r') = Result $ toJSON r'
+	mapServerM :: (Monad m, Monad n) => (m a -> n b) -> ServerM m a -> ServerM n b
+	mapServerM f = ServerM . mapReaderT f . runServerM
 
--- | Run command
-runCommand :: CommandOptions -> Command -> IO Result
-runCommand _ Ping = runCommandM $ return $ object ["message" .= ("pong" :: String)]
-runCommand copts Listen = runCommandM $ liftIO $ commandListenLog copts $
-	mapM_ (\msg -> commandNotify copts (Notification $ object ["message" .= msg]))
-runCommand copts (AddData cts) = runCommandM $ mapM_ updateData cts where
-	updateData (AddedDatabase db) = DB.update (dbVar copts) $ return db
-	updateData (AddedModule m) = DB.update (dbVar copts) $ return $ fromModule m
-	updateData (AddedProject p) = DB.update (dbVar copts) $ return $ fromProject p
-runCommand copts (Scan projs cabals fs paths' fcts ghcs' docs' infer') = runCommandM $ do
-	sboxes <- getSandboxes copts cabals
-	updateProcess copts ghcs' docs' infer' $ concat [
+toValue :: (ToJSON a, Monad m) => m a -> m Value
+toValue = liftM toJSON
+
+runCommand :: ServerMonadBase m => Command -> ClientM m Value
+runCommand Ping = toValue $ return $ object ["message" .= ("pong" :: String)]
+runCommand Listen = toValue $ do
+	serverListen >>= mapM_ (\msg -> commandNotify (Notification $ object ["message" .= msg]))
+runCommand (AddData cts) = toValue $ mapM_ updateData cts where
+	updateData (AddedDatabase db) = toValue $ serverUpdateDB db
+	updateData (AddedModule m) = toValue $ serverUpdateDB $ fromModule m
+	updateData (AddedProject p) = toValue $ serverUpdateDB $ fromProject p
+runCommand (Scan projs cabals fs paths' fcts ghcs' docs' infer') = toValue $ do
+	sboxes <- getSandboxes cabals
+	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
 		map (\(FileContents f cts) -> Update.scanFileContents ghcs' f (Just cts)) fcts,
 		map (Update.scanProject ghcs') projs,
 		map (Update.scanFile ghcs') fs,
 		map (Update.scanDirectory ghcs') paths',
 		map (Update.scanCabal ghcs') sboxes]
-runCommand copts (RefineDocs projs fs ms) = runCommandM $ do
-	projects <- traverse (findProject copts) projs
-	dbval <- getDb copts
+runCommand (RefineDocs projs fs ms) = toValue $ do
+	projects <- traverse findProject projs
+	dbval <- getDb
 	let
 		filters = anyOf $ concat [
 			map inProject projects,
 			map inFile fs,
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
-	updateProcess copts [] False False [Update.scanDocs $ map (getInspected dbval) mods]
-runCommand copts (InferTypes projs fs ms) = runCommandM $ do
-	projects <- traverse (findProject copts) projs
-	dbval <- getDb copts
+	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs $ map (getInspected dbval) mods]
+runCommand (InferTypes projs fs ms) = toValue $ do
+	projects <- traverse findProject projs
+	dbval <- getDb
 	let
 		filters = anyOf $ concat [
 			map inProject projects,
 			map inFile fs,
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
-	updateProcess copts [] False False [Update.inferModTypes $ map (getInspected dbval) mods]
-runCommand _ (Remove _ _ _ _) = runCommandM $ return $ object ["message" .= ("not implemented" :: String)]
-runCommand copts (InfoModules fs) = runCommandM $ do
-	dbval <- getDb copts
-	filter' <- targetFilters copts fs
+	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes $ map (getInspected dbval) mods]
+runCommand (Remove _ _ _ _) = toValue $ return $ object ["message" .= ("not implemented" :: String)]
+runCommand (InfoModules fs) = toValue $ do
+	dbval <- getDb
+	filter' <- targetFilters fs
 	return $ map (view moduleId) $ newestPackage $ selectModules (filter' . view moduleId) dbval
-runCommand copts InfoPackages = runCommandM $
-	(ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb copts
-runCommand copts InfoProjects = runCommandM $ (toList . databaseProjects) <$> getDb copts
-runCommand copts InfoSandboxes = runCommandM $
-	(ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb copts
-runCommand copts (InfoSymbol sq fs locals') = runCommandM $ do
-	dbval <- liftM (localsDatabase locals') $ getDb copts
-	filter' <- targetFilters copts fs
+runCommand InfoPackages = toValue $ (ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb
+runCommand InfoProjects = toValue $ (toList . databaseProjects) <$> getDb
+runCommand InfoSandboxes = toValue $ (ordNub . sort . mapMaybe (cabalOf . view moduleId) . allModules) <$> getDb
+runCommand (InfoSymbol sq fs locals') = toValue $ do
+	dbval <- liftM (localsDatabase locals') $ getDb
+	filter' <- targetFilters fs
 	return $ newestPackage $ filterMatch sq $ filter (checkModule filter') $ allDeclarations dbval
-runCommand copts (InfoModule sq fs) = runCommandM $ do
-	dbval <- getDb copts
-	filter' <- targetFilters copts fs
+runCommand (InfoModule sq fs) = toValue $ do
+	dbval <- getDb
+	filter' <- targetFilters fs
 	return $ newestPackage $ filterMatch sq $ filter (filter' . view moduleId) $ allModules dbval
-runCommand copts (InfoResolve fpath exports) = runCommandM $ do
-	dbval <- getDb copts
+runCommand (InfoResolve fpath exports) = toValue $ do
+	dbval <- getDb
 	cabal <- liftIO $ getSandbox fpath
 	let
 		cabaldb = filterDB (restrictCabal cabal) (const True) dbval
@@ -117,39 +126,40 @@ runCommand copts (InfoResolve fpath exports) = runCommandM $ do
 	case lookupFile fpath dbval of
 		Nothing -> commandError "File not found" []
 		Just m -> return $ getScope $ resolveOne cabaldb m
-runCommand copts (InfoProject (Left projName)) = runCommandM $ findProject copts projName
-runCommand _ (InfoProject (Right projPath)) = runCommandM $ liftIO $ searchProject projPath
-runCommand _ (InfoSandbox sandbox') = runCommandM $ liftIO $ searchSandbox sandbox'
-runCommand copts (Lookup nm fpath) = runCommandM $ do
-	dbval <- getDb copts
+runCommand (InfoProject (Left projName)) = toValue $ findProject projName
+runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
+runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
+runCommand (Lookup nm fpath) = toValue $ do
+	dbval <- getDb
 	cabal <- liftIO $ getSandbox fpath
-	mapCommandErrorStr $ lookupSymbol dbval cabal fpath nm
-runCommand copts (Whois nm fpath) = runCommandM $ do
-	dbval <- getDb copts
+	mapCommandIO $ lookupSymbol dbval cabal fpath nm
+runCommand (Whois nm fpath) = toValue $ do
+	dbval <- getDb
 	cabal <- liftIO $ getSandbox fpath
-	mapCommandErrorStr $ whois dbval cabal fpath nm
-runCommand copts (ResolveScopeModules sq fpath) = runCommandM $ do
-	dbval <- getDb copts
+	mapCommandIO $ whois dbval cabal fpath nm
+runCommand (ResolveScopeModules sq fpath) = toValue $ do
+	dbval <- getDb
 	cabal <- liftIO $ getSandbox fpath
-	liftM (filterMatch sq . map (view moduleId)) $ mapCommandErrorStr $ scopeModules dbval cabal fpath
-runCommand copts (ResolveScope sq global fpath) = runCommandM $ do
-	dbval <- getDb copts
+	liftM (filterMatch sq . map (view moduleId)) $ mapCommandIO $ scopeModules dbval cabal fpath
+runCommand (ResolveScope sq global fpath) = toValue $ do
+	dbval <- getDb
 	cabal <- liftIO $ getSandbox fpath
-	liftM (filterMatch sq) $ mapCommandErrorStr $ scope dbval cabal fpath global
-runCommand copts (Complete input wide fpath) = runCommandM $ do
-	dbval <- getDb copts
+	liftM (filterMatch sq) $ mapCommandIO $ scope dbval cabal fpath global
+runCommand (Complete input wide fpath) = toValue $ do
+	dbval <- getDb
 	cabal <- liftIO $ getSandbox fpath
-	mapCommandErrorStr $ completions dbval cabal fpath input wide
-runCommand _ (Hayoo hq p ps) = runCommandM $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
+	mapCommandIO $ completions dbval cabal fpath input wide
+runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
-	mapCommandErrorStr $ Hayoo.hayoo hq (Just i)
-runCommand _ (CabalList packages) = runCommandM $ mapCommandErrorStr $ Cabal.cabalList packages
-runCommand _ (Lint fs fcts) = runCommandM $ do
-	mapCommandErrorStr $ liftM2 (++)
+	mapCommandIO $ Hayoo.hayoo hq (Just i)
+runCommand (CabalList packages) = toValue $ mapCommandIO $ Cabal.cabalList packages
+runCommand (Lint fs fcts) = toValue $ do
+	mapCommandIO $ liftM2 (++)
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f c) -> HLint.hlintSource f c) fcts)
-runCommand copts (Check fs fcts ghcs') = runCommandM $ do
-	db <- getDb copts
+runCommand (Check fs fcts ghcs') = toValue $ do
+	db <- getDb
+	ghc <- askSession sessionGhc
 	let
 		checkSome file fn = do
 			cabal <- liftIO $ getSandbox file
@@ -157,14 +167,15 @@ runCommand copts (Check fs fcts ghcs') = runCommandM $ do
 				(commandError_ $ "File '" ++ file ++ "' not found")
 				return
 				(lookupFile file db)
-			notes <- inWorkerWith (commandError_ . show) (commandGhc copts)
+			notes <- inWorkerWith (commandError_ . show) ghc
 				(runExceptT $ fn cabal m)
 			either commandError_ return notes
 	liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
 		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- fcts]
-runCommand copts (CheckLint fs fcts ghcs') = runCommandM $ do
-	db <- getDb copts
+runCommand (CheckLint fs fcts ghcs') = toValue $ do
+	db <- getDb
+	ghc <- askSession sessionGhc
 	let
 		checkSome file fn = do
 			cabal <- liftIO $ getSandbox file
@@ -172,18 +183,19 @@ runCommand copts (CheckLint fs fcts ghcs') = runCommandM $ do
 				(commandError_ $ "File '" ++ file ++ "' not found")
 				return
 				(lookupFile file db)
-			notes <- inWorkerWith (commandError_ . show) (commandGhc copts)
+			notes <- inWorkerWith (commandError_ . show) ghc
 				(runExceptT $ fn cabal m)
 			either commandError_ return notes
 	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
 		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- fcts]
-	lintMsgs <- mapCommandErrorStr $ liftM2 (++)
+	lintMsgs <- mapCommandIO $ liftM2 (++)
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) fcts)
 	return $ checkMsgs ++ lintMsgs
-runCommand copts (Types fs fcts ghcs') = runCommandM $ do
-	db <- getDb copts
+runCommand (Types fs fcts ghcs') = toValue $ do
+	db <- getDb
+	ghc <- askSession sessionGhc
 	let
 		cts = [(f, Nothing) | f <- fs] ++ [(f, Just src) | FileContents f src <- fcts]
 	liftM concat $ forM cts $ \(file, msrc) -> do
@@ -192,42 +204,46 @@ runCommand copts (Types fs fcts ghcs') = runCommandM $ do
 			(commandError_ $ "File '" ++ file ++ "' not found")
 			return
 			(lookupFile file db)
-		notes <- inWorkerWith (commandError_ . show) (commandGhc copts)
+		notes <- inWorkerWith (commandError_ . show) ghc
 			(runExceptT $ Types.fileTypes ghcs' cabal m msrc)
 		either commandError_ return notes
-runCommand _ (GhcMod GhcModLang) = runCommandM $ mapCommandErrorStr GhcMod.langs
-runCommand _ (GhcMod GhcModFlags) = runCommandM $ mapCommandErrorStr GhcMod.flags
-runCommand copts (GhcMod (GhcModType (Position line column) fpath ghcs')) = runCommandM $ do
-	dbval <- getDb copts
+runCommand (GhcMod GhcModLang) = toValue $ mapCommandIO $ GhcMod.langs
+runCommand (GhcMod GhcModFlags) = toValue $ mapCommandIO $ GhcMod.flags
+runCommand (GhcMod (GhcModType (Position line column) fpath ghcs')) = toValue $ do
+	ghcmod <- askSession sessionGhcMod
+	dbval <- getDb
 	cabal <- liftIO $ getSandbox fpath
-	(fpath', m', _) <- mapCommandErrorStr $ fileCtx dbval fpath
-	mapCommandErrorStr $ GhcMod.waitMultiGhcMod (commandGhcMod copts) fpath' $
+	(fpath', m', _) <- mapCommandIO $ fileCtx dbval fpath
+	mapCommandIO $ GhcMod.waitMultiGhcMod ghcmod fpath' $
 		GhcMod.typeOf (ghcs' ++ moduleOpts (allPackages dbval) m') cabal fpath' line column
-runCommand copts (GhcMod (GhcModLint fs hlints')) = runCommandM $ do
-	mapCommandErrorStr $ liftM concat $ forM fs $ \file ->
-		GhcMod.waitMultiGhcMod (commandGhcMod copts) file $
+runCommand (GhcMod (GhcModLint fs hlints')) = toValue $ do
+	ghcmod <- askSession sessionGhcMod
+	mapCommandIO $ liftM concat $ forM fs $ \file ->
+		GhcMod.waitMultiGhcMod ghcmod file $
 			GhcMod.lint hlints' file
-runCommand copts (GhcMod (GhcModCheck fs ghcs')) = runCommandM $ do
-	dbval <- getDb copts
-	mapCommandErrorStr $ liftM concat $ forM fs $ \file -> do
+runCommand (GhcMod (GhcModCheck fs ghcs')) = toValue $ do
+	ghcmod <- askSession sessionGhcMod
+	dbval <- getDb
+	mapCommandIO $ liftM concat $ forM fs $ \file -> do
 		mproj <- liftIO $ locateProject file
 		cabal <- liftIO $ getSandbox file
 		(_, m', _) <- fileCtx dbval file
-		GhcMod.waitMultiGhcMod (commandGhcMod copts) file $
+		GhcMod.waitMultiGhcMod ghcmod file $
 			GhcMod.check (ghcs' ++ moduleOpts (allPackages dbval) m') cabal [file] mproj
-runCommand copts (GhcMod (GhcModCheckLint fs ghcs' hlints')) = runCommandM $ do
-	dbval <- getDb copts
-	mapCommandErrorStr $ liftM concat $ forM fs $ \file -> do
+runCommand (GhcMod (GhcModCheckLint fs ghcs' hlints')) = toValue $ do
+	ghcmod <- askSession sessionGhcMod
+	dbval <- getDb
+	mapCommandIO $ liftM concat $ forM fs $ \file -> do
 		mproj <- liftIO $ locateProject file
 		cabal <- liftIO $ getSandbox file
 		(_, m', _) <- fileCtx dbval file
-		GhcMod.waitMultiGhcMod (commandGhcMod copts) file $ do
+		GhcMod.waitMultiGhcMod ghcmod file $ do
 			checked <- GhcMod.check (ghcs' ++ moduleOpts (allPackages dbval) m') cabal [file] mproj
 			linted <- GhcMod.lint hlints' file
 			return $ checked ++ linted
-runCommand _ (AutoFix (AutoFixShow ns)) = runCommandM $ return $ AutoFix.corrections ns
-runCommand copts (AutoFix (AutoFixFix ns rest isPure)) = runCommandM $ do
-	files <- liftM (ordNub . sort) $ mapM (findPath copts) $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
+runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
+runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
+	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
 	let
 		doFix :: FilePath -> String -> ([Tools.Note AutoFix.Correction], String)
 		doFix file cts = AutoFix.edit cts fUpCorrs $ do
@@ -244,79 +260,82 @@ runCommand copts (AutoFix (AutoFixFix ns rest isPure)) = runCommandM $ do
 				(corrs', cts') <- liftM (doFix file) $ liftE $ readFileUtf8 file
 				liftE $ writeFileUtf8 file cts'
 				return corrs'
-	mapCommandErrorStr $ liftM concat $ mapM runFix files
-runCommand copts (GhcEval exprs) = runCommandM $ mapCommandErrorStr $ liftM (map toValue) $ liftAsync $
-	pushTask (commandGhci copts) $ mapM (try . evaluate) exprs
+	mapCommandIO $ liftM concat $ mapM runFix files
+runCommand (GhcEval exprs) = toValue $ do
+	ghci <- askSession sessionGhci
+	async' <- liftIO $ pushTask ghci $ mapM (try . evaluate) exprs
+	res <- waitAsync async'
+	return $ map toValue' res
 	where
-		toValue :: Either SomeException String -> Value
-		toValue (Left (SomeException e)) = object ["fail" .= show e]
-		toValue (Right s) = toJSON s
-runCommand copts (Link hold) = runCommandM $ liftIO $ commandLink copts >> when hold (commandHold copts)
-runCommand copts Exit = runCommandM $ liftIO $ commandExit copts
+		waitAsync :: CommandMonad m => Async a -> m a
+		waitAsync a = liftIO (waitCatch a) >>= either (commandError_ . displayException) return
+		toValue' :: ToJSON a => Either SomeException a -> Value
+		toValue' (Left (SomeException e)) = object ["fail" .= show e]
+		toValue' (Right s) = toJSON s
+runCommand (Link hold) = toValue $ commandLink >> when hold commandHold
+runCommand Exit = toValue $ serverExit
 
-targetFilters :: MonadIO m => CommandOptions -> [TargetFilter] -> ExceptT CommandError m (ModuleId -> Bool)
-targetFilters copts fs = do
-	fs_ <- mapM (targetFilter copts) fs
+targetFilters :: CommandMonad m => [TargetFilter] -> m (ModuleId -> Bool)
+targetFilters fs = do
+	fs_ <- mapM targetFilter fs
 	return $ foldr (liftM2 (&&)) (const True) fs_
 
-targetFilter :: MonadIO m => CommandOptions -> TargetFilter -> ExceptT CommandError m (ModuleId -> Bool)
-targetFilter copts f = case f of
-	TargetProject proj -> liftM inProject $ findProject copts proj
+targetFilter :: CommandMonad m => TargetFilter -> m (ModuleId -> Bool)
+targetFilter f = case f of
+	TargetProject proj -> liftM inProject $ findProject proj
 	TargetFile file -> return $ inFile file
 	TargetModule mname -> return $ inModule mname
-	TargetDepsOf dep -> liftM inDeps $ findDep copts dep
-	TargetCabal cabal -> liftM inCabal $ findSandbox copts cabal
+	TargetDepsOf dep -> liftM inDeps $ findDep dep
+	TargetCabal cabal -> liftM inCabal $ findSandbox cabal
 	TargetPackage pack -> return $ inPackage pack
 	TargetSourced -> return byFile
 	TargetStandalone -> return standalone
 
 -- Helper functions
 
-commandStrMsg :: String -> CommandError
-commandStrMsg m = CommandError m []
-
 -- | Find sandbox by path
-findSandbox :: MonadIO m => CommandOptions -> Cabal -> ExceptT CommandError m Cabal
-findSandbox _ Cabal = return Cabal
-findSandbox copts (Sandbox f) = (findPath copts >=> mapCommandErrorStr . liftIO . getSandbox) f
+findSandbox :: CommandMonad m => Cabal -> m Cabal
+findSandbox Cabal = return Cabal
+findSandbox (Sandbox f) = (findPath >=> mapCommandErrorStr . liftIO . getSandbox) f
 
 -- | Canonicalize paths
-findPath :: (MonadIO m, Paths a) => CommandOptions -> a -> ExceptT e m a
-findPath copts = paths findPath' where
-	findPath' :: MonadIO m => FilePath -> ExceptT e m FilePath
-	findPath' f = liftIO $ canonicalizePath (normalise f') where
-		f'
-			| isRelative f = commandRoot copts </> f
-			| otherwise = f
+findPath :: (CommandMonad m, Paths a) => a -> m a
+findPath = paths findPath' where
+	findPath' :: CommandMonad m => FilePath -> m FilePath
+	findPath' f = do
+		r <- commandRoot
+		liftIO $ canonicalizePath (normalise $ if isRelative f then r </> f else f)
 
 -- | Get list of enumerated sandboxes
-getSandboxes :: (MonadIO m, Functor m) => CommandOptions -> [Cabal] -> ExceptT CommandError m [Cabal]
-getSandboxes copts = traverse (findSandbox copts)
+getSandboxes :: (CommandMonad m, Functor m) => [Cabal] -> m [Cabal]
+getSandboxes = traverse findSandbox
 
 -- | Find project by name or path
-findProject :: MonadIO m => CommandOptions -> String -> ExceptT CommandError m Project
-findProject copts proj = do
-	db' <- getDb copts
-	proj' <- liftM addCabal $ findPath copts proj
+findProject :: CommandMonad m => String -> m Project
+findProject proj = do
+	db' <- getDb
+	proj' <- liftM addCabal $ findPath proj
 	let
 		resultProj =
 			refineProject db' (project proj') <|>
 			find ((== proj) . view projectName) (databaseProjects db')
-	maybe (throwError $ commandStrMsg $ "Project " ++ proj ++ " not found") return resultProj
+	maybe (commandError_ $ "Project {} not found" ~~ proj) return resultProj
 	where
 		addCabal p
 			| takeExtension p == ".cabal" = p
 			| otherwise = p </> (takeBaseName p <.> "cabal")
 
 -- | Find dependency: it may be source, project file or project name, also returns sandbox found
-findDep :: MonadIO m => CommandOptions -> String -> ExceptT CommandError m (Project, Maybe FilePath, Cabal)
-findDep copts depName = do
-	depPath <- findPath copts depName
+findDep :: CommandMonad m => String -> m (Project, Maybe FilePath, Cabal)
+findDep depName = do
+	depPath <- findPath depName
 	proj <- msum [
-		mapCommandErrorStr $ do
+		do
 			p <- liftIO (locateProject depPath)
-			maybe (throwError $ "Project " ++ depName ++ " not found") (mapExceptT liftIO . loadProject) p,
-		findProject copts depName]
+			p' <- maybe (commandError_ $ "Project {} not found" ~~ depName) return p
+			r <- liftIO $ runExceptT $ loadProject p'
+			either commandError_ return r,
+		findProject depName]
 	let
 		src
 			| takeExtension depPath == ".hs" = Just depPath
@@ -338,21 +357,18 @@ localsDatabase True = databaseLocals
 localsDatabase False = id
 
 -- | Get actual DB state
-getDb :: MonadIO m => CommandOptions -> m Database
-getDb = liftIO . DB.readAsync . commandDatabase
+getDb :: SessionMonad m => m Database
+getDb = askSession sessionDatabase >>= liftIO . DB.readAsync
 
--- | Get DB async var
-dbVar :: CommandOptions -> DB.Async Database
-dbVar = commandDatabase
+mapCommandErrorStr :: CommandMonad m => ExceptT String m a -> m a
+mapCommandErrorStr act = runExceptT act >>= either commandError_ return
 
-mapCommandErrorStr :: (Monad m) => ExceptT String m a -> ExceptT CommandError m a
-mapCommandErrorStr = mapExceptT (liftM $ left commandStrMsg)
+mapCommandIO :: CommandMonad m => ExceptT String IO a -> m a
+mapCommandIO act = liftIO (runExceptT act) >>= either commandError_ return
 
 -- | Run DB update action
-updateProcess :: CommandOptions -> [String] -> Bool -> Bool -> [ExceptT String (Update.UpdateDB IO) ()] -> CommandM ()
-updateProcess copts ghcOpts' docs' infer' acts = lift $ Update.updateDB (Update.settings copts ghcOpts' docs' infer') $ sequence_ [act `catchError` logErr | act <- acts] where
-	logErr :: String -> ExceptT String (Update.UpdateDB IO) ()
-	logErr e = liftIO $ commandLog copts Log.Error e
+updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()
+updateProcess uopts acts = Update.runUpdate uopts $ sequence_ [act `catchError` (Log.log Log.Error . view (commandErrorMsg . packed)) | act <- acts]
 
 -- | Filter declarations with prefix and infix
 filterMatch :: Symbol a => SearchQuery -> [a] -> [a]

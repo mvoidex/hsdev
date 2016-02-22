@@ -1,8 +1,11 @@
-{-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances, GeneralizedNewtypeDeriving, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, TypeFamilies, ConstraintKinds, TemplateHaskell #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Types (
-	CommandOptions(..), CommandError(..), commandError_, commandError,
-	CommandM,
+	ServerMonadBase,
+	Session(..), SessionMonad(..), askSession, ServerM(..),
+	CommandOptions(..), CommandError(..), commandErrorMsg, commandErrorDetails, commandError, commandError_, CommandMonad(..), askOptions, ClientM(..),
+	withSession, serverListen, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ServerOpts(..), ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..), AddedContents(..),
@@ -13,9 +16,13 @@ module HsDev.Server.Types (
 	) where
 
 import Control.Applicative
-import Control.Lens (each)
+import Control.Lens (each, makeLenses)
+import Control.Monad.Base
+import Control.Monad.Catch
+import Control.Monad.CatchIO
 import Control.Monad.Except
 import Control.Monad.Reader
+import Control.Monad.Trans.Control
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy.Char8 as L
@@ -42,41 +49,160 @@ import HsDev.Util
 import System.Win32.FileMapping.NamePool (Pool)
 #endif
 
-data CommandOptions = CommandOptions {
-	commandDatabase :: DB.Async Database,
-	commandWriteCache :: Database -> IO (),
-	commandReadCache :: (FilePath -> ExceptT String IO Structured) -> IO (Maybe Database),
-	commandRoot :: FilePath,
-	commandLog :: Level -> String -> IO (),
-	commandLogger :: Log,
-	commandListenLog :: ([String] -> IO ()) -> IO (),
-	commandLogWait :: IO (),
-	commandWatcher :: Watcher,
-#if mingw32_HOST_OS
-	commandMmapPool :: Maybe Pool,
-#endif
-	commandGhc :: Worker Ghc,
-	commandGhci :: Worker Ghc,
-	commandGhcMod :: Worker (ReaderT WorkerMap IO),
-	commandNotify :: Notification -> IO (),
-	commandLink :: IO (),
-	commandHold :: IO (),
-	commandExit :: IO (),
-	commandDefines :: [(String, String)] }
+type ServerMonadBase m = (MonadCatchIO m, MonadBaseControl IO m)
 
-data CommandError = CommandError String [A.Pair]
+data Session = Session {
+	sessionDatabase :: DB.Async Database,
+	sessionWriteCache :: Database -> ServerM IO (),
+	sessionReadCache :: (FilePath -> ExceptT String IO Structured) -> ServerM IO (Maybe Database),
+	sessionLog :: Level -> String -> IO (),
+	sessionLogger :: Log,
+	sessionListenLog :: IO [String],
+	sessionLogWait :: IO (),
+	sessionWatcher :: Watcher,
+#if mingw32_HOST_OS
+	sessionMmapPool :: Maybe Pool,
+#endif
+	sessionGhc :: Worker Ghc,
+	sessionGhci :: Worker Ghc,
+	sessionGhcMod :: Worker (ReaderT WorkerMap IO),
+	sessionExit :: IO (),
+	sessionWait :: IO (),
+	sessionDefines :: [(String, String)] }
+
+class (ServerMonadBase m, MonadLog m) => SessionMonad m where
+	getSession :: m Session
+
+askSession :: SessionMonad m => (Session -> a) -> m a
+askSession f = liftM f $ getSession
+
+newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a } deriving (Functor, Applicative, Monad, MonadReader Session, MonadIO, MonadTrans, MonadCatchIO, MonadThrow, MonadCatch)
+
+instance MonadCatchIO m => MonadLog (ServerM m) where
+	askLog = ServerM $ asks sessionLogger
+
+instance ServerMonadBase m => SessionMonad (ServerM m) where
+	getSession = ask
+
+instance MonadBase b m => MonadBase b (ServerM m) where
+	liftBase = ServerM . liftBase
+
+instance MonadBaseControl b m => MonadBaseControl b (ServerM m) where
+	type StM (ServerM m) a = StM (ReaderT Session m) a
+	liftBaseWith f = ServerM $ liftBaseWith (\f' -> f (f' . runServerM))
+	restoreM = ServerM . restoreM
+
+data CommandOptions = CommandOptions {
+	commandOptionsRoot :: FilePath,
+	commandOptionsNotify :: Notification -> IO (),
+	commandOptionsLink :: IO (),
+	commandOptionsHold :: IO () }
+
+instance Default CommandOptions where
+	def = CommandOptions "." (const $ return ()) (return ()) (return ())
+
+data CommandError = CommandError {
+	_commandErrorMsg :: String,
+	_commandErrorDetails :: [A.Pair] }
+
+makeLenses ''CommandError
 
 instance Monoid CommandError where
 	mempty = CommandError "" []
 	mappend (CommandError lmsg lp) (CommandError rmsg rp) = CommandError (lmsg ++ ", " ++ rmsg) (lp ++ rp)
 
-commandError_ :: String -> ExceptT CommandError IO a
+class (SessionMonad m, MonadError CommandError m, MonadPlus m) => CommandMonad m where
+	getOptions :: m CommandOptions
+
+commandError :: CommandMonad m => String -> [A.Pair] -> m a
+commandError m ds = throwError $ CommandError m ds
+
+commandError_ :: CommandMonad m => String -> m a
 commandError_ m = commandError m []
 
-commandError :: String -> [A.Pair] -> ExceptT CommandError IO a
-commandError m ps = throwError $ CommandError m ps
+askOptions :: CommandMonad m => (CommandOptions -> a) -> m a
+askOptions f = liftM f getOptions
 
-type CommandM a = ExceptT CommandError IO a
+newtype ClientM m a = ClientM { runClientM :: ServerM (ExceptT CommandError (ReaderT CommandOptions m)) a }
+	deriving (Functor, Applicative, Monad, MonadIO, MonadCatchIO, MonadThrow, MonadCatch)
+
+instance MonadTrans ClientM where
+	lift = ClientM . lift . lift . lift
+
+instance MonadCatchIO m => MonadLog (ClientM m) where
+	askLog = ClientM askLog
+
+instance Monad m => MonadError CommandError (ClientM m) where
+	throwError = ClientM . lift . throwError
+	catchError act handler = ClientM $ ServerM $ catchError (runServerM $ runClientM act) (runServerM . runClientM . handler)
+
+instance Monad m => Alternative (ClientM m) where
+	empty = ClientM $ ServerM empty
+	x <|> y = ClientM $ ServerM $ runServerM (runClientM x) <|> runServerM (runClientM y)
+
+instance Monad m => MonadPlus (ClientM m) where
+	mzero = ClientM $ ServerM mzero
+	mplus l r = ClientM $ ServerM $ runServerM (runClientM l) `mplus` runServerM (runClientM r)
+
+instance ServerMonadBase m => SessionMonad (ClientM m) where
+	getSession = ClientM getSession
+
+instance ServerMonadBase m => CommandMonad (ClientM m) where
+	getOptions = ClientM $ lift $ lift ask
+
+instance MonadBase b m => MonadBase b (ClientM m) where
+	liftBase = ClientM . liftBase
+
+instance MonadBaseControl b m => MonadBaseControl b (ClientM m) where
+	type StM (ClientM m) a = StM (ServerM (ExceptT CommandError (ReaderT CommandOptions m))) a
+	liftBaseWith f = ClientM $ liftBaseWith (\f' -> f (f' . runClientM))
+	restoreM = ClientM . restoreM
+
+-- | Run action on session
+withSession :: Session -> ServerM m a -> m a
+withSession s act = runReaderT (runServerM act) s
+
+-- | Listen server's log
+serverListen :: SessionMonad m => m [String]
+serverListen = join . liftM liftIO $ askSession sessionListenLog
+
+-- | Wait for server
+serverWait :: SessionMonad m => m ()
+serverWait = join . liftM liftIO $ askSession sessionWait
+
+-- | Update database
+serverUpdateDB :: SessionMonad m => Database -> m ()
+serverUpdateDB db = askSession sessionDatabase >>= (`DB.update` (return db))
+
+-- | Server write cache
+serverWriteCache :: SessionMonad m => Database -> m ()
+serverWriteCache db = do
+	s <- getSession
+	write' <- askSession sessionWriteCache
+	liftIO $ withSession s $ write' db
+
+-- | Server read cache
+serverReadCache :: SessionMonad m => (FilePath -> ExceptT String IO Structured) -> m (Maybe Database)
+serverReadCache act = do
+	s <- getSession
+	read' <- askSession sessionReadCache
+	liftIO $ withSession s $ read' act
+
+-- | Exit session
+serverExit :: SessionMonad m => m ()
+serverExit = join . liftM liftIO $ askSession sessionExit
+
+commandRoot :: CommandMonad m => m FilePath
+commandRoot = askOptions commandOptionsRoot
+
+commandNotify :: CommandMonad m => Notification -> m ()
+commandNotify n = join . liftM liftIO $ askOptions commandOptionsNotify <*> pure n
+
+commandLink :: CommandMonad m => m ()
+commandLink = join . liftM liftIO $ askOptions commandOptionsLink
+
+commandHold :: CommandMonad m => m ()
+commandHold = join . liftM liftIO $ askOptions commandOptionsHold
 
 -- | Server control command
 data ServerCommand =

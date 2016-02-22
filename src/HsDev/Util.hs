@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Util (
 	withCurrentDirectory,
@@ -38,6 +39,7 @@ import Control.Exception
 import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Catch as C
+import qualified Control.Monad.CatchIO as CatchIO
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
@@ -56,6 +58,7 @@ import Options.Applicative
 import System.Directory
 import System.FilePath
 import System.IO
+import qualified System.Log.Simple as Log
 
 import Control.Concurrent.Async
 
@@ -231,15 +234,15 @@ logException pre out = handle onErr where
 	onErr :: SomeException -> IO ()
 	onErr e = out $ pre ++ displayException e
 
-logIO :: String -> (String -> IO ()) -> IO () -> IO ()
-logIO pre out = handle onIO where
-	onIO :: IOException -> IO ()
-	onIO e = out $ pre ++ displayException e
+logIO :: CatchIO.MonadCatchIO m => String -> (String -> m ()) -> m () -> m ()
+logIO pre out = flip CatchIO.catch (onIO out) where
+	onIO :: CatchIO.MonadCatchIO m => (String -> m ()) -> IOException -> m ()
+	onIO out' e = out' $ pre ++ displayException e
 
-logAsync :: (String -> IO ()) -> IO () -> IO ()
-logAsync out = handle onAsync where
-	onAsync :: AsyncException -> IO ()
-	onAsync e = out (displayException e) >> throwIO e
+logAsync :: CatchIO.MonadCatchIO m => (String -> m ()) -> m () -> m ()
+logAsync out = flip CatchIO.catch (onAsync out) where
+	onAsync :: CatchIO.MonadCatchIO m => (String -> m ()) -> AsyncException -> m ()
+	onAsync out' e = out' (displayException e) >> CatchIO.throw e
 
 ignoreIO :: IO () -> IO ()
 ignoreIO = handle (const (return ()) :: IOException -> IO ())
@@ -277,3 +280,11 @@ parseArgs nm p = handle' . execParserPure (prefs mempty) (p { infoParser = withH
 	handle' (Success r) = Right r
 	handle' (Failure f) = Left $ fst $ renderFailure f nm
 	handle' _ = Left "error: completion invoked result"
+
+instance CatchIO.MonadCatchIO m => CatchIO.MonadCatchIO (ExceptT e m) where
+	catch act onError = ExceptT $ CatchIO.catch (runExceptT act) (runExceptT . onError)
+	block = ExceptT . CatchIO.block . runExceptT
+	unblock = ExceptT . CatchIO.unblock . runExceptT
+
+instance Log.MonadLog m => Log.MonadLog (ExceptT e m) where
+	askLog = lift Log.askLog
