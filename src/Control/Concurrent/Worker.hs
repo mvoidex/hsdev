@@ -1,10 +1,10 @@
 {-# LANGUAGE RankNTypes #-}
 
 module Control.Concurrent.Worker (
-	Worker(..),
-	startWorker,
+	Worker(..), WorkerStopped(..),
+	startWorker, workerDone,
 	sendTask, pushTask,
-	stopWorker, syncTask,
+	restartWorker, stopWorker, syncTask,
 	inWorkerWith, inWorker, inWorker_,
 
 	module Control.Concurrent.Async
@@ -15,6 +15,7 @@ import Control.Monad.IO.Class
 import Control.Monad.Catch
 import Control.Monad.Except
 import Data.Maybe (isJust)
+import Data.Typeable
 
 import Control.Concurrent.FiniteChan
 import Control.Concurrent.Async
@@ -23,7 +24,11 @@ data Worker m = Worker {
 	workerChan :: Chan (Async (), m ()),
 	workerWrap :: forall a. m a -> m a,
 	workerTask :: MVar (Async ()),
-	workerRestart :: IO Bool }
+	workerTouch :: IO () }
+
+data WorkerStopped = WorkerStopped deriving (Show, Typeable)
+
+instance Exception WorkerStopped
 
 -- | Create new worker
 startWorker :: MonadIO m => (m () -> IO ()) -> (m () -> m ()) -> (forall a. m a -> m a) -> IO (Worker m)
@@ -31,32 +36,45 @@ startWorker run initialize wrap = do
 	ch <- newChan
 	taskVar <- newEmptyMVar
 	let
-		start = async $ do
-			run $ initialize processWork
-			processSkip
-		processWork = whileJust (liftM (fmap snd) $ liftIO $ getChan ch) id
-		processSkip = whileJust (liftM (fmap fst) $ getChan ch) cancel
-		whileJust :: Monad m => m (Maybe a) -> (a -> m b) -> m  ()
-		whileJust v act = v >>= maybe (return ()) (\x -> act x >> whileJust v act)
+		start = async $ run $ initialize go
+		go = do
+			t <- fmap snd <$> liftIO (getChan ch)
+			maybe (return ()) (>> go) t
 	start >>= putMVar taskVar
 	let
 		restart = do
-			task <- readMVar taskVar
-			stopped <- liftM isJust $ poll task
-			when stopped (start >>= void . swapMVar taskVar)
-			return stopped
+			done <- doneChan ch
+			unless done $ do
+				task <- readMVar taskVar
+				stopped <- isJust <$> poll task
+				when stopped (start >>= void . swapMVar taskVar)
 	return $ Worker ch wrap taskVar restart
+
+workerDone :: MonadIO m => Worker m -> IO Bool
+workerDone = doneChan . workerChan
 
 sendTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Async a)
 sendTask w act = mfix $ \async' -> do
 	var <- newEmptyMVar
 	let
-		act' = (workerWrap w act >>= liftIO . putMVar var . Right) `catch` (liftIO . putMVar var . Left)
-		f = putChan (workerChan w) (void async', void act') >> takeMVar var >>= either (throwM :: SomeException -> IO a) return
+		act' = (workerWrap w act >>= liftIO . putMVar var . Right) `catch` onError
+		onError :: (MonadCatch m, MonadIO m) => SomeException -> m ()
+		onError = liftIO . putMVar var . Left
+		f = do
+			p <- sendChan (workerChan w) (void async', void act')
+			unless p $ putMVar var (Left $ SomeException WorkerStopped)
+			r <- takeMVar var
+			either throwM return r
 	async f
 
 pushTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Async a)
-pushTask w act = workerRestart w >> sendTask w act
+pushTask w act = workerTouch w >> sendTask w act
+
+restartWorker :: Worker m -> IO ()
+restartWorker w = do
+	async' <- readMVar (workerTask w)
+	cancel async'
+	void $ waitCatch async'
 
 stopWorker :: Worker m -> IO ()
 stopWorker = closeChan . workerChan

@@ -74,7 +74,7 @@ class (ServerMonadBase m, MonadLog m) => SessionMonad m where
 	getSession :: m Session
 
 askSession :: SessionMonad m => (Session -> a) -> m a
-askSession f = liftM f $ getSession
+askSession f = liftM f getSession
 
 newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a } deriving (Functor, Applicative, Monad, MonadReader Session, MonadIO, MonadTrans, MonadCatchIO, MonadThrow, MonadCatch)
 
@@ -172,7 +172,7 @@ serverWait = join . liftM liftIO $ askSession sessionWait
 
 -- | Update database
 serverUpdateDB :: SessionMonad m => Database -> m ()
-serverUpdateDB db = askSession sessionDatabase >>= (`DB.update` (return db))
+serverUpdateDB db = askSession sessionDatabase >>= (`DB.update` return db)
 
 -- | Server write cache
 serverWriteCache :: SessionMonad m => Database -> m ()
@@ -307,6 +307,7 @@ data Request = Request {
 	requestNoFile :: Bool,
 	requestTimeout :: Int,
 	requestSilent :: Bool }
+		deriving (Show)
 
 instance ToJSON Request where
 	toJSON (Request c dir f tm s) = object ["current-directory" .= dir, "no-file" .= f, "timeout" .= tm, "silent" .= s] `objectUnion` toJSON c
@@ -501,7 +502,7 @@ instance FromCmd Command where
 		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP),
 		cmd "resolve" "resolve module scope (or exports)" (InfoResolve <$> fileArg <*> exportsFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
-		cmd "sandbox" "get sandbox info" (InfoSandbox <$> (pathArg $ help "locate sandbox in parent of this path")),
+		cmd "sandbox" "get sandbox info" (InfoSandbox <$> pathArg (help "locate sandbox in parent of this path")),
 		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
 		cmd "whois" "get info for symbol" (Whois <$> strArgument idm <*> ctx),
 		cmd "scope" "get declarations accessible from module or within a project" (
@@ -544,12 +545,12 @@ instance FromCmd TargetFilter where
 	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> cabalArg, TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand")]
 
 instance FromCmd SearchQuery where
-	cmdP = SearchQuery <$> (strArgument idm <|> pure "") <*> (asum [
+	cmdP = SearchQuery <$> (strArgument idm <|> pure "") <*> asum [
 		flag' SearchExact (long "exact"),
 		flag' SearchRegex (long "regex"),
 		flag' SearchInfix (long "infix"),
 		flag' SearchSuffix (long "suffix"),
-		pure SearchPrefix <* switch (long "prefix")])
+		pure SearchPrefix <* switch (long "prefix")]
 
 readJSON :: FromJSON a => ReadM a
 readJSON = str >>= maybe (readerError "Can't parse JSON argument") return . decode . L.pack
@@ -646,45 +647,45 @@ instance FromJSON Command where
 		guardCmd "listen" v *> pure Listen,
 		guardCmd "add" v *> (AddData <$> v .:: "data"),
 		guardCmd "scan" v *> (Scan <$>
-			v .:: "projects" <*>
-			v .:: "sandboxes" <*>
-			v .:: "files" <*>
-			v .:: "paths" <*>
-			v .:: "contents" <*>
-			v .:: "ghc-opts" <*>
-			v .:: "docs" <*>
-			v .:: "infer"),
-		guardCmd "docs" v *> (RefineDocs <$> v .:: "projects" <*> v .:: "files" <*> v .:: "modules"),
-		guardCmd "infer" v *> (InferTypes <$> v .:: "projects" <*> v .:: "files" <*> v .:: "modules"),
+			v .::?! "projects" <*>
+			v .::?! "sandboxes" <*>
+			v .::?! "files" <*>
+			v .::?! "paths" <*>
+			v .::?! "contents" <*>
+			v .::?! "ghc-opts" <*>
+			(v .:: "docs" <|> pure False) <*>
+			(v .:: "infer" <|> pure False)),
+		guardCmd "docs" v *> (RefineDocs <$> v .::?! "projects" <*> v .::?! "files" <*> v .::?! "modules"),
+		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files" <*> v .::?! "modules"),
 		guardCmd "remove" v *> (Remove <$>
-			v .:: "projects" <*>
-			v .:: "packages" <*>
-			v .:: "sandboxes" <*>
-			v .:: "files"),
-		guardCmd "modules" v *> (InfoModules <$> v .:: "filters"),
+			v .::?! "projects" <*>
+			v .::?! "packages" <*>
+			v .::?! "sandboxes" <*>
+			v .::?! "files"),
+		guardCmd "modules" v *> (InfoModules <$> v .::?! "filters"),
 		guardCmd "packages" v *> pure InfoPackages,
 		guardCmd "projects" v *> pure InfoProjects,
 		guardCmd "sandboxes" v *> pure InfoSandboxes,
-		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .:: "filters" <*> v .:: "locals"),
-		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .:: "filters"),
-		guardCmd "resolve" v *> (InfoResolve <$> v .:: "file" <*> v .:: "exports"),
+		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .::?! "filters" <*> (v .:: "locals" <|> pure False)),
+		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .::?! "filters"),
+		guardCmd "resolve" v *> (InfoResolve <$> v .:: "file" <*> (v .:: "exports" <|> pure False)),
 		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
 		guardCmd "lookup" v *> (Lookup <$> v .:: "name" <*> v .:: "file"),
 		guardCmd "whois" v *> (Whois <$> v .:: "name" <*> v .:: "file"),
 		guardCmd "scope modules" v *> (ResolveScopeModules <$> v .:: "query" <*> v .:: "file"),
-		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> v .:: "global" <*> v .:: "file"),
-		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> v .:: "wide" <*> v .:: "file"),
-		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> v .:: "page" <*> v .:: "pages"),
-		guardCmd "cabal list" v *> (CabalList <$> v .:: "packages"),
-		guardCmd "lint" v *> (Lint <$> v .:: "files" <*> v .:: "contents"),
-		guardCmd "check" v *> (Check <$> v .:: "files" <*> v .:: "contents" <*> v .:: "ghc-opts"),
-		guardCmd "check-lint" v *> (CheckLint <$> v .:: "files" <*> v .:: "contents" <*> v .:: "ghc-opts"),
-		guardCmd "types" v *> (Types <$> v .:: "files" <*> v .:: "contents" <*> v .:: "ghc-opts"),
+		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> (v .:: "global" <|> pure False) <*> v .:: "file"),
+		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> (v .:: "wide" <|> pure False) <*> v .:: "file"),
+		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> (v .:: "page" <|> pure 0) <*> (v .:: "pages" <|> pure 1)),
+		guardCmd "cabal list" v *> (CabalList <$> v .::?! "packages"),
+		guardCmd "lint" v *> (Lint <$> v .::?! "files" <*> v .::?! "contents"),
+		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
+		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
+		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
 		GhcMod <$> parseJSON (Object v),
 		AutoFix <$> parseJSON (Object v),
-		guardCmd "ghc eval" v *> (GhcEval <$> v .:: "exprs"),
-		guardCmd "link" v *> (Link <$> v .:: "hold"),
+		guardCmd "ghc eval" v *> (GhcEval <$> v .::?! "exprs"),
+		guardCmd "link" v *> (Link <$> (v .:: "hold" <|> pure False)),
 		guardCmd "exit" v *> pure Exit]
 
 instance ToJSON AddedContents where
@@ -710,10 +711,10 @@ instance FromJSON GhcModCommand where
 	parseJSON = withObject "ghc-mod-command" $ \v -> asum [
 		guardCmd "ghc-mod lang" v *> pure GhcModLang,
 		guardCmd "ghc-mod flags" v *> pure GhcModFlags,
-		guardCmd "ghc-mod type" v *> (GhcModType <$> v .:: "position" <*> v .:: "file" <*> v .:: "ghc-opts"),
-		guardCmd "ghc-mod lint" v *> (GhcModLint <$> v .:: "files" <*> v .:: "hlint-opts"),
-		guardCmd "ghc-mod check" v *> (GhcModCheck <$> v .:: "files" <*> v .:: "ghc-opts"),
-		guardCmd "ghc-mod check-lint" v *> (GhcModCheckLint <$> v .:: "files" <*> v .:: "ghc-opts" <*> v .:: "hlint-opts")]
+		guardCmd "ghc-mod type" v *> (GhcModType <$> v .:: "position" <*> v .:: "file" <*> v .::?! "ghc-opts"),
+		guardCmd "ghc-mod lint" v *> (GhcModLint <$> v .:: "files" <*> v .::?! "hlint-opts"),
+		guardCmd "ghc-mod check" v *> (GhcModCheck <$> v .:: "files" <*> v .::?! "ghc-opts"),
+		guardCmd "ghc-mod check-lint" v *> (GhcModCheckLint <$> v .:: "files" <*> v .::?! "ghc-opts" <*> v .::?! "hlint-opts")]
 
 instance ToJSON AutoFixCommand where
 	toJSON (AutoFixShow ns) = cmdJson "autofix show" ["messages" .= ns]
@@ -722,7 +723,7 @@ instance ToJSON AutoFixCommand where
 instance FromJSON AutoFixCommand where
 	parseJSON = withObject "auto-fix-command" $ \v -> asum [
 		guardCmd "autofix show" v *> (AutoFixShow <$> v .:: "messages"),
-		guardCmd "autofix fix" v *> (AutoFixFix <$> v .:: "messages" <*> v .:: "rest" <*> v .:: "pure")]
+		guardCmd "autofix fix" v *> (AutoFixFix <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True))]
 
 instance ToJSON FileContents where
 	toJSON (FileContents fpath cts) = object ["file" .= fpath, "contents" .= cts]
@@ -760,7 +761,7 @@ instance ToJSON SearchQuery where
 	toJSON (SearchQuery q st) = object ["input" .= q, "type" .= st]
 
 instance FromJSON SearchQuery where
-	parseJSON = withObject "search-query" $ \v -> SearchQuery <$> v .:: "input" <*> v .:: "type"
+	parseJSON = withObject "search-query" $ \v -> SearchQuery <$> (v .:: "input" <|> pure "") <*> (v .:: "type" <|> pure SearchPrefix)
 
 instance ToJSON SearchType where
 	toJSON SearchExact = toJSON ("exact" :: String)

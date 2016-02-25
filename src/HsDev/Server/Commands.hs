@@ -4,6 +4,7 @@
 module HsDev.Server.Commands (
 	ServerCommand(..), ServerOpts(..), ClientOpts(..),
 	Request(..),
+	Msg, isLisp, msg, jsonMsg, lispMsg, encodeMessage, decodeMessage,
 	sendCommand, runServerCommand,
 	findPath,
 	processRequest, processClient, processClientSocket,
@@ -75,8 +76,8 @@ sendCommand copts noFile c onNotification = do
 		sendReceive = do
 			curDir <- getCurrentDirectory
 			input <- if clientStdin copts
-				then liftM Just L.getContents
-				else return $ fmap toUtf8 $ Nothing -- arg "data" copts
+				then Just <$> L.getContents
+				else return $ toUtf8 <$> Nothing -- arg "data" copts
 			let
 				parseData :: L.ByteString -> IO Value
 				parseData cts = case eitherDecode cts of
@@ -84,7 +85,7 @@ sendCommand copts noFile c onNotification = do
 					Right v -> return v
 			_ <- traverse parseData input -- FIXME: Not used!
 
-			s <- socket AF_INET Stream defaultProtocol
+			s <- makeSocket
 			addr' <- inet_addr "127.0.0.1"
 			Net.connect s (SockAddrInet (fromIntegral $ clientPort copts) addr')
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> do
@@ -158,8 +159,8 @@ runServerCommand (Run sopts) = runServer sopts $ do
 	Log.log Log.Info $ "Server started at port {}" ~~ serverPort sopts
 	clientChan <- liftIO F.newChan
 	session <- getSession
-	_ <- liftIO $ async $ withSession session $ Log.scope "listener" $ flip finally serverExit $ do
-		bracket (liftIO $ socket AF_INET Stream defaultProtocol) (liftIO . close) $ \s -> do
+	_ <- liftIO $ async $ withSession session $ Log.scope "listener" $ flip finally serverExit $
+		bracket (liftIO makeSocket) (liftIO . close) $ \s -> do
 			liftIO $ do
 				setSocketOption s ReuseAddr 1
 				bind s $ SockAddrInet (fromIntegral $ serverPort sopts) iNADDR_ANY
@@ -169,7 +170,7 @@ runServerCommand (Run sopts) = runServer sopts $ do
 				s' <- liftIO $ fst <$> accept s
 				Log.log Log.Trace $ "accepted {}" ~~ show s'
 				void $ liftIO $ forkIO $ withSession session $ Log.scope (T.pack $ show s') $
-					logAsync (Log.log Log.Fatal . fromString) $ logIO ("exception: ") (Log.log Log.Error . fromString) $
+					logAsync (Log.log Log.Fatal . fromString) $ logIO "exception: " (Log.log Log.Error . fromString) $
 						flip finally (liftIO $ close s') $
 							bracket (liftIO newEmptyMVar) (liftIO . (`putMVar` ())) $ \done -> do
 								me <- liftIO myThreadId
@@ -195,34 +196,27 @@ runServerCommand (Run sopts) = runServer sopts $ do
 runServerCommand (Stop copts) = runServerCommand (Remote copts False Exit)
 runServerCommand (Connect copts) = do
 	curDir <- getCurrentDirectory
-	s <- socket AF_INET Stream defaultProtocol
+	s <- makeSocket
 	addr' <- inet_addr "127.0.0.1"
 	Net.connect s (SockAddrInet (fromIntegral $ clientPort copts) addr')
 	bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [(1 :: Integer)..] $ \i -> ignoreIO $ do
 		input' <- hGetLineBS stdin
-		case eitherDecode input' of
-			Left _ -> L.putStrLn $ encodeValue $ object ["error" .= ("invalid command" :: String)]
-			Right req' -> do
-				L.hPutStrLn h $ encode $ Message (Just $ show i) $ Request req' curDir True (clientTimeout copts) False
+		case decodeMsg input' of
+			Left em -> L.putStrLn $ encodeMessage $ set msg (Message Nothing $ responseError "invalid command" []) em
+			Right m -> do
+				L.hPutStrLn h $ encodeMessage $ set msg (Message (Just $ show i) $ Request (view msg m) curDir True (clientTimeout copts) False) m
 				waitResp h
 	where
-		pretty = clientPretty copts
-
-		encodeValue :: ToJSON a => a -> L.ByteString
-		encodeValue
-			| pretty = encodePretty
-			| otherwise = encode
-
 		waitResp h = do
 			resp <- hGetLineBS h
 			parseResp h resp
 
-		parseResp h str = case eitherDecode str of
-			Left e -> putStrLn $ "Can't decode response: " ++ e
-			Right (Message i r) -> do
-				Response r' <- unMmap r
-				putStrLn $ fromMaybe "_" i ++ ":" ++ fromUtf8 (encodeValue r')
-				case unResponse r of
+		parseResp h str = case decodeMessage str of
+			Left em -> putStrLn $ "Can't decode response: {}" ~~ view msg em
+			Right m -> do
+				Response r' <- unMmap $ view (msg . message) m
+				putStrLn $ "{}: {}" ~~ fromMaybe "_" (view (msg . messageId) m) ~~ fromUtf8 (encodeMsg $ set msg (Response r') m)
+				case unResponse (view (msg . message) m) of
 					Left _ -> waitResp h
 					_ -> return ()
 runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue >>= printResult where
@@ -254,9 +248,9 @@ jsonMsg = (,) False
 lispMsg :: a -> Msg a
 lispMsg = (,) True
 
--- | Decode lisp or json request
-decodeMessage :: FromJSON a => ByteString -> Either (Msg String) (Msg (Message a))
-decodeMessage bstr = over _Left decodeType' decodeMsg' where
+-- | Decode lisp or json
+decodeMsg :: FromJSON a => ByteString -> Either (Msg String) (Msg a)
+decodeMsg bstr = over _Left decodeType' decodeMsg' where
 	decodeType'
 		| isLisp' = lispMsg
 		| otherwise = jsonMsg
@@ -265,10 +259,18 @@ decodeMessage bstr = over _Left decodeType' decodeMsg' where
 	try' :: (ByteString -> Either String Value) -> Bool -> Maybe Bool
 	try' f l = either (const Nothing) (const $ Just l) $ f bstr
 
-encodeMessage :: ToJSON a => Msg (Message a) -> ByteString
-encodeMessage m
+-- | Encode lisp or json
+encodeMsg :: ToJSON a => Msg a -> ByteString
+encodeMsg m
 	| view isLisp m = encodeLisp $ view msg m
 	| otherwise = encode $ view msg m
+
+-- | Decode lisp or json request
+decodeMessage :: FromJSON a => ByteString -> Either (Msg String) (Msg (Message a))
+decodeMessage = decodeMsg
+
+encodeMessage :: ToJSON a => Msg (Message a) -> ByteString
+encodeMessage = encodeMsg
 
 -- | Process request, notifications can be sent during processing
 processRequest :: SessionMonad m => CommandOptions -> Command -> m Result
@@ -299,7 +301,7 @@ processClient name rchan send' = do
 					| otherwise = take 100 str ++ "..."
 	-- flip finally (disconnected linkVar) $ forever $ Log.scopeLog (commandLogger copts) (T.pack name) $ do
 	reqs <- liftIO $ F.readChan rchan
-	flip finally (disconnected linkVar) $ Log.scope (T.pack name) $ do
+	flip finally (disconnected linkVar) $ Log.scope (T.pack name) $
 		forM_ reqs $ \req' -> do
 			Log.log Log.Trace $ " => {}" ~~ fromUtf8 req'
 			case decodeMessage req' of
@@ -315,11 +317,11 @@ processClient name rchan send' = do
 						Log.log Log.Trace $ "{} >> {}" ~~ name ~~ fromUtf8 (encode c)
 						resp <- liftIO $ fmap (Response . Right) $ handleTimeout tm $ handleError $ withSession s $
 							processRequest
-								(CommandOptions {
+								CommandOptions {
 									commandOptionsRoot = cdir,
 									commandOptionsNotify = withSession s . onNotify,
 									commandOptionsLink = void (swapMVar linkVar exit),
-									commandOptionsHold = forever (F.getChan rchan) })
+									commandOptionsHold = forever (F.getChan rchan) }
 								c
 						mmap' noFile resp
 					answer resp'
@@ -385,12 +387,12 @@ mmap mmapPool r
 	| L.length msg' <= 1024 = return r
 	| otherwise = do
 		rvar <- newEmptyMVar
-		_ <- forkIO $ flip finally (tryPutMVar rvar r) $ void $ withName mmapPool $ \mmapName -> runExceptT $ flip catchError
-			(\_ -> liftIO $ void $ tryPutMVar rvar r)
+		_ <- forkIO $ flip finally (tryPutMVar rvar r) $ void $ withName mmapPool $ \mmapName -> runExceptT $ catchError
 			(withMapFile mmapName (L.toStrict msg') $ liftIO $ do
 				_ <- tryPutMVar rvar $ result $ MmapFile mmapName
 				-- give 10 seconds for client to read data
 				threadDelay 10000000)
+			(\_ -> liftIO $ void $ tryPutMVar rvar r)
 		takeMVar rvar
 	where
 		msg' = encode r
@@ -409,3 +411,6 @@ unMmap (Response (Right (Result v)))
 				Right r'' -> return r''
 #endif
 unMmap r = return r
+
+makeSocket :: IO Socket
+makeSocket = socket AF_INET Stream defaultProtocol

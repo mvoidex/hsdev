@@ -8,6 +8,8 @@ module HsDev.Tools.Ghc.Check (
 	module HsDev.Symbols.Types,
 	Cabal(..), Project(..),
 
+	recalcNotesTabs,
+
 	module Control.Monad.Except
 	) where
 

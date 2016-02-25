@@ -160,11 +160,12 @@ runCommand (Lint fs fcts) = toValue $ do
 runCommand (Check fs fcts ghcs') = toValue $ do
 	db <- getDb
 	ghc <- askSession sessionGhc
+	liftIO $ restartWorker ghc
 	let
 		checkSome file fn = do
 			cabal <- liftIO $ getSandbox file
 			m <- maybe
-				(commandError_ $ "File '" ++ file ++ "' not found")
+				(commandError_ $ "File '{}' not found" ~~ file)
 				return
 				(lookupFile file db)
 			notes <- inWorkerWith (commandError_ . show) ghc
@@ -176,6 +177,7 @@ runCommand (Check fs fcts ghcs') = toValue $ do
 runCommand (CheckLint fs fcts ghcs') = toValue $ do
 	db <- getDb
 	ghc <- askSession sessionGhc
+	liftIO $ restartWorker ghc
 	let
 		checkSome file fn = do
 			cabal <- liftIO $ getSandbox file

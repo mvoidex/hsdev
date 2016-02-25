@@ -26,7 +26,7 @@ import HsDev.Util ((.::), (.::?), objectUnion)
 data Message a = Message {
 	_messageId :: Maybe String,
 	_message :: a }
-		deriving (Eq, Ord, Functor)
+		deriving (Eq, Ord, Show, Functor)
 
 makeLenses ''Message
 
@@ -48,7 +48,7 @@ messagesById :: Maybe String -> [Message a] -> [a]
 messagesById i = map _message . filter ((== i) . _messageId)
 
 -- | Notification from server
-data Notification = Notification Value
+data Notification = Notification Value deriving (Eq, Show)
 
 instance ToJSON Notification where
 	toJSON (Notification v) = object ["notify" .= v]
@@ -62,6 +62,7 @@ data Result =
 	-- ^ Result
 	Error String (Map String Value)
 	-- ^ Error
+		deriving (Show)
 
 instance ToJSON Result where
 	toJSON (Result r) = object ["result" .= r]
@@ -83,7 +84,7 @@ instance ToJSON ResultPart where
 instance FromJSON ResultPart where
 	parseJSON = withObject "result-part" $ \v -> ResultPart <$> v .:: "result-part"
 
-newtype Response = Response { unResponse :: Either Notification Result }
+newtype Response = Response { unResponse :: Either Notification Result } deriving (Show)
 
 isNotification :: Response -> Bool
 isNotification = either (const True) (const False) . unResponse
