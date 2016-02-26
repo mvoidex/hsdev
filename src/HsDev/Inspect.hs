@@ -164,10 +164,14 @@ getDecls decls =
 		mergeInfos (Function ln ld lr) (Function rn rd rr) = Function (ln `mplus` rn) (ld ++ rd) (lr `mplus` rr)
 		mergeInfos l _ = l
 
--- | Get definitions
-getBinds :: Maybe H.Binds -> [Declaration]
-getBinds (Just (H.BDecls decls)) = getDecls decls
-getBinds _ = []
+-- | Get local binds
+getLocalDecls :: H.Decl -> [Declaration]
+getLocalDecls decl' = concatMap getDecls' binds' where
+	binds' :: [H.Binds]
+	binds' = universeBi decl'
+	getDecls' :: H.Binds -> [Declaration]
+	getDecls' (H.BDecls decls) = getDecls decls
+	getDecls' _ = []
 
 -- | Get declaration and child declarations
 getDecl :: H.Decl -> [Declaration]
@@ -222,10 +226,9 @@ getRec loc t ns rt = [mkFun loc n (Function (Just $ oneLinePrint $ t `H.TyFun` r
 -- | Get definitions
 getDef :: H.Decl -> [Declaration]
 getDef (H.FunBind []) = []
-getDef (H.FunBind matches@(H.Match loc n _ _ _ _ : _)) = [setPosition loc $ decl (identOfName n) fun] where
-	fun = Function Nothing (concatMap (getBinds . matchBinds) matches) Nothing
-	matchBinds (H.Match _ _ _ _ _ binds) = binds
-getDef (H.PatBind loc pat _ binds) = map (\name -> setPosition loc (decl (identOfName name) (Function Nothing (getBinds binds) Nothing))) (names pat) where
+getDef d@(H.FunBind (H.Match loc n _ _ _ _ : _)) = [setPosition loc $ decl (identOfName n) fun] where
+	fun = Function Nothing (getLocalDecls d) Nothing
+getDef d@(H.PatBind loc pat _ _) = map (\name -> setPosition loc (decl (identOfName name) (Function Nothing (getLocalDecls d) Nothing))) (names pat) where
 	names :: H.Pat -> [H.Name]
 	names (H.PVar n) = [n]
 	names (H.PNPlusK n _) = [n]
