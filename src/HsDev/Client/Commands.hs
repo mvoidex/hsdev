@@ -99,7 +99,8 @@ runCommand (InferTypes projs fs ms) = toValue $ do
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes $ map (getInspected dbval) mods]
-runCommand (Remove _ _ _ _) = toValue $ return $ object ["message" .= ("not implemented" :: String)]
+runCommand (Remove _ _ _) = toValue $ return $ object ["message" .= ("not implemented" :: String)]
+runCommand RemoveAll = toValue $ return $ object ["message" .= ("not implemented" :: String)]
 runCommand (InfoModules fs) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs

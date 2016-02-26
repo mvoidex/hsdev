@@ -344,9 +344,9 @@ data Command =
 		inferModules :: [String] } |
 	Remove {
 		removeProjects :: [FilePath],
-		removePackages :: [String],
 		removeSandboxes :: [Cabal],
 		removeFiles :: [FilePath] } |
+	RemoveAll |
 	InfoModules [TargetFilter] |
 	InfoPackages |
 	InfoProjects |
@@ -436,7 +436,8 @@ instance Paths Command where
 		pure infer
 	paths f (RefineDocs projs fs ms) = RefineDocs <$> each f projs <*> each f fs <*> pure ms
 	paths f (InferTypes projs fs ms) = InferTypes <$> each f projs <*> each f fs <*> pure ms
-	paths f (Remove projs ps cs fs) = Remove <$> each f projs <*> pure ps <*> (each . paths) f cs <*> each f fs
+	paths f (Remove projs cs fs) = Remove <$> each f projs <*> (each . paths) f cs <*> each f fs
+	paths _ RemoveAll = pure RemoveAll
 	paths f (InfoModules t) = InfoModules <$> paths f t
 	paths f (InfoSymbol q t l) = InfoSymbol <$> pure q <*> paths f t <*> pure l
 	paths f (InfoModule q t) = InfoModule <$> pure q <*> paths f t
@@ -491,9 +492,9 @@ instance FromCmd Command where
 		cmd "infer" "infer types" $ InferTypes <$> many projectArg <*> many fileArg <*> many moduleArg,
 		cmd "remove" "remove modules info" $ Remove <$>
 			many projectArg <*>
-			many packageArg <*>
 			many cabalArg <*>
 			many fileArg,
+		cmd "remove-all" "remove all data" (pure RemoveAll),
 		cmd "modules" "list modules" (InfoModules <$> many cmdP),
 		cmd "packages" "list packages" (pure InfoPackages),
 		cmd "projects" "list projects" (pure InfoProjects),
@@ -614,7 +615,8 @@ instance ToJSON Command where
 		"infer" .= infer']
 	toJSON (RefineDocs projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
 	toJSON (InferTypes projs fs ms) = cmdJson "infer" ["projects" .= projs, "files" .= fs, "modules" .= ms]
-	toJSON (Remove projs packages cabals fs) = cmdJson "remove" ["projects" .= projs, "packages" .= packages, "sandboxes" .= cabals, "files" .= fs]
+	toJSON (Remove projs cabals fs) = cmdJson "remove" ["projects" .= projs, "sandboxes" .= cabals, "files" .= fs]
+	toJSON RemoveAll = cmdJson "remove-all" []
 	toJSON (InfoModules tf) = cmdJson "modules" ["filters" .= tf]
 	toJSON InfoPackages = cmdJson "packages" []
 	toJSON InfoProjects = cmdJson "projects" []
@@ -659,9 +661,9 @@ instance FromJSON Command where
 		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files" <*> v .::?! "modules"),
 		guardCmd "remove" v *> (Remove <$>
 			v .::?! "projects" <*>
-			v .::?! "packages" <*>
 			v .::?! "sandboxes" <*>
 			v .::?! "files"),
+		guardCmd "remove-all" v *> pure RemoveAll,
 		guardCmd "modules" v *> (InfoModules <$> v .::?! "filters"),
 		guardCmd "packages" v *> pure InfoPackages,
 		guardCmd "projects" v *> pure InfoProjects,
