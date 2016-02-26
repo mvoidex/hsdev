@@ -14,7 +14,7 @@ module HsDev.Server.Commands (
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.Async
-import Control.Exception (SomeException)
+import Control.Exception (SomeException, handle)
 import Control.Lens (set, traverseOf, view, over, Lens', Lens, _1, _2, _Left)
 import Control.Monad
 import Control.Monad.CatchIO
