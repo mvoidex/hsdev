@@ -1,5 +1,6 @@
 module HsDev.Watcher (
 	watchProject, watchModule, watchSandbox,
+	unwatchProject, unwatchModule, unwatchSandbox,
 	isSource, isCabal, isConf,
 
 	module System.Directory.Watcher,
@@ -7,6 +8,7 @@ module HsDev.Watcher (
 	) where
 
 import Control.Lens (view)
+import Control.Monad (void)
 import System.FilePath (takeDirectory, takeExtension, (</>))
 
 import System.Directory.Watcher hiding (Watcher)
@@ -34,6 +36,24 @@ watchModule _ _ = return ()
 watchSandbox :: Watcher -> Cabal -> [String] -> IO ()
 watchSandbox _ Cabal _ = return ()
 watchSandbox w (Sandbox f) opts = watchTree w f isConf (WatchedSandbox (Sandbox f) opts)
+
+unwatchProject :: Watcher -> Project -> IO ()
+unwatchProject w proj = do
+	mapM_ (unwatchTree w) dirs
+	void $ unwatchDir w projDir
+	where
+		dirs = map ((projDir </>) . view entity) $ maybe [] sourceDirs $ view projectDescription proj
+		projDir = view projectPath proj
+
+unwatchModule :: Watcher -> ModuleLocation -> IO ()
+unwatchModule w (FileModule f Nothing) = void $ unwatchDir w (takeDirectory f)
+unwatchModule _ (FileModule _ (Just _)) = return ()
+unwatchModule _ (CabalModule _ _ _) = return ()
+unwatchModule _ _ = return ()
+
+unwatchSandbox :: Watcher -> Cabal -> IO ()
+unwatchSandbox _ Cabal = return ()
+unwatchSandbox w (Sandbox f) = void $ unwatchTree w f
 
 isSource :: Event -> Bool
 isSource (Event _ f _) = takeExtension f == ".hs"

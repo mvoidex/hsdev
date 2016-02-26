@@ -6,6 +6,7 @@ module HsDev.Client.Commands (
 
 import Control.Applicative
 import Control.Arrow
+import Control.Concurrent.MVar
 import Control.Exception (displayException)
 import Control.Lens (view, preview, _Just)
 import Control.Monad
@@ -27,6 +28,8 @@ import System.FilePath
 import qualified System.Log.Simple as Log
 import Text.Regex.PCRE ((=~))
 
+import qualified System.Directory.Watcher as W
+import qualified Data.Async as A
 import System.Directory.Paths
 import Text.Format
 import HsDev.Cache
@@ -47,6 +50,7 @@ import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Tools.HLint as HLint
 import qualified HsDev.Tools.Types as Tools
 import HsDev.Util
+import HsDev.Watcher
 
 import qualified HsDev.Database.Update as Update
 
@@ -99,8 +103,28 @@ runCommand (InferTypes projs fs ms) = toValue $ do
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes $ map (getInspected dbval) mods]
-runCommand (Remove _ _ _) = toValue $ return $ object ["message" .= ("not implemented" :: String)]
-runCommand RemoveAll = toValue $ return $ object ["message" .= ("not implemented" :: String)]
+runCommand (Remove projs cabals files) = toValue $ do
+	db <- askSession sessionDatabase
+	dbval <- getDb
+	w <- askSession sessionWatcher
+	projects <- traverse findProject projs
+	forM_ projects $ \proj -> do
+		DB.clear db (return $ projectDB proj dbval)
+		liftIO $ unwatchProject w proj
+	forM_ cabals $ \cabal -> do
+		DB.clear db (return $ cabalDB cabal dbval)
+		liftIO $ unwatchSandbox w cabal
+	forM_ files $ \file -> do
+		DB.clear db (return $ filterDB (inFile file) (const False) dbval)
+		let
+			mloc = fmap (view moduleLocation) $ lookupFile file dbval
+		maybe (return ()) (liftIO . unwatchModule w) mloc
+runCommand RemoveAll = toValue $ do
+	db <- askSession sessionDatabase
+	liftIO $ A.modifyAsync db A.Clear
+	w <- askSession sessionWatcher
+	wdirs <- liftIO $ readMVar (W.watcherDirs w)
+	liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir
 runCommand (InfoModules fs) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
