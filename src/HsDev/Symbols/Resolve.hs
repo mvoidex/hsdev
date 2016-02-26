@@ -8,11 +8,11 @@ module HsDev.Symbols.Resolve (
 	) where
 
 import Control.Arrow
-import Control.Lens (makeLenses, view, preview, set, over, _Just)
+import Control.Lens (makeLenses, view, preview, set, _Just)
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.Function (on)
-import Data.List (sortBy, groupBy)
+import Data.List (sortBy, groupBy, delete, nubBy)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import Data.Maybe.JustIf
@@ -78,7 +78,7 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 			let
 				exported' = case view moduleExports m of
 					Nothing -> thisDecls
-					Just exports' -> catMaybes $ exported <$> scope' <*> exports'
+					Just exports' -> unique $ catMaybes $ exported <$> scope' <*> exports'
 			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exported')
 	thisDecls :: [Declaration]
 	thisDecls = map (selfDefined . selfImport) $ view moduleDeclarations m
@@ -91,6 +91,10 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 		rm <- act
 		modify $ M.insert (view (resolvedModule . moduleId) rm) rm
 		return rm
+	unique :: [Declaration] -> [Declaration]
+	unique = nubBy ((==) `on` declId) . sortBy (comparing declId)
+	declId :: Declaration -> (Text, Maybe ModuleId)
+	declId = view declarationName &&& view declarationDefined
 
 exported :: Declaration -> Export -> Maybe Declaration
 exported decl' (ExportName q n p)
@@ -127,25 +131,25 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 						inDepsOf' file p]
 			CabalModule cabal _ _ -> selectImport i [inCabal cabal]
 			ModuleSource _ -> selectImport i [byCabal]
-		liftM (filterImportList . concatMap (view resolvedExports)) $ mapM resolveModule ms
+		fromMaybe [] <$> traverse (liftM (filterImportList . view resolvedExports) . resolveModule) ms
 	setImport :: Import -> Declaration -> Declaration
-	setImport i' = over declarationImported (Just [i'] `mappend`)
-	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM [Module]
+	setImport i' = set declarationImported (Just [i'])
+	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM (Maybe Module)
 	selectImport i' fs = do
 		db <- ask
 		return $
+			listToMaybe $
+			newestPackage $
 			fromMaybe [] $
 			listToMaybe $ dropWhile null
-				[selectModules (select' f) db | f <- byImport i' : fs]
+				[selectModules (select' f) db | f <- fs]
 		where
 			select' f md  = view moduleName md == view importModuleName i' && f (view moduleId md)
 	filterImportList :: [Declaration] -> [Declaration]
 	filterImportList = case view importList i of
 		Nothing -> id
 		Just il -> filter (passImportList il . view declarationName)
-	byImport :: Import -> ModuleId -> Bool
-	byImport i' m' = view importModuleName i' == view moduleIdName m'
-	deps f p = concatMap (view infoDepends) $ fileTargets p f
+	deps f p = delete (view projectName p) $ concatMap (view infoDepends) $ fileTargets p f
 	inDepsOf' f p m' = any (`inPackage` m') (deps f p)
 
 -- | Merge imported declarations
