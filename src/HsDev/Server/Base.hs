@@ -44,9 +44,6 @@ import HsDev.Util
 
 #if mingw32_HOST_OS
 import System.Win32.FileMapping.NamePool
-#else
-import System.Posix.Process
-import System.Posix.IO
 #endif
 
 -- | Inits log chan and returns functions (print message, wait channel)

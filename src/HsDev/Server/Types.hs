@@ -6,7 +6,7 @@ module HsDev.Server.Types (
 	Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandError(..), commandErrorMsg, commandErrorDetails, commandError, commandError_, CommandMonad(..), askOptions, ClientM(..),
 	withSession, serverListen, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, serverExit, commandRoot, commandNotify, commandLink, commandHold,
-	ServerCommand(..), ServerOpts(..), ClientOpts(..), serverOptsArgs, Request(..),
+	ServerCommand(..), ConnectionPort(..), ServerOpts(..), ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..), AddedContents(..),
 	GhcModCommand(..),
@@ -32,6 +32,7 @@ import Options.Applicative
 import System.Log.Simple hiding (Command)
 
 import System.Directory.Paths
+import Text.Format (FormatBuild(..))
 
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
@@ -214,9 +215,20 @@ data ServerCommand =
 	Remote ClientOpts Bool Command
 		deriving (Show)
 
+data ConnectionPort = NetworkPort Int | UnixPort String deriving (Eq, Read)
+
+instance Default ConnectionPort where
+	def = NetworkPort 4567
+
+instance Show ConnectionPort where
+	show (NetworkPort p) = show p
+	show (UnixPort s) = "unix " ++ s
+
+instance FormatBuild ConnectionPort
+
 -- | Server options
 data ServerOpts = ServerOpts {
-	serverPort :: Int,
+	serverPort :: ConnectionPort,
 	serverTimeout :: Int,
 	serverLog :: Maybe FilePath,
 	serverLogConfig :: String,
@@ -225,11 +237,11 @@ data ServerOpts = ServerOpts {
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts 4567 0 Nothing "use default" Nothing False
+	def = ServerOpts def 0 Nothing "use default" Nothing False
 
 -- | Client options
 data ClientOpts = ClientOpts {
-	clientPort :: Int,
+	clientPort :: ConnectionPort,
 	clientPretty :: Bool,
 	clientStdin :: Bool,
 	clientTimeout :: Int,
@@ -237,7 +249,7 @@ data ClientOpts = ClientOpts {
 		deriving (Show)
 
 instance Default ClientOpts where
-	def = ClientOpts 4567 False False 0 False
+	def = ClientOpts def False False 0 False
 
 instance FromCmd ServerCommand where
 	cmdP = serv <|> remote where
@@ -251,7 +263,7 @@ instance FromCmd ServerCommand where
 
 instance FromCmd ServerOpts where
 	cmdP = ServerOpts <$>
-		(portArg <|> pure (serverPort def)) <*>
+		(connectionArg <|> pure (serverPort def)) <*>
 		(timeoutArg <|> pure (serverTimeout def)) <*>
 		optional logArg <*>
 		(logConfigArg <|> pure (serverLogConfig def)) <*>
@@ -260,13 +272,15 @@ instance FromCmd ServerOpts where
 
 instance FromCmd ClientOpts where
 	cmdP = ClientOpts <$>
-		(portArg <|> pure (clientPort def)) <*>
+		(connectionArg <|> pure (clientPort def)) <*>
 		prettyFlag <*>
 		stdinFlag <*>
 		(timeoutArg <|> pure (clientTimeout def)) <*>
 		silentFlag
 
-portArg :: Parser Int
+portArg :: Parser ConnectionPort
+unixArg :: Parser ConnectionPort
+connectionArg :: Parser ConnectionPort
 timeoutArg :: Parser Int
 logArg :: Parser FilePath
 logConfigArg :: Parser String
@@ -277,7 +291,13 @@ prettyFlag :: Parser Bool
 stdinFlag :: Parser Bool
 silentFlag :: Parser Bool
 
-portArg = option auto (long "port" <> metavar "number" <> help "connection port")
+portArg = NetworkPort <$> option auto (long "port" <> metavar "number" <> help "connection port")
+unixArg = UnixPort <$> strOption (long "unix" <> metavar "name" <> help "unix connection port")
+#if mingw32_HOST_OS
+connectionArg = portArg
+#else
+connectionArg = portArg <|> unixArg
+#endif
 timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
 logArg = strOption (long "log" <> short 'l' <> metavar "file" <> help "log file")
 logConfigArg = strOption (long "log-config" <> metavar "rule" <> help "log config: low [low], high [high], set [low] [high], use [default/debug/trace/silent/supress]")
@@ -290,7 +310,7 @@ silentFlag = switch (long "silent" <> help "supress notifications")
 
 serverOptsArgs :: ServerOpts -> [String]
 serverOptsArgs sopts = concat [
-	["--port", show $ serverPort sopts],
+	portArgs (serverPort sopts),
 	["--timeout", show $ serverTimeout sopts],
 	marg "--log" (serverLog sopts),
 	["--log-config", serverLogConfig sopts],
@@ -300,6 +320,9 @@ serverOptsArgs sopts = concat [
 		marg :: String -> Maybe String -> [String]
 		marg n (Just v) = [n, v]
 		marg _ _ = []
+		portArgs :: ConnectionPort -> [String]
+		portArgs (NetworkPort n) = ["--port", show n]
+		portArgs (UnixPort s) = ["--unix", s]
 
 data Request = Request {
 	requestCommand :: Command,

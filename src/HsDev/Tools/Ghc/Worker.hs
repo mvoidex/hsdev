@@ -4,6 +4,7 @@ module HsDev.Tools.Ghc.Worker (
 	-- * Workers
 	ghcWorker, ghciWorker,
 	-- * Initializers and actions
+	ghcRun,
 	withFlags, modifyFlags, addCmdOpts,
 	importModules, preludeModules,
 	evaluate,
@@ -38,22 +39,25 @@ import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage)
 -- | Ghc worker. Pass options and initializer action
 ghcWorker :: [String] -> Ghc () -> IO (Worker Ghc)
 ghcWorker opts initialize = startWorker (runGhc (Just libdir)) ghcInit id where
-	ghcInit f = do
-		fs <- getSessionDynFlags
-		defaultCleanupHandler fs $ do
-			(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
-			let fs'' = fs' {
-				ghcMode = CompManager,
-				ghcLink = LinkInMemory,
-				hscTarget = HscInterpreted }
-			_ <- setSessionDynFlags fs''
-			_ <- liftIO $ initPackages fs''
-			initialize
-			f
+	ghcInit f = ghcRun opts (initialize >> f)
 
 -- | Interpreter worker is worker with @preludeModules@ loaded
 ghciWorker :: IO (Worker Ghc)
 ghciWorker = ghcWorker [] (importModules preludeModules)
+
+-- | Run ghc
+ghcRun :: [String] -> Ghc a -> Ghc a
+ghcRun opts f = do
+	fs <- getSessionDynFlags
+	defaultCleanupHandler fs $ do
+		(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
+		let fs'' = fs' {
+			ghcMode = CompManager,
+			ghcLink = LinkInMemory,
+			hscTarget = HscInterpreted }
+		_ <- setSessionDynFlags fs''
+		_ <- liftIO $ initPackages fs''
+		f
 
 -- | Alter @DynFlags@ temporary
 withFlags :: Ghc a -> Ghc a

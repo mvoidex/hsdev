@@ -63,6 +63,7 @@ import System.Win32.PowerShell (escape, quote, quoteDouble)
 #else
 import Control.Exception (handle)
 import System.Posix.Process
+import System.Posix.Files (removeLink)
 import System.Posix.IO
 #endif
 
@@ -86,9 +87,9 @@ sendCommand copts noFile c onNotification = do
 					Right v -> return v
 			_ <- traverse parseData input -- FIXME: Not used!
 
-			s <- makeSocket
+			s <- makeSocket (clientPort copts)
 			addr' <- inet_addr "127.0.0.1"
-			Net.connect s (SockAddrInet (fromIntegral $ clientPort copts) addr')
+			Net.connect s (sockAddr (clientPort copts) addr')
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> do
 				L.hPutStrLn h $ encode $ Message Nothing $ Request c curDir noFile (clientTimeout copts) (clientSilent copts)
 				hFlush h
@@ -161,10 +162,10 @@ runServerCommand (Run sopts) = runServer sopts $ do
 	clientChan <- liftIO F.newChan
 	session <- getSession
 	_ <- liftIO $ async $ withSession session $ Log.scope "listener" $ flip finally serverExit $
-		bracket (liftIO makeSocket) (liftIO . close) $ \s -> do
+		bracket (liftIO $ makeSocket (serverPort sopts)) (liftIO . close) $ \s -> do
 			liftIO $ do
 				setSocketOption s ReuseAddr 1
-				bind s $ SockAddrInet (fromIntegral $ serverPort sopts) iNADDR_ANY
+				bind s $ sockAddr (serverPort sopts) iNADDR_ANY
 				listen s maxListenQueue
 			forever $ logAsync (Log.log Log.Fatal . fromString) $ logIO "exception: " (Log.log Log.Error . fromString) $ do
 				Log.log Log.Trace "accepting connection"
@@ -194,6 +195,7 @@ runServerCommand (Run sopts) = runServer sopts $ do
 	Log.log Log.Trace "waiting for accept thread"
 	serverWait
 	Log.log Log.Trace "accept thread stopped"
+	liftIO $ unlink (serverPort sopts)
 	askSession sessionDatabase >>= liftIO . DB.readAsync >>= writeCache sopts
 	Log.log Log.Trace "waiting for clients"
 	liftIO (F.stopChan clientChan) >>= sequence_
@@ -201,9 +203,9 @@ runServerCommand (Run sopts) = runServer sopts $ do
 runServerCommand (Stop copts) = runServerCommand (Remote copts False Exit)
 runServerCommand (Connect copts) = do
 	curDir <- getCurrentDirectory
-	s <- makeSocket
+	s <- makeSocket $ clientPort copts
 	addr' <- inet_addr "127.0.0.1"
-	Net.connect s (SockAddrInet (fromIntegral $ clientPort copts) addr')
+	Net.connect s $ sockAddr (clientPort copts) addr'
 	bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [(1 :: Integer)..] $ \i -> ignoreIO $ do
 		input' <- hGetLineBS stdin
 		case decodeMsg input' of
@@ -419,5 +421,18 @@ unMmap (Response (Right (Result v)))
 #endif
 unMmap r = return r
 
-makeSocket :: IO Socket
-makeSocket = socket AF_INET Stream defaultProtocol
+makeSocket :: ConnectionPort -> IO Socket
+makeSocket (NetworkPort _) = socket AF_INET Stream defaultProtocol
+makeSocket (UnixPort _) = socket AF_UNIX Stream defaultProtocol
+
+sockAddr :: ConnectionPort -> HostAddress -> SockAddr
+sockAddr (NetworkPort p) addr = SockAddrInet (fromIntegral p) addr
+sockAddr (UnixPort s) _ = SockAddrUnix s
+
+unlink :: ConnectionPort -> IO ()
+unlink (NetworkPort _) = return ()
+#if mingw32_HOST_OS
+unlink (UnixPort _) = return ()
+#else
+unlink (UnixPort s) = removeLink s
+#endif
