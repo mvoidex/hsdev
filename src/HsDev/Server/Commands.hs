@@ -61,6 +61,7 @@ import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
 import System.Win32.PowerShell (escape, quote, quoteDouble)
 #else
+import Control.Exception (handle)
 import System.Posix.Process
 import System.Posix.IO
 #endif
@@ -130,12 +131,12 @@ runServerCommand (Start sopts) = do
 		then putStrLn $ "Server started at port {}" ~~ serverPort sopts
 		else mapM_ putStrLn [
 			"Failed to start server",
-			"\tCommand: " ++ script,
-			"\tResult: " ++ r]
+			"\tCommand: {}" ~~ script,
+			"\tResult: {}" ~~ r]
 #else
 	let
 		forkError :: SomeException -> IO ()
-		forkError e  = putStrLn $ "Failed to start server: " ++ show e
+		forkError e  = putStrLn $ "Failed to start server: {}" ~~ show e
 
 		proxy :: IO ()
 		proxy = do
@@ -219,7 +220,9 @@ runServerCommand (Connect copts) = do
 			Left em -> putStrLn $ "Can't decode response: {}" ~~ view msg em
 			Right m -> do
 				Response r' <- unMmap $ view (msg . message) m
-				putStrLn $ "{}: {}" ~~ fromMaybe "_" (view (msg . messageId) m) ~~ fromUtf8 (encodeMsg $ set msg (Response r') m)
+				putStrLn $ "{id}: {response}"
+					~~ ("id" %= fromMaybe "_" (view (msg . messageId) m))
+					~~ ("response" %= fromUtf8 (encodeMsg $ set msg (Response r') m))
 				case unResponse (view (msg . message) m) of
 					Left _ -> waitResp h
 					_ -> return ()
