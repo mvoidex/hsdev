@@ -14,7 +14,7 @@ module HsDev.Server.Commands (
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.Async
-import Control.Exception (SomeException, handle)
+import Control.Exception (SomeException)
 import Control.Lens (set, traverseOf, view, over, Lens', Lens, _1, _2, _Left)
 import Control.Monad
 import Control.Monad.CatchIO
@@ -41,7 +41,7 @@ import qualified System.Log.Simple as Log
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
-import Text.Format ((~~))
+import Text.Format ((~~), (%=))
 import System.Directory.Paths
 
 import qualified HsDev.Client.Commands as Client
@@ -119,15 +119,15 @@ runServerCommand (Start sopts) = do
 		-- start-process foo 'bar baz' ⇒ foo bar baz -- not expected
 		-- start-process foo '"bar baz"' ⇒ foo "bar baz" -- ok
 		biescape = escape quote . escape quoteDouble
-		script = "try {{ start-process {} {} -WindowStyle Hidden -WorkingDirectory {} }} catch {{ $_.Exception, $_.InvocationInfo.Line }}"
-			~~ escape quote myExe
-			~~ intercalate ", " (map biescape args)
-			~~ escape quote curDir
+		script = "try {{ start-process {process} {args} -WindowStyle Hidden -WorkingDirectory {dir} }} catch {{ $_.Exception, $_.InvocationInfo.Line }}"
+			~~ ("process" %= escape quote myExe)
+			~~ ("args" %= intercalate ", " (map biescape args))
+			~~ ("dir" %= escape quote curDir)
 	r <- readProcess "powershell" [
 		"-Command",
 		script] ""
 	if all isSpace r
-		then putStrLn $ "Server started at port " ++ show (serverPort sopts)
+		then putStrLn $ "Server started at port {}" ~~ serverPort sopts
 		else mapM_ putStrLn [
 			"Failed to start server",
 			"\tCommand: " ++ script,
@@ -156,7 +156,7 @@ runServerCommand (Start sopts) = do
 		putStrLn $ "Server started at port {}" ~~ serverPort sopts
 #endif
 runServerCommand (Run sopts) = runServer sopts $ do
-	Log.log Log.Info $ "Server started at port {}" ~~ serverPort sopts
+	q <- liftIO $ newQSem 0
 	clientChan <- liftIO F.newChan
 	session <- getSession
 	_ <- liftIO $ async $ withSession session $ Log.scope "listener" $ flip finally serverExit $
@@ -167,6 +167,7 @@ runServerCommand (Run sopts) = runServer sopts $ do
 				listen s maxListenQueue
 			forever $ logAsync (Log.log Log.Fatal . fromString) $ logIO "exception: " (Log.log Log.Error . fromString) $ do
 				Log.log Log.Trace "accepting connection"
+				liftIO $ signalQSem q
 				s' <- liftIO $ fst <$> accept s
 				Log.log Log.Trace $ "accepted {}" ~~ show s'
 				void $ liftIO $ forkIO $ withSession session $ Log.scope (T.pack $ show s') $
@@ -186,6 +187,9 @@ runServerCommand (Run sopts) = runServer sopts $ do
 								liftIO $ F.putChan clientChan timeoutWait
 								processClientSocket s'
 
+	Log.log Log.Trace "waiting for starting accept thread"
+	liftIO $ waitQSem q
+	Log.log Log.Info $ "Server started at port {}" ~~ serverPort sopts
 	Log.log Log.Trace "waiting for accept thread"
 	serverWait
 	Log.log Log.Trace "accept thread stopped"
