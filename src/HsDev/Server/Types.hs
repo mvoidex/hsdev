@@ -279,7 +279,6 @@ instance FromCmd ClientOpts where
 		silentFlag
 
 portArg :: Parser ConnectionPort
-unixArg :: Parser ConnectionPort
 connectionArg :: Parser ConnectionPort
 timeoutArg :: Parser Int
 logArg :: Parser FilePath
@@ -292,10 +291,11 @@ stdinFlag :: Parser Bool
 silentFlag :: Parser Bool
 
 portArg = NetworkPort <$> option auto (long "port" <> metavar "number" <> help "connection port")
-unixArg = UnixPort <$> strOption (long "unix" <> metavar "name" <> help "unix connection port")
 #if mingw32_HOST_OS
 connectionArg = portArg
 #else
+unixArg :: Parser ConnectionPort
+unixArg = UnixPort <$> strOption (long "unix" <> metavar "name" <> help "unix connection port")
 connectionArg = portArg <|> unixArg
 #endif
 timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
