@@ -7,36 +7,50 @@
 
 Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
 Uses [fsnotify](http://hackage.haskell.org/package/fsnotify) to watch for changes.
-And several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofix`
+There are also several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofix`
 
 ## Usage
 
 Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will store information.
 Then you can connect to server and send requests (see [requests/responses](MESSAGES.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
+Scan sources, installed modules and you're ready to request various information: scope, completions, info about symbols etc.
+
+Typical usage is:
+<pre>
+PS> hsdev start
+Server started at port 4567
+PS> hsdev scan --path /projects/haskell --project /projects/hsdev --cabal --silent
+[]
+PS> hsdev complete DB.r -f /projects/hsdev/src/HsDev/Server/Commands.hs | jq -r '.[] | .name + """ :: """ + .decl.type'
+readAsync :: Async a -> IO a
+</pre>
 
 ### Commands
 
+Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help <command>`) to get detailed info.
+
 * `version` — returns version number
-* `start`, `run` and `stop` — server commands
-* `connect` — interactive connect to server
+* `start`, `run` and `stop` — server commands, start remote server, run server or stop remote server.
+* `connect` — connect to server to send commands from command line (for debug)
 * `ping` — ping server
 * `listen` — connect to server and listen for its log (for debug)
-* `add` — add inspected modules
-* `scan`, `rescan` — scan installed modules, cabal projects and files (`rescan` is deprecated because of using `fsnotify`)
-* `remove` — unload data
+* `add` — add info to database
+* `scan` — scan installed modules, cabal projects and files
+* `docs`, `infer` — scan docs or infer types for sources
+* `remove`, `remove-all` — unload data
 * `modules`, `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
-* `resolve` — resolve scope symbols and exports for sources module
+* `resolve` — resolve scope symbols and exports for sources module, it takes reexports, export and import lists into account
 * `symbol`, `module`, `project` — find symbol, module or project
-* `lookup`, `whois` — find visible or imported symbol
+* `lookup`, `whois` — find project-visible or imported symbol
 * `scope`, `scope modules` — get modules or declarations, accessible from file
 * `complete` — get completions for file and input
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
 * `lint`, `check`, `lint-check` — lint or check source files. These commands have some advantages over `ghc-mod` ones: `lint` uses `hlint` as library, `check` returns more precise source position and also uses project description to pass `-package` flags, these commands also can accept file contents
+* `types` — get types for all source spans
+* `ghc eval` — evaluate expression
 * `ghc-mod type`, `ghc-mod check`, `ghc-mod lint`, `ghc-mod lang`, `ghc-mod flags` — run `ghc-mod` command in corresponding ghc-mod worker (separate workers per project and per sandbox)
-* `autofix show`, `autofix fix` — commands to fix some warnings and apply `hlint` suggestions
-* `dump` — dump modules or projects info
-* `load` — load data
+* `autofix show`, `autofix fix` — commands to fix some warnings and apply `hlint` suggestions, see description below
 
 #### TODO: Detailed commands description with examples
 
