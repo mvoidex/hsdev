@@ -1,6 +1,6 @@
 module HsDev.Symbols.Util (
 	projectOf, cabalOf, packageOf,
-	inProject, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inCabal, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
+	inProject, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inCabal, inSandboxStack, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
 	imports, qualifier, imported, visible, inScope,
 	newestPackage,
 	sourceModule, visibleModule, preferredModule, uniqueModules,
@@ -12,7 +12,7 @@ import Control.Lens (view)
 import Control.Monad (liftM)
 import Data.Function (on)
 import Data.Maybe
-import Data.List (maximumBy, groupBy, sortBy, partition)
+import Data.List (maximumBy, groupBy, sortBy, partition, intersect)
 import Data.Ord (comparing)
 import Data.String (fromString)
 import System.FilePath (normalise)
@@ -60,6 +60,12 @@ inDepsOfProject = maybe (const False) (anyPackage . ordNub . concatMap (view inf
 inCabal :: Cabal -> ModuleId -> Bool
 inCabal c m = case view moduleIdLocation m of
 	CabalModule cabal _ _ -> cabal == c
+	_ -> False
+
+-- | Check if module in one of sandboxes
+inSandboxStack :: SandboxStack -> ModuleId -> Bool
+inSandboxStack sboxes m = case view moduleIdLocation m of
+	CabalModule cabal _ _ -> not $ null $ sandboxStack cabal `intersect` sboxes
 	_ -> False
 
 -- | Check if module in package

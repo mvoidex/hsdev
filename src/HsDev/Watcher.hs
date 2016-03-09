@@ -29,13 +29,14 @@ watchProject w proj opts = do
 watchModule :: Watcher -> ModuleLocation -> IO ()
 watchModule w (FileModule f Nothing) = watchDir w (takeDirectory f) isSource WatchedModule
 watchModule w (FileModule _ (Just proj)) = watchProject w proj []
-watchModule w (CabalModule cabal _ _) = watchSandbox w cabal []
+watchModule w (CabalModule cabal _ _) = watchSandbox w (sandboxStack cabal) []
 watchModule _ _ = return ()
 
 -- | Watch for sandbox
-watchSandbox :: Watcher -> Cabal -> [String] -> IO ()
-watchSandbox _ Cabal _ = return ()
-watchSandbox w (Sandbox f) opts = watchTree w f isConf (WatchedSandbox (Sandbox f) opts)
+watchSandbox :: Watcher -> SandboxStack -> [String] -> IO ()
+watchSandbox w sboxes opts = mapM_ watch' (sandboxStacks sboxes) where
+	watch' [] = return ()
+	watch' fs@(f:_) = watchTree w f isConf (WatchedSandbox fs opts)
 
 unwatchProject :: Watcher -> Project -> IO ()
 unwatchProject w proj = do
@@ -51,9 +52,9 @@ unwatchModule _ (FileModule _ (Just _)) = return ()
 unwatchModule _ (CabalModule _ _ _) = return ()
 unwatchModule _ _ = return ()
 
-unwatchSandbox :: Watcher -> Cabal -> IO ()
-unwatchSandbox _ Cabal = return ()
-unwatchSandbox w (Sandbox f) = void $ unwatchTree w f
+unwatchSandbox :: Watcher -> SandboxStack -> IO ()
+unwatchSandbox _ [] = return ()
+unwatchSandbox w (f:_) = void $ unwatchTree w f
 
 isSource :: Event -> Bool
 isSource (Event _ f _) = takeExtension f == ".hs"

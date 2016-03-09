@@ -41,8 +41,8 @@ hdocs mloc opts = runExceptT (docs' mloc) >>= return . either (const M.empty) (f
 	docs' _ = throwError $ "Can't get docs for: " ++ show mloc
 
 -- | Get all docs
-hdocsCabal :: Cabal -> [String] -> ExceptT String IO (Map String (Map String String))
-hdocsCabal cabal opts = liftM (M.map $ force . HDocs.formatDocs) $ HDocs.installedDocs (cabalOpt cabal ++ opts)
+hdocsCabal :: SandboxStack -> [String] -> ExceptT String IO (Map String (Map String String))
+hdocsCabal sboxes opts = liftM (M.map $ force . HDocs.formatDocs) $ HDocs.installedDocs (sandboxStackOpt sboxes ++ opts)
 
 -- | Set docs for module
 setDocs :: Map String String -> Module -> Module

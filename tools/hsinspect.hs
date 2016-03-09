@@ -6,6 +6,7 @@ module Main (
 
 import Control.Monad (liftM, (>=>))
 import Control.Monad.IO.Class
+import Control.Monad.Except (ExceptT(..), runExceptT)
 import Data.Aeson (toJSON)
 import System.Directory (canonicalizePath)
 import System.FilePath (takeExtension)
@@ -14,7 +15,8 @@ import HsDev.Project (readProject)
 import HsDev.Scan (scanModule, scanModify)
 import HsDev.Inspect (inspectContents, inspectDocs, getDefines)
 import HsDev.Symbols.Location (ModuleLocation(..), Cabal(..))
-import HsDev.Tools.GhcMod.InferType (infer)
+import HsDev.Tools.Ghc.Types (inferTypes)
+import HsDev.Tools.Ghc.Worker
 
 import Tool
 
@@ -35,10 +37,11 @@ main = toolMain "hsinspect" "haskell inspect" opts (printExceptT . printResult .
 		fname' <- liftIO $ canonicalizePath fname
 		defs <- liftIO getDefines
 		im <- scanModule defs ghcs (FileModule fname' Nothing) Nothing
+		ghc <- liftIO $ ghcWorker ghcs (return ())
 		let
 			scanAdditional =
 				scanModify (\opts' _ -> inspectDocs opts') >=>
-				scanModify infer
+				scanModify (\opts' sboxes m -> ExceptT (inWorker ghc (runExceptT $ inferTypes opts' sboxes m Nothing)))
 		toJSON <$> scanAdditional im
 	inspect' (Opts (Just fcabal@(takeExtension -> ".cabal")) _) = do
 		fcabal' <- liftIO $ canonicalizePath fcabal

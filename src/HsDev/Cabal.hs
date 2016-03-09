@@ -1,14 +1,15 @@
-{-# LANGUAGE OverloadedStrings, MultiWayIf, FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings, MultiWayIf, FlexibleContexts, TemplateHaskell #-}
 
 module HsDev.Cabal (
-	Cabal(..), sandbox,
+	Cabal(..), sandbox, SandboxStack, sandboxStack, sandboxStacks, sandboxCabals, topSandbox,
 	isPackageDb, findPackageDb, locateSandbox, getSandbox, searchSandbox,
-	cabalOpt
+	cabalOpt, sandboxStackOpt
 	) where
 
 import Control.Applicative
 import Control.DeepSeq (NFData(..))
 import Control.Monad.Except
+import Control.Lens (makeLenses, Lens', lens)
 import Data.Aeson
 import Data.List
 import System.Directory
@@ -17,12 +18,31 @@ import System.FilePath
 import HsDev.Util (searchPath, liftE)
 
 -- | Cabal or sandbox
-data Cabal = Cabal | Sandbox FilePath deriving (Eq, Ord)
+data Cabal = Cabal | Sandbox { _sandbox :: FilePath } deriving (Eq, Ord)
 
--- | Get sandbox
-sandbox :: Cabal -> Maybe FilePath
-sandbox Cabal = Nothing
-sandbox (Sandbox f) = Just f
+makeLenses ''Cabal
+
+type SandboxStack = [FilePath]
+
+sandboxStack :: Cabal -> SandboxStack
+sandboxStack Cabal = []
+sandboxStack (Sandbox f) = [f]
+
+sandboxStacks :: SandboxStack -> [SandboxStack]
+sandboxStacks = tails
+
+sandboxCabals :: SandboxStack -> [Cabal]
+sandboxCabals = (Cabal :) . map Sandbox . reverse
+
+topSandbox :: Lens' SandboxStack Cabal
+topSandbox = lens g s where
+	g :: SandboxStack -> Cabal
+	g [] = Cabal
+	g (f:_) = Sandbox f
+	s :: SandboxStack -> Cabal -> SandboxStack
+	s _ Cabal = []
+	s [] (Sandbox f) = [f]
+	s (_:fs) (Sandbox f) = f:fs
 
 instance NFData Cabal where
 	rnf Cabal = ()
@@ -47,9 +67,10 @@ instance FromJSON Cabal where
 
 -- | Is -package-db file
 isPackageDb :: FilePath -> Bool
-isPackageDb p = cabalDev p || cabalSandbox p where
-	cabalDev dir = "packages-" `isPrefixOf` dir && ".conf" `isSuffixOf` dir
-	cabalSandbox dir = "-packages.conf.d" `isSuffixOf` dir
+isPackageDb p = cabalDev p || cabalSandbox p || stackDb p where
+	cabalDev dir = "packages-" `isPrefixOf` takeFileName dir && ".conf" `isSuffixOf` takeFileName dir
+	cabalSandbox dir = "-packages.conf.d" `isSuffixOf` takeFileName dir
+	stackDb dir = takeFileName dir == "pkgdb"
 
 -- | Is .cabal-sandbox
 cabalSandboxDir :: FilePath -> Bool
@@ -88,3 +109,7 @@ searchSandbox p = runExceptT (searchPath p locateSandbox) >>= either (const $ re
 cabalOpt :: Cabal -> [String]
 cabalOpt Cabal = []
 cabalOpt (Sandbox p) = ["-package-db " ++ p]
+
+sandboxStackOpt :: SandboxStack -> [String]
+sandboxStackOpt [] = []
+sandboxStackOpt paths' = "-no-user-package-db" : reverse ["-package-db " ++ p | p <- paths']

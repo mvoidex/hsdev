@@ -37,6 +37,7 @@ import HsDev.Commands
 import qualified HsDev.Database.Async as DB
 import HsDev.Server.Message as M
 import HsDev.Server.Types
+import HsDev.Stack
 import HsDev.Symbols
 import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util
@@ -52,6 +53,7 @@ import qualified HsDev.Tools.Types as Tools
 import HsDev.Util
 import HsDev.Watcher
 
+import qualified HsDev.Scan as Scan
 import qualified HsDev.Database.Update as Update
 
 runClient :: (ToJSON a, ServerMonadBase m) => CommandOptions -> ClientM m a -> ServerM m Result
@@ -79,10 +81,10 @@ runCommand (Scan projs cabals fs paths' fcts ghcs' docs' infer') = toValue $ do
 	sboxes <- getSandboxes cabals
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
 		map (\(FileContents f cts) -> Update.scanFileContents ghcs' f (Just cts)) fcts,
-		map (Update.scanProject ghcs') projs,
+		map (Update.scanProjectStack ghcs') projs,
 		map (Update.scanFile ghcs') fs,
 		map (Update.scanDirectory ghcs') paths',
-		map (Update.scanCabal ghcs') sboxes]
+		map (Update.scanCabal ghcs' . sandboxStack) sboxes]
 runCommand (RefineDocs projs fs ms) = toValue $ do
 	projects <- traverse findProject projs
 	dbval <- getDb
@@ -113,7 +115,7 @@ runCommand (Remove projs cabals files) = toValue $ do
 		liftIO $ unwatchProject w proj
 	forM_ cabals $ \cabal -> do
 		DB.clear db (return $ cabalDB cabal dbval)
-		liftIO $ unwatchSandbox w cabal
+		liftIO $ unwatchSandbox w $ sandboxStack cabal
 	forM_ files $ \file -> do
 		DB.clear db (return $ filterDB (inFile file) (const False) dbval)
 		let
@@ -141,39 +143,32 @@ runCommand (InfoModule sq fs) = toValue $ do
 	filter' <- targetFilters fs
 	return $ newestPackage $ filterMatch sq $ filter (filter' . view moduleId) $ allModules dbval
 runCommand (InfoResolve fpath exports) = toValue $ do
-	dbval <- getDb
-	cabal <- liftIO $ getSandbox fpath
+	dbval <- getSDb fpath
 	let
-		cabaldb = filterDB (restrictCabal cabal) (const True) dbval
 		getScope
 			| exports = exportsModule
 			| otherwise = scopeModule
 	case lookupFile fpath dbval of
 		Nothing -> commandError "File not found" []
-		Just m -> return $ getScope $ resolveOne cabaldb m
+		Just m -> return $ getScope $ resolveOne dbval m
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $ do
-	dbval <- getDb
-	cabal <- liftIO $ getSandbox fpath
-	mapCommandIO $ lookupSymbol dbval cabal fpath nm
+	dbval <- getSDb fpath
+	mapCommandIO $ lookupSymbol dbval fpath nm
 runCommand (Whois nm fpath) = toValue $ do
-	dbval <- getDb
-	cabal <- liftIO $ getSandbox fpath
-	mapCommandIO $ whois dbval cabal fpath nm
+	dbval <- getSDb fpath
+	mapCommandIO $ whois dbval fpath nm
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
-	dbval <- getDb
-	cabal <- liftIO $ getSandbox fpath
-	liftM (filterMatch sq . map (view moduleId)) $ mapCommandIO $ scopeModules dbval cabal fpath
+	dbval <- getSDb fpath
+	liftM (filterMatch sq . map (view moduleId)) $ mapCommandIO $ scopeModules dbval fpath
 runCommand (ResolveScope sq global fpath) = toValue $ do
-	dbval <- getDb
-	cabal <- liftIO $ getSandbox fpath
-	liftM (filterMatch sq) $ mapCommandIO $ scope dbval cabal fpath global
+	dbval <- getSDb fpath
+	liftM (filterMatch sq) $ mapCommandIO $ scope dbval fpath global
 runCommand (Complete input wide fpath) = toValue $ do
-	dbval <- getDb
-	cabal <- liftIO $ getSandbox fpath
-	mapCommandIO $ completions dbval cabal fpath input wide
+	dbval <- getSDb fpath
+	mapCommandIO $ completions dbval fpath input wide
 runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
 	mapCommandIO $ Hayoo.hayoo hq (Just i)
@@ -183,56 +178,56 @@ runCommand (Lint fs fcts) = toValue $ do
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f c) -> HLint.hlintSource f c) fcts)
 runCommand (Check fs fcts ghcs') = toValue $ do
-	db <- getDb
+	dbval <- getDb
 	ghc <- askSession sessionGhc
 	liftIO $ restartWorker ghc
 	let
 		checkSome file fn = do
-			cabal <- liftIO $ getSandbox file
+			sboxes <- liftIO $ getSandboxStack file
 			m <- maybe
 				(commandError_ $ "File '{}' not found" ~~ file)
 				return
-				(lookupFile file db)
+				(lookupFile file dbval)
 			notes <- inWorkerWith (commandError_ . show) ghc
-				(runExceptT $ fn cabal m)
+				(runExceptT $ fn sboxes m)
 			either commandError_ return notes
 	liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
-		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- fcts]
+		[(f, \sboxes m -> Check.checkSource ghcs' sboxes m src) | FileContents f src <- fcts]
 runCommand (CheckLint fs fcts ghcs') = toValue $ do
-	db <- getDb
+	dbval <- getDb
 	ghc <- askSession sessionGhc
 	liftIO $ restartWorker ghc
 	let
 		checkSome file fn = do
-			cabal <- liftIO $ getSandbox file
+			sboxes <- liftIO $ getSandboxStack file
 			m <- maybe
 				(commandError_ $ "File '" ++ file ++ "' not found")
 				return
-				(lookupFile file db)
+				(lookupFile file dbval)
 			notes <- inWorkerWith (commandError_ . show) ghc
-				(runExceptT $ fn cabal m)
+				(runExceptT $ fn sboxes m)
 			either commandError_ return notes
 	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
-		[(f, \cabal m -> Check.checkSource ghcs' cabal m src) | FileContents f src <- fcts]
+		[(f, \sboxes m -> Check.checkSource ghcs' sboxes m src) | FileContents f src <- fcts]
 	lintMsgs <- mapCommandIO $ liftM2 (++)
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) fcts)
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs fcts ghcs') = toValue $ do
-	db <- getDb
+	dbval <- getDb
 	ghc <- askSession sessionGhc
 	let
 		cts = [(f, Nothing) | f <- fs] ++ [(f, Just src) | FileContents f src <- fcts]
 	liftM concat $ forM cts $ \(file, msrc) -> do
-		cabal <- liftIO $ getSandbox file
+		sboxes <- liftIO $ getSandboxStack file
 		m <- maybe
 			(commandError_ $ "File '" ++ file ++ "' not found")
 			return
-			(lookupFile file db)
+			(lookupFile file dbval)
 		notes <- inWorkerWith (commandError_ . show) ghc
-			(runExceptT $ Types.fileTypes ghcs' cabal m msrc)
+			(runExceptT $ Types.fileTypes ghcs' sboxes m msrc)
 		either commandError_ return notes
 runCommand (GhcMod GhcModLang) = toValue $ mapCommandIO $ GhcMod.langs
 runCommand (GhcMod GhcModFlags) = toValue $ mapCommandIO $ GhcMod.flags
@@ -386,6 +381,13 @@ localsDatabase False = id
 -- | Get actual DB state
 getDb :: SessionMonad m => m Database
 getDb = askSession sessionDatabase >>= liftIO . DB.readAsync
+
+-- | Get DB with filtered sanxboxes for file
+getSDb :: SessionMonad m => FilePath -> m Database
+getSDb fpath = do
+	dbval <- getDb
+	sboxes <- liftIO $ getSandboxStack fpath
+	return $ filterDB (restrictSandboxStack sboxes) (const True) dbval
 
 mapCommandErrorStr :: CommandMonad m => ExceptT String m a -> m a
 mapCommandErrorStr act = runExceptT act >>= either commandError_ return

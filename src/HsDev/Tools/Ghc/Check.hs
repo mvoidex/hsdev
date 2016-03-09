@@ -35,20 +35,20 @@ import HsDev.Tools.Types
 import HsDev.Util (readFileUtf8, ordNub)
 
 -- | Check files and collect warnings and errors
-checkFiles :: [String] -> Cabal -> [FilePath] -> Maybe Project -> Ghc [Note OutputMessage]
-checkFiles opts cabal files _ = do
+checkFiles :: [String] -> SandboxStack -> [FilePath] -> Maybe Project -> Ghc [Note OutputMessage]
+checkFiles opts sboxes files _ = do
 	ch <- liftIO newChan
 	withFlags $ do
 		modifyFlags (\fs -> fs { log_action = logAction ch })
-		_ <- addCmdOpts ("-Wall" : (cabalOpt cabal ++ opts))
+		_ <- addCmdOpts ("-Wall" : (sandboxStackOpt sboxes ++ opts))
 		clearTargets
 		mapM (`makeTarget` Nothing) files >>= loadTargets
 	notes <- liftIO $ stopChan ch
 	liftIO $ recalcNotesTabs notes
 
 -- | Check module source
-check :: [String] -> Cabal -> Module -> Maybe String -> ExceptT String Ghc [Note OutputMessage]
-check opts cabal m msrc = case view moduleLocation m of
+check :: [String] -> SandboxStack -> Module -> Maybe String -> ExceptT String Ghc [Note OutputMessage]
+check opts sboxes m msrc = case view moduleLocation m of
 	FileModule file proj -> do
 		ch <- liftIO newChan
 		pkgs <- lift listPackages
@@ -61,7 +61,7 @@ check opts cabal m msrc = case view moduleLocation m of
 			modifyFlags (\fs -> fs { log_action = logAction ch })
 			_ <- addCmdOpts $ concat [
 				["-Wall"],
-				cabalOpt cabal,
+				sandboxStackOpt sboxes,
 				moduleOpts pkgs m,
 				opts]
 			clearTargets
@@ -72,12 +72,12 @@ check opts cabal m msrc = case view moduleLocation m of
 	_ -> throwError "Module is not source"
 
 -- | Check module and collect warnings and errors
-checkFile :: [String] -> Cabal -> Module -> ExceptT String Ghc [Note OutputMessage]
-checkFile opts cabal m = check opts cabal m Nothing
+checkFile :: [String] -> SandboxStack -> Module -> ExceptT String Ghc [Note OutputMessage]
+checkFile opts sboxes m = check opts sboxes m Nothing
 
 -- | Check module and collect warnings and errors
-checkSource :: [String] -> Cabal -> Module -> String -> ExceptT String Ghc [Note OutputMessage]
-checkSource opts cabal m src = check opts cabal m (Just src)
+checkSource :: [String] -> SandboxStack -> Module -> String -> ExceptT String Ghc [Note OutputMessage]
+checkSource opts sboxes m src = check opts sboxes m (Just src)
 
 -- | Log  ghc warnings and errors as to chan
 -- You may have to apply recalcTabs on result notes

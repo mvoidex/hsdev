@@ -29,6 +29,7 @@ import PprTyThing
 import Pretty
 
 import System.Directory.Paths (canonicalize)
+import HsDev.Cabal
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.Types
@@ -96,8 +97,8 @@ instance FromJSON TypedExpr where
 		v .:: "type"
 
 -- | Get all types in module
-fileTypes :: [String] -> Cabal -> Module -> Maybe String -> ExceptT String Ghc [Note TypedExpr]
-fileTypes opts cabal m msrc = case view moduleLocation m of
+fileTypes :: [String] -> SandboxStack -> Module -> Maybe String -> ExceptT String Ghc [Note TypedExpr]
+fileTypes opts sboxes m msrc = case view moduleLocation m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
 		cts <- maybe (liftIO $ readFileUtf8 file') return msrc
@@ -109,7 +110,7 @@ fileTypes opts cabal m msrc = case view moduleLocation m of
 		dirExist <- liftIO $ doesDirectoryExist dir
 		lift $ withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
 			_ <- addCmdOpts $ concat [
-				cabalOpt cabal,
+				sandboxStackOpt sboxes,
 				moduleOpts pkgs m,
 				opts]
 			target <- makeTarget (makeRelative dir file') msrc
@@ -142,5 +143,5 @@ setModuleTypes ts = over (moduleDeclarations . each) setType where
 		return $ set (declaration . functionType) (Just $ fromString $ view (note . typedType) tnote) d
 
 -- | Infer types in module
-inferTypes :: [String] -> Cabal -> Module -> Maybe String -> ExceptT String Ghc Module
-inferTypes opts cabal m msrc = liftM (`setModuleTypes` m) $ fileTypes opts cabal m msrc
+inferTypes :: [String] -> SandboxStack -> Module -> Maybe String -> ExceptT String Ghc Module
+inferTypes opts sboxes m msrc = liftM (`setModuleTypes` m) $ fileTypes opts sboxes m msrc

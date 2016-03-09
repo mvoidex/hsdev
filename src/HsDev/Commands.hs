@@ -11,7 +11,7 @@ module HsDev.Commands (
 	moduleCompletions,
 
 	-- * Filters
-	checkModule, checkDeclaration, restrictCabal, visibleFrom,
+	checkModule, checkDeclaration, restrictCabal, restrictSandboxStack, visibleFrom,
 	splitIdentifier,
 
 	-- * Helpers
@@ -71,12 +71,11 @@ getProject db p = do
 		refineProject db p'
 
 -- | Lookup visible within project/cabal symbol
-lookupSymbol :: Database -> Cabal -> FilePath -> String -> ExceptT String IO [ModuleDeclaration]
-lookupSymbol db cabal file ident = do
+lookupSymbol :: Database -> FilePath -> String -> ExceptT String IO [ModuleDeclaration]
+lookupSymbol db file ident = do
 	(_, mthis, mproj) <- fileCtx db file
 	liftM
 		(filter $ checkModule $ allOf [
-			restrictCabal cabal,
 			visibleFrom mproj mthis,
 			maybe (const True) inModule qname])
 		(newestPackage <$> findDeclaration db iname)
@@ -84,23 +83,23 @@ lookupSymbol db cabal file ident = do
 		(qname, iname) = splitIdentifier ident
 
 -- | Whois symbol in scope
-whois :: Database -> Cabal -> FilePath -> String -> ExceptT String IO [Declaration]
-whois db cabal file ident = do
+whois :: Database -> FilePath -> String -> ExceptT String IO [Declaration]
+whois db file ident = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
 		newestPackage $ filter checkDecl $
-		view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) $
+		view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file mproj db) $
 		moduleLocals mthis
 	where
 		(qname, iname) = splitIdentifier ident
 		checkDecl d = fmap fromString qname `elem` scopes d && view declarationName d == fromString iname
 
 -- | Accessible modules
-scopeModules :: Database -> Cabal -> FilePath -> ExceptT String IO [Module]
-scopeModules db cabal file = do
+scopeModules :: Database -> FilePath -> ExceptT String IO [Module]
+scopeModules db file = do
 	(file', mthis, mproj) <- fileCtxMaybe db file
 	newestPackage <$> case mproj of
-		Nothing -> return $ maybe id (:) mthis $ selectModules (inCabal cabal . view moduleId) db
+		Nothing -> return $ maybe id (:) mthis $ selectModules (byCabal . view moduleId) db
 		Just proj -> let deps' = deps file' proj in
 			return $ concatMap (\p -> selectModules (p . view moduleId) db) [
 				inProject proj,
@@ -109,19 +108,19 @@ scopeModules db cabal file = do
 		deps f p = delete (view projectName p) $ concatMap (view infoDepends) $ fileTargets p f
 
 -- | Symbols in scope
-scope :: Database -> Cabal -> FilePath -> Bool -> ExceptT String IO [Declaration]
-scope db cabal file False = do
+scope :: Database -> FilePath -> Bool -> ExceptT String IO [Declaration]
+scope db file False = do
 	(_, mthis, mproj) <- fileCtx db file
-	return $ view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) mthis
-scope db cabal file True = concatMap (view moduleDeclarations) <$> scopeModules db cabal file
+	return $ view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file mproj db) mthis
+scope db file True = concatMap (view moduleDeclarations) <$> scopeModules db file
 
 -- | Completions
-completions :: Database -> Cabal -> FilePath -> String -> Bool -> ExceptT String IO [Declaration]
-completions db cabal file prefix wide = do
+completions :: Database -> FilePath -> String -> Bool -> ExceptT String IO [Declaration]
+completions db file prefix wide = do
 	(_, mthis, mproj) <- fileCtx db file
 	return $
 		toListOf (each . minimalDecl) $ newestPackage $ filter checkDecl $
-		view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file cabal mproj db) $
+		view moduleDeclarations $ scopeModule $ resolveOne (fileDeps file mproj db) $
 		dropImportLists mthis
 	where
 		(qname, iname) = splitIdentifier prefix
@@ -149,6 +148,11 @@ checkDeclaration = (. view moduleDeclaration)
 -- | Allow only selected cabal sandbox
 restrictCabal :: Cabal -> ModuleId -> Bool
 restrictCabal cabal m = inCabal cabal m || not (byCabal m)
+
+-- | Allow only selected cabal sandboxes
+restrictSandboxStack :: SandboxStack -> ModuleId -> Bool
+restrictSandboxStack sboxes m = any (`inCabal` m) sboxes' || not (byCabal m) where
+	sboxes' = sandboxCabals sboxes
 
 -- | Check whether module is visible from source file
 visibleFrom :: Maybe Project -> Module -> ModuleId -> Bool
@@ -183,10 +187,8 @@ fileCtxMaybe db file = ((\(f, m, p) -> (f, Just m, p)) <$> fileCtx db file) <|> 
 		return (file', Nothing, mproj')
 
 -- | Restrict only modules file depends on
-fileDeps :: FilePath -> Cabal -> Maybe Project -> Database -> Database
-fileDeps file cabal mproj = filterDB fileDeps' (const True) where
+fileDeps :: FilePath -> Maybe Project -> Database -> Database
+fileDeps file mproj = filterDB fileDeps' (const True) where
 	fileDeps' = liftM2 (||)
 		(maybe (const True) inProject mproj)
-		(liftM2 (&&)
-			(restrictCabal cabal)
-			(\m -> any (`inDepsOfTarget` m) (fromMaybe [] $ fileTargets <$> mproj <*> pure file)))
+		(\m -> any (`inDepsOfTarget` m) (fromMaybe [] $ fileTargets <$> mproj <*> pure file))

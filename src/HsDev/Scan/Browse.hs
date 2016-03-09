@@ -11,8 +11,10 @@ module HsDev.Scan.Browse (
 
 import Control.Lens (view, preview, _Just)
 import Control.Monad.Except
+import Data.List (sortBy, intersect)
 import Data.Maybe
 import Data.String (fromString)
+import System.FilePath
 import Text.Read (readMaybe)
 
 import HsDev.Cabal
@@ -38,29 +40,29 @@ import qualified Var as GHC
 import Pretty
 
 -- | Browse packages
-browsePackages :: [String] -> Cabal -> ExceptT String IO [ModulePackage]
-browsePackages opts cabal = liftIOErrors $ withPackages (cabalOpt cabal ++ opts) $ \dflags ->
+browsePackages :: [String] -> SandboxStack -> ExceptT String IO [ModulePackage]
+browsePackages opts sboxes = liftIOErrors $ withPackages (sandboxStackOpt sboxes ++ opts) $ \dflags ->
 	return $ mapMaybe readPackage $ fromMaybe [] $ GHC.pkgDatabase dflags
 
-listModules :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]
-listModules opts cabal = liftIOErrors $ withPackages_ (cabalOpt cabal ++ opts) $ do
+listModules :: [String] -> SandboxStack -> ExceptT String IO [ModuleLocation]
+listModules opts sboxes = liftIOErrors $ withPackages_ (sandboxStackOpt sboxes ++ opts) $ do
 	ms <- lift packageDbModules
-	return $ map (uncurry $ ghcModuleLocation cabal) ms
+	return $ map (uncurry $ ghcModuleLocation sboxes) ms
 
-browseModules :: [String] -> Cabal -> [ModuleLocation] -> ExceptT String IO [InspectedModule]
-browseModules opts cabal mlocs = liftIOErrors $ withPackages_ (cabalOpt cabal ++ opts) $ do
+browseModules :: [String] -> SandboxStack -> [ModuleLocation] -> ExceptT String IO [InspectedModule]
+browseModules opts sboxes mlocs = liftIOErrors $ withPackages_ (sandboxStackOpt sboxes ++ opts) $ do
 	ms <- lift packageDbModules
-	liftM catMaybes $ mapM (uncurry browseModule') [(p, m) | (p, m) <- ms, ghcModuleLocation cabal p m `elem` mlocs]
+	liftM catMaybes $ mapM (uncurry browseModule') [(p, m) | (p, m) <- ms, ghcModuleLocation sboxes p m `elem` mlocs]
 	where
 		browseModule' :: GHC.PackageConfig -> GHC.Module -> ExceptT String GHC.Ghc (Maybe InspectedModule)
-		browseModule' p m = tryT $ inspect (ghcModuleLocation cabal p m) (return $ InspectionAt 0 opts) (browseModule cabal p m)
+		browseModule' p m = tryT $ inspect (ghcModuleLocation sboxes p m) (return $ InspectionAt 0 opts) (browseModule sboxes p m)
 
 -- | Browse all modules
-browse :: [String] -> Cabal -> ExceptT String IO [InspectedModule]
-browse opts cabal = listModules opts cabal >>= browseModules opts cabal
+browse :: [String] -> SandboxStack -> ExceptT String IO [InspectedModule]
+browse opts sboxes = listModules opts sboxes >>= browseModules opts sboxes
 
-browseModule :: Cabal -> GHC.PackageConfig -> GHC.Module -> ExceptT String GHC.Ghc Module
-browseModule cabal package m = do
+browseModule :: SandboxStack -> GHC.PackageConfig -> GHC.Module -> ExceptT String GHC.Ghc Module
+browseModule sboxes package m = do
 	mi <- lift (GHC.getModuleInfo m) >>= maybe (throwError "Can't find module info") return
 	ds <- mapM (toDecl mi) (GHC.modInfoExports mi)
 	let
@@ -75,7 +77,7 @@ browseModule cabal package m = do
 	where
 		thisLoc = view moduleIdLocation $ mloc m
 		mloc m' = ModuleId (fromString mname') $
-			CabalModule cabal (readPackage package) mname'
+			ghcModuleLocation sboxes package m'
 			where
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl minfo n = do
@@ -149,8 +151,16 @@ tryT act = catchError (liftM Just act) (const $ return Nothing)
 readPackage :: GHC.PackageConfig -> Maybe ModulePackage
 readPackage pc = readMaybe $ GHC.packageNameString pc ++ "-" ++ showVersion (GHC.packageVersion pc)
 
-ghcModuleLocation :: Cabal -> GHC.PackageConfig -> GHC.Module -> ModuleLocation
-ghcModuleLocation cabal p m = CabalModule cabal (readPackage p) (GHC.moduleNameString $ GHC.moduleName m)
+ghcModuleLocation :: SandboxStack -> GHC.PackageConfig -> GHC.Module -> ModuleLocation
+ghcModuleLocation sboxes p m = CabalModule cabal (readPackage p) (GHC.moduleNameString $ GHC.moduleName m) where
+	cabal = maybe Cabal Sandbox $ listToMaybe $ sortBy (flip compare) (intersect sboxes pkgs)
+	dirs = GHC.libraryDirs p
+	pkgs = ordNub $ mapMaybe pkgDb dirs
+	pkgDb path'
+		| "lib" `elem` paths' = Just $ (joinPath . reverse . drop 1 . dropWhile (/= "lib") . reverse $ paths') </> "pkgdb"
+		| otherwise = Nothing
+		where
+			paths' = splitDirectories path'
 
 packageDbModules :: GHC.GhcMonad m => m [(GHC.PackageConfig, GHC.Module)]
 packageDbModules = do

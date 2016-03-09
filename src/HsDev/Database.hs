@@ -2,10 +2,10 @@
 
 module HsDev.Database (
 	Database(..),
-	databaseIntersection, nullDatabase, databaseLocals, allModules, allDeclarations, allPackages,
+	databaseIntersection, nullDatabase, databaseLocals, databaseCabals, allModules, allDeclarations, allPackages,
 	fromModule, fromProject,
 	filterDB,
-	projectDB, cabalDB, standaloneDB,
+	projectDB, cabalDB, sandboxStackDB, standaloneDB,
 	selectModules, selectDeclarations, lookupModule, lookupInspected, lookupFile, refineProject,
 	getInspected,
 
@@ -17,7 +17,7 @@ module HsDev.Database (
 	Map
 	) where
 
-import Control.Lens (set, view, preview, _Just, each, (^..))
+import Control.Lens (set, view, preview, _Just, _Right, each, (^..))
 import Control.Monad (msum, join)
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
@@ -84,6 +84,10 @@ databaseLocals :: Database -> Database
 databaseLocals db = db {
 	databaseModules = fmap (fmap moduleLocals) (databaseModules db) }
 
+-- | All scanned sandboxes
+databaseCabals :: Database -> [Cabal]
+databaseCabals db = ordNub $ databaseModules db ^.. each . inspectionResult . _Right . moduleLocation . moduleCabal
+
 -- | All modules
 allModules :: Database -> [Module]
 allModules = rights . fmap (view inspectionResult) . databaseModules
@@ -121,6 +125,9 @@ projectDB proj = filterDB (inProject proj) (((==) `on` view projectCabal) proj)
 -- | Cabal database
 cabalDB :: Cabal -> Database -> Database
 cabalDB cabal = filterDB (inCabal cabal) (const False)
+
+sandboxStackDB :: SandboxStack -> Database -> Database
+sandboxStackDB sboxes = filterDB (inSandboxStack sboxes) (const False)
 
 -- | Standalone database
 standaloneDB :: Database -> Database
@@ -234,7 +241,7 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 structurize :: Database -> Structured
 structurize db = Structured cs ps fs where
 	cs = M.fromList [(c, cabalDB c db) | c <- ordNub (mapMaybe modCabal (allModules db))]
-	ps = M.fromList [(pname, projectDB (project pname) db) | pname <- (databaseProjects db ^.. each . projectCabal)]
+	ps = M.fromList [(pname, projectDB (project pname) db) | pname <- databaseProjects db ^.. each . projectCabal]
 	fs = standaloneDB db
 
 merge :: Structured -> Database

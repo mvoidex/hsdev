@@ -258,7 +258,7 @@ locateGhcModEnv f = do
 	maybe (liftM Right $ getSandbox f) (return . Left) mproj
 
 ghcModEnvPath :: FilePath -> Either Project Cabal -> FilePath
-ghcModEnvPath defaultPath = either (view projectPath) (fromMaybe defaultPath . sandbox)
+ghcModEnvPath defaultPath = either (view projectPath) (fromMaybe defaultPath . preview sandbox)
 
 -- | Create ghc-mod worker for project or for sandbox
 ghcModWorker :: Either Project Cabal -> IO (Worker (GhcModT IO))

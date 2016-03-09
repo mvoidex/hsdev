@@ -1,7 +1,10 @@
+{-# LANGUAGE FlexibleInstances #-}
+
 module HsDev.Scan (
 	-- * Enumerate functions
 	enumCabal, CompileFlag, ModuleToScan, ProjectToScan, SandboxToScan, ScanContents(..),
-	enumProject, enumDirectory,
+	EnumContents(..),
+	enumProject, enumSandbox, enumDirectory,
 
 	-- * Scan
 	scanProjectFile,
@@ -15,12 +18,16 @@ module HsDev.Scan (
 
 import Control.Applicative ((<|>))
 import Control.DeepSeq
-import Control.Lens (view, preview, set, _Right, _1, _2, _3, (^.))
+import Control.Lens (view, preview, set, over, each, _Right, _1, _2, _3, (^.), (^..))
 import Control.Monad.Except
 import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.List (intercalate)
 import System.Directory
+import Text.Format
 
 import HsDev.Scan.Browse (browsePackages)
+import HsDev.Server.Types (FileContents(..))
+import HsDev.Stack (getSandboxStack)
 import HsDev.Symbols
 import HsDev.Symbols.Types
 import HsDev.Database
@@ -50,12 +57,64 @@ data ScanContents = ScanContents {
 instance NFData ScanContents where
 	rnf (ScanContents ms ps ss) = rnf ms `seq` rnf ps `seq` rnf ss
 
+instance Monoid ScanContents where
+	mempty = ScanContents [] [] []
+	mappend (ScanContents lm lp ls) (ScanContents rm rp rs) = ScanContents
+		(uniqueBy (view _1) $ lm ++ rm)
+		(uniqueBy (view _1) $ lp ++ rp)
+		(ordNub $ ls ++ rs)
+
+instance FormatBuild ScanContents where
+	formatBuild (ScanContents ms ps cs) = formatBuild str where
+		str :: String
+		str = format "modules: {}, projects: {}, sandboxes: {}"
+			~~ (intercalate ", " $ ms ^.. each . _1 . moduleFile)
+			~~ (intercalate ", " $ ps ^.. each . _1 . projectPath)
+			~~ (intercalate ", " $ cs ^.. each . sandbox)
+
+class EnumContents a where
+	enumContents :: a -> ExceptT String IO ScanContents
+
+instance EnumContents ModuleLocation where
+	enumContents mloc = return $ ScanContents [(mloc, [], Nothing)] [] []
+
+instance EnumContents (Extensions ModuleLocation) where
+	enumContents ex = return $ ScanContents [(view entity ex, extensionsOpts ex, Nothing)] [] []
+
+instance EnumContents Project where
+	enumContents = enumProject
+
+instance EnumContents Cabal where
+	enumContents Cabal = return $ ScanContents [] [] [Cabal]
+	enumContents (Sandbox f) = enumSandbox f
+
+instance {-# OVERLAPPING #-} EnumContents a => EnumContents [a] where
+	enumContents = liftM mconcat . tries . map enumContents
+
+instance {-# OVERLAPS #-} EnumContents FilePath where
+	enumContents f
+		| haskellSource f = do
+			mproj <- liftEIO $ locateProject f
+			case mproj of
+				Nothing -> enumContents $ FileModule f Nothing
+				Just proj -> do
+					ScanContents _ [(_, mods)] _ <- enumContents proj
+					return $ ScanContents (filter ((== Just f) . preview (_1 . moduleFile)) mods) [] []
+		| otherwise = enumDirectory f
+
+instance EnumContents FileContents where
+	enumContents (FileContents f cts)
+		| haskellSource f = do
+			ScanContents [(m, opts, _)] _ _ <- enumContents f
+			return $ ScanContents [(m, opts, Just cts)] [] []
+		| otherwise = return mempty
+
 -- | Enum project sources
-enumProject :: Project -> ExceptT String IO ProjectToScan
+enumProject :: Project -> ExceptT String IO ScanContents
 enumProject p = do
 	p' <- loadProject p
-	cabal <- liftE $ searchSandbox (view projectPath p')
-	pkgs <- liftM (map $ view packageName) $ browsePackages [] cabal
+	sboxes <- liftE $ getSandboxStack (view projectPath p')
+	pkgs <- liftM (map $ view packageName) $ browsePackages [] sboxes
 	let
 		projOpts :: FilePath -> [String]
 		projOpts f = concatMap makeOpts $ fileTargets p' f where
@@ -65,7 +124,16 @@ enumProject p = do
 				["-package " ++ view projectName p'],
 				["-package " ++ dep | dep <- view infoDepends i, dep `elem` pkgs]]
 	srcs <- projectSources p'
-	return (p', [(FileModule (view entity src) (Just p'), extensionsOpts src ++ projOpts (view entity src), Nothing) | src <- srcs])
+	let
+		mlocs = over each (\src -> over ghcOptions (++ projOpts (view entity src)) . over entity (\f -> FileModule f (Just p')) $ src) srcs
+	mods <- liftM modulesToScan $ enumContents mlocs
+	return $ ScanContents [] [(p', mods)] (sandboxCabals sboxes)
+
+-- | Enum sandboxes
+enumSandbox :: FilePath -> ExceptT String IO ScanContents
+enumSandbox dir = do
+	sbox <- locateSandbox dir
+	return $ ScanContents [] [] [sbox]
 
 -- | Enum directory modules
 enumDirectory :: FilePath -> ExceptT String IO ScanContents
@@ -76,14 +144,14 @@ enumDirectory dir = do
 		sources = filter haskellSource cts
 	dirs <- liftE $ filterM doesDirectoryExist cts
 	sboxes <- liftM catMaybes $ triesMap (liftE . findPackageDb) dirs
-	projs <- triesMap (enumProject . project) projects
+	projs <- liftM mconcat $ triesMap (enumProject . project) projects
 	let
-		projPaths = map (view projectPath . fst) projs
+		projPaths = map (view projectPath . fst) $ projectsToScan projs
 		standalone = map (`FileModule` Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
-	return ScanContents {
-		modulesToScan = [(s, [], Nothing) | s <- standalone],
-		projectsToScan = projs,
-		sandboxesToScan = map Sandbox sboxes }
+	return $ mconcat [
+		ScanContents [(s, [], Nothing) | s <- standalone] [] [],
+		projs,
+		ScanContents [] [] (map Sandbox sboxes)]
 
 -- | Scan project file
 scanProjectFile :: [String] -> FilePath -> ExceptT String IO Project
@@ -105,10 +173,15 @@ scanModule _ opts (CabalModule c p n) _ = browse opts c n p
 scanModule _ _ (ModuleSource _) _ = throwError "Can inspect only modules in file or cabal"
 
 -- | Scan additional info and modify scanned module. Dones't fail on error, just left module unchanged
-scanModify :: ([String] -> Cabal -> Module -> ExceptT String IO Module) -> InspectedModule -> ExceptT String IO InspectedModule
+scanModify :: ([String] -> SandboxStack -> Module -> ExceptT String IO Module) -> InspectedModule -> ExceptT String IO InspectedModule
 scanModify f im = traverse f' im <|> return im where
-	-- TODO: Get actual sandbox
-	f' = f (fromMaybe [] $ preview (inspection . inspectionOpts) im) Cabal
+	f' m = do
+		sboxes <- case view moduleLocation m of
+			FileModule fpath _ -> liftIO $ getSandboxStack fpath
+			-- TODO: Get actual sandbox stack
+			CabalModule cabal _ _ -> return $ sandboxStack cabal
+			_ -> return $ sandboxStack Cabal
+		f (fromMaybe [] $ preview (inspection . inspectionOpts) im) sboxes m
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> ExceptT String IO Bool

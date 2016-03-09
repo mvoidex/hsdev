@@ -51,6 +51,7 @@ library
     HsDev.Server.Commands
     HsDev.Server.Message
     HsDev.Server.Types
+    HsDev.Stack
     HsDev.Symbols
     HsDev.Symbols.Class
     HsDev.Symbols.Location
