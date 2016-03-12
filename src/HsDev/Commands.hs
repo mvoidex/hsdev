@@ -11,7 +11,7 @@ module HsDev.Commands (
 	moduleCompletions,
 
 	-- * Filters
-	checkModule, checkDeclaration, restrictCabal, restrictSandboxStack, visibleFrom,
+	checkModule, checkDeclaration, restrictPackageDb, restrictPackageDbStack, visibleFrom,
 	splitIdentifier,
 
 	-- * Helpers
@@ -99,7 +99,7 @@ scopeModules :: Database -> FilePath -> ExceptT String IO [Module]
 scopeModules db file = do
 	(file', mthis, mproj) <- fileCtxMaybe db file
 	newestPackage <$> case mproj of
-		Nothing -> return $ maybe id (:) mthis $ selectModules (byCabal . view moduleId) db
+		Nothing -> return $ maybe id (:) mthis $ selectModules (installed . view moduleId) db
 		Just proj -> let deps' = deps file' proj in
 			return $ concatMap (\p -> selectModules (p . view moduleId) db) [
 				inProject proj,
@@ -146,18 +146,17 @@ checkDeclaration :: (Declaration -> Bool) -> (ModuleDeclaration -> Bool)
 checkDeclaration = (. view moduleDeclaration)
 
 -- | Allow only selected cabal sandbox
-restrictCabal :: Cabal -> ModuleId -> Bool
-restrictCabal cabal m = inCabal cabal m || not (byCabal m)
+restrictPackageDb :: PackageDb -> ModuleId -> Bool
+restrictPackageDb pdb m = inPackageDb pdb m || not (installed m)
 
 -- | Allow only selected cabal sandboxes
-restrictSandboxStack :: SandboxStack -> ModuleId -> Bool
-restrictSandboxStack sboxes m = any (`inCabal` m) sboxes' || not (byCabal m) where
-	sboxes' = sandboxCabals sboxes
+restrictPackageDbStack :: PackageDbStack -> ModuleId -> Bool
+restrictPackageDbStack pdbs m = any (`inPackageDb` m) (packageDbs pdbs) || not (installed m)
 
 -- | Check whether module is visible from source file
 visibleFrom :: Maybe Project -> Module -> ModuleId -> Bool
 visibleFrom (Just p) this m = visible p (view moduleId this) m
-visibleFrom Nothing this m = view moduleId this == m || byCabal m
+visibleFrom Nothing this m = view moduleId this == m || installed m
 
 -- | Split identifier into module name and identifier itself
 splitIdentifier :: String -> (Maybe String, String)

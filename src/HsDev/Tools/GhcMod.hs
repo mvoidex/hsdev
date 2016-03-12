@@ -54,23 +54,26 @@ import qualified Language.Haskell.GhcMod.Monad as GhcMod
 import qualified Language.Haskell.GhcMod.Types as GhcMod
 
 import Control.Concurrent.Worker
-import HsDev.Cabal
+import HsDev.PackageDb
 import HsDev.Project
+import HsDev.Sandbox (searchPackageDbStack)
 import HsDev.Symbols
 import HsDev.Tools.Base
 import HsDev.Tools.Types
 import HsDev.Util ((.::), liftIOErrors, liftThrow, readFileUtf8, ordNub)
 
-list :: [String] -> Cabal -> ExceptT String IO [ModuleLocation]
-list opts cabal = runGhcMod (GhcMod.defaultOptions { GhcMod.optGhcUserOptions = opts }) $ do
+-- FIXME: Pass package-db stack options to ghc-mod
+list :: [String] -> PackageDbStack -> ExceptT String IO [ModuleLocation]
+list opts pdbs = runGhcMod (GhcMod.defaultOptions { GhcMod.optGhcUserOptions = opts }) $ do
 	ms <- (map splitPackage . lines) <$> GhcMod.modules True
-	return [CabalModule cabal (readMaybe p) m | (m, p) <- ms]
+	return [InstalledModule (topPackageDb pdbs) (readMaybe p) m | (m, p) <- ms]
 	where
 		splitPackage :: String -> (String, String)
 		splitPackage = second (drop 1) . break isSpace
 
-browse :: [String] -> Cabal -> String -> Maybe ModulePackage -> ExceptT String IO InspectedModule
-browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection opts) $ runGhcMod
+-- FIXME: Pass package-db stack options to ghc-mod
+browse :: [String] -> PackageDbStack -> String -> Maybe ModulePackage -> ExceptT String IO InspectedModule
+browse opts pdbs mname mpackage = inspect thisLoc (return $ browseInspection opts) $ runGhcMod
 	(GhcMod.defaultOptions { GhcMod.optGhcUserOptions = packageOpt mpackage ++ opts }) $ do
 		ds <- (mapMaybe parseDecl . lines) <$> GhcMod.browse
 			(GhcMod.defaultBrowseOpts {
@@ -89,7 +92,7 @@ browse opts cabal mname mpackage = inspect thisLoc (return $ browseInspection op
 	where
 		mpkgname = maybe mname (\p -> view packageName p ++ ":" ++ mname) mpackage
 		thisLoc = view moduleIdLocation $ mloc mname
-		mloc mname' = ModuleId (fromString mname') $ CabalModule cabal Nothing mname'
+		mloc mname' = ModuleId (fromString mname') $ InstalledModule (topPackageDb pdbs) Nothing mname'
 		parseDecl s = do
 			groups <- matchRx rx s
 			let
@@ -117,10 +120,11 @@ langs = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.language
 flags :: ExceptT String IO [String]
 flags = runGhcMod GhcMod.defaultOptions $ (lines . nullToNL) <$> GhcMod.flags
 
-info :: [String] -> Cabal -> FilePath -> String -> GhcModT IO Declaration
-info opts cabal file sname = do
+-- FIXME: Detect actual package-db for module
+info :: [String] -> PackageDbStack -> FilePath -> String -> GhcModT IO Declaration
+info opts pdbs file sname = do
 	fileCts <- liftIO $ readFileUtf8 file
-	rs <- withOptions (\o -> o { GhcMod.optGhcUserOptions = cabalOpt cabal ++ opts }) $
+	rs <- withOptions (\o -> o { GhcMod.optGhcUserOptions = packageDbStackOpts pdbs ++ opts }) $
 		liftM nullToNL $ GhcMod.info file (GhcMod.Expression sname)
 	toDecl fileCts rs
 	where
@@ -152,7 +156,7 @@ info opts cabal file sname = do
 		parsePos src = case splitRx ":(?=\\d)" src of
 			[_, line, column] ->  Position <$> readMaybe line <*> readMaybe column
 			_ -> Nothing
-		mkMod = CabalModule cabal Nothing
+		mkMod = InstalledModule (topPackageDb pdbs) Nothing
 		trim = p . p where
 			p = reverse . dropWhile isSpace
 
@@ -177,8 +181,8 @@ instance FromJSON TypedRegion where
 		v .:: "expr" <*>
 		v .:: "type"
 
-typeOf :: [String] -> Cabal -> FilePath -> Int -> Int -> GhcModT IO [TypedRegion]
-typeOf opts cabal file line col = withOptions (\o -> o { GhcMod.optGhcUserOptions = cabalOpt cabal ++ opts }) $ do
+typeOf :: [String] -> PackageDbStack -> FilePath -> Int -> Int -> GhcModT IO [TypedRegion]
+typeOf opts pdbs file line col = withOptions (\o -> o { GhcMod.optGhcUserOptions = packageDbStackOpts pdbs ++ opts }) $ do
 	fileCts <- liftIO $ readFileUtf8 file
 	let
 		Position line' col' = calcTabs fileCts 8 (Position line col)
@@ -220,10 +224,10 @@ nullToNL = map $ \case
 	'\0' -> '\n'
 	ch -> ch
 
-check :: [String] -> Cabal -> [FilePath] -> Maybe Project -> GhcModT IO [Note OutputMessage]
-check opts cabal files _ = do
+check :: [String] -> PackageDbStack -> [FilePath] -> Maybe Project -> GhcModT IO [Note OutputMessage]
+check opts pdbs files _ = do
 	cts <- liftIO $ mapM readFileUtf8 files
-	withOptions (\o -> o { GhcMod.optGhcUserOptions = cabalOpt cabal ++ opts }) $ do
+	withOptions (\o -> o { GhcMod.optGhcUserOptions = packageDbStackOpts pdbs ++ opts }) $ do
 		res <- GhcMod.checkSyntax files
 		return $ map (recalcOutputMessageTabs (zip files cts)) $ parseOutputMessages res
 
@@ -252,16 +256,16 @@ runGhcMod opts act = do
 		GhcMod.withGhcModEnv cur opts $ \(env, _) ->
 			GhcMod.runGhcModT' env GhcMod.defaultGhcModState act
 
-locateGhcModEnv :: FilePath -> IO (Either Project Cabal)
+locateGhcModEnv :: FilePath -> IO (Either Project PackageDbStack)
 locateGhcModEnv f = do
 	mproj <- locateProject f
-	maybe (liftM Right $ getSandbox f) (return . Left) mproj
+	maybe (liftM Right $ searchPackageDbStack f) (return . Left) mproj
 
-ghcModEnvPath :: FilePath -> Either Project Cabal -> FilePath
-ghcModEnvPath defaultPath = either (view projectPath) (fromMaybe defaultPath . preview sandbox)
+ghcModEnvPath :: FilePath -> Either Project PackageDbStack -> FilePath
+ghcModEnvPath defaultPath = either (view projectPath) (fromMaybe defaultPath . preview packageDb . topPackageDb)
 
 -- | Create ghc-mod worker for project or for sandbox
-ghcModWorker :: Either Project Cabal -> IO (Worker (GhcModT IO))
+ghcModWorker :: Either Project PackageDbStack -> IO (Worker (GhcModT IO))
 ghcModWorker p = do
 	home <- getHomeDirectory
 	startWorker (runGhcModT'' $ ghcModEnvPath home p) id liftThrow

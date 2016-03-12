@@ -37,6 +37,7 @@ import Text.Format (FormatBuild(..))
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
 import HsDev.Project
+import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
@@ -350,7 +351,8 @@ data Command =
 	AddData { addedContents :: [AddedContents] } |
 	Scan {
 		scanProjects :: [FilePath],
-		scanSandboxes :: [Cabal],
+		scanCabal :: Bool,
+		scanSandboxes :: [FilePath],
 		scanFiles :: [FilePath],
 		scanPaths :: [FilePath],
 		scanContents :: [FileContents],
@@ -367,7 +369,8 @@ data Command =
 		inferModules :: [String] } |
 	Remove {
 		removeProjects :: [FilePath],
-		removeSandboxes :: [Cabal],
+		removeCabal :: Bool,
+		removeSandboxes :: [FilePath],
 		removeFiles :: [FilePath] } |
 	RemoveAll |
 	InfoModules [TargetFilter] |
@@ -439,7 +442,8 @@ data TargetFilter =
 	TargetFile FilePath |
 	TargetModule String |
 	TargetDepsOf String |
-	TargetCabal Cabal |
+	TargetCabal |
+	TargetSandbox FilePath |
 	TargetPackage String |
 	TargetSourced |
 	TargetStandalone
@@ -448,8 +452,9 @@ data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
 
 instance Paths Command where
-	paths f (Scan projs cs fs ps fcts ghcs docs infer) = Scan <$>
+	paths f (Scan projs c cs fs ps fcts ghcs docs infer) = Scan <$>
 		each f projs <*>
+		pure c <*>
 		(each . paths) f cs <*>
 		each f fs <*>
 		each f ps <*>
@@ -459,7 +464,7 @@ instance Paths Command where
 		pure infer
 	paths f (RefineDocs projs fs ms) = RefineDocs <$> each f projs <*> each f fs <*> pure ms
 	paths f (InferTypes projs fs ms) = InferTypes <$> each f projs <*> each f fs <*> pure ms
-	paths f (Remove projs cs fs) = Remove <$> each f projs <*> (each . paths) f cs <*> each f fs
+	paths f (Remove projs c cs fs) = Remove <$> each f projs <*> pure c <*> (each . paths) f cs <*> each f fs
 	paths _ RemoveAll = pure RemoveAll
 	paths f (InfoModules t) = InfoModules <$> paths f t
 	paths f (InfoSymbol q t l) = InfoSymbol <$> pure q <*> paths f t <*> pure l
@@ -491,7 +496,7 @@ instance Paths FileContents where
 
 instance Paths TargetFilter where
 	paths f (TargetFile fpath) = TargetFile <$> f fpath
-	paths f (TargetCabal c) = TargetCabal <$> paths f c
+	paths f (TargetSandbox c) = TargetSandbox <$> paths f c
 	paths _ t = pure t
 
 instance Paths [TargetFilter] where
@@ -504,7 +509,8 @@ instance FromCmd Command where
 		cmd "add" "add info to database" (AddData <$> option readJSON idm),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
-			many cabalArg <*>
+			cabalFlag <*>
+			many sandboxArg <*>
 			many fileArg <*>
 			many (pathArg $ help "path") <*>
 			many cmdP <*>
@@ -515,7 +521,8 @@ instance FromCmd Command where
 		cmd "infer" "infer types" $ InferTypes <$> many projectArg <*> many fileArg <*> many moduleArg,
 		cmd "remove" "remove modules info" $ Remove <$>
 			many projectArg <*>
-			many cabalArg <*>
+			cabalFlag <*>
+			many sandboxArg <*>
 			many fileArg,
 		cmd "remove-all" "remove all data" (pure RemoveAll),
 		cmd "modules" "list modules" (InfoModules <$> many cmdP),
@@ -566,7 +573,16 @@ instance FromCmd FileContents where
 	cmdP = option readJSON (long "contents")
 
 instance FromCmd TargetFilter where
-	cmdP = asum [TargetProject <$> projectArg, TargetFile <$> fileArg, TargetModule <$> moduleArg, TargetDepsOf <$> depsArg, TargetCabal <$> cabalArg, TargetPackage <$> packageArg, flag' TargetSourced (long "src"), flag' TargetStandalone (long "stand")]
+	cmdP = asum [
+		TargetProject <$> projectArg,
+		TargetFile <$> fileArg,
+		TargetModule <$> moduleArg,
+		TargetDepsOf <$> depsArg,
+		flag' TargetCabal (long "cabal"),
+		TargetSandbox <$> sandboxArg,
+		TargetPackage <$> packageArg,
+		flag' TargetSourced (long "src"),
+		flag' TargetStandalone (long "stand")]
 
 instance FromCmd SearchQuery where
 	cmdP = SearchQuery <$> (strArgument idm <|> pure "") <*> asum [
@@ -579,7 +595,7 @@ instance FromCmd SearchQuery where
 readJSON :: FromJSON a => ReadM a
 readJSON = str >>= maybe (readerError "Can't parse JSON argument") return . decode . L.pack
 
-cabalArg :: Parser Cabal
+cabalFlag :: Parser Bool
 ctx :: Parser FilePath
 depsArg :: Parser String
 docsFlag :: Parser Bool
@@ -598,10 +614,10 @@ packageArg :: Parser String
 pathArg :: Mod OptionFields String -> Parser FilePath
 projectArg :: Parser String
 pureFlag :: Parser Bool
-sandboxArg :: Parser String
+sandboxArg :: Parser FilePath
 wideFlag :: Parser Bool
 
-cabalArg = flag' Cabal (long "cabal") <|> (Sandbox <$> sandboxArg)
+cabalFlag = switch (long "cabal")
 ctx = fileArg
 depsArg = strOption (long "deps" <> metavar "object" <> help "filter to such that in dependency of specified object (file or project)")
 docsFlag = switch (long "docs" <> help "scan source file docs")
@@ -627,9 +643,10 @@ instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
 	toJSON Listen = cmdJson "listen" []
 	toJSON (AddData cts) = cmdJson "add" ["data" .= cts]
-	toJSON (Scan projs cabals fs ps contents ghcs docs' infer') = cmdJson "scan" [
+	toJSON (Scan projs cabal sboxes fs ps contents ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
-		"sandboxes" .= cabals,
+		"cabal" .= cabal,
+		"sandboxes" .= sboxes,
 		"files" .= fs,
 		"paths" .= ps,
 		"contents" .= contents,
@@ -638,7 +655,7 @@ instance ToJSON Command where
 		"infer" .= infer']
 	toJSON (RefineDocs projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
 	toJSON (InferTypes projs fs ms) = cmdJson "infer" ["projects" .= projs, "files" .= fs, "modules" .= ms]
-	toJSON (Remove projs cabals fs) = cmdJson "remove" ["projects" .= projs, "sandboxes" .= cabals, "files" .= fs]
+	toJSON (Remove projs cabal sboxes fs) = cmdJson "remove" ["projects" .= projs, "cabal" .= cabal, "sandboxes" .= sboxes, "files" .= fs]
 	toJSON RemoveAll = cmdJson "remove-all" []
 	toJSON (InfoModules tf) = cmdJson "modules" ["filters" .= tf]
 	toJSON InfoPackages = cmdJson "packages" []
@@ -673,6 +690,7 @@ instance FromJSON Command where
 		guardCmd "add" v *> (AddData <$> v .:: "data"),
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>
+			(v .:: "cabal" <|> pure False) <*>
 			v .::?! "sandboxes" <*>
 			v .::?! "files" <*>
 			v .::?! "paths" <*>
@@ -684,6 +702,7 @@ instance FromJSON Command where
 		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files" <*> v .::?! "modules"),
 		guardCmd "remove" v *> (Remove <$>
 			v .::?! "projects" <*>
+			(v .:: "cabal" <|> pure False) <*>
 			v .::?! "sandboxes" <*>
 			v .::?! "files"),
 		guardCmd "remove-all" v *> pure RemoveAll,
@@ -761,7 +780,8 @@ instance ToJSON TargetFilter where
 	toJSON (TargetFile fpath) = object ["file" .= fpath]
 	toJSON (TargetModule mname) = object ["module" .= mname]
 	toJSON (TargetDepsOf dep) = object ["deps" .= dep]
-	toJSON (TargetCabal cabal) = object ["cabal" .= cabal]
+	toJSON TargetCabal = toJSON ("cabal" :: String)
+	toJSON (TargetSandbox sbox) = object ["sandbox" .= sbox]
 	toJSON (TargetPackage pname) = object ["package" .= pname]
 	toJSON TargetSourced = toJSON ("sourced" :: String)
 	toJSON TargetStandalone = toJSON ("standalone" :: String)
@@ -773,11 +793,12 @@ instance FromJSON TargetFilter where
 			TargetFile <$> v .:: "file",
 			TargetModule <$> v .:: "module",
 			TargetDepsOf <$> v .:: "deps",
-			TargetCabal <$> v .:: "cabal",
+			TargetSandbox <$> v .:: "sandbox",
 			TargetPackage <$> v .:: "package"]
 		str' = do
 			s <- parseJSON j :: A.Parser String
 			case s of
+				"cabal" -> return TargetCabal
 				"sourced" -> return TargetSourced
 				"standalone" -> return TargetStandalone
 				_ -> empty

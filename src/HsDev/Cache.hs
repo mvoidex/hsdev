@@ -2,7 +2,7 @@
 
 module HsDev.Cache (
 	escapePath,
-	cabalCache,
+	packageDbCache,
 	projectCache,
 	standaloneCache,
 	dump,
@@ -21,7 +21,7 @@ import Data.Char (isAlphaNum)
 import Data.List (intercalate)
 import System.FilePath
 
-import HsDev.Symbols (Cabal(..))
+import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Database (Database)
 
@@ -30,9 +30,10 @@ escapePath :: FilePath -> FilePath
 escapePath = intercalate "." . map (filter isAlphaNum) . splitDirectories
 
 -- | Name of cache for cabal
-cabalCache :: Cabal -> FilePath
-cabalCache Cabal = "cabal" <.> "json"
-cabalCache (Sandbox p) = escapePath p <.> "json"
+packageDbCache :: PackageDb -> FilePath
+packageDbCache GlobalDb = "global" <.> "json"
+packageDbCache UserDb = "user" <.> "json"
+packageDbCache (PackageDb p) = escapePath p <.> "json"
 
 -- | Name of cache for projects
 projectCache :: Project -> FilePath

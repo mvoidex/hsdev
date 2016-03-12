@@ -13,7 +13,7 @@ module HsDev.Database.Update (
 	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks,
 	readDB,
 
-	scanModule, scanModules, scanFile, scanFileContents, scanCabal, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
+	scanModule, scanModules, scanFile, scanFileContents, scanCabal, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
 	scan,
 	updateEvent, processEvent,
@@ -38,7 +38,8 @@ import Data.Aeson.Types
 import Data.List ((\\))
 import Data.Foldable (toList)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe, isJust, fromMaybe)
+import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
+import Data.Maybe.JustIf
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath, doesFileExist)
 import qualified System.Log.Simple as Log
@@ -50,6 +51,7 @@ import HsDev.Database.Async hiding (Event)
 import HsDev.Display
 import HsDev.Inspect (inspectDocs, inspectDocsGhc)
 import HsDev.Project
+import HsDev.Sandbox
 import HsDev.Stack
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker (ghcWorker)
@@ -80,12 +82,12 @@ runUpdate uopts act = Log.scope "update" $ do
 	wait db
 	dbval <- liftIO $ readAsync db
 	let
-		cabals = ordNub $ mapMaybe (preview moduleCabal) updatedMods
+		dbs = ordNub $ mapMaybe (preview modulePackageDb) updatedMods
 		projs = ordNub $ mapMaybe (preview $ moduleProject . _Just) updatedMods
 		stand = any moduleStandalone updatedMods
 
 		modifiedDb = mconcat $ concat [
-			map (`cabalDB` dbval) cabals,
+			map (`packageDbDB` dbval) dbs,
 			map (`projectDB` dbval) projs,
 			[standaloneDB dbval | stand]]
 	serverWriteCache modifiedDb
@@ -117,10 +119,10 @@ runUpdate uopts act = Log.scope "update" $ do
 			s <- getSession
 			im' <- liftExceptT $ S.scanModify (infer' s) im
 			updater $ return $ fromModule im'
-		infer' :: Session -> [String] -> SandboxStack -> Module -> ExceptT String IO Module
-		infer' s opts sboxes m = case preview (moduleLocation . moduleFile) m of
+		infer' :: Session -> [String] -> PackageDbStack -> Module -> ExceptT String IO Module
+		infer' s opts pdbs m = case preview (moduleLocation . moduleFile) m of
 			Nothing -> return m
-			Just _ -> inWorkerT (sessionGhc s) $ inferTypes opts sboxes m Nothing
+			Just _ -> inWorkerT (sessionGhc s) $ inferTypes opts pdbs m Nothing
 		inWorkerT w = ExceptT . inWorker w . runExceptT 
 
 -- | Post status
@@ -244,37 +246,57 @@ scanFileContents opts fpath mcts = Log.scope "file" $ do
 	where
 		inFile f = maybe False (== f) . preview (moduleIdLocation . moduleFile)
 
--- | Scan cabal modules
-scanCabal :: UpdateMonad m => [String] -> SandboxStack -> m ()
-scanCabal opts cabalSandboxStack = runTask "scanning" (view topSandbox cabalSandboxStack) $ Log.scope "cabal" $ do
+-- | Scan cabal modules, doesn't rescan if already scanned
+scanCabal :: UpdateMonad m => [String] -> m ()
+scanCabal opts = Log.scope "cabal" $ do
 	dbval <- readDB
-	if (null $ sandboxCabals cabalSandboxStack \\ databaseCabals dbval)
+	let
+		scannedDbs = databasePackageDbs dbval
+		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ packageDbStacks userDb
+	if null unscannedDbs
 		then do
-			Log.log Log.Trace $ "sandbox already scanned: {}" ~~ view topSandbox cabalSandboxStack
-		else do
-			watch (\w -> watchSandbox w cabalSandboxStack opts)
-			mlocs <- liftExceptT $ listModules opts cabalSandboxStack
-			scan loadSandboxes (sandboxStackDB cabalSandboxStack) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-				ms <- liftExceptT $ browseModules opts cabalSandboxStack (mlocs' ^.. each . _1)
-				docs <- liftExceptT $ hdocsCabal cabalSandboxStack opts
-				updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
+			Log.log Log.Trace $ "cabal (global-db and user-db) already scanned"
+		else runTasks $ map (scanPackageDb opts) unscannedDbs
+
+-- | Scan sandbox modules, doesn't rescan if already scanned
+scanSandbox :: UpdateMonad m => [String] -> Sandbox -> m ()
+scanSandbox opts sbox = Log.scope "sandbox" $ do
+	dbval <- readDB
+	pdbs <- liftExceptT $ sandboxPackageDbStack sbox
+	let
+		scannedDbs = databasePackageDbs dbval
+		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ packageDbStacks pdbs
+	if null unscannedDbs
+		then do
+			Log.log Log.Trace $ "sandbox already scanned"
+		else runTasks $ map (scanPackageDb opts) unscannedDbs
+
+-- | Scan top of package-db stack, usable for rescan
+scanPackageDb :: UpdateMonad m => [String] -> PackageDbStack -> m ()
+scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "package-db" $ do
+	watch (\w -> watchPackageDb w pdbs opts)
+	mlocs <- liftM
+		(filter (\mloc -> preview modulePackageDb mloc == Just (topPackageDb pdbs))) $
+		liftExceptT $ listModules opts pdbs
+	scan (Cache.loadPackageDb (topPackageDb pdbs)) (packageDbDB (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+		ms <- liftExceptT $ browseModules opts pdbs (mlocs' ^.. each . _1)
+		docs <- liftExceptT $ hdocsCabal pdbs opts
+		updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
 		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view moduleName m) docs
-		loadSandboxes :: FilePath -> ExceptT String IO Structured
-		loadSandboxes fpath = liftM mconcat $ mapM (`Cache.loadCabal` fpath) (sandboxCabals cabalSandboxStack)
 
 -- | Scan project file
 scanProjectFile :: UpdateMonad m => [String] -> FilePath -> m Project
 scanProjectFile opts cabal = runTask "scanning" cabal $ liftExceptT $ S.scanProjectFile opts cabal
 
--- | Scan project and related sandboxes
+-- | Scan project and related package-db stack
 scanProjectStack :: UpdateMonad m => [String] -> FilePath -> m ()
 scanProjectStack opts cabal = do
 	proj <- scanProjectFile opts cabal
 	scanProject opts cabal
-	sboxes <- liftIO $ getSandboxStack (view projectPath proj)
-	scanCabal opts sboxes
+	sbox <- liftIO $ searchSandbox (view projectPath proj)
+	maybe (scanCabal opts) (scanSandbox opts) sbox
 
 -- | Scan project
 scanProject :: UpdateMonad m => [String] -> FilePath -> m ()
@@ -289,20 +311,20 @@ scanProject opts cabal = runTask "scanning" (project cabal) $ Log.scope "project
 -- | Scan directory for source files and projects
 scanDirectory :: UpdateMonad m => [String] -> FilePath -> m ()
 scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
-	S.ScanContents standSrcs projSrcs sboxes <- liftExceptT $ S.enumDirectory dir
+	S.ScanContents standSrcs projSrcs pdbss <- liftExceptT $ S.enumDirectory dir
 	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
-	runTasks [scanCabal opts (sandboxStack sbox) | sbox <- sboxes]
+	runTasks $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
 	where
 		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)
 
 scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()
-scanContents opts (S.ScanContents standSrcs projSrcs sboxes) = do
+scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	dbval <- readDB
 	let
 		projs = databaseProjects dbval ^.. each . projectCabal
-		cabals = databaseCabals dbval
+		pdbs = databasePackageDbs dbval
 		files = allModules (standaloneDB dbval) ^.. each . moduleLocation . moduleFile
 		srcs = standSrcs ^.. each . _1 . moduleFile
 		inSrcs src = src `elem` srcs && src `notElem` files
@@ -312,8 +334,8 @@ scanContents opts (S.ScanContents standSrcs projSrcs sboxes) = do
 	mapMOf_ (each . _1 . moduleFile) (\f -> Log.log Log.Trace ("scanning file: {}" ~~ f)) standSrcs
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	scan (Cache.loadFiles inSrcs) (filterDB inFiles (const False) . standaloneDB) standSrcs opts $ scanModules opts
-	mapMOf_ (each . sandbox) (\s -> Log.log Log.Trace ("scanning sandbox: {}" ~~ s)) sboxes
-	runTasks [scanCabal opts (sandboxStack sbox) | sbox <- sboxes, sbox `notElem` cabals]
+	mapMOf_ each (\s -> Log.log Log.Trace ("scanning package-db: {}" ~~ topPackageDb s)) pdbss
+	runTasks [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
 
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [InspectedModule] -> m ()
@@ -376,12 +398,11 @@ updateEvent (WatchedProject proj projOpts) e
 			~~ ("proj" %= view projectName proj)
 		scanProject projOpts $ view projectCabal proj
 	| otherwise = return ()
-updateEvent (WatchedSandbox sboxes _) e
+updateEvent (WatchedPackageDb pdbs opts) e
 	| isConf e = do
-		Log.log Log.Info $ "Sandbox {cabal} changed"
-			~~ ("cabal" %= view topSandbox sboxes)
-		Log.log Log.Warning "Updating sandbox not implemented"
-		-- scanCabal cabalOpts sboxes
+		Log.log Log.Info $ "Package db {package} changed"
+			~~ ("package" %= topPackageDb pdbs)
+		scanPackageDb opts pdbs
 	| otherwise = return ()
 updateEvent WatchedModule e
 	| isSource e = do

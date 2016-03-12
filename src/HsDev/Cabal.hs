@@ -15,6 +15,7 @@ import Data.List
 import System.Directory
 import System.FilePath
 
+import System.Directory.Paths
 import HsDev.Util (searchPath, liftE)
 
 -- | Cabal or sandbox
@@ -64,6 +65,10 @@ instance FromJSON Cabal where
 			cabalText _ = fail "Unknown cabal string"
 		sandboxP = withObject "sandbox" sandboxPath where
 			sandboxPath obj = fmap Sandbox $ obj .: "sandbox"
+
+instance Paths Cabal where
+	paths _ Cabal = pure Cabal
+	paths f (Sandbox p) = Sandbox <$> f p
 
 -- | Is -package-db file
 isPackageDb :: FilePath -> Bool

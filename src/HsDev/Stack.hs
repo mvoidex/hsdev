@@ -2,9 +2,9 @@
 
 module HsDev.Stack (
 	stack, path, pathOf,
-	StackEnv(..), stackRoot, stackProject, stackConfig, stackGhc, stackSnapshot, stackLocal, stackSandboxes,
+	StackEnv(..), stackRoot, stackProject, stackConfig, stackGhc, stackSnapshot, stackLocal,
 	getStackEnv, projectEnv,
-	getSandboxStack,
+	stackPackageDbStack,
 
 	MaybeT(..)
 	) where
@@ -22,9 +22,8 @@ import System.Directory
 import System.FilePath
 import System.Process
 
-import HsDev.Cabal
+import HsDev.PackageDb
 import HsDev.Project
-import HsDev.Symbols (searchProject)
 
 -- | Invoke stack command
 stack :: [String] -> 	MaybeT IO String
@@ -64,32 +63,21 @@ getStackEnv p = StackEnv <$>
 	(p ^. pathOf "local-pkg-db")
 
 -- | Projects paths
-projectEnv :: Project -> MaybeT IO StackEnv
+projectEnv :: FilePath -> MaybeT IO StackEnv
 projectEnv p = do
 	hasConfig <- liftIO $ doesFileExist yaml
 	guard hasConfig
 	paths' <- path (Just yaml)
 	MaybeT $ return $ getStackEnv paths'
 	where
-		yaml = view projectPath p </> "stack.yaml"
+		yaml = p </> "stack.yaml"
 
--- | Get sandboxes for stack environment
-stackSandboxes :: Lens' StackEnv SandboxStack
-stackSandboxes = lens g s where
-	g :: StackEnv -> SandboxStack
-	g env' = [_stackLocal env', _stackSnapshot env']
-	s :: StackEnv -> SandboxStack -> StackEnv
-	s env' sboxes = env' {
-		_stackSnapshot = fromMaybe (_stackSnapshot env') $ sboxes ^? ix 1,
-		_stackLocal = fromMaybe (_stackLocal env') $ sboxes ^? ix 0 }
-
--- | Get sandboxes for file/project
-getSandboxStack :: FilePath -> IO SandboxStack
-getSandboxStack fpath = liftM (fromMaybe []) $ runMaybeT $ stackEnv `mplus` cabalEnv where
-	stackEnv = do
-		proj <- MaybeT $ searchProject fpath
-		senv <- projectEnv proj
-		return $ view stackSandboxes senv
-	cabalEnv = do
-		sbox <- liftIO $ searchSandbox fpath
-		return $ sandboxStack sbox
+-- | Get package-db stack for stack environment
+stackPackageDbStack :: Lens' StackEnv PackageDbStack
+stackPackageDbStack = lens g s where
+	g :: StackEnv -> PackageDbStack
+	g env' = PackageDbStack $ map PackageDb [_stackLocal env', _stackSnapshot env']
+	s :: StackEnv -> PackageDbStack -> StackEnv
+	s env' pdbs = env' {
+		_stackSnapshot = fromMaybe (_stackSnapshot env') $ pdbs ^? packageDbStack . ix 1 . packageDb,
+		_stackLocal = fromMaybe (_stackLocal env') $ pdbs ^? packageDbStack . ix 0 . packageDb }

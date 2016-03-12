@@ -2,10 +2,10 @@
 
 module HsDev.Database (
 	Database(..),
-	databaseIntersection, nullDatabase, databaseLocals, databaseCabals, allModules, allDeclarations, allPackages,
+	databaseIntersection, nullDatabase, databaseLocals, databasePackageDbs, allModules, allDeclarations, allPackages,
 	fromModule, fromProject,
 	filterDB,
-	projectDB, cabalDB, sandboxStackDB, standaloneDB,
+	projectDB, packageDbDB, packageDbStackDB, standaloneDB,
 	selectModules, selectDeclarations, lookupModule, lookupInspected, lookupFile, refineProject,
 	getInspected,
 
@@ -85,8 +85,8 @@ databaseLocals db = db {
 	databaseModules = fmap (fmap moduleLocals) (databaseModules db) }
 
 -- | All scanned sandboxes
-databaseCabals :: Database -> [Cabal]
-databaseCabals db = ordNub $ databaseModules db ^.. each . inspectionResult . _Right . moduleLocation . moduleCabal
+databasePackageDbs :: Database -> [PackageDb]
+databasePackageDbs db = ordNub $ databaseModules db ^.. each . inspectionResult . _Right . moduleLocation . modulePackageDb
 
 -- | All modules
 allModules :: Database -> [Module]
@@ -122,12 +122,12 @@ filterDB m p db = mempty {
 projectDB :: Project -> Database -> Database
 projectDB proj = filterDB (inProject proj) (((==) `on` view projectCabal) proj)
 
--- | Cabal database
-cabalDB :: Cabal -> Database -> Database
-cabalDB cabal = filterDB (inCabal cabal) (const False)
+-- | Package-db database
+packageDbDB :: PackageDb -> Database -> Database
+packageDbDB pdb = filterDB (inPackageDb pdb) (const False)
 
-sandboxStackDB :: SandboxStack -> Database -> Database
-sandboxStackDB sboxes = filterDB (inSandboxStack sboxes) (const False)
+packageDbStackDB :: PackageDbStack -> Database -> Database
+packageDbStackDB pdbs = filterDB (inPackageDbStack pdbs) (const False)
 
 -- | Standalone database
 standaloneDB :: Database -> Database
@@ -175,7 +175,7 @@ remove = sub
 
 -- | Structured database
 data Structured = Structured {
-	structuredCabals :: Map Cabal Database,
+	structuredPackageDbs :: Map PackageDb Database,
 	structuredProjects :: Map FilePath Database,
 	structuredFiles :: Database }
 		deriving (Eq, Ord)
@@ -185,11 +185,11 @@ instance NFData Structured where
 
 instance Group Structured where
 	add old new = Structured {
-		structuredCabals = structuredCabals new `M.union` structuredCabals old,
+		structuredPackageDbs = structuredPackageDbs new `M.union` structuredPackageDbs old,
 		structuredProjects = structuredProjects new `M.union` structuredProjects old,
 		structuredFiles = structuredFiles old `add` structuredFiles new }
 	sub old new = Structured {
-		structuredCabals = structuredCabals old `M.difference` structuredCabals new,
+		structuredPackageDbs = structuredPackageDbs old `M.difference` structuredPackageDbs new,
 		structuredProjects = structuredProjects old `M.difference` structuredProjects new,
 		structuredFiles = structuredFiles old `sub` structuredFiles new }
 	zero = Structured zero zero zero
@@ -217,14 +217,14 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 	mkMap key dbs = do
 		keys <- mapM key dbs
 		return $ M.fromList $ zip keys dbs
-	keyCabal :: Database -> Either String Cabal
+	keyCabal :: Database -> Either String PackageDb
 	keyCabal db = unique
 		"No cabal"
 		"Different module cabals"
-		(ordNub <$> mapM getCabal (allModules db))
+		(ordNub <$> mapM getPackageDb (allModules db))
 		where
-			getCabal m = case view moduleLocation m of
-				CabalModule c _ _ -> Right c
+			getPackageDb m = case view moduleLocation m of
+				InstalledModule c _ _ -> Right c
 				_ -> Left "Module have no cabal"
 	keyProj :: Database -> Either String FilePath
 	keyProj db = unique
@@ -240,14 +240,14 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 
 structurize :: Database -> Structured
 structurize db = Structured cs ps fs where
-	cs = M.fromList [(c, cabalDB c db) | c <- ordNub (mapMaybe modCabal (allModules db))]
+	cs = M.fromList [(c, packageDbDB c db) | c <- ordNub (mapMaybe modPackageDb (allModules db))]
 	ps = M.fromList [(pname, projectDB (project pname) db) | pname <- databaseProjects db ^.. each . projectCabal]
 	fs = standaloneDB db
 
 merge :: Structured -> Database
 merge (Structured cs ps fs) = mconcat $ M.elems cs ++ M.elems ps ++ [fs]
 
-modCabal :: Module -> Maybe Cabal
-modCabal m = case view moduleLocation m of
-	CabalModule c _ _ -> Just c
+modPackageDb :: Module -> Maybe PackageDb
+modPackageDb m = case view moduleLocation m of
+	InstalledModule c _ _ -> Just c
 	_ -> Nothing

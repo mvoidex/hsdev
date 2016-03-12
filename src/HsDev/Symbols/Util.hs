@@ -1,6 +1,6 @@
 module HsDev.Symbols.Util (
-	projectOf, cabalOf, packageOf,
-	inProject, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inCabal, inSandboxStack, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, byCabal, standalone,
+	projectOf, packageDbOf, packageOf,
+	inProject, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inPackageDb, inPackageDbStack, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, installed, standalone,
 	imports, qualifier, imported, visible, inScope,
 	newestPackage,
 	sourceModule, visibleModule, preferredModule, uniqueModules,
@@ -12,7 +12,7 @@ import Control.Lens (view)
 import Control.Monad (liftM)
 import Data.Function (on)
 import Data.Maybe
-import Data.List (maximumBy, groupBy, sortBy, partition, intersect)
+import Data.List (maximumBy, groupBy, sortBy, partition)
 import Data.Ord (comparing)
 import Data.String (fromString)
 import System.FilePath (normalise)
@@ -27,15 +27,15 @@ projectOf m = case view moduleIdLocation m of
 	_ -> Nothing
 
 -- | Get module cabal
-cabalOf :: ModuleId -> Maybe Cabal
-cabalOf m = case view moduleIdLocation m of
-	CabalModule c _ _ -> Just c
+packageDbOf :: ModuleId -> Maybe PackageDb
+packageDbOf m = case view moduleIdLocation m of
+	InstalledModule c _ _ -> Just c
 	_ -> Nothing
 
 -- | Get module package
 packageOf :: ModuleId -> Maybe ModulePackage
 packageOf m = case view moduleIdLocation m of
-	CabalModule _ package _ -> package
+	InstalledModule _ package _ -> package
 	_ -> Nothing
 
 -- | Check if module in project
@@ -56,27 +56,27 @@ inDepsOfProject = maybe (const False) (anyPackage . ordNub . concatMap (view inf
 	anyPackage :: [String] -> ModuleId -> Bool
 	anyPackage = liftM or . mapM inPackage
 
--- | Check if module in cabal
-inCabal :: Cabal -> ModuleId -> Bool
-inCabal c m = case view moduleIdLocation m of
-	CabalModule cabal _ _ -> cabal == c
+-- | Check if module in package-db
+inPackageDb :: PackageDb -> ModuleId -> Bool
+inPackageDb c m = case view moduleIdLocation m of
+	InstalledModule d _ _ -> d == c
 	_ -> False
 
 -- | Check if module in one of sandboxes
-inSandboxStack :: SandboxStack -> ModuleId -> Bool
-inSandboxStack sboxes m = case view moduleIdLocation m of
-	CabalModule cabal _ _ -> not $ null $ sandboxStack cabal `intersect` sboxes
+inPackageDbStack :: PackageDbStack -> ModuleId -> Bool
+inPackageDbStack dbs m = case view moduleIdLocation m of
+	InstalledModule d _ _ -> d `elem` packageDbs dbs
 	_ -> False
 
 -- | Check if module in package
 inPackage :: String -> ModuleId -> Bool
 inPackage p m = case view moduleIdLocation m of
-	CabalModule _ package _ -> Just p == fmap (view packageName) package
+	InstalledModule _ package _ -> Just p == fmap (view packageName) package
 	_ -> False
 
 inVersion :: String -> ModuleId -> Bool
 inVersion v m = case view moduleIdLocation m of
-	CabalModule _ package _ -> Just v == fmap (view packageVersion) package
+	InstalledModule _ package _ -> Just v == fmap (view packageVersion) package
 	_ -> False
 
 -- | Check if module in file
@@ -102,9 +102,9 @@ byFile m = case view moduleIdLocation m of
 	_ -> False
 
 -- | Check if module got from cabal database
-byCabal :: ModuleId -> Bool
-byCabal m = case view moduleIdLocation m of
-	CabalModule _ _ _ -> True
+installed :: ModuleId -> Bool
+installed m = case view moduleIdLocation m of
+	InstalledModule _ _ _ -> True
 	_ -> False
 
 -- | Check if module is standalone
@@ -148,7 +148,7 @@ newestPackage =
 	partition (isJust . fst) .
 	map ((mpackage . symbolModuleLocation) &&& id)
 	where
-		mpackage (CabalModule _ (Just p) _) = Just p
+		mpackage (InstalledModule _ (Just p) _) = Just p
 		mpackage _ = Nothing
 		pname = fmap (view packageName) . fst
 		pver = fmap (view packageVersion) . fst
@@ -165,22 +165,25 @@ sourceModule :: Maybe Project -> [Module] -> Maybe Module
 sourceModule proj ms = listToMaybe $ maybe (const []) (filter . (. view moduleId) . inProject) proj ms ++ filter (byFile . view moduleId) ms
 
 -- | Select module, visible in project or cabal
-visibleModule :: Cabal -> Maybe Project -> [Module] -> Maybe Module
-visibleModule cabal proj ms = listToMaybe $ maybe (const []) (filter . (. view moduleId) . inProject) proj ms ++ filter (inCabal cabal . view moduleId) ms
+-- TODO: PackageDbStack?
+visibleModule :: PackageDb -> Maybe Project -> [Module] -> Maybe Module
+visibleModule d proj ms = listToMaybe $ maybe (const []) (filter . (. view moduleId) . inProject) proj ms ++ filter (inPackageDb d . view moduleId) ms
 
 -- | Select preferred visible module
-preferredModule :: Cabal -> Maybe Project -> [ModuleId] -> Maybe ModuleId
-preferredModule cabal proj ms = listToMaybe $ concatMap (`filter` ms) order where
+-- TODO: PackageDbStack?
+preferredModule :: PackageDb -> Maybe Project -> [ModuleId] -> Maybe ModuleId
+preferredModule d proj ms = listToMaybe $ concatMap (`filter` ms) order where
 	order = [
 		maybe (const False) inProject proj,
 		byFile,
-		inCabal cabal,
+		inPackageDb d,
 		const True]
 
 -- | Remove duplicate modules, leave only `preferredModule`
-uniqueModules :: Cabal -> Maybe Project -> [ModuleId] -> [ModuleId]
-uniqueModules cabal proj =
-	mapMaybe (preferredModule cabal proj) .
+-- TODO: PackageDbStack?
+uniqueModules :: PackageDb -> Maybe Project -> [ModuleId] -> [ModuleId]
+uniqueModules d proj =
+	mapMaybe (preferredModule d proj) .
 	groupBy ((==) `on` view moduleIdName) .
 	sortBy (comparing (view moduleIdName))
 

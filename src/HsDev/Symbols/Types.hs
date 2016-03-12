@@ -28,7 +28,7 @@ module HsDev.Symbols.Types (
 	exportedBy, exportedDeclaration,
 	inspectionAt, inspectionOpts, inspection, inspectedId, inspectionResult,
 
-	module HsDev.Cabal,
+	module HsDev.PackageDb,
 	module HsDev.Project,
 	module HsDev.Symbols.Class,
 	module HsDev.Symbols.Documented
@@ -46,7 +46,7 @@ import Data.Text (Text, unpack)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime)
 
-import HsDev.Cabal
+import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented
@@ -487,7 +487,7 @@ instance Show InspectedModule where
 		showError :: String -> String
 		showError e = unlines $ ("\terror: " ++ e) : case mi of
 			FileModule f p -> ["file: " ++ f, "project: " ++ maybe "" (view projectPath) p]
-			CabalModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ n]
+			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ n]
 			ModuleSource src -> ["source: " ++ fromMaybe "" src]
 
 instance ToJSON InspectedModule where

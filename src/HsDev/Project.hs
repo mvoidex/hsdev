@@ -3,7 +3,7 @@
 module HsDev.Project (
 	Project(..),
 	ProjectDescription(..), Target(..), Library(..), Executable(..), Test(..), Info(..), infoSourceDirsDef,
-	readProject, loadProject, getProjectSandbox,
+	readProject, loadProject,
 	project,
 	Extensions(..), withExtensions,
 	infos, inTarget, fileTargets, findSourceDir, sourceDirs,
@@ -40,7 +40,6 @@ import qualified Distribution.Text (Text)
 import Language.Haskell.Extension
 import System.FilePath
 
-import HsDev.Cabal (Cabal, getSandbox)
 import HsDev.Util
 
 -- | Cabal project
@@ -285,10 +284,6 @@ loadProject :: Project -> ExceptT String IO Project
 loadProject p
 	| isJust (_projectDescription p) = return p
 	| otherwise = readProject (_projectCabal p)
-
--- | Find project sandbox
-getProjectSandbox :: Project -> IO Cabal
-getProjectSandbox = getSandbox . _projectPath
 
 -- | Make project by .cabal file
 project :: FilePath -> Project

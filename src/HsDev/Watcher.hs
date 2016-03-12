@@ -1,6 +1,6 @@
 module HsDev.Watcher (
-	watchProject, watchModule, watchSandbox,
-	unwatchProject, unwatchModule, unwatchSandbox,
+	watchProject, watchModule, watchPackageDb, watchPackageDbStack,
+	unwatchProject, unwatchModule, unwatchPackageDb,
 	isSource, isCabal, isConf,
 
 	module System.Directory.Watcher,
@@ -29,14 +29,18 @@ watchProject w proj opts = do
 watchModule :: Watcher -> ModuleLocation -> IO ()
 watchModule w (FileModule f Nothing) = watchDir w (takeDirectory f) isSource WatchedModule
 watchModule w (FileModule _ (Just proj)) = watchProject w proj []
-watchModule w (CabalModule cabal _ _) = watchSandbox w (sandboxStack cabal) []
 watchModule _ _ = return ()
 
--- | Watch for sandbox
-watchSandbox :: Watcher -> SandboxStack -> [String] -> IO ()
-watchSandbox w sboxes opts = mapM_ watch' (sandboxStacks sboxes) where
-	watch' [] = return ()
-	watch' fs@(f:_) = watchTree w f isConf (WatchedSandbox fs opts)
+-- | Watch for top of package-db stack
+watchPackageDb :: Watcher -> PackageDbStack -> [String] -> IO ()
+watchPackageDb w pdbs opts = case topPackageDb pdbs of
+	GlobalDb -> return () -- TODO: Watch for global package-db
+	UserDb -> return () -- TODO: Watch for user package-db
+	(PackageDb pdb) -> watchTree w pdb isConf (WatchedPackageDb pdbs opts)
+
+-- | Watch for package-db stack
+watchPackageDbStack :: Watcher -> PackageDbStack -> [String] -> IO ()
+watchPackageDbStack w pdbs opts = mapM_ (\pdbs' -> watchPackageDb w pdbs' opts) $ packageDbStacks pdbs
 
 unwatchProject :: Watcher -> Project -> IO ()
 unwatchProject w proj = do
@@ -49,12 +53,14 @@ unwatchProject w proj = do
 unwatchModule :: Watcher -> ModuleLocation -> IO ()
 unwatchModule w (FileModule f Nothing) = void $ unwatchDir w (takeDirectory f)
 unwatchModule _ (FileModule _ (Just _)) = return ()
-unwatchModule _ (CabalModule _ _ _) = return ()
+unwatchModule _ (InstalledModule _ _ _) = return ()
 unwatchModule _ _ = return ()
 
-unwatchSandbox :: Watcher -> SandboxStack -> IO ()
-unwatchSandbox _ [] = return ()
-unwatchSandbox w (f:_) = void $ unwatchTree w f
+-- | Unwatch package-db
+unwatchPackageDb :: Watcher -> PackageDb -> IO ()
+unwatchPackageDb _ GlobalDb = return () -- TODO: Unwatch global package-db
+unwatchPackageDb _ UserDb = return () -- TODO: Unwatch user package-db
+unwatchPackageDb w (PackageDb pdb) = void $ unwatchTree w pdb
 
 isSource :: Event -> Bool
 isSource (Event _ f _) = takeExtension f == ".hs"

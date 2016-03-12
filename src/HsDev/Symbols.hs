@@ -166,16 +166,12 @@ mergeExported =
 		merge' [] = error "mergeExported: impossible"
 		merge' ds@(d:_) = ExportedDeclaration (map (view declarationModuleId) ds) (view moduleDeclaration d)
 
-instance Paths Cabal where
-	paths _ Cabal = pure Cabal
-	paths f (Sandbox p) = Sandbox <$> f p
-
 instance Paths Project where
 	paths f (Project nm p c desc) = Project nm <$> f p <*> f c <*> pure desc
 
 instance Paths ModuleLocation where
 	paths f (FileModule fpath p) = FileModule <$> f fpath <*> traverse (paths f) p
-	paths f (CabalModule c p n) = CabalModule <$> paths f c <*> pure p <*> pure n
+	paths f (InstalledModule c p n) = InstalledModule <$> paths f c <*> pure p <*> pure n
 	paths _ (ModuleSource m) = pure $ ModuleSource m
 
 -- | Find project file is related to

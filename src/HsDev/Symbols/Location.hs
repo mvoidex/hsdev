@@ -6,7 +6,7 @@ module HsDev.Symbols.Location (
 	Location(..),
 
 	packageName, packageVersion,
-	moduleFile, moduleProject, moduleCabal, modulePackage, cabalModuleName, moduleSourceName,
+	moduleFile, moduleProject, modulePackageDb, modulePackage, cabalModuleName, moduleSourceName,
 	positionLine, positionColumn,
 	regionFrom, regionTo,
 	locationModule, locationPosition,
@@ -16,7 +16,7 @@ module HsDev.Symbols.Location (
 	packageOpt,
 	RecalcTabs(..),
 
-	module HsDev.Cabal
+	module HsDev.PackageDb
 	) where
 
 import Control.Applicative
@@ -32,10 +32,11 @@ import qualified Data.Text as T (split, unpack)
 import System.FilePath
 import Text.Read (readMaybe)
 
-import HsDev.Cabal
+import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Util ((.::), (.::?))
 
+-- | Just package name and version without its location
 data ModulePackage = ModulePackage {
 	_packageName :: String,
 	_packageVersion :: String }
@@ -74,7 +75,7 @@ instance FromJSON ModulePackage where
 -- | Location of module
 data ModuleLocation =
 	FileModule { _moduleFile :: FilePath, _moduleProject :: Maybe Project } |
-	CabalModule { _moduleCabal :: Cabal, _modulePackage :: Maybe ModulePackage, _cabalModuleName :: String } |
+	InstalledModule { _modulePackageDb :: PackageDb, _modulePackage :: Maybe ModulePackage, _cabalModuleName :: String } |
 	ModuleSource { _moduleSourceName :: Maybe String }
 		deriving (Eq, Ord)
 
@@ -85,29 +86,29 @@ moduleStandalone = (== Just Nothing) . preview moduleProject
 
 locationId :: ModuleLocation -> String
 locationId (FileModule fpath _) = fpath
-locationId (CabalModule cabal mpack nm) = intercalate ":" [show cabal, maybe "" show mpack, nm]
+locationId (InstalledModule cabal mpack nm) = intercalate ":" [show cabal, maybe "" show mpack, nm]
 locationId (ModuleSource msrc) = fromMaybe "" msrc
 
 instance NFData ModuleLocation where
 	rnf (FileModule f p) = rnf f `seq` rnf p
-	rnf (CabalModule c p n) = rnf c `seq` rnf p `seq` rnf n
+	rnf (InstalledModule d p n) = rnf d `seq` rnf p `seq` rnf n
 	rnf (ModuleSource m) = rnf m
 
 instance Show ModuleLocation where
 	show (FileModule f p) = f ++ maybe "" (" in " ++) (fmap (view projectPath) p)
-	show (CabalModule _ p n) = n ++ maybe "" (" in package " ++) (fmap show p)
+	show (InstalledModule _ p n) = n ++ maybe "" (" in package " ++) (fmap show p)
 	show (ModuleSource m) = fromMaybe "" m
 
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap (view projectCabal) p]
-	toJSON (CabalModule c p n) = object ["cabal" .= c, "package" .= fmap show p, "name" .= n]
+	toJSON (InstalledModule c p n) = object ["db" .= c, "package" .= fmap show p, "name" .= n]
 	toJSON (ModuleSource (Just s)) = object ["source" .= s]
 	toJSON (ModuleSource Nothing) = object []
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .:: "project"))) <|>
-		(CabalModule <$> v .:: "cabal" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
+		(InstalledModule <$> v .:: "db" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
 		(ModuleSource <$> v .::? "source")
 
 noLocation :: ModuleLocation

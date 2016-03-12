@@ -11,10 +11,11 @@ import Data.Aeson (toJSON)
 import System.Directory (canonicalizePath)
 import System.FilePath (takeExtension)
 
+import HsDev.PackageDb
 import HsDev.Project (readProject)
 import HsDev.Scan (scanModule, scanModify)
 import HsDev.Inspect (inspectContents, inspectDocs, getDefines)
-import HsDev.Symbols.Location (ModuleLocation(..), Cabal(..))
+import HsDev.Symbols.Location (ModuleLocation(..))
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.Ghc.Worker
 
@@ -41,9 +42,9 @@ main = toolMain "hsinspect" "haskell inspect" opts (printExceptT . printResult .
 		let
 			scanAdditional =
 				scanModify (\opts' _ -> inspectDocs opts') >=>
-				scanModify (\opts' sboxes m -> ExceptT (inWorker ghc (runExceptT $ inferTypes opts' sboxes m Nothing)))
+				scanModify (\opts' pdbs m -> ExceptT (inWorker ghc (runExceptT $ inferTypes opts' pdbs m Nothing)))
 		toJSON <$> scanAdditional im
 	inspect' (Opts (Just fcabal@(takeExtension -> ".cabal")) _) = do
 		fcabal' <- liftIO $ canonicalizePath fcabal
 		toJSON <$> readProject fcabal'
-	inspect' (Opts (Just mname) ghcs) = toJSON <$> scanModule [] ghcs (CabalModule Cabal Nothing mname) Nothing
+	inspect' (Opts (Just mname) ghcs) = toJSON <$> scanModule [] ghcs (InstalledModule UserDb Nothing mname) Nothing

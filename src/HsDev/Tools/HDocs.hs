@@ -37,12 +37,12 @@ hdocs :: ModuleLocation -> [String] -> IO (Map String String)
 hdocs mloc opts = runExceptT (docs' mloc) >>= return . either (const M.empty) (force . HDocs.formatDocs) where
 	docs' :: ModuleLocation -> ExceptT String IO HDocs.ModuleDocMap
 	docs' (FileModule fpath _) = liftM snd $ HDocs.readSource opts fpath
-	docs' (CabalModule _ _ mname) = HDocs.moduleDocs opts mname
+	docs' (InstalledModule _ _ mname) = HDocs.moduleDocs opts mname
 	docs' _ = throwError $ "Can't get docs for: " ++ show mloc
 
 -- | Get all docs
-hdocsCabal :: SandboxStack -> [String] -> ExceptT String IO (Map String (Map String String))
-hdocsCabal sboxes opts = liftM (M.map $ force . HDocs.formatDocs) $ HDocs.installedDocs (sandboxStackOpt sboxes ++ opts)
+hdocsCabal :: PackageDbStack -> [String] -> ExceptT String IO (Map String (Map String String))
+hdocsCabal pdbs opts = liftM (M.map $ force . HDocs.formatDocs) $ HDocs.installedDocs (packageDbStackOpts pdbs ++ opts)
 
 -- | Set docs for module
 setDocs :: Map String String -> Module -> Module

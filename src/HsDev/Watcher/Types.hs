@@ -2,13 +2,13 @@ module HsDev.Watcher.Types (
 	Watched(..),
 	Watcher,
 
-	Cabal, Project
+	PackageDbStack, Project
 	) where
 
 import qualified System.Directory.Watcher as W
 import HsDev.Project (Project)
-import HsDev.Cabal (Cabal, SandboxStack)
+import HsDev.PackageDb (PackageDbStack)
 
-data Watched = WatchedProject Project [String] | WatchedSandbox SandboxStack [String] | WatchedModule
+data Watched = WatchedProject Project [String] | WatchedPackageDb PackageDbStack [String] | WatchedModule
 
 type Watcher = W.Watcher Watched

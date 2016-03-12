@@ -65,7 +65,7 @@ resolveOne db = fromMaybe (error "Resolve: impossible happened") . resolve db . 
 resolveModule :: Module -> ResolveM ResolvedModule
 resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' return where
 	resolveModule' = save $ case view moduleLocation m of
-		CabalModule {} -> return ResolvedModule {
+		InstalledModule {} -> return ResolvedModule {
 			_resolvedModule = m,
 			_resolvedScope = view moduleDeclarations m,
 			_resolvedExports = view moduleDeclarations m }
@@ -125,12 +125,12 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 				case proj' of
 					Nothing -> selectImport i [
 						inFile $ importedModulePath (view moduleName m) file (view importModuleName i),
-						byCabal]
+						installed]
 					Just p -> selectImport i [
 						inProject p,
 						inDepsOf' file p]
-			CabalModule cabal _ _ -> selectImport i [inCabal cabal]
-			ModuleSource _ -> selectImport i [byCabal]
+			InstalledModule cabal _ _ -> selectImport i [inPackageDb cabal]
+			ModuleSource _ -> selectImport i [installed]
 		fromMaybe [] <$> traverse (liftM (filterImportList . view resolvedExports) . resolveModule) ms
 	setImport :: Import -> Declaration -> Declaration
 	setImport i' = set declarationImported (Just [i'])

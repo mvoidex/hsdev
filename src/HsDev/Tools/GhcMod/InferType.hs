@@ -12,7 +12,7 @@ import Data.String (fromString)
 import qualified Data.Text as T (unpack)
 import qualified Language.Haskell.GhcMod as GhcMod
 
-import HsDev.Cabal
+import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Tools.GhcMod
 import HsDev.Util (withCurrentDirectory)
@@ -23,8 +23,8 @@ untyped (Function Nothing _ _) = True
 untyped _ = False
 
 -- | Infer type of declaration
-inferType :: [String] -> Cabal -> FilePath -> Declaration -> GhcModT IO Declaration
-inferType opts cabal src decl'
+inferType :: [String] -> PackageDbStack -> FilePath -> Declaration -> GhcModT IO Declaration
+inferType opts pdbs src decl'
 	| untyped (view declaration decl') = doInfer
 	| otherwise = return decl'
 	where
@@ -32,23 +32,23 @@ inferType opts cabal src decl'
 			inferred <- ((preview $ declaration . functionType . _Just) <$> byInfo) <|> (fmap fromString <$> byTypeOf)
 			return $ set (declaration . functionType) inferred decl'
 
-		byInfo = info opts cabal src (T.unpack $ view declarationName decl')
+		byInfo = info opts pdbs src (T.unpack $ view declarationName decl')
 		byTypeOf = case view declarationPosition decl' of
 			Nothing -> fail "No position"
-			Just (Position l c) -> (fmap typedType . listToMaybe) <$> typeOf opts cabal src l c
+			Just (Position l c) -> (fmap typedType . listToMaybe) <$> typeOf opts pdbs src l c
 
 -- | Infer types for module
-inferTypes :: [String] -> Cabal -> Module -> GhcModT IO Module
-inferTypes opts cabal m = case view moduleLocation m of
+inferTypes :: [String] -> PackageDbStack -> Module -> GhcModT IO Module
+inferTypes opts pdbs m = case view moduleLocation m of
 	FileModule src _ -> do
-		inferredDecls <- traverse (\d -> inferType opts cabal src d <|> return d) $
+		inferredDecls <- traverse (\d -> inferType opts pdbs src d <|> return d) $
 			view moduleDeclarations m
 		return $ set moduleDeclarations inferredDecls m
 	_ -> fail "Type infer works only for source files"
 
 -- | Infer type in module
-infer :: [String] -> Cabal -> Module -> ExceptT String IO Module
-infer opts cabal m = case view moduleLocation m of
+infer :: [String] -> PackageDbStack -> Module -> ExceptT String IO Module
+infer opts pdbs m = case view moduleLocation m of
 	FileModule src _ -> mapExceptT (withCurrentDirectory (sourceModuleRoot (view moduleName m) src)) $
-		runGhcMod GhcMod.defaultOptions $ inferTypes opts cabal m
+		runGhcMod GhcMod.defaultOptions $ inferTypes opts pdbs m
 	_ -> throwError "Type infer works only for source files"

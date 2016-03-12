@@ -1,6 +1,6 @@
 module HsDev.Cache.Structured (
 	dump, load,
-	loadCabal, loadProject, loadFiles
+	loadPackageDb, loadProject, loadFiles
 	) where
 
 import Control.DeepSeq
@@ -22,8 +22,8 @@ dump :: FilePath -> Structured -> IO ()
 dump dir db = do
 	createDirectoryIfMissing True (dir </> "cabal")
 	createDirectoryIfMissing True (dir </> "projects")
-	forM_ (M.assocs $ structuredCabals db) $ \(c, cdb) -> Cache.dump
-		(dir </> "cabal" </> Cache.cabalCache c)
+	forM_ (M.assocs $ structuredPackageDbs db) $ \(c, cdb) -> Cache.dump
+		(dir </> "cabal" </> Cache.packageDbCache c)
 		cdb
 	forM_ (M.assocs $ structuredProjects db) $ \(p, pdb) -> Cache.dump
 		(dir </> "projects" </> Cache.projectCache (project p))
@@ -38,8 +38,8 @@ dump dir db = do
 
 -- | Load all cache
 load :: FilePath -> IO (Either String Structured)
-load dir = runExceptT $ join $ either throwError return <$> (structured <$> loadCabals <*> loadProjects <*> loadStandaloneFiles) where
-	loadCabals = loadDir (dir </> "cabal")
+load dir = runExceptT $ join $ either throwError return <$> (structured <$> loadPackageDbs <*> loadProjects <*> loadStandaloneFiles) where
+	loadPackageDbs = loadDir (dir </> "cabal")
 	loadProjects = loadDir (dir </> "projects")
 	loadStandaloneFiles = ExceptT $ Cache.load (dir </> Cache.standaloneCache)
 
@@ -52,9 +52,9 @@ loadData :: FilePath -> ExceptT String IO Database
 loadData = liftExceptionM . ExceptT . Cache.load
 
 -- | Load cabal from cache
-loadCabal :: Cabal -> FilePath -> ExceptT String IO Structured
-loadCabal c dir = do
-	dat <- loadData (dir </> "cabal" </> Cache.cabalCache c)
+loadPackageDb :: PackageDb -> FilePath -> ExceptT String IO Structured
+loadPackageDb c dir = do
+	dat <- loadData (dir </> "cabal" </> Cache.packageDbCache c)
 	ExceptT $ return $ structured [dat] [] mempty
 
 -- | Load project from cache

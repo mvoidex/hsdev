@@ -135,7 +135,7 @@ writeCache sopts db = withCache sopts () $ \cdir -> do
 		let
 			sd = structurize db
 		liftIO $ SC.dump cdir sd
-		forM_ (M.keys (structuredCabals sd)) $ \c -> Log.log Log.Debug ("cache write: cabal {}" ~~ show c)
+		forM_ (M.keys (structuredPackageDbs sd)) $ \c -> Log.log Log.Debug ("cache write: cabal {}" ~~ show c)
 		forM_ (M.keys (structuredProjects sd)) $ \p -> Log.log Log.Debug ("cache write: project {}" ~~ p)
 		case allModules (structuredFiles sd) of
 			[] -> return ()
@@ -151,7 +151,7 @@ readCache sopts act = do
 	where
 		cacheErr e = Log.log Log.Error ("Error reading cache: {}" ~~ e) >> return Nothing
 		cacheOk s = do
-			forM_ (M.keys (structuredCabals s)) $ \c -> Log.log Log.Debug ("cache read: cabal {}" ~~ show c)
+			forM_ (M.keys (structuredPackageDbs s)) $ \c -> Log.log Log.Debug ("cache read: cabal {}" ~~ show c)
 			forM_ (M.keys (structuredProjects s)) $ \p -> Log.log Log.Debug ("cache read: project {}" ~~ p)
 			case allModules (structuredFiles s) of
 				[] -> return ()
