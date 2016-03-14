@@ -297,9 +297,9 @@ instance Log.MonadLog m => Log.MonadLog (ExceptT e m) where
 version :: Maybe [Int]
 version = mapM readMaybe $ split (== '.') $cabalVersion
 
--- | Cut version to contain only major and minor
+-- | Cut version to contain only significant numbers (currently 3)
 cutVersion :: Maybe [Int] -> Maybe [Int]
-cutVersion = fmap (take 2)
+cutVersion = fmap (take 3)
 
 -- | Check if version is the same
 sameVersion :: Maybe [Int] -> Maybe [Int] -> Bool
