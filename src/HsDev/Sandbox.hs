@@ -3,7 +3,7 @@
 module HsDev.Sandbox (
 	SandboxType(..), Sandbox(..), sandboxType, sandbox,
 	isSandbox, guessSandboxType, sandboxFromPath,
-	findSandbox, searchSandbox, sandboxPackageDbStack, searchPackageDbStack,
+	findSandbox, searchSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
 
 	-- * cabal-sandbox util
 	cabalSandboxLib, cabalSandboxPackageDb
@@ -105,6 +105,14 @@ searchPackageDbStack p = do
 		Just sbox -> liftM (either (const userDb) id) $ runExceptT $ sandboxPackageDbStack sbox
 	where
 		userDb = PackageDbStack [UserDb]
+
+-- | Restore package-db stack by package-db
+restorePackageDbStack :: PackageDb -> IO PackageDbStack
+restorePackageDbStack GlobalDb = return globalDb
+restorePackageDbStack UserDb = return userDb
+restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ PackageDbStack [PackageDb p]) $ runMaybeT $ do
+	sbox <- MaybeT $ searchSandbox p
+	exceptToMaybeT $ sandboxPackageDbStack sbox
 
 -- | Get actual sandbox build path: <arch>-<platform>-<compiler>-<version>
 cabalSandboxLib :: ExceptT String IO FilePath
