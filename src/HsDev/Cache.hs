@@ -16,6 +16,7 @@ module HsDev.Cache (
 	) where
 
 import Control.DeepSeq (force)
+import Control.Exception
 import Control.Lens (view)
 import Data.Aeson (encode, eitherDecode)
 import Data.Aeson.Encode.Pretty (encodePretty)
@@ -59,9 +60,12 @@ dump file = BS.writeFile file . encodePretty
 
 -- | Load database from file, strict
 load :: FilePath -> IO (Either String Database)
-load file = do
+load file = handle onIO $ do
 	cts <- BS.readFile file
 	return $ force $ eitherDecode cts
+	where
+		onIO :: IOException -> IO (Either String Database)
+		onIO _ = return $ Left $ "IO exception while reading cache from " ++ file
 
 -- | Write version
 writeVersion :: FilePath -> IO ()
@@ -71,6 +75,9 @@ writeVersion file = BS.writeFile file $ encode ver where
 
 -- | Read version
 readVersion :: FilePath -> IO (Maybe [Int])
-readVersion file = do
+readVersion file = handle onIO $ do
 	cts <- BS.readFile file
 	return $ either (const Nothing) id $ eitherDecode cts
+	where
+		onIO :: IOException -> IO (Maybe [Int])
+		onIO _ = return Nothing
