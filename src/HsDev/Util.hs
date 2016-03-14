@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Util (
@@ -28,6 +28,8 @@ module HsDev.Util (
 	FromCmd(..),
 	cmdJson, withCmd, guardCmd,
 	withHelp, cmd, parseArgs,
+	-- * Version stuff
+	version, cutVersion, sameVersion, strVersion,
 
 	-- * Reexportss
 	module Control.Monad.Except,
@@ -36,6 +38,7 @@ module HsDev.Util (
 
 import Control.Arrow (second, left, (&&&))
 import Control.Exception
+import Control.Concurrent.Async
 import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Catch as C
@@ -43,7 +46,7 @@ import qualified Control.Monad.CatchIO as CatchIO
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
-import Data.List (isPrefixOf, unfoldr)
+import Data.List (isPrefixOf, unfoldr, intercalate)
 import qualified Data.Map as M
 import Data.Maybe (catMaybes, fromMaybe)
 import qualified Data.Set as Set
@@ -59,8 +62,9 @@ import System.Directory
 import System.FilePath
 import System.IO
 import qualified System.Log.Simple as Log
+import Text.Read (readMaybe)
 
-import Control.Concurrent.Async
+import HsDev.Version
 
 -- | Run action with current directory set
 withCurrentDirectory :: FilePath -> IO a -> IO a
@@ -288,3 +292,20 @@ instance CatchIO.MonadCatchIO m => CatchIO.MonadCatchIO (ExceptT e m) where
 
 instance Log.MonadLog m => Log.MonadLog (ExceptT e m) where
 	askLog = lift Log.askLog
+
+-- | Get hsdev version as list of integers
+version :: Maybe [Int]
+version = mapM readMaybe $ split (== '.') $cabalVersion
+
+-- | Cut version to contain only major and minor
+cutVersion :: Maybe [Int] -> Maybe [Int]
+cutVersion = fmap (take 2)
+
+-- | Check if version is the same
+sameVersion :: Maybe [Int] -> Maybe [Int] -> Bool
+sameVersion l r = fromMaybe False $ liftA2 (==) l r
+
+-- | Version to string
+strVersion :: Maybe [Int] -> String
+strVersion Nothing = "unknown"
+strVersion (Just vers) = intercalate "." $ map show vers

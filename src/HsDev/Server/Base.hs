@@ -16,20 +16,24 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 import Data.Default
+import Data.List (intercalate)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T (pack, unpack)
-import System.Log.Simple hiding (Level(..), Message(..), Command(..))
+import System.Log.Simple hiding (Level(..), Message(..), Command(..), (%=))
 import qualified System.Log.Simple.Base as Log
 import qualified System.Log.Simple as Log
+import System.Directory (removeDirectoryRecursive)
+import System.FilePath
 
 import qualified Control.Concurrent.FiniteChan as F
 import System.Directory.Paths (canonicalize)
 import qualified System.Directory.Watcher as Watcher
-import Text.Format ((~~), FormatBuild(..))
+import Text.Format ((~~), FormatBuild(..), (%=))
 
+import qualified HsDev.Cache as Cache
 import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
 import HsDev.Database
@@ -70,11 +74,22 @@ runServer :: ServerOpts -> ServerM IO () -> IO ()
 runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> Log.scopeLog logger' (T.pack "hsdev") $ Watcher.withWatcher $ \watcher -> do
 	waitSem <- newQSem 0
 	db <- DB.newAsync
+	withCache sopts () $ \cdir -> do
+		outputStr Log.Trace $ "Checking cache version in {}" ~~ cdir 
+		ver <- Cache.readVersion $ cdir </> Cache.versionCache
+		outputStr Log.Debug $ "Cache version: {}" ~~ strVersion ver
+		when (not $ sameVersion (cutVersion version) (cutVersion ver)) $ ignoreIO $ do
+			outputStr Log.Info $ "Cache version ({cache}) is incompatible with hsdev version ({hsdev}), removing cache ({dir})" ~~
+				("cache" %= strVersion ver) ~~
+				("hsdev" %= strVersion version) ~~
+				("dir" %= cdir)
+			-- drop cache
+			removeDirectoryRecursive cdir
 	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
-		outputStr Log.Info $ "Loading cache from " ++ cdir
+		outputStr Log.Info $ "Loading cache from {}" ~~ cdir
 		dbCache <- liftA merge <$> SC.load cdir
 		case dbCache of
-			Left err -> outputStr Log.Error $ "Failed to load cache: " ++ err
+			Left err -> outputStr Log.Error $ "Failed to load cache: {}" ~~ err
 			Right dbCache' -> DB.update db (return dbCache')
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"

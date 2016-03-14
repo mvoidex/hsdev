@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Cache (
 	escapePath,
@@ -30,7 +30,7 @@ import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Database (Database)
 import HsDev.Version
-import HsDev.Util (split)
+import HsDev.Util (split, version)
 
 -- | Escape path
 escapePath :: FilePath -> FilePath
@@ -69,9 +69,7 @@ load file = handle onIO $ do
 
 -- | Write version
 writeVersion :: FilePath -> IO ()
-writeVersion file = BS.writeFile file $ encode ver where
-	ver :: Maybe [Int]
-	ver = mapM readMaybe $ split (== '.') $cabalVersion
+writeVersion file = BS.writeFile file $ encode version
 
 -- | Read version
 readVersion :: FilePath -> IO (Maybe [Int])
