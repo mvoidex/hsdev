@@ -14,6 +14,7 @@ module HsDev.Project (
 	testName, testEnabled, testBuildInfo,
 	infoDepends, infoLanguage, infoExtensions, infoGHCOptions, infoSourceDirs,
 	extensions, ghcOptions, entity,
+	targetOpts,
 
 	-- * Helpers
 	showExtension, flagExtension, extensionFlag,
@@ -29,6 +30,7 @@ import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.List
 import Data.Maybe
+import Data.Monoid
 import Data.Ord
 import Distribution.Compiler (CompilerFlavor(GHC))
 import qualified Distribution.Package as P
@@ -193,6 +195,15 @@ data Info = Info {
 	_infoGHCOptions :: [String],
 	_infoSourceDirs :: [FilePath] }
 		deriving (Eq, Read)
+
+instance Monoid Info where
+	mempty = Info [] Nothing [] [] []
+	mappend l r = Info
+		(ordNub $ _infoDepends l ++ _infoDepends r)
+		(getFirst $ First (_infoLanguage l) `mappend` First (_infoLanguage r))
+		(_infoExtensions l ++ _infoExtensions r)
+		(_infoGHCOptions l ++ _infoGHCOptions r)
+		(ordNub $ _infoSourceDirs l ++ _infoSourceDirs r)
 
 -- | infoSourceDirs lens with default
 infoSourceDirsDef :: Simple Lens Info [FilePath]
@@ -364,6 +375,13 @@ sourceDirs = ordNub . concatMap dirs . infos where
 parseDT :: Distribution.Text.Text a => String -> String -> Parser a
 parseDT typeName v = maybe err return (simpleParse v) where
 	err = fail $ "Can't parse " ++ typeName ++ ": " ++ v
+
+-- | Get options for specific target
+targetOpts :: Info -> [String]
+targetOpts info' = concat [
+	["-i" ++ s | s <- _infoSourceDirs info'],
+	extensionsOpts $ withExtensions () info',
+	["-package " ++ p | p <- _infoDepends info']]
 
 -- | Extension as flag name
 showExtension :: Extension -> String

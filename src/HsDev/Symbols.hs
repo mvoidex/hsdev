@@ -37,7 +37,7 @@ module HsDev.Symbols (
 
 import Control.Applicative
 import Control.Arrow
-import Control.Lens (view, set, over)
+import Control.Lens
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Data.Function (on)
@@ -206,18 +206,19 @@ locateSourceDir f = runMaybeT $ do
 moduleOpts :: [ModulePackage] -> Module -> [String]
 moduleOpts pkgs m = case view moduleLocation m of
 	FileModule file proj -> concat [
-		["-i" ++ s | s <- srcDirs],
-		concatMap extensionsOpts exts,
 		hidePackages,
-		["-package " ++ p | p <- deps, p `elem` pkgs']]
+		targetOpts info']
 		where
 			infos' = maybe [] (`fileTargets` file) proj
-			srcDirs = concatMap (view infoSourceDirs) infos'
-			exts = map (file `withExtensions`) infos'
-			deps = concatMap (view infoDepends) infos'
-			pkgs' = map (view packageName) pkgs
+			info' = over infoDepends (filter validDep) (mconcat $ selfInfo : infos')
+			selfInfo
+				| proj ^? _Just . projectName `elem` map Just (infos' ^.. each . infoDepends . each) = fromMaybe mempty $
+					proj ^? _Just . projectDescription . _Just . projectLibrary . _Just . libraryBuildInfo
+				| otherwise = mempty
+			validDep d = d `elem` pkgs' || Just d == (proj ^? _Just . projectName)
+			pkgs' = pkgs ^.. each . packageName
 			hidePackages
-				| null infos' = []
+				| null (info' ^. infoDepends) = []
 				| otherwise = ["-hide-all-packages"]
 	_ -> []
 
