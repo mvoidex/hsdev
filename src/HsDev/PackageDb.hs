@@ -29,14 +29,14 @@ instance NFData PackageDb where
 	rnf (PackageDb p) = rnf p
 
 instance ToJSON PackageDb where
-	toJSON GlobalDb = "global"
-	toJSON UserDb = "user'"
+	toJSON GlobalDb = "global-db"
+	toJSON UserDb = "user-db"
 	toJSON (PackageDb p) = object ["package-db" .= p]
 
 instance FromJSON PackageDb where
 	parseJSON v = globalP v <|> userP v <|> dbP v where
-		globalP = withText "global" (\s -> guard (s == "global") >> return GlobalDb)
-		userP = withText "user" (\s -> guard (s == "user") >> return UserDb)
+		globalP = withText "global-db" (\s -> guard (s == "global-db") >> return GlobalDb)
+		userP = withText "user-db" (\s -> guard (s == "user-db") >> return UserDb)
 		dbP = withObject "package-db" pathP where
 			pathP obj = PackageDb <$> obj .:: "package-db"
 

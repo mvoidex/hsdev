@@ -159,7 +159,7 @@ runCommand (InfoModules fs) = toValue $ do
 	return $ map (view moduleId) $ newestPackage $ selectModules (filter' . view moduleId) dbval
 runCommand InfoPackages = toValue $ (ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb
 runCommand InfoProjects = toValue $ (toList . databaseProjects) <$> getDb
-runCommand InfoSandboxes = toValue $ (ordNub . sort . mapMaybe (packageDbOf . view moduleId) . allModules) <$> getDb
+runCommand InfoSandboxes = toValue $ databasePackageDbs <$> getDb
 runCommand (InfoSymbol sq fs locals') = toValue $ do
 	dbval <- liftM (localsDatabase locals') $ getDb
 	filter' <- targetFilters fs
