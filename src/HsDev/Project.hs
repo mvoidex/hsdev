@@ -298,17 +298,16 @@ loadProject p
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
-project file
-	| takeExtension file == ".cabal" = Project {
-		_projectName = takeBaseName (takeDirectory file),
-		_projectPath = takeDirectory file,
-		_projectCabal = file,
-		_projectDescription = Nothing }
-	| otherwise = Project {
-		_projectName = takeBaseName file,
-		_projectPath = file,
-		_projectCabal = file </> (takeBaseName file <.> "cabal"),
-		_projectDescription = Nothing }
+project file = Project {
+	_projectName = takeBaseName (takeDirectory cabal),
+	_projectPath = takeDirectory cabal,
+	_projectCabal = cabal,
+	_projectDescription = Nothing }
+	where
+		file' = dropTrailingPathSeparator $ normalise file
+		cabal
+			| takeExtension file' == ".cabal" = file'
+			| otherwise = file' </> (takeBaseName file' <.> "cabal")
 
 -- | Entity with project extensions
 data Extensions a = Extensions {
