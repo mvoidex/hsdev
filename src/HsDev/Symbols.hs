@@ -215,7 +215,7 @@ moduleOpts pkgs m = case view moduleLocation m of
 				| proj ^? _Just . projectName `elem` map Just (infos' ^.. each . infoDepends . each) = fromMaybe mempty $
 					proj ^? _Just . projectDescription . _Just . projectLibrary . _Just . libraryBuildInfo
 				| otherwise = mempty
-			validDep d = d `elem` pkgs' || Just d == (proj ^? _Just . projectName)
+			validDep d = d `elem` pkgs'
 			pkgs' = pkgs ^.. each . packageName
 			hidePackages
 				| null (info' ^. infoDepends) = []
