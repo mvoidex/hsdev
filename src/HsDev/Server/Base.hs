@@ -25,7 +25,7 @@ import qualified Data.Text as T (pack, unpack)
 import System.Log.Simple hiding (Level(..), Message(..), Command(..), (%=))
 import qualified System.Log.Simple.Base as Log
 import qualified System.Log.Simple as Log
-import System.Directory (removeDirectoryRecursive)
+import System.Directory (removeDirectoryRecursive, createDirectoryIfMissing)
 import System.FilePath
 
 import qualified Control.Concurrent.FiniteChan as F
@@ -85,6 +85,9 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 				("dir" %= cdir)
 			-- drop cache
 			removeDirectoryRecursive cdir
+		outputStr Log.Debug $ "Writing new cache version: {}" ~~ strVersion version
+		createDirectoryIfMissing True cdir
+		Cache.writeVersion $ cdir </> Cache.versionCache
 	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
 		outputStr Log.Info $ "Loading cache from {}" ~~ cdir
 		dbCache <- liftA merge <$> SC.load cdir
