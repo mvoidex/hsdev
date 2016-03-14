@@ -2,8 +2,9 @@
 
 module HsDev.PackageDb (
 	PackageDb(..), packageDb,
-	PackageDbStack(..), packageDbStack, globalDb, userDb, fromPackageDbs,
+	PackageDbStack(..), packageDbStack, globalDb, userDb, fromPackageDb, fromPackageDbs,
 	topPackageDb, packageDbs, packageDbStacks,
+	isSubStack,
 
 	packageDbOpt, packageDbStackOpts
 	) where
@@ -13,7 +14,7 @@ import Control.Monad (guard)
 import Control.Lens (makeLenses, each)
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
-import Data.List (tails)
+import Data.List (tails, isSuffixOf)
 
 import System.Directory.Paths
 import HsDev.Util ((.::))
@@ -69,6 +70,10 @@ globalDb = PackageDbStack []
 userDb :: PackageDbStack
 userDb = PackageDbStack [UserDb]
 
+-- | Make package-db from one package-db
+fromPackageDb :: FilePath -> PackageDbStack
+fromPackageDb = PackageDbStack . return . PackageDb
+
 -- | Make package-db stack from paths
 fromPackageDbs :: [FilePath] -> PackageDbStack
 fromPackageDbs = PackageDbStack . map PackageDb . reverse
@@ -85,6 +90,10 @@ packageDbs = (GlobalDb :) . reverse . _packageDbStack
 -- | Get stacks for each package-db in stack
 packageDbStacks :: PackageDbStack -> [PackageDbStack]
 packageDbStacks = map PackageDbStack . tails . _packageDbStack
+
+-- | Is one package-db stack substack of another
+isSubStack :: PackageDbStack -> PackageDbStack -> Bool
+isSubStack (PackageDbStack l) (PackageDbStack r) = l `isSuffixOf` r
 
 -- | Get ghc options for package-db
 packageDbOpt :: PackageDb -> String

@@ -110,7 +110,7 @@ searchPackageDbStack p = do
 restorePackageDbStack :: PackageDb -> IO PackageDbStack
 restorePackageDbStack GlobalDb = return globalDb
 restorePackageDbStack UserDb = return userDb
-restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ PackageDbStack [PackageDb p]) $ runMaybeT $ do
+restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDb p) $ runMaybeT $ do
 	sbox <- MaybeT $ searchSandbox p
 	exceptToMaybeT $ sandboxPackageDbStack sbox
 

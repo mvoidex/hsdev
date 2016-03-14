@@ -12,7 +12,7 @@ import Control.Lens (view, preview, _Just)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
-import Control.Monad.State (gets)
+import qualified Control.Monad.State as State
 import Control.Monad.Catch (try, SomeException(..))
 import Data.Aeson hiding (Result, Error)
 import Data.List
@@ -117,18 +117,36 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 	forM_ projects $ \proj -> do
 		DB.clear db (return $ projectDB proj dbval)
 		liftIO $ unwatchProject w proj
-	-- TODO: Implement removing package-db properly
-	when cabal $ do
-		undefined
-	forM_ sboxes' $ \sbox -> do
-		undefined
-		-- DB.clear db (return $ cabalDB cabal dbval)
-		-- liftIO $ unwatchSandbox w $ sandboxStack cabal
+	dbPDbs <- liftIO $ mapM restorePackageDbStack $ databasePackageDbs dbval
+	flip State.evalStateT dbPDbs $ do
+		when cabal $ removePackageDbStack userDb
+		forM_ sboxes' $ \sbox -> do
+			pdbs <- lift $ mapCommandIO $ sandboxPackageDbStack sbox
+			removePackageDbStack pdbs
 	forM_ files $ \file -> do
 		DB.clear db (return $ filterDB (inFile file) (const False) dbval)
 		let
 			mloc = fmap (view moduleLocation) $ lookupFile file dbval
 		maybe (return ()) (liftIO . unwatchModule w) mloc
+	where
+		-- We can safely remove package-db from db iff doesn't used by some of other package-dbs
+		-- For example, we can't remove global-db if there are any other package-dbs, because all of them uses global-db
+		-- We also can't remove stack snapshot package-db if there are some local package-db not yet removed
+		canRemove pdbs = do
+			from <- State.get
+			return $ null $ filter (pdbs `isSubStack`) $ delete pdbs from
+		-- Remove top of package-db stack if possible
+		removePackageDb pdbs = do
+			db <- lift $ askSession sessionDatabase
+			dbval <- lift getDb
+			w <- lift $ askSession sessionWatcher
+			can <- canRemove pdbs
+			when can $ do
+				State.modify (delete pdbs)
+				DB.clear db (return $ packageDbDB (topPackageDb pdbs) dbval)
+				liftIO $ unwatchPackageDb w $ topPackageDb pdbs
+		-- Remove package-db stack when possible
+		removePackageDbStack = mapM_ removePackageDb . packageDbStacks
 runCommand RemoveAll = toValue $ do
 	db <- askSession sessionDatabase
 	liftIO $ A.modifyAsync db A.Clear
@@ -278,7 +296,7 @@ runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 		doFix :: FilePath -> String -> ([Tools.Note AutoFix.Correction], String)
 		doFix file cts = AutoFix.edit cts fUpCorrs $ do
 			AutoFix.autoFix fCorrs
-			gets (view AutoFix.regions)
+			State.gets (view AutoFix.regions)
 			where
 				findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
 				findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
