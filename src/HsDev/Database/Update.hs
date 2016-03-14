@@ -252,7 +252,7 @@ scanCabal opts = Log.scope "cabal" $ do
 	dbval <- readDB
 	let
 		scannedDbs = databasePackageDbs dbval
-		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ packageDbStacks userDb
+		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks userDb
 	if null unscannedDbs
 		then do
 			Log.log Log.Trace $ "cabal (global-db and user-db) already scanned"
@@ -265,7 +265,7 @@ scanSandbox opts sbox = Log.scope "sandbox" $ do
 	pdbs <- liftExceptT $ sandboxPackageDbStack sbox
 	let
 		scannedDbs = databasePackageDbs dbval
-		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ packageDbStacks pdbs
+		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks pdbs
 	if null unscannedDbs
 		then do
 			Log.log Log.Trace $ "sandbox already scanned"
