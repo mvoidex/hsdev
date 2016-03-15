@@ -67,9 +67,9 @@ import Text.Read (readMaybe)
 import HsDev.Version
 
 -- | Run action with current directory set
-withCurrentDirectory :: FilePath -> IO a -> IO a
-withCurrentDirectory cur act = bracket getCurrentDirectory setCurrentDirectory $
-	const (setCurrentDirectory cur >> act)
+withCurrentDirectory :: CatchIO.MonadCatchIO m => FilePath -> m a -> m a
+withCurrentDirectory cur act = CatchIO.bracket (liftIO getCurrentDirectory) (liftIO . setCurrentDirectory) $
+	const (liftIO (setCurrentDirectory cur) >> act)
 
 -- | Get directory contents safely
 directoryContents :: FilePath -> IO [FilePath]

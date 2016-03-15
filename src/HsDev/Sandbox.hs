@@ -81,8 +81,13 @@ findSandbox fpath = do
 	if isDir
 		then do
 			dirs <- liftM ((fpath' :) . map (fpath' </>) . (\\ [".", ".."])) $ getDirectoryContents fpath'
-			return $ msum $ map sandboxFromPath dirs
+			return $ msum $ map sandboxFromDir dirs
 		else return Nothing
+	where
+		sandboxFromDir :: FilePath -> Maybe Sandbox
+		sandboxFromDir fpath
+			| takeFileName fpath == "stack.yaml" = sandboxFromPath (takeDirectory fpath </> ".stack-work")
+			| otherwise = sandboxFromPath fpath
 
 -- | Search sandbox by parent directory
 searchSandbox :: FilePath -> IO (Maybe Sandbox)
@@ -94,7 +99,7 @@ sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
 	dir <- cabalSandboxPackageDb
 	return $ PackageDbStack [PackageDb $ fpath </> dir]
 sandboxPackageDbStack (Sandbox StackWork fpath) = maybeToExceptT "Can't locate stack environment" $
-	liftM (view stackPackageDbStack) $ projectEnv fpath
+	liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory fpath
 
 -- | Search package-db stack with user-db as default
 searchPackageDbStack :: FilePath -> IO PackageDbStack

@@ -19,17 +19,21 @@ import Data.Maybe
 import Data.Map (Map)
 import qualified Data.Map as M
 import System.Directory
+import System.Environment
 import System.FilePath
 import System.Process
 
 import HsDev.PackageDb
 import HsDev.Project
+import HsDev.Util (withCurrentDirectory)
 
--- | Invoke stack command
+-- | Invoke stack command, we are trying to get actual stack near current hsdev executable
 stack :: [String] -> 	MaybeT IO String
 stack cmd = do
-	stackExe <- MaybeT $ findExecutable "stack"
-	liftIO $ readProcess stackExe cmd ""
+	curExe <- liftIO getExecutablePath
+	withCurrentDirectory (takeDirectory curExe) $ do
+		stackExe <- MaybeT $ findExecutable "stack"
+		liftIO $ readProcess stackExe cmd ""
 
 type Paths = Map String FilePath
 
