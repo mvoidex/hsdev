@@ -334,6 +334,7 @@ targetFilter f = case f of
 	TargetFile file -> return $ inFile file
 	TargetModule mname -> return $ inModule mname
 	TargetDepsOf dep -> liftM inDeps $ findDep dep
+	TargetPackageDb pdb -> return $ inPackageDb pdb
 	TargetCabal -> return $ inPackageDbStack userDb
 	TargetSandbox sbox -> liftM inPackageDbStack $ findSandbox sbox >>= mapCommandIO . sandboxPackageDbStack
 	TargetPackage pack -> return $ inPackage pack

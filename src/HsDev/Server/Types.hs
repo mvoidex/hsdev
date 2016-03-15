@@ -442,6 +442,7 @@ data TargetFilter =
 	TargetFile FilePath |
 	TargetModule String |
 	TargetDepsOf String |
+	TargetPackageDb PackageDb |
 	TargetCabal |
 	TargetSandbox FilePath |
 	TargetPackage String |
@@ -496,6 +497,7 @@ instance Paths FileContents where
 
 instance Paths TargetFilter where
 	paths f (TargetFile fpath) = TargetFile <$> f fpath
+	paths f (TargetPackageDb pdb) = TargetPackageDb <$> paths f pdb
 	paths f (TargetSandbox c) = TargetSandbox <$> paths f c
 	paths _ t = pure t
 
@@ -578,6 +580,7 @@ instance FromCmd TargetFilter where
 		TargetFile <$> fileArg,
 		TargetModule <$> moduleArg,
 		TargetDepsOf <$> depsArg,
+		TargetPackageDb <$> packageDbArg,
 		flag' TargetCabal (long "cabal"),
 		TargetSandbox <$> sandboxArg,
 		TargetPackage <$> packageArg,
@@ -633,6 +636,10 @@ inferFlag = switch (long "infer" <> help "infer types")
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = strOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
 packageArg = strOption (long "package" <> metavar "name" <> help "module package")
+packageDbArg =
+	flag' GlobalDb (long "global-db" <> help "global package-db") <|>
+	flag' UserDb (long "user-db" <> help "user package-db") <|>
+	(PackageDb <$> strOption (long "package-db" <> metavar "path" <> help "custom package-db"))
 pathArg f = strOption (long "path" <> metavar "path" <> short 'p' <> f)
 projectArg = strOption (long "project" <> long "proj" <> metavar "project")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
@@ -780,6 +787,7 @@ instance ToJSON TargetFilter where
 	toJSON (TargetFile fpath) = object ["file" .= fpath]
 	toJSON (TargetModule mname) = object ["module" .= mname]
 	toJSON (TargetDepsOf dep) = object ["deps" .= dep]
+	toJSON (TargetPackageDb pdb) = object ["db" .= pdb]
 	toJSON TargetCabal = toJSON ("cabal" :: String)
 	toJSON (TargetSandbox sbox) = object ["sandbox" .= sbox]
 	toJSON (TargetPackage pname) = object ["package" .= pname]
@@ -793,6 +801,7 @@ instance FromJSON TargetFilter where
 			TargetFile <$> v .:: "file",
 			TargetModule <$> v .:: "module",
 			TargetDepsOf <$> v .:: "deps",
+			TargetPackageDb <$> v .:: "db",
 			TargetSandbox <$> v .:: "sandbox",
 			TargetPackage <$> v .:: "package"]
 		str' = do
