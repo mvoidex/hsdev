@@ -13,7 +13,7 @@ module HsDev.Database.Update (
 	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks,
 	readDB,
 
-	scanModule, scanModules, scanFile, scanFileContents, scanCabal, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
+	scanModule, scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
 	scan,
 	updateEvent, processEvent,
@@ -42,6 +42,7 @@ import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
 import Data.Maybe.JustIf
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath, doesFileExist)
+import System.FilePath
 import qualified System.Log.Simple as Log
 
 import Control.Concurrent.Worker (inWorker)
@@ -258,10 +259,20 @@ scanCabal opts = Log.scope "cabal" $ do
 			Log.log Log.Trace $ "cabal (global-db and user-db) already scanned"
 		else runTasks $ map (scanPackageDb opts) unscannedDbs
 
+-- | Prepare sandbox for scanning. This is used for stack project to build & configure.
+prepareSandbox :: UpdateMonad m => Sandbox -> m ()
+prepareSandbox sbox@(Sandbox StackWork fpath) = Log.scope "prepare" $ runTasks [
+	runTask "building dependencies" sbox $ void $ liftIO $ runMaybeT $ buildDeps myaml,
+	runTask "configuring" sbox $ void $ liftIO $ runMaybeT $ configure myaml]
+	where
+		myaml = Just $ takeDirectory fpath </> "stack.yaml"
+prepareSandbox _ = return ()
+
 -- | Scan sandbox modules, doesn't rescan if already scanned
 scanSandbox :: UpdateMonad m => [String] -> Sandbox -> m ()
 scanSandbox opts sbox = Log.scope "sandbox" $ do
 	dbval <- readDB
+	prepareSandbox sbox
 	pdbs <- liftExceptT $ sandboxPackageDbStack sbox
 	let
 		scannedDbs = databasePackageDbs dbval

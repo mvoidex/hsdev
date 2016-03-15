@@ -1,7 +1,9 @@
 {-# LANGUAGE TemplateHaskell, RankNTypes #-}
 
 module HsDev.Stack (
-	stack, path, pathOf,
+	stack, yaml,
+	path, pathOf,
+	build, buildDeps, configure,
 	StackEnv(..), stackRoot, stackProject, stackConfig, stackGhc, stackSnapshot, stackLocal,
 	getStackEnv, projectEnv,
 	stackPackageDbStack,
@@ -28,24 +30,41 @@ import HsDev.Project
 import HsDev.Util (withCurrentDirectory)
 
 -- | Invoke stack command, we are trying to get actual stack near current hsdev executable
-stack :: [String] -> 	MaybeT IO String
+stack :: [String] -> MaybeT IO String
 stack cmd = do
 	curExe <- liftIO getExecutablePath
 	withCurrentDirectory (takeDirectory curExe) $ do
 		stackExe <- MaybeT $ findExecutable "stack"
 		liftIO $ readProcess stackExe cmd ""
 
+-- | Make yaml opts
+yaml :: Maybe FilePath -> [String]
+yaml Nothing = []
+yaml (Just y) = ["--stack-yaml", y]
+
 type Paths = Map String FilePath
 
 -- | Stack path
 path :: Maybe FilePath -> MaybeT IO Paths
-path mcfg = liftM (M.fromList . map breakPath . lines) $ stack ("path" : maybe [] (\cfg -> ["--stack-yaml", cfg]) mcfg) where
+path mcfg = liftM (M.fromList . map breakPath . lines) $ stack ("path" : yaml mcfg) where
 	breakPath :: String -> (String, FilePath)
 	breakPath = second (dropWhile isSpace . drop 1) . break (== ':')
 
 -- | Get path for
 pathOf :: String -> Lens' Paths (Maybe FilePath)
 pathOf = at
+
+-- | Build stack project
+build :: [String] -> Maybe FilePath -> MaybeT IO ()
+build opts mcfg = void $ stack $ "build" : (opts ++ yaml mcfg)
+
+-- | Build only dependencies
+buildDeps :: Maybe FilePath -> MaybeT IO ()
+buildDeps = build ["--only-dependencies"]
+
+-- | Configure project
+configure :: Maybe FilePath -> MaybeT IO ()
+configure = build ["--only-configure"]
 
 data StackEnv = StackEnv {
 	_stackRoot :: FilePath,

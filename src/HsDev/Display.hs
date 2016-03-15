@@ -11,8 +11,9 @@ import Data.Maybe (fromMaybe)
 import Text.Format
 
 import HsDev.PackageDb
-import HsDev.Symbols.Location
 import HsDev.Project
+import HsDev.Sandbox
+import HsDev.Symbols.Location
 
 class Display a where
 	display :: a -> String
@@ -33,6 +34,11 @@ instance Display ModuleLocation where
 instance Display Project where
 	display = view projectName
 	displayType _ = "project"
+
+instance Display Sandbox where
+	display (Sandbox _ fpath) = fpath
+	displayType (Sandbox CabalSandbox _) = "cabal-sandbox"
+	displayType (Sandbox StackWork _) = "stack-work"
 
 instance Display FilePath where
 	display = id
