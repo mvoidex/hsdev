@@ -56,6 +56,7 @@ import HsDev.Util
 import HsDev.Watcher
 
 import qualified HsDev.Scan as Scan
+import qualified HsDev.Scan.Browse as Scan
 import qualified HsDev.Database.Update as Update
 
 runClient :: (ToJSON a, ServerMonadBase m) => CommandOptions -> ClientM m a -> ServerM m Result
@@ -203,12 +204,12 @@ runCommand (Lint fs fcts) = toValue $ do
 	mapCommandIO $ liftM2 (++)
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f c) -> HLint.hlintSource f c) fcts)
-runCommand (Check fs fcts ghcs') = toValue $ do
+runCommand (Check fs fcts ghcs') = toValue $ Log.scope "check" $ do
 	dbval <- getDb
 	ghc <- askSession sessionGhc
 	liftIO $ restartWorker ghc
 	let
-		checkSome file fn = do
+		checkSome file fn = Log.scope "checkSome" $ do
 			pdbs <- liftIO $ searchPackageDbStack file
 			m <- maybe
 				(commandError_ $ "File '{}' not found" ~~ file)
@@ -261,9 +262,10 @@ runCommand (GhcMod (GhcModType (Position line column) fpath ghcs')) = toValue $ 
 	ghcmod <- askSession sessionGhcMod
 	dbval <- getDb
 	pdbs <- liftIO $ searchPackageDbStack fpath
+	pkgs <- mapCommandIO $ Scan.browsePackages ghcs' pdbs
 	(fpath', m', _) <- mapCommandIO $ fileCtx dbval fpath
 	mapCommandIO $ GhcMod.waitMultiGhcMod ghcmod fpath' $
-		GhcMod.typeOf (ghcs' ++ moduleOpts (allPackages dbval) m') pdbs fpath' line column
+		GhcMod.typeOf (ghcs' ++ moduleOpts pkgs m') pdbs fpath' line column
 runCommand (GhcMod (GhcModLint fs hlints')) = toValue $ do
 	ghcmod <- askSession sessionGhcMod
 	mapCommandIO $ liftM concat $ forM fs $ \file ->
@@ -275,18 +277,20 @@ runCommand (GhcMod (GhcModCheck fs ghcs')) = toValue $ do
 	mapCommandIO $ liftM concat $ forM fs $ \file -> do
 		mproj <- liftIO $ locateProject file
 		pdbs <- liftIO $ searchPackageDbStack file
+		pkgs <- Scan.browsePackages ghcs' pdbs
 		(_, m', _) <- fileCtx dbval file
 		GhcMod.waitMultiGhcMod ghcmod file $
-			GhcMod.check (ghcs' ++ moduleOpts (allPackages dbval) m') pdbs [file] mproj
+			GhcMod.check (ghcs' ++ moduleOpts pkgs m') pdbs [file] mproj
 runCommand (GhcMod (GhcModCheckLint fs ghcs' hlints')) = toValue $ do
 	ghcmod <- askSession sessionGhcMod
 	dbval <- getDb
 	mapCommandIO $ liftM concat $ forM fs $ \file -> do
 		mproj <- liftIO $ locateProject file
 		pdbs <- liftIO $ searchPackageDbStack file
+		pkgs <- Scan.browsePackages ghcs' pdbs
 		(_, m', _) <- fileCtx dbval file
 		GhcMod.waitMultiGhcMod ghcmod file $ do
-			checked <- GhcMod.check (ghcs' ++ moduleOpts (allPackages dbval) m') pdbs [file] mproj
+			checked <- GhcMod.check (ghcs' ++ moduleOpts pkgs m') pdbs [file] mproj
 			linted <- GhcMod.lint hlints' file
 			return $ checked ++ linted
 runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns

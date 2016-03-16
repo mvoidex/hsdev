@@ -1,6 +1,6 @@
 module HsDev.Scan.Browse (
 	-- * List all packages
-	browsePackages,
+	browsePackages, browsePackagesDeps,
 	-- * Scan cabal modules
 	listModules, browseModules, browse, browseDb,
 	-- * Helpers
@@ -12,21 +12,23 @@ module HsDev.Scan.Browse (
 	module Control.Monad.Except
 	) where
 
+import Control.Arrow
 import Control.Lens (view, preview, _Just)
 import Control.Monad.Except
 import Data.List (isPrefixOf)
 import Data.Maybe
 import Data.String (fromString)
+import Data.Version
 import System.Directory
 import System.FilePath
 import Text.Read (readMaybe)
 
+import Data.Deps
 import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Tools.Base (inspect)
 import HsDev.Util (liftIOErrors, ordNub)
 
-import Data.Version
 import qualified ConLike as GHC
 import qualified DataCon as GHC
 import qualified DynFlags as GHC
@@ -47,6 +49,15 @@ import Pretty
 browsePackages :: [String] -> PackageDbStack -> ExceptT String IO [ModulePackage]
 browsePackages opts dbs = liftIOErrors $ withPackages_ (packageDbStackOpts dbs ++ opts) $
 	liftM (map readPackage) $ lift packageConfigs
+
+-- | Get packages with deps
+browsePackagesDeps :: [String] -> PackageDbStack -> ExceptT String IO (Deps ModulePackage)
+browsePackagesDeps opts dbs = liftIOErrors $ withPackages (packageDbStackOpts dbs ++ opts) $ \df -> do
+	cfgs <- lift packageConfigs
+	return $ mapDeps (toPkg df) $ mconcat $ map (uncurry deps) $
+		map (GHC.installedPackageId &&& GHC.depends) cfgs
+	where
+		toPkg df' = readPackage . GHC.getPackageDetails df' . GHC.resolveInstalledPackageId df'
 
 listModules :: [String] -> PackageDbStack -> ExceptT String IO [ModuleLocation]
 listModules opts dbs = liftIOErrors $ withPackages_ (packageDbStackOpts dbs ++ opts) $ do

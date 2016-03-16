@@ -43,12 +43,14 @@ import Control.Monad.Except
 import Data.Function (on)
 import Data.List
 import Data.Maybe (fromMaybe)
+import qualified Data.Map as M
 import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T (concat)
 import System.Directory
 import System.FilePath
 
+import Data.Deps
 import System.Directory.Paths
 
 import HsDev.Symbols.Types
@@ -215,6 +217,7 @@ moduleOpts pkgs m = case view moduleLocation m of
 				| proj ^? _Just . projectName `elem` map Just (infos' ^.. each . infoDepends . each) = fromMaybe mempty $
 					proj ^? _Just . projectDescription . _Just . projectLibrary . _Just . libraryBuildInfo
 				| otherwise = mempty
+			-- filter out unavailable packages such as unix under windows
 			validDep d = d `elem` pkgs'
 			pkgs' = pkgs ^.. each . packageName
 			hidePackages

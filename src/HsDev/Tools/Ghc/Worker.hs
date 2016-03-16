@@ -5,7 +5,7 @@ module HsDev.Tools.Ghc.Worker (
 	ghcWorker, ghciWorker,
 	-- * Initializers and actions
 	ghcRun,
-	withFlags, modifyFlags, addCmdOpts,
+	withFlags, modifyFlags, addCmdOpts, setCmdOpts,
 	importModules, preludeModules,
 	evaluate,
 	clearTargets, makeTarget, loadTargets,
@@ -53,10 +53,11 @@ ghcRun opts f = do
 		(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
 		let fs'' = fs' {
 			ghcMode = CompManager,
-			ghcLink = LinkInMemory,
-			hscTarget = HscInterpreted }
-		_ <- setSessionDynFlags fs''
-		_ <- liftIO $ initPackages fs''
+			-- ghcLink = LinkInMemory,
+			-- hscTarget = HscInterpreted }
+			ghcLink = NoLink,
+			hscTarget = HscNothing }
+		void $ setSessionDynFlags fs''
 		f
 
 -- | Alter @DynFlags@ temporary
@@ -73,13 +74,20 @@ modifyFlags f = do
 	_ <- liftIO $ initPackages fs'
 	return ()
 
-addCmdOpts :: [String] -> Ghc DynFlags
+-- | Add options without reinit session
+addCmdOpts :: [String] -> Ghc ()
 addCmdOpts opts = do
 	fs <- getSessionDynFlags
 	(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
-	_ <- setSessionDynFlags fs'
-	(fs'', _) <- liftIO $ initPackages fs'
-	return fs''
+	let fs'' = fs' {
+		ghcMode = CompManager,
+		ghcLink = NoLink,
+		hscTarget = HscNothing }
+	void $ setSessionDynFlags fs''
+
+-- | Set options after session reinit
+setCmdOpts :: [String] -> Ghc ()
+setCmdOpts opts = initGhcMonad (Just libdir) >> addCmdOpts opts
 
 -- | Import some modules
 importModules :: [String] -> Ghc ()

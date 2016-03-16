@@ -28,6 +28,7 @@ import qualified ErrUtils as E
 
 import System.Directory.Paths
 import HsDev.PackageDb
+import HsDev.Scan.Browse (browsePackages)
 import HsDev.Symbols (moduleOpts)
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
@@ -41,7 +42,7 @@ checkFiles opts pdbs files _ = do
 	ch <- liftIO newChan
 	withFlags $ do
 		modifyFlags (\fs -> fs { log_action = logAction ch })
-		_ <- addCmdOpts ("-Wall" : (packageDbStackOpts pdbs ++ opts))
+		_ <- setCmdOpts ("-Wall" : (packageDbStackOpts pdbs ++ opts))
 		clearTargets
 		mapM (`makeTarget` Nothing) files >>= loadTargets
 	notes <- liftIO $ stopChan ch
@@ -52,19 +53,19 @@ check :: [String] -> PackageDbStack -> Module -> Maybe String -> ExceptT String 
 check opts pdbs m msrc = case view moduleLocation m of
 	FileModule file proj -> do
 		ch <- liftIO newChan
-		pkgs <- lift listPackages
+		pkgs <- mapExceptT liftIO $ browsePackages opts pdbs
 		let
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file) $
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
 		lift $ withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
-			modifyFlags (\fs -> fs { log_action = logAction ch })
-			_ <- addCmdOpts $ concat [
+			_ <- setCmdOpts $ concat [
 				["-Wall"],
 				packageDbStackOpts pdbs,
 				moduleOpts pkgs m,
 				opts]
+			modifyFlags (\fs -> fs { log_action = logAction ch })
 			clearTargets
 			target <- makeTarget (makeRelative dir file) msrc
 			loadTargets [target]

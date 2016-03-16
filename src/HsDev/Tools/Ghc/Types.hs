@@ -29,6 +29,7 @@ import PprTyThing
 import Pretty
 
 import System.Directory.Paths (canonicalize)
+import HsDev.Scan.Browse (browsePackages)
 import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker
@@ -102,14 +103,14 @@ fileTypes opts pdbs m msrc = case view moduleLocation m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
 		cts <- maybe (liftIO $ readFileUtf8 file') return msrc
-		pkgs <- lift listPackages
+		pkgs <- mapExceptT liftIO $ browsePackages opts pdbs
 		let
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file') $
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
 		lift $ withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
-			_ <- addCmdOpts $ concat [
+			_ <- setCmdOpts $ concat [
 				packageDbStackOpts pdbs,
 				moduleOpts pkgs m,
 				opts]

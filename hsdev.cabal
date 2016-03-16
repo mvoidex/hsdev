@@ -28,6 +28,7 @@ library
     Control.Concurrent.Worker
     Control.Concurrent.Util
     Data.Async
+    Data.Deps
     Data.Group
     Data.Help
     Data.Lisp

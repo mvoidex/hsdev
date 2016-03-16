@@ -8,7 +8,7 @@ module HsDev.Project (
 	Extensions(..), withExtensions,
 	infos, inTarget, fileTargets, findSourceDir, sourceDirs,
 
-	projectName, projectPath, projectCabal, projectDescription, projectLibrary, projectExecutables, projectTests,
+	projectName, projectPath, projectCabal, projectDescription, projectVersion, projectLibrary, projectExecutables, projectTests,
 	libraryModules, libraryBuildInfo,
 	executableName, executablePath, executableBuildInfo,
 	testName, testEnabled, testBuildInfo,
@@ -23,7 +23,7 @@ module HsDev.Project (
 
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
-import Control.Lens (makeLenses, Simple, Lens, view, lens)
+import Control.Lens (makeLenses, Simple, Lens, view, lens, at)
 import Control.Exception
 import Control.Monad.Except
 import Data.Aeson
@@ -32,6 +32,7 @@ import Data.List
 import Data.Maybe
 import Data.Monoid
 import Data.Ord
+import Data.Version (showVersion)
 import Distribution.Compiler (CompilerFlavor(GHC))
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
@@ -82,6 +83,7 @@ instance FromJSON Project where
 		v .:: "description"
 
 data ProjectDescription = ProjectDescription {
+	_projectVersion :: String,
 	_projectLibrary :: Maybe Library,
 	_projectExecutables :: [Executable],
 	_projectTests :: [Test] }
@@ -95,12 +97,14 @@ instance Show ProjectDescription where
 
 instance ToJSON ProjectDescription where
 	toJSON d = object [
+		"version" .= _projectVersion d,
 		"library" .= _projectLibrary d,
 		"executables" .= _projectExecutables d,
 		"tests" .= _projectTests d]
 
 instance FromJSON ProjectDescription where
 	parseJSON = withObject "project description" $ \v -> ProjectDescription <$>
+		v .:: "version" <*>
 		v .:: "library" <*>
 		v .:: "executables" <*>
 		v .:: "tests"
@@ -245,6 +249,7 @@ instance FromJSON Info where
 analyzeCabal :: String -> Either String ProjectDescription
 analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source of
 	ParseOk _ r -> Right ProjectDescription {
+		_projectVersion = showVersion $ P.pkgVersion $ PD.package r,
 		_projectLibrary = fmap toLibrary $ PD.library r,
 		_projectExecutables = fmap toExecutable $ PD.executables r,
 		_projectTests = fmap toTest $ PD.testSuites r }
@@ -275,7 +280,7 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 				(\(n, t) -> t { PD.testName = n }) }
 			where
 				insertInfo :: (a -> PD.BuildInfo) -> (PD.BuildInfo -> a -> a) -> [P.Dependency] -> a -> a
-				insertInfo f s deps x = s ((f x) { PD.targetBuildDepends = deps }) x
+				insertInfo f s deps' x = s ((f x) { PD.targetBuildDepends = deps' }) x
 
 		flattenTree :: Monoid a => (c -> a -> a) -> PD.CondTree v c a -> a
 		flattenTree f (PD.CondNode x cs cmps) = f cs x `mappend` mconcat (concatMap flattenBranch cmps) where
