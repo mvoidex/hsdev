@@ -25,6 +25,11 @@ PS> hsdev complete DB.r -f /projects/hsdev/src/HsDev/Server/Commands.hs | jq -r 
 readAsync :: Async a -> IO a
 </pre>
 
+## Stack support
+
+In order to support stack projects correctly, `hsdev` and `stack` executables must be build with same compiler. Then `hsdev` will be able to `stack build --only-dependencies` and `stack build --only-configure` stack projects in order to get corresponding package-db.
+`hsdev` first searchs for `stack` near itself, so you can just place it in same path.
+
 ### Commands
 
 Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help <command>`) to get detailed info.
