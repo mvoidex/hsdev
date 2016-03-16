@@ -41,9 +41,10 @@ List of commands with additional fiels:
          + `{"project":<project>}`
  * `scan` — scan sources and installed modules
      - `projects` — list of projects paths or `.cabal` files
-     - `sandboxes` — list of `sandbox` objects
-         + `"cabal"` — scan cabal
-         + `{"sandbox":<path to sandbox>}` — scan sandbox
+     - `cabal` — scan global and user package-db (`true` of `false`)
+     - `sandboxes` — list of `sandbox path`s, where path may contain or be one of:
+         + `<path>/.cabal-sandbox` — cabal sandbox
+         + `<path>/.stack-work` — stack sandbox
      - `files` — list of source files
      - `paths` — list of directories to scan
      - `contents` — list of `content` objects to scan
@@ -64,7 +65,12 @@ List of commands with additional fiels:
          + `{"file":<source file>}`
          + `{"module":<module name>}`
          + `{"deps":<dependent project/source>}`
-         + `{"cabal":<sandbox object>}`
+         + `{"cabal":<"true" or "false">` — restrict to global and user package-db
+         + `{"sandbox":<sandbox path>}`
+         + `{"db":<package-db>}` — restrict to specific package-db, where `<package-db>` is one of
+             * `"global-db"` — global package-db
+             * `"user-db"` — user package-db
+             * `{"package-db":<path to package-db>}` — specific package-db
          + `{"package":<package name>}`
          + `"sources"` — search for sourced
          + `"standalone"` — search for standalone (project-free)
