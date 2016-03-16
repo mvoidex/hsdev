@@ -9,6 +9,18 @@ Haskell development library and tool with support of autocompletion, symbol info
 Uses [fsnotify](http://hackage.haskell.org/package/fsnotify) to watch for changes.
 There are also several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofix`
 
+Main idea is to hold in memory scanned sourced and installed modules, so that getting info about symbols and modules is fast and simple.
+It also doesn't require much work to integrate with some editor:
+1. Create `hsdev run ...` process
+2. Connect to it via socket
+3. Send `scan` command with paths/files once
+4. Use other commands to get completions, modules and symbols info; check and lint sources
+
+##### Editors
+
+1. (SublimeText)[https://www.sublimetext.com/]: [SublimeHaskell](https://packagecontrol.io/packages/SublimeHaskell) plugin
+2. (Atom)[https://atom.io/]: working on [atom-haskell-hsdev](https://github.com/mvoidex/atom-haskell-hsdev) plugin
+
 ## Usage
 
 Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will store information.
