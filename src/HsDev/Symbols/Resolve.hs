@@ -12,7 +12,7 @@ import Control.Lens (makeLenses, view, preview, set, _Just)
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.Function (on)
-import Data.List (sortBy, groupBy, delete, nubBy)
+import Data.List (sortBy, groupBy, delete)
 import qualified Data.Map as M
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import Data.Maybe.JustIf
@@ -23,6 +23,7 @@ import Data.Text (Text)
 import HsDev.Database
 import HsDev.Symbols
 import HsDev.Symbols.Util
+import HsDev.Util (uniqueBy)
 
 -- | Resolve monad uses existing @Database@ and @ResolvedTree@ as state.
 newtype ResolveM a = ResolveM { runResolveM :: ReaderT Database (State ResolvedTree) a }
@@ -92,7 +93,7 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 		modify $ M.insert (view (resolvedModule . moduleId) rm) rm
 		return rm
 	unique :: [Declaration] -> [Declaration]
-	unique = nubBy ((==) `on` declId) . sortBy (comparing declId)
+	unique = uniqueBy declId
 	declId :: Declaration -> (Text, Maybe ModuleId)
 	declId = view declarationName &&& view declarationDefined
 
@@ -129,7 +130,7 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 					Just p -> selectImport i [
 						inProject p,
 						inDepsOf' file p]
-			InstalledModule cabal _ _ -> selectImport i [inPackageDb cabal]
+			InstalledModule pdb _ _ -> selectImport i [inPackageDb pdb]
 			ModuleSource _ -> selectImport i [installed]
 		fromMaybe [] <$> traverse (liftM (filterImportList . view resolvedExports) . resolveModule) ms
 	setImport :: Import -> Declaration -> Declaration
