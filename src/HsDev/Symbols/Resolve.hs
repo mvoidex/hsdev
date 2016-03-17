@@ -25,9 +25,12 @@ import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Util (uniqueBy)
 
+-- | Map from name to modules
+type ModuleMap = M.Map Text [Module]
+
 -- | Resolve monad uses existing @Database@ and @ResolvedTree@ as state.
-newtype ResolveM a = ResolveM { runResolveM :: ReaderT Database (State ResolvedTree) a }
-	deriving (Functor, Applicative, Monad, MonadState ResolvedTree, MonadReader Database)
+newtype ResolveM a = ResolveM { runResolveM :: ReaderT (Database, ModuleMap) (State ResolvedTree) a }
+	deriving (Functor, Applicative, Monad, MonadState ResolvedTree, MonadReader (Database, ModuleMap))
 
 -- | Tree of resolved modules
 type ResolvedTree = Map ModuleId ResolvedModule
@@ -56,7 +59,11 @@ resolvedTopScope = filter isTop . view resolvedScope where
 
 -- | Resolve modules, function is not IO, so all file names must be canonicalized
 resolve :: (Traversable t, Foldable t) => Database -> t Module -> t ResolvedModule
-resolve db = flip evalState M.empty . flip runReaderT db . runResolveM . traverse resolveModule
+resolve db = flip evalState M.empty . flip runReaderT (db, m) . runResolveM . traverse resolveModule where
+	m :: ModuleMap
+	m = M.fromList $ map ((view moduleName . head) &&& id) $
+		groupBy ((==) `on` view moduleName) $
+		sortBy (comparing (view moduleName)) $ allModules db
 
 -- | Resolve one module
 resolveOne :: Database -> Module -> ResolvedModule
@@ -120,7 +127,7 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 	resolveImport' = do
 		ms <- case view moduleLocation m of
 			FileModule file proj -> do
-				db <- ask
+				db <- asks fst
 				let
 					proj' = proj >>= refineProject db
 				case proj' of
@@ -137,15 +144,15 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 	setImport i' = set declarationImported (Just [i'])
 	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM (Maybe Module)
 	selectImport i' fs = do
-		db <- ask
+		modsMap <- asks snd
+		let
+			mods = fromMaybe [] $ M.lookup (view importModuleName i') modsMap
 		return $
 			listToMaybe $
 			newestPackage $
 			fromMaybe [] $
 			listToMaybe $ dropWhile null
-				[selectModules (select' f) db | f <- fs]
-		where
-			select' f md  = view moduleName md == view importModuleName i' && f (view moduleId md)
+				[filter (f . view moduleId) mods | f <- fs]
 	filterImportList :: [Declaration] -> [Declaration]
 	filterImportList = case view importList i of
 		Nothing -> id
