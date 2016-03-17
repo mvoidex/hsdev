@@ -125,7 +125,7 @@ exportMap decls = ExportMap
 			M.fromList . map (first head . unzip) .
 			groupBy ((==) `on` fst) . sortBy (comparing fst)
 		byName' :: Declaration -> [(Maybe Text, Text)]
-		byName' decl' = [(iname, view declarationName decl') | iname <- inames, nm <- declNames] where
+		byName' decl' = [(iname, nm) | iname <- inames, nm <- declNames] where
 			inames = (if any (not . view importIsQualified) (imported' decl') then (Nothing :) else id) (map Just qnames)
 			declNames = view declarationName decl' : maybeToList (preview (declaration . related . _Just) decl')
 			qnames = ordNub [nm |
