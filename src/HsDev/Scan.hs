@@ -176,9 +176,9 @@ scanModule _ opts (InstalledModule c p n) _ = do
 		getDbs = maybe (return userDb) searchPackageDbStack . preview packageDb
 scanModule _ _ (ModuleSource _) _ = throwError "Can inspect only modules in file or cabal"
 
--- | Scan additional info and modify scanned module. Dones't fail on error, just left module unchanged
+-- | Scan additional info and modify scanned module
 scanModify :: ([String] -> PackageDbStack -> Module -> ExceptT String IO Module) -> InspectedModule -> ExceptT String IO InspectedModule
-scanModify f im = traverse f' im <|> return im where
+scanModify f im = traverse f' im where
 	f' m = do
 		pdbs <- liftIO $ case view moduleLocation m of
 			-- TODO: Get actual sandbox stack

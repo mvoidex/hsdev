@@ -41,10 +41,11 @@ main = toolMain "hsinspect" "haskell inspect" opts (printExceptT . printResult .
 		ghc <- liftIO $ ghcWorker ghcs (return ())
 		let
 			scanAdditional =
-				scanModify (\opts' _ -> inspectDocs opts') >=>
-				scanModify (\opts' pdbs m -> ExceptT (inWorker ghc (runExceptT $ inferTypes opts' pdbs m Nothing)))
+				scanModify' (\opts' _ -> inspectDocs opts') >=>
+				scanModify' (\opts' pdbs m -> ExceptT (inWorker ghc (runExceptT $ inferTypes opts' pdbs m Nothing)))
 		toJSON <$> scanAdditional im
 	inspect' (Opts (Just fcabal@(takeExtension -> ".cabal")) _) = do
 		fcabal' <- liftIO $ canonicalizePath fcabal
 		toJSON <$> readProject fcabal'
 	inspect' (Opts (Just mname) ghcs) = toJSON <$> scanModule [] ghcs (InstalledModule UserDb Nothing mname) Nothing
+	scanModify' f im = scanModify f im <|> return im

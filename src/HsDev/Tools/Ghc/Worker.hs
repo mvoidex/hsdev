@@ -12,6 +12,7 @@ module HsDev.Tools.Ghc.Worker (
 	-- * Utils
 	listPackages, spanRegion,
 	withCurrentDirectory,
+	logToChan, logToNull,
 
 	Ghc,
 
@@ -25,16 +26,22 @@ import Data.Dynamic
 import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
 import Data.Version (showVersion)
-import GHC
-import GHC.Paths
 import Packages
 import StringBuffer
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import Text.Read
 
-import Control.Concurrent.Worker
+import GHC hiding (Warning, Module, moduleName)
+import GHC.Paths
+import Outputable
+import qualified ErrUtils as E
+import FastString (unpackFS)
 
-import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage)
+import Control.Concurrent.FiniteChan
+import Control.Concurrent.Worker
+import System.Directory.Paths
+import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage, ModuleLocation(..))
+import HsDev.Tools.Types
 
 -- | Ghc worker. Pass options and initializer action
 ghcWorker :: [String] -> Ghc () -> IO (Worker Ghc)
@@ -134,6 +141,33 @@ spanRegion _ = Position 0 0 `region` Position 0 0
 withCurrentDirectory :: FilePath -> Ghc a -> Ghc a
 withCurrentDirectory dir act = gbracket (liftIO getCurrentDirectory) (liftIO . setCurrentDirectory) $
 	const (liftIO (setCurrentDirectory dir) >> act)
+
+-- | Log  ghc warnings and errors as to chan
+-- You may have to apply recalcTabs on result notes
+logToChan :: Chan (Note OutputMessage) -> DynFlags -> E.Severity -> SrcSpan -> PprStyle -> SDoc -> IO ()
+logToChan ch fs sev src _ msg
+	| Just sev' <- checkSev sev = do
+		src' <- canonicalize srcMod
+		putChan ch $ Note {
+			_noteSource = src',
+			_noteRegion = spanRegion src,
+			_noteLevel = Just sev',
+			_note = OutputMessage {
+				_message = showSDoc fs msg,
+				_messageSuggestion = Nothing } }
+	| otherwise = return ()
+	where
+		checkSev SevWarning = Just Warning
+		checkSev SevError = Just Error
+		checkSev SevFatal = Just Error
+		checkSev _ = Nothing
+		srcMod = case src of
+			RealSrcSpan s' -> FileModule (unpackFS $ srcSpanFile s') Nothing
+			_ -> ModuleSource Nothing
+
+-- | Don't log ghc warnings and errors
+logToNull :: DynFlags -> E.Severity -> SrcSpan -> PprStyle -> SDoc -> IO ()
+logToNull _ _ _ _ _ = return ()
 
 -- TODO: Load target by @ModuleLocation@, which may cause updating @DynFlags@
 

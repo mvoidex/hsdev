@@ -19,17 +19,18 @@ module HsDev.Database.Update (
 	updateEvent, processEvent,
 
 	-- * Helpers
-	liftExceptT,
+	liftExceptT, liftExceptT_,
 
 	module HsDev.Watcher,
 
 	module Control.Monad.Except
 	) where
 
+import Control.Applicative ((<|>))
 import Control.Arrow
 import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
-import Control.Lens (preview, _Just, view, over, set, _1, mapMOf_, each, (^..), _head)
+import Control.Lens (preview, _Just, view, over, set, _1, mapMOf_, each, (^..), _head, _Right)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -45,7 +46,9 @@ import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath
 import qualified System.Log.Simple as Log
 
-import Control.Concurrent.Worker (inWorker)
+import GHC (log_action)
+
+import Control.Concurrent.Worker (inWorker, restartWorker)
 import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async hiding (Event)
@@ -55,7 +58,7 @@ import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Stack
 import HsDev.Symbols
-import HsDev.Tools.Ghc.Worker (ghcWorker)
+import HsDev.Tools.Ghc.Worker (ghcWorker, setCmdOpts, modifyFlags, logToNull)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
@@ -112,13 +115,21 @@ runUpdate uopts act = Log.scope "update" $ do
 			return r
 		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
 		scanDocs_ im = do
-			im' <- liftExceptT $ S.scanModify (\opts _ -> inspectDocs opts) im
+			im' <-
+				liftExceptT
+					("Scanning docs for {} failed: {}" ~~ view inspectedId im)
+					(S.scanModify (\opts _ -> inspectDocs opts) im)
+				<|> return im
 			updater $ return $ fromModule im'
 		inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
 		inferModTypes_ im = do
 			-- TODO: locate sandbox
 			s <- getSession
-			im' <- liftExceptT $ S.scanModify (infer' s) im
+			im' <-
+				liftExceptT
+					("Inferring types for {} failed: {}" ~~ view inspectedId im)
+					(S.scanModify (infer' s) im)
+				<|> return im
 			updater $ return $ fromModule im'
 		infer' :: Session -> [String] -> PackageDbStack -> Module -> ExceptT String IO Module
 		infer' s opts pdbs m = case preview (moduleLocation . moduleFile) m of
@@ -203,7 +214,7 @@ readDB = askSession sessionDatabase >>= liftIO . readAsync
 scanModule :: UpdateMonad m => [String] -> ModuleLocation -> Maybe String -> m ()
 scanModule opts mloc mcts = runTask "scanning" mloc $ Log.scope "module" $ do
 	defs <- askSession sessionDefines
-	im <- liftExceptT $ S.scanModule defs opts mloc mcts
+	im <- liftExceptT_ $ S.scanModule defs opts mloc mcts
 	updater $ return $ fromModule im
 	_ <- return $ view inspectionResult im
 	return ()
@@ -273,7 +284,7 @@ scanSandbox :: UpdateMonad m => [String] -> Sandbox -> m ()
 scanSandbox opts sbox = Log.scope "sandbox" $ do
 	dbval <- readDB
 	prepareSandbox sbox
-	pdbs <- liftExceptT $ sandboxPackageDbStack sbox
+	pdbs <- liftExceptT_ $ sandboxPackageDbStack sbox
 	let
 		scannedDbs = databasePackageDbs dbval
 		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks pdbs
@@ -288,10 +299,10 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 	watch (\w -> watchPackageDb w pdbs opts)
 	mlocs <- liftM
 		(filter (\mloc -> preview modulePackageDb mloc == Just (topPackageDb pdbs))) $
-		liftExceptT $ listModules opts pdbs
+		liftExceptT_ $ listModules opts pdbs
 	scan (Cache.loadPackageDb (topPackageDb pdbs)) (packageDbDB (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- liftExceptT $ browseModules opts pdbs (mlocs' ^.. each . _1)
-		docs <- liftExceptT $ hdocsCabal pdbs opts
+		ms <- liftExceptT_ $ browseModules opts pdbs (mlocs' ^.. each . _1)
+		docs <- liftExceptT_ $ hdocsCabal pdbs opts
 		updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
@@ -299,7 +310,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 
 -- | Scan project file
 scanProjectFile :: UpdateMonad m => [String] -> FilePath -> m Project
-scanProjectFile opts cabal = runTask "scanning" cabal $ liftExceptT $ S.scanProjectFile opts cabal
+scanProjectFile opts cabal = runTask "scanning" cabal $ liftExceptT_ $ S.scanProjectFile opts cabal
 
 -- | Scan project and related package-db stack
 scanProjectStack :: UpdateMonad m => [String] -> FilePath -> m ()
@@ -314,7 +325,7 @@ scanProject :: UpdateMonad m => [String] -> FilePath -> m ()
 scanProject opts cabal = runTask "scanning" (project cabal) $ Log.scope "project" $ do
 	proj <- scanProjectFile opts cabal
 	watch (\w -> watchProject w proj opts)
-	S.ScanContents _ [(_, sources)] _ <- liftExceptT $ S.enumProject proj
+	S.ScanContents _ [(_, sources)] _ <- liftExceptT_ $ S.enumProject proj
 	scan (Cache.loadProject $ view projectCabal proj) (projectDB proj) sources opts $ \ms -> do
 		scanModules opts ms
 		updater $ return $ fromProject proj
@@ -322,7 +333,7 @@ scanProject opts cabal = runTask "scanning" (project cabal) $ Log.scope "project
 -- | Scan directory for source files and projects
 scanDirectory :: UpdateMonad m => [String] -> FilePath -> m ()
 scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
-	S.ScanContents standSrcs projSrcs pdbss <- liftExceptT $ S.enumDirectory dir
+	S.ScanContents standSrcs projSrcs pdbss <- liftExceptT_ $ S.enumDirectory dir
 	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
@@ -351,13 +362,25 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [InspectedModule] -> m ()
 scanDocs ims = do
-	w <- liftIO $ ghcWorker ["-haddock"] (return ())
+	-- w <- liftIO $ ghcWorker ["-haddock"] (return ())
+	w <- askSession sessionGhc
+	liftIO $ do
+		restartWorker w
+		inWorker w $ do
+			setCmdOpts ["-haddock"]
+			modifyFlags (\fs -> fs { log_action = logToNull })
 	runTasks $ map (scanDocs' w) ims
 	where
 		scanDocs' w im = runTask "scanning docs" (view inspectedId im) $ Log.scope "docs" $ do
 			Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
-			im' <- liftExceptT $ S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im
-			Log.log Log.Trace $ "Docs for {} updated" ~~ view inspectedId im
+			im' <-
+				liftExceptT
+					("Scanning docs for {} failed: {}" ~~ view inspectedId im)
+					(S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im)
+				<|> return im
+			Log.log Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
+				view inspectedId im' ~~
+				length (im' ^.. inspectionResult . _Right . moduleDeclarations . each . declarationDocs . _Just)
 			updater $ return $ fromModule im'
 		inWorkerT w = ExceptT . inWorker w . runExceptT 
 
@@ -366,7 +389,11 @@ inferModTypes = runTasks . map inferModTypes' where
 	inferModTypes' im = runTask "inferring types" (view inspectedId im) $ Log.scope "docs" $ do
 		w <- askSession sessionGhc
 		Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
-		im' <- liftExceptT $ S.scanModify (\opts cabal m -> inWorkerT w (inferTypes opts cabal m Nothing)) im
+		im' <-
+			liftExceptT
+				("Inferring types for {} failed: {}" ~~ view inspectedId im)
+				(S.scanModify (\opts cabal m -> inWorkerT w (inferTypes opts cabal m Nothing)) im)
+			<|> return im
 		Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
 		updater $ return $ fromModule im'
 	inWorkerT w = ExceptT . inWorker w . runExceptT
@@ -388,7 +415,7 @@ scan cache' part' mlocs opts act = Log.scope "scan" $ do
 	dbval <- getCache cache' part'
 	let
 		obsolete = filterDB (\m -> view moduleIdLocation m `notElem` (mlocs ^.. each . _1)) (const False) dbval
-	changed <- liftExceptT $ S.changedModules dbval opts mlocs
+	changed <- liftExceptT "Getting changed modules failed: {}" $ S.changedModules dbval opts mlocs
 	cleaner $ return obsolete
 	act changed
 
@@ -427,11 +454,17 @@ updateEvent WatchedModule e
 		scanFile opts $ view eventPath e
 	| otherwise = return ()
 
-liftExceptT :: CommandMonad m => ExceptT String IO a -> m a
-liftExceptT act = liftIO (runExceptT act) >>= either commandError_ return
+liftExceptT_ :: CommandMonad m => ExceptT String IO a -> m a
+liftExceptT_ = liftExceptT "{}"
+
+liftExceptT :: CommandMonad m => Format -> ExceptT String IO a -> m a
+liftExceptT msg act = liftIO (runExceptT act) >>= either onError return where
+	onError e = do
+		Log.log Log.Error $ msg ~~ e
+		commandError_ $ msg ~~ e
 
 liftCIO ::CommandMonad m => IO a -> m a
-liftCIO = liftExceptT . liftE
+liftCIO = liftExceptT "Exception during IO action: {}" . liftE
 
 processEvent :: UpdateOptions -> Watched -> Event -> ClientM IO ()
 processEvent uopts w e = runUpdate uopts $ updateEvent w e
