@@ -164,7 +164,8 @@ runCommand InfoSandboxes = toValue $ databasePackageDbs <$> getDb
 runCommand (InfoSymbol sq fs locals') = toValue $ do
 	dbval <- liftM (localsDatabase locals') $ getDb
 	filter' <- targetFilters fs
-	return $ newestPackage $ filterMatch sq $ filter (checkModule filter') $ allDeclarations dbval
+	return $ newestPackage $ filterMatch sq $
+		concatMap moduleModuleDeclarations $ filter (filter' . view moduleId) $ allModules dbval
 runCommand (InfoModule sq fs) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
