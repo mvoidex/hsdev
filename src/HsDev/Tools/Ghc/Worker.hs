@@ -94,7 +94,10 @@ addCmdOpts opts = do
 
 -- | Set options after session reinit
 setCmdOpts :: [String] -> Ghc ()
-setCmdOpts opts = initGhcMonad (Just libdir) >> addCmdOpts opts
+setCmdOpts opts = do
+	initGhcMonad (Just libdir)
+	addCmdOpts opts
+	modifyFlags (\fs -> fs { log_action = logToNull })
 
 -- | Import some modules
 importModules :: [String] -> Ghc ()

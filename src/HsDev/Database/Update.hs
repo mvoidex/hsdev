@@ -58,7 +58,7 @@ import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Stack
 import HsDev.Symbols
-import HsDev.Tools.Ghc.Worker (ghcWorker, setCmdOpts, modifyFlags, logToNull)
+import HsDev.Tools.Ghc.Worker (ghcWorker, setCmdOpts)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
@@ -366,9 +366,7 @@ scanDocs ims = do
 	w <- askSession sessionGhc
 	liftIO $ do
 		restartWorker w
-		inWorker w $ do
-			setCmdOpts ["-haddock"]
-			modifyFlags (\fs -> fs { log_action = logToNull })
+		inWorker w $ setCmdOpts ["-haddock"]
 	runTasks $ map (scanDocs' w) ims
 	where
 		scanDocs' w im = runTask "scanning docs" (view inspectedId im) $ Log.scope "docs" $ do
