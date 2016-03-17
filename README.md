@@ -21,7 +21,7 @@ It also doesn't require much work to integrate with some editor:
 ##### Editors
 
 1. [SublimeText](https://www.sublimetext.com/): [SublimeHaskell](https://packagecontrol.io/packages/SublimeHaskell) plugin
-2. [Atom](https://atom.io/): working on [atom-haskell-hsdev](https://github.com/mvoidex/atom-haskell-hsdev) plugin
+2. [Atom](https://atom.io/): working in progress, [atom-haskell-hsdev](https://github.com/mvoidex/atom-haskell-hsdev) plugin
 
 ## Usage
 
