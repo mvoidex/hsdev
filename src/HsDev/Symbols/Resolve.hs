@@ -3,7 +3,7 @@
 module HsDev.Symbols.Resolve (
 	ResolveM(..),ResolvedTree, ResolvedModule(..), resolvedModule, resolvedScope, resolvedExports,
 	scopeModule, exportsModule, resolvedTopScope,
-	resolve, resolveOne, resolveModule, ExportMap(..), exportMap, exported, resolveImport,
+	resolve, resolveOne, resolveModule, exported, resolveImports, resolveImport,
 	mergeImported
 	) where
 
@@ -14,16 +14,17 @@ import Control.Monad.State
 import Data.Function (on)
 import Data.List (sortBy, groupBy, delete)
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, listToMaybe, catMaybes, maybeToList)
+import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import Data.Maybe.JustIf
 import Data.Ord (comparing)
+import qualified Data.Set as S
 import Data.String (fromString)
 import Data.Text (Text)
 
 import HsDev.Database
 import HsDev.Symbols
 import HsDev.Symbols.Util
-import HsDev.Util (uniqueBy, ordNub)
+import HsDev.Util (uniqueBy)
 
 -- | Map from name to modules
 type ModuleMap = M.Map Text [Module]
@@ -79,14 +80,14 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 			_resolvedExports = view moduleDeclarations m }
 		_ -> do
 			scope' <-
-				liftM ((thisDecls ++) . mergeImported . concat) .
-				mapM (resolveImport m) .
+				liftM (thisDecls ++) .
+				resolveImports m .
 				(import_ (fromString "Prelude") :) .
 				view moduleImports $ m
 			let
 				exported' = case view moduleExports m of
 					Nothing -> thisDecls
-					Just exports' -> unique $ concatMap (exported (exportMap scope')) exports'
+					Just exports' -> unique $ catMaybes $ exported <$> scope' <*> exports'
 			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exported')
 	thisDecls :: [Declaration]
 	thisDecls = map (selfDefined . selfImport) $ view moduleDeclarations m
@@ -104,55 +105,37 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 	declId :: Declaration -> (Text, Maybe ModuleId)
 	declId = view declarationName &&& view declarationDefined
 
--- | Map from name (or module name) to declarations, that can be possibly exported with this name (or module name)
-data ExportMap = ExportMap {
-	exportMapName :: M.Map (Maybe Text, Text) [Declaration],
-	exportMapModule :: M.Map Text [Declaration] }
-
-lookup_ :: Ord a => a -> M.Map a [b] -> [b]
-lookup_ k = fromMaybe [] . M.lookup k
-
-exportMap :: [Declaration] -> ExportMap
-exportMap decls = ExportMap
-	(mkMap byName')
-	(mkMap byModule')
+exported :: Declaration -> Export -> Maybe Declaration
+exported decl' (ExportName q n p)
+	| view declarationName decl' == n = decl' `justIf` checkImport
+	| preview (declaration . related . _Just) decl' == Just n = case p of
+		ExportNothing -> Nothing
+		ExportAll -> Just decl'
+		ExportWith ns -> decl' `justIf` (view declarationName decl' `elem` ns)
+	| otherwise = Nothing
 	where
-		mkMap :: Ord a => (Declaration -> [a]) -> M.Map a [Declaration]
-		mkMap fn = toMap $ concatMap fn' decls where
-			fn' decl' = zip (fn decl') (repeat decl')
-		toMap :: Ord a => [(a, Declaration)] -> M.Map a [Declaration]
-		toMap =
-			M.fromList . map (first head . unzip) .
-			groupBy ((==) `on` fst) . sortBy (comparing fst)
-		byName' :: Declaration -> [(Maybe Text, Text)]
-		byName' decl' = [(iname, nm) | iname <- inames, nm <- declNames] where
-			inames = (if any (not . view importIsQualified) (imported' decl') then (Nothing :) else id) (map Just qnames)
-			declNames = view declarationName decl' : maybeToList (preview (declaration . related . _Just) decl')
-			qnames = ordNub [nm |
-				i <- imported' decl',
-				view importIsQualified i,
-				nm <- importNames i]
-		byModule' :: Declaration -> [Text]
-		byModule' decl' = concatMap imports' (imported' decl')
-		imported' :: Declaration -> [Import]
-		imported' = fromMaybe [] . view declarationImported
-		imports' :: Import -> [Text]
-		imports' i
-			| view importIsQualified i = []
-			| otherwise = importNames i
+		checkImport = case q of
+			Nothing -> any (not . view importIsQualified) $ fromMaybe [] $ view declarationImported decl'
+			Just q' -> any ((q' `elem`) . importNames) $ fromMaybe [] $ view declarationImported decl'
+exported decl' (ExportModule m) = decl' `justWhen` (any (unqualBy m) . fromMaybe [] . view declarationImported) where
+	unqualBy :: Text -> Import -> Bool
+	unqualBy m' i = m' `elem` importNames i && not (view importIsQualified i)
 
-exported :: ExportMap -> Export -> [Declaration]
-exported emap (ExportName q n p) = filter check' $ lookup_ (q, n) (exportMapName emap) where
-	check' decl' = view declarationName decl' == n || inner' where
-		inner' = preview (declaration . related . _Just) decl' == Just n && case p of
-			ExportNothing -> False
-			ExportAll -> True
-			ExportWith ns -> view declarationName decl' `elem` ns
-exported emap (ExportModule m) = lookup_ m (exportMapModule emap)
+-- | Bring declarations into scope by imports
+resolveImports :: Module -> [Import] -> ResolveM [Declaration]
+resolveImports m is = do
+	db <- asks fst
+	let
+		deps = maybe S.empty S.fromList $ do
+			f <- preview (moduleLocation . moduleFile) m
+			p <- preview (moduleLocation . moduleProject . _Just) m
+			p' <- refineProject db p
+			return $ delete (view projectName p') $ concatMap (view infoDepends) $ fileTargets p' f
+	liftM (mergeImported . concat) $ mapM (resolveImport deps m) is
 
--- | Bring declarations into scope
-resolveImport :: Module -> Import -> ResolveM [Declaration]
-resolveImport m i = liftM (map $ setImport i) resolveImport' where
+-- | Bring declarations into scope, first parameter is set of visible packages
+resolveImport :: S.Set String -> Module -> Import -> ResolveM [Declaration]
+resolveImport deps m i = liftM (map $ setImport i) resolveImport' where
 	resolveImport' :: ResolveM [Declaration]
 	resolveImport' = do
 		ms <- case view moduleLocation m of
@@ -166,7 +149,7 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 						installed]
 					Just p -> selectImport i [
 						inProject p,
-						inDepsOf' file p]
+						inDeps]
 			InstalledModule pdb _ _ -> selectImport i [inPackageDb pdb]
 			ModuleSource _ -> selectImport i [installed]
 		fromMaybe [] <$> traverse (liftM (filterImportList . view resolvedExports) . resolveModule) ms
@@ -187,8 +170,7 @@ resolveImport m i = liftM (map $ setImport i) resolveImport' where
 	filterImportList = case view importList i of
 		Nothing -> id
 		Just il -> filter (passImportList il . view declarationName)
-	deps f p = delete (view projectName p) $ concatMap (view infoDepends) $ fileTargets p f
-	inDepsOf' f p m' = any (`inPackage` m') (deps f p)
+	inDeps = maybe False (`S.member` deps) . preview (moduleIdLocation . modulePackage . _Just . packageName)
 
 -- | Merge imported declarations
 mergeImported :: [Declaration] -> [Declaration]
