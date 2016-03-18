@@ -13,7 +13,7 @@ import Test.Hspec
 
 call :: Server -> Command -> IO (Maybe Value)
 call srv c = do
-	r <- inServer srv c
+	r <- inServer srv def c
 	case r of
 		Result v -> return $ Just v
 		Error e _ -> do
@@ -28,7 +28,7 @@ main = hspec $ do
 	describe "scan project" $ do
 		it "should scan project" $ do
 			s <- startServer def
-			_ <- call s $ Scan ["tests\\test-package"] [] [] [] [] [] False False
+			_ <- call s $ Scan ["tests\\test-package"] False [] [] [] [] [] False False
 			one <- call s $ InfoResolve "tests\\test-package\\ModuleOne.hs" True
 			when (["test", "forkIO", "f"] /= exports one) $
 				expectationFailure "invalid exports of ModuleOne.hs"
