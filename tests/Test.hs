@@ -27,7 +27,7 @@ main :: IO ()
 main = hspec $ do
 	describe "scan project" $ do
 		it "should scan project" $ do
-			s <- startServer def
+			s <- startServer (def { serverSilent = True })
 			_ <- call s $ Scan ["tests\\test-package"] False [] [] [] [] [] False False
 			one <- call s $ InfoResolve "tests\\test-package\\ModuleOne.hs" True
 			when (["test", "forkIO", "f"] /= exports one) $

@@ -234,11 +234,12 @@ data ServerOpts = ServerOpts {
 	serverLog :: Maybe FilePath,
 	serverLogConfig :: String,
 	serverCache :: Maybe FilePath,
-	serverLoad :: Bool }
+	serverLoad :: Bool,
+	serverSilent :: Bool }
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts def 0 Nothing "use default" Nothing False
+	def = ServerOpts def 0 Nothing "use default" Nothing False False
 
 -- | Client options
 data ClientOpts = ClientOpts {
@@ -269,7 +270,8 @@ instance FromCmd ServerOpts where
 		optional logArg <*>
 		(logConfigArg <|> pure (serverLogConfig def)) <*>
 		optional cacheArg <*>
-		loadFlag
+		loadFlag <*>
+		serverSilentFlag
 
 instance FromCmd ClientOpts where
 	cmdP = ClientOpts <$>
@@ -288,6 +290,7 @@ cacheArg :: Parser FilePath
 noFileFlag :: Parser Bool
 loadFlag :: Parser Bool
 prettyFlag :: Parser Bool
+serverSilentFlag :: Parser Bool
 stdinFlag :: Parser Bool
 silentFlag :: Parser Bool
 
@@ -306,6 +309,7 @@ cacheArg = strOption (long "cache" <> metavar "path" <> help "cache directory")
 noFileFlag = switch (long "no-file" <> help "don't use mmap files")
 loadFlag = switch (long "load" <> help "force load all data from cache on startup")
 prettyFlag = switch (long "pretty" <> help "pretty json output")
+serverSilentFlag = switch (long "silent" <> help "no stdout/stderr")
 stdinFlag = switch (long "stdin" <> help "pass data to stdin")
 silentFlag = switch (long "silent" <> help "supress notifications")
 
@@ -316,7 +320,8 @@ serverOptsArgs sopts = concat [
 	marg "--log" (serverLog sopts),
 	["--log-config", serverLogConfig sopts],
 	marg "--cache" (serverCache sopts),
-	["--load" | serverLoad sopts]]
+	["--load" | serverLoad sopts],
+	["--silent" | serverSilent sopts]]
 	where
 		marg :: String -> Maybe String -> [String]
 		marg n (Just v) = [n, v]

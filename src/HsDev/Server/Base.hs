@@ -55,7 +55,7 @@ initLog :: ServerOpts -> IO (Log, Log.Level -> String -> IO (), IO [String], IO 
 initLog sopts = do
 	msgs <- F.newChan
 	l <- newLog (constant [rule']) $ concat [
-		[logger text console],
+		[logger text console | not $ serverSilent sopts],
 		[logger text (chaner msgs)],
 		maybeToList $ (logger text . file) <$> serverLog sopts]
 	Log.writeLog l Log.Info ("Log politics: low = {}, high = {}" ~~ logLow ~~ logHigh)
