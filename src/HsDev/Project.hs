@@ -23,7 +23,7 @@ module HsDev.Project (
 
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
-import Control.Lens (makeLenses, Simple, Lens, view, lens, at)
+import Control.Lens (makeLenses, Simple, Lens, view, lens)
 import Control.Exception
 import Control.Monad.Except
 import Data.Aeson

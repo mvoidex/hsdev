@@ -43,14 +43,12 @@ import Control.Monad.Except
 import Data.Function (on)
 import Data.List
 import Data.Maybe (fromMaybe)
-import qualified Data.Map as M
 import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T (concat)
 import System.Directory
 import System.FilePath
 
-import Data.Deps
 import System.Directory.Paths
 
 import HsDev.Symbols.Types

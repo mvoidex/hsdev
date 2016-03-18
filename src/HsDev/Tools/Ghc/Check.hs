@@ -22,7 +22,6 @@ import System.Directory (doesDirectoryExist)
 import GHC hiding (Warning, Module, moduleName)
 
 import Control.Concurrent.FiniteChan
-import System.Directory.Paths
 import HsDev.PackageDb
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.Symbols (moduleOpts)

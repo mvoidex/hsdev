@@ -11,11 +11,10 @@ module HsDev.Sandbox (
 	) where
 
 import Control.Arrow
-import Control.Applicative
 import Control.DeepSeq (NFData(..))
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
-import Control.Lens (view, makeLenses, Lens', lens)
+import Control.Lens (view, makeLenses)
 import Data.Aeson
 import Data.Maybe (isJust, fromMaybe)
 import Data.List ((\\))
@@ -85,9 +84,9 @@ findSandbox fpath = do
 		else return Nothing
 	where
 		sandboxFromDir :: FilePath -> Maybe Sandbox
-		sandboxFromDir fpath
-			| takeFileName fpath == "stack.yaml" = sandboxFromPath (takeDirectory fpath </> ".stack-work")
-			| otherwise = sandboxFromPath fpath
+		sandboxFromDir fdir
+			| takeFileName fdir == "stack.yaml" = sandboxFromPath (takeDirectory fdir </> ".stack-work")
+			| otherwise = sandboxFromPath fdir
 
 -- | Search sandbox by parent directory
 searchSandbox :: FilePath -> IO (Maybe Sandbox)
@@ -108,8 +107,6 @@ searchPackageDbStack p = do
 	case mbox of
 		Nothing -> return userDb
 		Just sbox -> liftM (either (const userDb) id) $ runExceptT $ sandboxPackageDbStack sbox
-	where
-		userDb = PackageDbStack [UserDb]
 
 -- | Restore package-db stack by package-db
 restorePackageDbStack :: PackageDb -> IO PackageDbStack

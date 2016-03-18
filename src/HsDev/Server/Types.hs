@@ -37,7 +37,6 @@ import Text.Format (FormatBuild(..))
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
 import HsDev.Project
-import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
@@ -618,6 +617,7 @@ holdFlag :: Parser Bool
 inferFlag :: Parser Bool
 localsFlag :: Parser Bool
 moduleArg :: Parser String
+packageDbArg :: Parser PackageDb
 packageArg :: Parser String
 pathArg :: Mod OptionFields String -> Parser FilePath
 projectArg :: Parser String

@@ -16,16 +16,14 @@ module HsDev.Scan (
 	module Control.Monad.Except,
 	) where
 
-import Control.Applicative ((<|>))
 import Control.DeepSeq
-import Control.Lens (view, preview, set, over, each, _Right, _1, _2, _3, (^.), (^..), at)
+import Control.Lens (view, preview, set, over, each, _Right, _1, _2, _3, (^.), (^..))
 import Control.Monad.Except
 import Data.Maybe (catMaybes, fromMaybe, isJust)
 import Data.List (intercalate)
 import System.Directory
 import Text.Format
 
-import Data.Deps
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.Server.Types (FileContents(..))
 import HsDev.Sandbox

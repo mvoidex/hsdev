@@ -24,13 +24,11 @@ import qualified Data.ByteString.Lazy.Char8 as BS
 import Data.Char (isAlphaNum)
 import Data.List (intercalate)
 import System.FilePath
-import Text.Read (readMaybe)
 
 import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Database (Database)
-import HsDev.Version
-import HsDev.Util (split, version)
+import HsDev.Util (version)
 
 -- | Escape path
 escapePath :: FilePath -> FilePath

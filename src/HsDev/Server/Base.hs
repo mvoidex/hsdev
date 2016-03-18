@@ -16,7 +16,6 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 import Data.Default
-import Data.List (intercalate)
 import qualified Data.Map as M
 import Data.Maybe
 import Data.String
@@ -78,7 +77,7 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 		outputStr Log.Trace $ "Checking cache version in {}" ~~ cdir 
 		ver <- Cache.readVersion $ cdir </> Cache.versionCache
 		outputStr Log.Debug $ "Cache version: {}" ~~ strVersion ver
-		when (not $ sameVersion (cutVersion version) (cutVersion ver)) $ ignoreIO $ do
+		unless (sameVersion (cutVersion version) (cutVersion ver)) $ ignoreIO $ do
 			outputStr Log.Info $ "Cache version ({cache}) is incompatible with hsdev version ({hsdev}), removing cache ({dir})" ~~
 				("cache" %= strVersion ver) ~~
 				("hsdev" %= strVersion version) ~~

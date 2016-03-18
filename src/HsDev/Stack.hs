@@ -12,7 +12,7 @@ module HsDev.Stack (
 	) where
 
 import Control.Arrow
-import Control.Lens (makeLenses, Lens', at, ix, lens, (^?), (^.), view)
+import Control.Lens (makeLenses, Lens', at, ix, lens, (^?), (^.))
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Control.Monad.IO.Class
@@ -26,7 +26,6 @@ import System.FilePath
 import System.Process
 
 import HsDev.PackageDb
-import HsDev.Project
 import HsDev.Util (withCurrentDirectory)
 
 -- | Invoke stack command, we are trying to get actual stack near current hsdev executable
@@ -88,12 +87,12 @@ getStackEnv p = StackEnv <$>
 -- | Projects paths
 projectEnv :: FilePath -> MaybeT IO StackEnv
 projectEnv p = do
-	hasConfig <- liftIO $ doesFileExist yaml
+	hasConfig <- liftIO $ doesFileExist yaml'
 	guard hasConfig
-	paths' <- path (Just yaml)
+	paths' <- path (Just yaml')
 	MaybeT $ return $ getStackEnv paths'
 	where
-		yaml = p </> "stack.yaml"
+		yaml' = p </> "stack.yaml"
 
 -- | Get package-db stack for stack environment
 stackPackageDbStack :: Lens' StackEnv PackageDbStack

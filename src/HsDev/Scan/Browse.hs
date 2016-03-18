@@ -21,7 +21,6 @@ import Data.String (fromString)
 import Data.Version
 import System.Directory
 import System.FilePath
-import Text.Read (readMaybe)
 
 import Data.Deps
 import HsDev.PackageDb

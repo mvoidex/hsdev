@@ -39,7 +39,6 @@ import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Sandbox hiding (findSandbox)
 import qualified HsDev.Sandbox as S (findSandbox)
-import HsDev.Stack
 import HsDev.Symbols
 import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util
@@ -55,7 +54,6 @@ import qualified HsDev.Tools.Types as Tools
 import HsDev.Util
 import HsDev.Watcher
 
-import qualified HsDev.Scan as Scan
 import qualified HsDev.Scan.Browse as Scan
 import qualified HsDev.Database.Update as Update
 
@@ -87,7 +85,7 @@ runCommand (Scan projs cabal sboxes fs paths' fcts ghcs' docs' infer') = toValue
 		map (Update.scanProject ghcs') projs,
 		map (Update.scanFile ghcs') fs,
 		map (Update.scanDirectory ghcs') paths',
-		if cabal then [Update.scanCabal ghcs'] else [],
+		[Update.scanCabal ghcs' | cabal],
 		map (Update.scanSandbox ghcs') sboxes']
 runCommand (RefineDocs projs fs ms) = toValue $ do
 	projects <- traverse findProject projs
@@ -257,8 +255,8 @@ runCommand (Types fs fcts ghcs') = toValue $ do
 		notes <- inWorkerWith (commandError_ . show) ghc
 			(runExceptT $ Types.fileTypes ghcs' pdbs m msrc)
 		either commandError_ return notes
-runCommand (GhcMod GhcModLang) = toValue $ mapCommandIO $ GhcMod.langs
-runCommand (GhcMod GhcModFlags) = toValue $ mapCommandIO $ GhcMod.flags
+runCommand (GhcMod GhcModLang) = toValue $ mapCommandIO GhcMod.langs
+runCommand (GhcMod GhcModFlags) = toValue $ mapCommandIO GhcMod.flags
 runCommand (GhcMod (GhcModType (Position line column) fpath ghcs')) = toValue $ do
 	ghcmod <- askSession sessionGhcMod
 	dbval <- getDb
@@ -326,7 +324,7 @@ runCommand (GhcEval exprs) = toValue $ do
 		toValue' (Left (SomeException e)) = object ["fail" .= show e]
 		toValue' (Right s) = toJSON s
 runCommand (Link hold) = toValue $ commandLink >> when hold commandHold
-runCommand Exit = toValue $ serverExit
+runCommand Exit = toValue serverExit
 
 targetFilters :: CommandMonad m => [TargetFilter] -> m (ModuleId -> Bool)
 targetFilters fs = do
@@ -426,9 +424,6 @@ getSDb fpath = do
 	dbval <- getDb
 	pdbs <- liftIO $ searchPackageDbStack fpath
 	return $ filterDB (restrictPackageDbStack pdbs) (const True) dbval
-
-mapCommandErrorStr :: CommandMonad m => ExceptT String m a -> m a
-mapCommandErrorStr act = runExceptT act >>= either commandError_ return
 
 mapCommandIO :: CommandMonad m => ExceptT String IO a -> m a
 mapCommandIO act = liftIO (runExceptT act) >>= either commandError_ return

@@ -36,17 +36,13 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Data.Aeson
 import Data.Aeson.Types
-import Data.List ((\\))
 import Data.Foldable (toList)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe, isJust, fromMaybe, catMaybes)
-import Data.Maybe.JustIf
+import Data.Maybe (mapMaybe, isJust, fromMaybe)
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath
 import qualified System.Log.Simple as Log
-
-import GHC (log_action)
 
 import Control.Concurrent.Worker (inWorker, restartWorker)
 import qualified HsDev.Cache.Structured as Cache
@@ -58,7 +54,7 @@ import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Stack
 import HsDev.Symbols
-import HsDev.Tools.Ghc.Worker (ghcWorker, setCmdOpts)
+import HsDev.Tools.Ghc.Worker (setCmdOpts)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
@@ -266,8 +262,7 @@ scanCabal opts = Log.scope "cabal" $ do
 		scannedDbs = databasePackageDbs dbval
 		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks userDb
 	if null unscannedDbs
-		then do
-			Log.log Log.Trace $ "cabal (global-db and user-db) already scanned"
+		then Log.log Log.Trace $ "cabal (global-db and user-db) already scanned"
 		else runTasks $ map (scanPackageDb opts) unscannedDbs
 
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
@@ -289,8 +284,7 @@ scanSandbox opts sbox = Log.scope "sandbox" $ do
 		scannedDbs = databasePackageDbs dbval
 		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks pdbs
 	if null unscannedDbs
-		then do
-			Log.log Log.Trace $ "sandbox already scanned"
+		then Log.log Log.Trace $ "sandbox already scanned"
 		else runTasks $ map (scanPackageDb opts) unscannedDbs
 
 -- | Scan top of package-db stack, usable for rescan
