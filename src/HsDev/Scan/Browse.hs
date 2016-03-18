@@ -93,7 +93,7 @@ browseModule pdb package m = do
 		_moduleName = fromString thisModule,
 		_moduleDocs = Nothing,
 		_moduleLocation = thisLoc,
-		_moduleExports = Just [ExportName Nothing (view declarationName d) ExportNothing | d <- ds],
+		_moduleExports = Just [ExportName Nothing (view declarationName d) ThingNothing | d <- ds],
 		_moduleImports = [import_ iname | iname <- ordNub (mapMaybe (preview definedModule) ds), iname /= fromString thisModule],
 		_moduleDeclarations = sortDeclarations ds }
 	where

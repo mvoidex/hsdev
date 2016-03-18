@@ -2,31 +2,21 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
-	ExportPart(..),
-	Export(..),
-	ImportList(..),
-	Import(..),
-	ModuleId(..),
-	Module(..), moduleContents, moduleId,
-	Declaration(..), minimalDecl,
-	TypeInfo(..), showTypeInfo,
-	DeclarationInfo(..), declarationInfo, declarationTypeCtor, declarationTypeName,
-	ModuleDeclaration(..),
-	ExportedDeclaration(..),
-	Inspection(..),
-	Inspected(..),
+	ThingPart(..),
+	Export(..), exportQualified, exportName, exportPart, exportModule,
+	ImportSpec(..), importSpecName, importSpecPart,
+	ImportList(..), hidingList, importSpecs,
+	Import(..), importModuleName, importIsQualified, importAs, importList, importPosition,
+	ModuleId(..), moduleIdName, moduleIdLocation,
+	Module(..), moduleName, moduleDocs, moduleLocation, moduleExports, moduleImports, moduleDeclarations, moduleContents, moduleId,
+	Declaration(..), declarationName, declarationDefined, declarationImported, declarationDocs, declarationPosition, declaration, minimalDecl,
+	TypeInfo(..), typeInfoContext, typeInfoArgs, typeInfoDefinition, typeInfoFunctions, showTypeInfo,
+	DeclarationInfo(..), functionType, localDeclarations, related, typeInfo, declarationInfo, declarationTypeCtor, declarationTypeName,
+	ModuleDeclaration(..), declarationModuleId, moduleDeclaration,
+	ExportedDeclaration(..), exportedBy, exportedDeclaration,
+	Inspection(..), inspectionAt, inspectionOpts,
+	Inspected(..), inspection, inspectedId, inspectionResult,
 	InspectedModule,
-
-	exportQualified, exportName, exportPart, exportModule,
-	hidingList, importSpec, importModuleName, importIsQualified, importAs, importList, importPosition,
-	moduleIdName, moduleIdLocation,
-	moduleName, moduleDocs, moduleLocation, moduleExports, moduleImports, moduleDeclarations,
-	declarationName, declarationDefined, declarationImported, declarationDocs, declarationPosition, declaration,
-	typeInfoContext, typeInfoArgs, typeInfoDefinition, typeInfoFunctions,
-	functionType, localDeclarations, related, typeInfo,
-	declarationModuleId, moduleDeclaration,
-	exportedBy, exportedDeclaration,
-	inspectionAt, inspectionOpts, inspection, inspectedId, inspectionResult,
 
 	module HsDev.PackageDb,
 	module HsDev.Project,
@@ -52,40 +42,40 @@ import HsDev.Symbols.Class
 import HsDev.Symbols.Documented
 import HsDev.Util (tab, tabs, (.::), (.::?), (.::?!), noNulls)
 
--- | What to export for data/class etc
-data ExportPart = ExportNothing | ExportAll | ExportWith [Text] deriving (Eq, Ord)
+-- | What to export/import for data/class etc
+data ThingPart = ThingNothing | ThingAll | ThingWith [Text] deriving (Eq, Ord)
 
-instance NFData ExportPart where
-	rnf ExportNothing = ()
-	rnf ExportAll = ()
-	rnf (ExportWith ns) = rnf ns
+instance NFData ThingPart where
+	rnf ThingNothing = ()
+	rnf ThingAll = ()
+	rnf (ThingWith ns) = rnf ns
 
-instance Show ExportPart where
-	show ExportNothing = ""
-	show ExportAll = "(..)"
-	show (ExportWith ns) = "(" ++ intercalate ", " (map unpack ns) ++ ")"
+instance Show ThingPart where
+	show ThingNothing = ""
+	show ThingAll = "(..)"
+	show (ThingWith ns) = "(" ++ intercalate ", " (map unpack ns) ++ ")"
 
-instance ToJSON ExportPart where
-	toJSON ExportNothing = toJSON ("nothing" :: String)
-	toJSON ExportAll = toJSON ("all" :: String)
-	toJSON (ExportWith ns) = object [
+instance ToJSON ThingPart where
+	toJSON ThingNothing = toJSON ("nothing" :: String)
+	toJSON ThingAll = toJSON ("all" :: String)
+	toJSON (ThingWith ns) = object [
 		"with" .= ns]
 
-instance FromJSON ExportPart where
+instance FromJSON ThingPart where
 	parseJSON v = parse' <|> parseWith v where
 		parse' = do
 			s <- parseJSON v
 			mplus
-				(guard (s == ("nothing" :: String)) >> return ExportNothing)
-				(guard (s == ("all" :: String)) >> return ExportAll)
-		parseWith = withObject "export part" $ \v' -> ExportWith <$> v' .:: "with"
+				(guard (s == ("nothing" :: String)) >> return ThingNothing)
+				(guard (s == ("all" :: String)) >> return ThingAll)
+		parseWith = withObject "export part" $ \v' -> ThingWith <$> v' .:: "with"
 
 -- | Module export
 data Export =
 	ExportName {
 		_exportQualified :: Maybe Text,
 		_exportName :: Text,
-		_exportPart :: ExportPart } |
+		_exportPart :: ThingPart } |
 	ExportModule { _exportModule :: Text }
 		deriving (Eq, Ord)
 
@@ -107,27 +97,45 @@ instance FromJSON Export where
 		(ExportName <$> (v .:: "module") <*> (v .:: "name") <*> (v .:: "part")) <|>
 		(ExportModule <$> (v .:: "module"))
 
+-- | Import spec
+data ImportSpec = ImportSpec {
+	_importSpecName :: Text,
+	_importSpecPart :: ThingPart }
+		deriving (Eq, Ord)
+
+instance NFData ImportSpec where
+	rnf (ImportSpec n p) = rnf n `seq` rnf p
+
+instance Show ImportSpec where
+	show (ImportSpec n p) = unpack n ++ show p
+
+instance ToJSON ImportSpec where
+	toJSON (ImportSpec n p) = object ["name" .= n, "part" .= p]
+
+instance FromJSON ImportSpec where
+	parseJSON = withObject "import-spec" $ \v -> ImportSpec <$> (v .:: "name") <*> (v .:: "part")
+
 -- | Import list
 data ImportList = ImportList {
 	_hidingList :: Bool,
-	_importSpec :: [Text] }
+	_importSpecs :: [ImportSpec] }
 		deriving (Eq, Ord)
 
 instance NFData ImportList where
 	rnf (ImportList h ls) = rnf h `seq` rnf ls
 
 instance Show ImportList where
-	show (ImportList h ls) = (if h then ("hiding " ++) else id) $ "(" ++ intercalate ", " (map unpack ls) ++ ")"
+	show (ImportList h ls) = (if h then ("hiding " ++) else id) $ "(" ++ intercalate ", " (map show ls) ++ ")"
 
 instance ToJSON ImportList where
 	toJSON (ImportList h ls) = object [
 		"hiding" .= h,
-		"spec" .= ls]
+		"specs" .= ls]
 
 instance FromJSON ImportList where
 	parseJSON = withObject "import-list" $ \v -> ImportList <$>
 		v .:: "hiding" <*>
-		v .:: "spec"
+		v .:: "specs"
 
 -- | Module import
 data Import = Import {
@@ -551,6 +559,7 @@ instance Documented ModuleDeclaration where
 	brief = brief . _moduleDeclaration
 
 makeLenses ''Export
+makeLenses ''ImportSpec
 makeLenses ''ImportList
 makeLenses ''Import
 makeLenses ''ModuleId

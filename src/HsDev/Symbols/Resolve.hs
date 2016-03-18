@@ -3,7 +3,7 @@
 module HsDev.Symbols.Resolve (
 	ResolveM(..),ResolvedTree, ResolvedModule(..), resolvedModule, resolvedScope, resolvedExports,
 	scopeModule, exportsModule, resolvedTopScope,
-	resolve, resolveOne, resolveModule, exported, resolveImports, resolveImport,
+	resolve, resolveOne, resolveModule, resolveImports, resolveImport,
 	mergeImported
 	) where
 
@@ -87,7 +87,7 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 			let
 				exported' = case view moduleExports m of
 					Nothing -> thisDecls
-					Just exports' -> unique $ catMaybes $ exported <$> scope' <*> exports'
+					Just exports' -> unique $ catMaybes $ mexported <$> scope' <*> exports'
 			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exported')
 	thisDecls :: [Declaration]
 	thisDecls = map (selfDefined . selfImport) $ view moduleDeclarations m
@@ -104,22 +104,7 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 	unique = uniqueBy declId
 	declId :: Declaration -> (Text, Maybe ModuleId)
 	declId = view declarationName &&& view declarationDefined
-
-exported :: Declaration -> Export -> Maybe Declaration
-exported decl' (ExportName q n p)
-	| view declarationName decl' == n = decl' `justIf` checkImport
-	| preview (declaration . related . _Just) decl' == Just n = case p of
-		ExportNothing -> Nothing
-		ExportAll -> Just decl'
-		ExportWith ns -> decl' `justIf` (view declarationName decl' `elem` ns)
-	| otherwise = Nothing
-	where
-		checkImport = case q of
-			Nothing -> any (not . view importIsQualified) $ fromMaybe [] $ view declarationImported decl'
-			Just q' -> any ((q' `elem`) . importNames) $ fromMaybe [] $ view declarationImported decl'
-exported decl' (ExportModule m) = decl' `justWhen` (any (unqualBy m) . fromMaybe [] . view declarationImported) where
-	unqualBy :: Text -> Import -> Bool
-	unqualBy m' i = m' `elem` importNames i && not (view importIsQualified i)
+	mexported decl' e' = decl' `justIf` exported decl' e'
 
 -- | Bring declarations into scope by imports
 resolveImports :: Module -> [Import] -> ResolveM [Declaration]
@@ -169,7 +154,7 @@ resolveImport deps m i = liftM (map $ setImport i) resolveImport' where
 	filterImportList :: [Declaration] -> [Declaration]
 	filterImportList = case view importList i of
 		Nothing -> id
-		Just il -> filter (passImportList il . view declarationName)
+		Just il -> filter (`imported` il)
 	inDeps = maybe False (`S.member` deps) . preview (moduleIdLocation . modulePackage . _Just . packageName)
 
 -- | Merge imported declarations

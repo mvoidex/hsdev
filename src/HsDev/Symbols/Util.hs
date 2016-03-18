@@ -1,7 +1,7 @@
 module HsDev.Symbols.Util (
 	projectOf, packageDbOf, packageOf,
 	inProject, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inPackageDb, inPackageDbStack, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, installed, standalone,
-	imports, qualifier, imported, visible, inScope,
+	imports, qualifier, moduleImported, visible, inScope,
 	newestPackage,
 	sourceModule, visibleModule, preferredModule, uniqueModules,
 	allOf, anyOf
@@ -125,8 +125,8 @@ qualifier m q = filter (importQualifier (fmap fromString q)) $
 	imports m
 
 -- | Check if module imported via imports specified
-imported :: ModuleId -> [Import] -> Bool
-imported m = any (\i -> view moduleIdName m == view importModuleName i)
+moduleImported :: ModuleId -> [Import] -> Bool
+moduleImported m = any (\i -> view moduleIdName m == view importModuleName i)
 
 -- | Check if module visible from this module within this project
 visible :: Project -> ModuleId -> ModuleId -> Bool
@@ -138,7 +138,7 @@ visible _ _ _ = False
 
 -- | Check if module is in scope with qualifier
 inScope :: Module -> Maybe String -> ModuleId -> Bool
-inScope this q m = m `imported` qualifier this q
+inScope this q m = m `moduleImported` qualifier this q
 
 -- | Select symbols with last package version
 newestPackage :: Symbol a => [a] -> [a]

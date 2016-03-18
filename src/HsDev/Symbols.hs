@@ -4,7 +4,7 @@
 module HsDev.Symbols (
 	-- * Information
 	export,
-	passImportList,
+	passThingSpec, passImportSpec, imported, exported,
 	importNames, import_,
 	Symbol(..),
 	unnamedModuleId,
@@ -64,11 +64,37 @@ export (ExportName Nothing n _) = n
 export (ExportName (Just q) n _) = T.concat [q, ".", n]
 export (ExportModule m) = m
 
--- | Check whether name pass import list
-passImportList :: ImportList -> Text -> Bool
-passImportList (ImportList hiding names) n
-	| hiding = n `notElem` names
-	| otherwise = n `elem` names
+-- | Does name pass thing spec
+passThingSpec :: Text -> ThingPart -> Bool
+passThingSpec _ ThingNothing = False
+passThingSpec _ ThingAll = True
+passThingSpec n (ThingWith ns) = n `elem` ns
+
+-- | Does declaration pass import-list spec
+passImportSpec :: Declaration -> ImportSpec -> Bool
+passImportSpec decl' (ImportSpec n p)
+	| view declarationName decl' == n = True
+	| preview (declaration . related . _Just) decl' == Just n = view declarationName decl' `passThingSpec` p
+	| otherwise = False
+
+-- | Check whether declaration passes import list
+imported :: Declaration -> ImportList -> Bool
+imported decl' (ImportList hiding specs) = invert $ any (decl' `passImportSpec`) specs where
+	invert = if hiding then not else id
+
+-- | Check whether declaration passes export
+exported :: Declaration -> Export -> Bool
+exported decl' (ExportName q n p)
+	| view declarationName decl' == n = checkImport
+	| preview (declaration . related . _Just) decl' == Just n = view declarationName decl' `passThingSpec` p
+	| otherwise = False
+	where
+		checkImport = case q of
+			Nothing -> any (not . view importIsQualified) $ fromMaybe [] $ view declarationImported decl'
+			Just q' -> any ((q' `elem`) . importNames) $ fromMaybe [] $ view declarationImported decl'
+exported decl' (ExportModule m) = any (unqualBy m) . fromMaybe [] . view declarationImported $ decl' where
+	unqualBy :: Text -> Import -> Bool
+	unqualBy m' i = m' `elem` importNames i && not (view importIsQualified i)
 
 -- | Get import module names - full and synonym
 importNames :: Import -> [Text]

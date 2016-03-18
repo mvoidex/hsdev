@@ -122,10 +122,10 @@ parseMode file exts = H.defaultParseMode {
 -- | Get exports
 getExports :: H.ExportSpec -> [Export]
 getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule $ fromString m]
-getExports (H.EVar n) = [uncurry ExportName (identOfQName n) ExportNothing]
-getExports (H.EAbs _ n) = [uncurry ExportName (identOfQName n) ExportNothing]
-getExports (H.EThingAll n) = [uncurry ExportName (identOfQName n) ExportAll]
-getExports (H.EThingWith n ns) = [uncurry ExportName (identOfQName n) $ ExportWith (map toStr ns)] where
+getExports (H.EVar n) = [uncurry ExportName (identOfQName n) ThingNothing]
+getExports (H.EAbs _ n) = [uncurry ExportName (identOfQName n) ThingNothing]
+getExports (H.EThingAll n) = [uncurry ExportName (identOfQName n) ThingAll]
+getExports (H.EThingWith n ns) = [uncurry ExportName (identOfQName n) $ ThingWith (map toStr ns)] where
 	toStr :: H.CName -> Text
 	toStr (H.VarName cn) = identOfName cn
 	toStr (H.ConName cn) = identOfName cn
@@ -140,7 +140,11 @@ getImport d = Import
 	(Just $ toPosition $ H.importLoc d)
 	where
 		mname (H.ModuleName n) = fromString n
-		importLst (hiding, specs) = ImportList hiding $ map identOfName (concatMap childrenBi specs :: [H.Name])
+		importLst (hiding, specs) = ImportList hiding $ map impSpec specs
+		impSpec (H.IVar n) = ImportSpec (identOfName n) ThingNothing
+		impSpec (H.IAbs _ n) = ImportSpec (identOfName n) ThingNothing
+		impSpec (H.IThingAll n) = ImportSpec (identOfName n) ThingAll
+		impSpec (H.IThingWith n ns) = ImportSpec (identOfName n) $ ThingWith $ map identOfName (concatMap childrenBi ns :: [H.Name])
 
 -- | Decl declarations
 getDecls :: [H.Decl] -> [Declaration]

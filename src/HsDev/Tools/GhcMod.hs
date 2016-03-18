@@ -84,7 +84,7 @@ browse opts pdbs mname mpackage = inspect thisLoc (return $ browseInspection opt
 			_moduleName = fromString mname,
 			_moduleDocs = Nothing,
 			_moduleLocation = thisLoc,
-			_moduleExports = Just [ExportName Nothing (view declarationName d) ExportNothing | d <- ds],
+			_moduleExports = Just [ExportName Nothing (view declarationName d) ThingNothing | d <- ds],
 			_moduleImports = [import_ iname |
 				iname <- ordNub (mapMaybe (preview definedModule) ds),
 				iname /= fromString mname],
