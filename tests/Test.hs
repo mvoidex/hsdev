@@ -10,6 +10,8 @@ import Data.Aeson.Lens
 import Data.Default
 import HsDev
 import Test.Hspec
+import System.FilePath
+import System.Directory
 
 call :: Server -> Command -> IO (Maybe Value)
 call srv c = do
@@ -27,12 +29,13 @@ main :: IO ()
 main = hspec $ do
 	describe "scan project" $ do
 		it "should scan project" $ do
+			dir <- getCurrentDirectory
 			s <- startServer (def { serverSilent = True })
-			_ <- call s $ Scan ["tests\\test-package"] False [] [] [] [] [] False False
-			one <- call s $ InfoResolve "tests\\test-package\\ModuleOne.hs" True
+			_ <- call s $ Scan [dir </> "tests/test-package"] False [] [] [] [] [] False False
+			one <- call s $ InfoResolve (dir </> "tests/test-package/ModuleOne.hs") True
 			when (["test", "forkIO", "f"] /= exports one) $
 				expectationFailure "invalid exports of ModuleOne.hs"
-			two <- call s $ InfoResolve "tests\\test-package\\ModuleTwo.hs" True
+			two <- call s $ InfoResolve (dir </> "tests/test-package/ModuleTwo.hs") True
 			when (["f", "twice"] /= exports two) $
 				expectationFailure "invalid exports of ModuleTwo.hs"
 			_ <- call s Exit
