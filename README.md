@@ -41,8 +41,8 @@ readAsync :: Async a -> IO a
 
 ## Stack support
 
-In order to support stack projects correctly, `hsdev` and `stack` executables must be build with same compiler, then `hsdev` will be able to `stack build --only-dependencies` and `stack build --only-configure` stack projects in order to get corresponding package-db.
-`hsdev` first searchs for `stack` near itself, so you can just place it in same path.
+`hsdev` uses `stack` to build dependencies and to get corresponding package-dbs. As long as `hsdev` doesn't pass `--compiler` and `--arch` flags to `stack`, the last uses default compiler instead of `hsdev`-compatible one. It's known issue and will be fixed (#26, #27); the workaround is to have `stack` and `hsdev` built with same compiler, or you can just install `hsdev` with `stack`.
+If you have several `stack` executables, note, that `hsdev` first searchs for `stack` near itself, so you can place them in same path.
 
 ### Commands
 
