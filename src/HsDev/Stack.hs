@@ -8,6 +8,8 @@ module HsDev.Stack (
 	getStackEnv, projectEnv,
 	stackPackageDbStack,
 
+	stackCompiler, stackArch,
+
 	MaybeT(..)
 	) where
 
@@ -20,21 +22,46 @@ import Data.Char
 import Data.Maybe
 import Data.Map (Map)
 import qualified Data.Map as M
+import Distribution.Compiler
+import Distribution.System
+import qualified Distribution.Text as T (display)
 import System.Directory
 import System.Environment
 import System.FilePath
 import System.Process
 
+import qualified GHC
+import qualified Packages as GHC
+
 import HsDev.PackageDb
+import HsDev.Scan.Browse (withPackages)
 import HsDev.Util (withCurrentDirectory)
 
+-- | Get compiler version
+stackCompiler :: MaybeT IO String
+stackCompiler = exceptToMaybeT $ do
+	res <- withPackages ["-no-user-package-db"] $
+		return .
+		map (GHC.packageNameString &&& GHC.packageVersion) .
+		fromMaybe [] .
+		GHC.pkgDatabase
+	let
+		compiler = T.display buildCompilerFlavor
+		CompilerId _ version = buildCompilerId
+		ver = maybe (T.display version) T.display $ lookup compiler res
+	return $ compiler ++ "-" ++ ver
+
+-- | Get arch for stack
+stackArch :: String
+stackArch = T.display buildArch
 -- | Invoke stack command, we are trying to get actual stack near current hsdev executable
 stack :: [String] -> MaybeT IO String
 stack cmd = do
 	curExe <- liftIO getExecutablePath
 	withCurrentDirectory (takeDirectory curExe) $ do
 		stackExe <- MaybeT $ findExecutable "stack"
-		liftIO $ readProcess stackExe cmd ""
+		comp <- stackCompiler
+		liftIO $ readProcess stackExe (cmd ++ ["--compiler", comp, "--arch", stackArch]) ""
 
 -- | Make yaml opts
 yaml :: Maybe FilePath -> [String]
