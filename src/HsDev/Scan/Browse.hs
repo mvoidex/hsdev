@@ -5,7 +5,7 @@ module HsDev.Scan.Browse (
 	listModules, browseModules, browse, browseDb,
 	-- * Helpers
 	withPackages, withPackages_,
-	readPackage, ghcPackageDb, ghcModuleLocation,
+	readPackage, readPackageConfig, ghcPackageDb, ghcModuleLocation,
 	packageDbCandidate, packageDbCandidate_,
 	packageConfigs, packageDbModules, lookupModule_,
 
@@ -45,18 +45,18 @@ import qualified Var as GHC
 import Pretty
 
 -- | Browse packages
-browsePackages :: [String] -> PackageDbStack -> ExceptT String IO [ModulePackage]
+browsePackages :: [String] -> PackageDbStack -> ExceptT String IO [PackageConfig]
 browsePackages opts dbs = liftIOErrors $ withPackages_ (packageDbStackOpts dbs ++ opts) $
-	liftM (map readPackage) $ lift packageConfigs
+	liftM (map readPackageConfig) $ lift packageConfigs
 
 -- | Get packages with deps
-browsePackagesDeps :: [String] -> PackageDbStack -> ExceptT String IO (Deps ModulePackage)
+browsePackagesDeps :: [String] -> PackageDbStack -> ExceptT String IO (Deps PackageConfig)
 browsePackagesDeps opts dbs = liftIOErrors $ withPackages (packageDbStackOpts dbs ++ opts) $ \df -> do
 	cfgs <- lift packageConfigs
 	return $ mapDeps (toPkg df) $ mconcat $ map (uncurry deps) $
 		map (GHC.installedPackageId &&& GHC.depends) cfgs
 	where
-		toPkg df' = readPackage . GHC.getPackageDetails df' . GHC.resolveInstalledPackageId df'
+		toPkg df' = readPackageConfig . GHC.getPackageDetails df' . GHC.resolveInstalledPackageId df'
 
 listModules :: [String] -> PackageDbStack -> ExceptT String IO [ModuleLocation]
 listModules opts dbs = liftIOErrors $ withPackages_ (packageDbStackOpts dbs ++ opts) $ do
@@ -83,7 +83,7 @@ browseDb opts dbs = listModules opts dbs >>= browseModules opts dbs . filter inT
 	inTop = (== Just (topPackageDb dbs)) . preview modulePackageDb
 
 browseModule :: PackageDb -> GHC.PackageConfig -> GHC.Module -> ExceptT String GHC.Ghc Module
-browseModule pdb package m = do
+browseModule pdb package' m = do
 	mi <- lift (GHC.getModuleInfo m) >>= maybe (throwError "Can't find module info") return
 	ds <- mapM (toDecl mi) (GHC.modInfoExports mi)
 	let
@@ -98,7 +98,7 @@ browseModule pdb package m = do
 	where
 		thisLoc = view moduleIdLocation $ mloc m
 		mloc m' = ModuleId (fromString mname') $
-			ghcModuleLocation pdb package m'
+			ghcModuleLocation pdb package' m'
 			where
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl minfo n = do
@@ -171,6 +171,12 @@ tryT act = catchError (liftM Just act) (const $ return Nothing)
 
 readPackage :: GHC.PackageConfig -> ModulePackage
 readPackage pc = ModulePackage (GHC.packageNameString pc) (showVersion (GHC.packageVersion pc))
+
+readPackageConfig :: GHC.PackageConfig -> PackageConfig
+readPackageConfig pc = PackageConfig
+	(readPackage pc)
+	(map (fromString . GHC.moduleNameString . GHC.exposedName) $ GHC.exposedModules pc)
+	(GHC.exposed pc)
 
 ghcModuleLocation :: PackageDb -> GHC.PackageConfig -> GHC.Module -> ModuleLocation
 ghcModuleLocation pdb p m = InstalledModule pdb (Just $ readPackage p) (GHC.moduleNameString $ GHC.moduleName m)

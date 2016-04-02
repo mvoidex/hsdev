@@ -112,7 +112,7 @@ enumProject :: Project -> ExceptT String IO ScanContents
 enumProject p = do
 	p' <- loadProject p
 	pdbs <- liftE $ searchPackageDbStack (view projectPath p')
-	pkgs <- liftM (map $ view packageName) $ browsePackages [] pdbs
+	pkgs <- liftM (map $ view (package . packageName)) $ browsePackages [] pdbs
 	let
 		projOpts :: FilePath -> [String]
 		projOpts f = concatMap makeOpts $ fileTargets p' f where

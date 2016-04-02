@@ -35,7 +35,7 @@ packageDbOf m = case view moduleIdLocation m of
 -- | Get module package
 packageOf :: ModuleId -> Maybe ModulePackage
 packageOf m = case view moduleIdLocation m of
-	InstalledModule _ package _ -> package
+	InstalledModule _ package' _ -> package'
 	_ -> Nothing
 
 -- | Check if module in project
@@ -71,12 +71,12 @@ inPackageDbStack dbs m = case view moduleIdLocation m of
 -- | Check if module in package
 inPackage :: String -> ModuleId -> Bool
 inPackage p m = case view moduleIdLocation m of
-	InstalledModule _ package _ -> Just p == fmap (view packageName) package
+	InstalledModule _ package' _ -> Just p == fmap (view packageName) package'
 	_ -> False
 
 inVersion :: String -> ModuleId -> Bool
 inVersion v m = case view moduleIdLocation m of
-	InstalledModule _ package _ -> Just v == fmap (view packageVersion) package
+	InstalledModule _ package' _ -> Just v == fmap (view packageVersion) package'
 	_ -> False
 
 -- | Check if module in file

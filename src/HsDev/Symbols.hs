@@ -21,6 +21,7 @@ module HsDev.Symbols (
 	-- * Utility
 	locateProject, searchProject,
 	locateSourceDir,
+	standaloneInfo,
 	moduleOpts,
 
 	-- * Modifiers
@@ -42,7 +43,8 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Data.Function (on)
 import Data.List
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
+import qualified Data.Map as M
 import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T (concat)
@@ -54,7 +56,7 @@ import System.Directory.Paths
 import HsDev.Symbols.Types
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented (Documented(..))
-import HsDev.Util (searchPath)
+import HsDev.Util (searchPath, uniqueBy)
 
 -- | Get name of export
 export :: Export -> Text
@@ -228,14 +230,22 @@ locateSourceDir f = runMaybeT $ do
 	proj <- MaybeT $ fmap (either (const Nothing) Just) $ runExceptT $ loadProject p
 	MaybeT $ return $ findSourceDir proj file
 
+-- | Make `Info` for standalone `Module`
+standaloneInfo :: [PackageConfig] -> Module -> Info
+standaloneInfo pkgs m = mempty { _infoDepends = pkgDeps ^.. each . package . packageName } where
+	pkgDeps = catMaybes [M.lookup mdep pkgMap >>= listToMaybe | mdep <- m ^.. moduleImports . each . importModuleName]
+	pkgMap = M.unionsWith mergePkgs [M.singleton m' [p] | p <- pkgs, m' <- view packageModules p]
+	mergePkgs ls rs = if null es then hs else es where
+		(es, hs) = partition (view packageExposed) $ uniqueBy (view package) (ls ++ rs)
+
 -- | Options for GHC of module and project
-moduleOpts :: [ModulePackage] -> Module -> [String]
+moduleOpts :: [PackageConfig] -> Module -> [String]
 moduleOpts pkgs m = case view moduleLocation m of
 	FileModule file proj -> concat [
 		hidePackages,
 		targetOpts info']
 		where
-			infos' = maybe [] (`fileTargets` file) proj
+			infos' = maybe [standaloneInfo pkgs m] (`fileTargets` file) proj
 			info' = over infoDepends (filter validDep) (mconcat $ selfInfo : infos')
 			selfInfo
 				| proj ^? _Just . projectName `elem` map Just (infos' ^.. each . infoDepends . each) = fromMaybe mempty $
@@ -243,7 +253,7 @@ moduleOpts pkgs m = case view moduleLocation m of
 				| otherwise = mempty
 			-- filter out unavailable packages such as unix under windows
 			validDep d = d `elem` pkgs'
-			pkgs' = pkgs ^.. each . packageName
+			pkgs' = pkgs ^.. each . package . packageName
 			hidePackages
 				| null (info' ^. infoDepends) = []
 				| otherwise = ["-hide-all-packages"]

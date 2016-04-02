@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), ModuleLocation(..), moduleStandalone, locationId, noLocation,
+	ModulePackage(..), PackageConfig(..), ModuleLocation(..), moduleStandalone, locationId, noLocation,
 	Position(..), Region(..), region, regionAt, regionLines, regionStr,
 	Location(..),
 
 	packageName, packageVersion,
+	package, packageModules, packageExposed,
 	moduleFile, moduleProject, modulePackageDb, modulePackage, cabalModuleName, moduleSourceName,
 	positionLine, positionColumn,
 	regionFrom, regionTo,
@@ -34,7 +35,7 @@ import Text.Read (readMaybe)
 
 import HsDev.PackageDb
 import HsDev.Project
-import HsDev.Util ((.::), (.::?))
+import HsDev.Util ((.::), (.::?), (.::?!), objectUnion)
 
 -- | Just package name and version without its location
 data ModulePackage = ModulePackage {
@@ -71,6 +72,26 @@ instance ToJSON ModulePackage where
 instance FromJSON ModulePackage where
 	parseJSON = withObject "module package" $ \v ->
 		ModulePackage <$> (v .:: "name") <*> (v .:: "version")
+
+data PackageConfig = PackageConfig {
+	_package :: ModulePackage,
+	_packageModules :: [Text],
+	_packageExposed :: Bool }
+		deriving (Eq, Ord, Read, Show)
+
+makeLenses ''PackageConfig
+
+instance NFData PackageConfig where
+	rnf (PackageConfig p ms e) = rnf p `seq` rnf ms `seq` rnf e
+
+instance ToJSON PackageConfig where
+	toJSON (PackageConfig p ms e) = toJSON p `objectUnion` object ["modules" .= ms, "exposed" .= e]
+
+instance FromJSON PackageConfig where
+	parseJSON = withObject "package-config" $ \v -> PackageConfig <$>
+		parseJSON (Object v) <*>
+		(v .::?! "modules") <*>
+		(v .:: "exposed" <|> pure False)
 
 -- | Location of module
 data ModuleLocation =
