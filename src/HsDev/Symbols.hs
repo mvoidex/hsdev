@@ -30,6 +30,9 @@ module HsDev.Symbols (
 	-- * Other
 	unalias,
 
+	-- * Tags
+	setTag, hasTag, removeTag, dropTags,
+
 	-- * Reexportss
 	module HsDev.Symbols.Types,
 	module HsDev.Symbols.Class,
@@ -46,6 +49,7 @@ import Data.List
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import qualified Data.Map as M
 import Data.Ord (comparing)
+import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T (concat)
 import System.Directory
@@ -266,3 +270,19 @@ addDeclaration decl' = over moduleDeclarations (sortDeclarations . (decl' :))
 -- | Unalias import name
 unalias :: Module -> Text -> [Text]
 unalias m alias = [view importModuleName i | i <- view moduleImports m, view importAs i == Just alias]
+
+-- | Set tag to `Inspected`
+setTag :: Ord t => t -> Inspected i t a -> Inspected i t a
+setTag tag = over inspectionTags (S.insert tag)
+
+-- | Check whether `Inspected` has tag
+hasTag :: Ord t => t -> Inspected i t a -> Bool
+hasTag tag = has (inspectionTags . ix tag)
+
+-- | Drop tag from `Inspected`
+removeTag :: Ord t => t -> Inspected i t a -> Inspected i t a
+removeTag tag = over inspectionTags (S.delete tag)
+
+-- | Drop all tags
+dropTags :: Inspected i t a -> Inspected i t a
+dropTags = set inspectionTags S.empty

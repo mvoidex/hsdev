@@ -187,9 +187,9 @@ scanModify f im = traverse f' im where
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> ExceptT String IO Bool
-upToDate opts (Inspected insp m _) = case m of
-	FileModule f _ -> liftM (== insp) $ fileInspection f opts
-	InstalledModule _ _ _ -> return $ insp == browseInspection opts
+upToDate opts im = case view inspectedId im of
+	FileModule f _ -> liftM (== view inspection im) $ fileInspection f opts
+	InstalledModule _ _ _ -> return $ view inspection im == browseInspection opts
 	_ -> return False
 
 -- | Rescan inspected module

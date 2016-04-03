@@ -15,7 +15,8 @@ module HsDev.Symbols.Types (
 	ModuleDeclaration(..), declarationModuleId, moduleDeclaration,
 	ExportedDeclaration(..), exportedBy, exportedDeclaration,
 	Inspection(..), inspectionAt, inspectionOpts,
-	Inspected(..), inspection, inspectedId, inspectionResult,
+	Inspected(..), inspection, inspectedId, inspectionTags, inspectionResult, notInspected, noTags,
+	ModuleTag(..),
 	InspectedModule,
 
 	module HsDev.PackageDb,
@@ -34,6 +35,8 @@ import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text, unpack)
 import qualified Data.Text as T
+import Data.Set (Set)
+import qualified Data.Set as S
 import Data.Time.Clock.POSIX (POSIXTime)
 
 import HsDev.PackageDb
@@ -456,6 +459,14 @@ instance Show Inspection where
 instance Read POSIXTime where
 	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
 
+instance Monoid Inspection where
+	mempty = InspectionNone
+	mappend InspectionNone r = r
+	mappend l InspectionNone = l
+	mappend (InspectionAt ltm lopts) (InspectionAt rtm ropts)
+		| ltm >= rtm = InspectionAt ltm lopts
+		| otherwise = InspectionAt rtm ropts
+
 instance ToJSON Inspection where
 	toJSON InspectionNone = object ["inspected" .= False]
 	toJSON (InspectionAt tm fs) = object [
@@ -468,30 +479,53 @@ instance FromJSON Inspection where
 		(InspectionAt <$> (fromInteger <$> v .:: "mtime") <*> (v .:: "flags"))
 
 -- | Inspected entity
-data Inspected i a = Inspected {
+data Inspected i t a = Inspected {
 	_inspection :: Inspection,
 	_inspectedId :: i,
+	_inspectionTags :: Set t,
 	_inspectionResult :: Either String a }
 		deriving (Eq, Ord)
 
-instance Functor (Inspected i) where
+notInspected :: Ord t => i -> Inspected i t a
+notInspected i = Inspected mempty i noTags (Left "not inspected")
+
+instance Functor (Inspected i t) where
 	fmap f insp = insp {
 		_inspectionResult = fmap f (_inspectionResult insp) }
 
-instance Foldable (Inspected i) where
+instance Foldable (Inspected i t) where
 	foldMap f = either mempty f . _inspectionResult
 
-instance Traversable (Inspected i) where
-	traverse f (Inspected insp i r) = Inspected insp i <$> either (pure . Left) (liftA Right . f) r
+instance Traversable (Inspected i t) where
+	traverse f (Inspected insp i ts r) = Inspected insp i ts <$> either (pure . Left) (liftA Right . f) r
 
-instance (NFData i, NFData a) => NFData (Inspected i a) where
-	rnf (Inspected t i r) = rnf t `seq` rnf i `seq` rnf r
+instance (NFData i, NFData t, NFData a) => NFData (Inspected i t a) where
+	rnf (Inspected t i ts r) = rnf t `seq` rnf i `seq` rnf ts `seq` rnf r
+
+-- | Empty tags
+noTags :: Ord t => Set t
+noTags = S.empty
+
+data ModuleTag = InferredTypesTag | RefinedDocsTag deriving (Eq, Ord, Read, Show, Enum, Bounded)
+
+instance NFData ModuleTag where
+	rnf InferredTypesTag = ()
+	rnf RefinedDocsTag = ()
+
+instance ToJSON ModuleTag where
+	toJSON InferredTypesTag = toJSON ("types" :: String)
+	toJSON RefinedDocsTag = toJSON ("docs" :: String)
+
+instance FromJSON ModuleTag where
+	parseJSON = withText "module-tag" $ \txt -> msum [
+		guard (txt == "types") >> return InferredTypesTag,
+		guard (txt == "docs") >> return RefinedDocsTag]
 
 -- | Inspected module
-type InspectedModule = Inspected ModuleLocation Module
+type InspectedModule = Inspected ModuleLocation ModuleTag Module
 
 instance Show InspectedModule where
-	show (Inspected i mi m) = unlines [either showError show m, "\tinspected: " ++ show i] where
+	show (Inspected i mi ts m) = unlines [either showError show m, "\tinspected: " ++ show i, "\ttags: " ++ intercalate ", " (map show $ S.toList ts)] where
 		showError :: String -> String
 		showError e = unlines $ ("\terror: " ++ e) : case mi of
 			FileModule f p -> ["file: " ++ f, "project: " ++ maybe "" (view projectPath) p]
@@ -502,12 +536,14 @@ instance ToJSON InspectedModule where
 	toJSON im = object [
 		"inspection" .= _inspection im,
 		"location" .= _inspectedId im,
+		"tags" .= S.toList (_inspectionTags im),
 		either ("error" .=) ("module" .=) (_inspectionResult im)]
 
 instance FromJSON InspectedModule where
 	parseJSON = withObject "inspected module" $ \v -> Inspected <$>
 		v .:: "inspection" <*>
 		v .:: "location" <*>
+		(S.fromList <$> (v .::?! "tags")) <*>
 		((Left <$> v .:: "error") <|> (Right <$> v .:: "module"))
 
 instance Symbol Module where

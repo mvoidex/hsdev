@@ -363,31 +363,35 @@ scanDocs ims = do
 		inWorker w $ setCmdOpts ["-haddock"]
 	runTasks $ map (scanDocs' w) ims
 	where
-		scanDocs' w im = runTask "scanning docs" (view inspectedId im) $ Log.scope "docs" $ do
-			Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
-			im' <-
-				liftExceptT
-					("Scanning docs for {} failed: {}" ~~ view inspectedId im)
-					(S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im)
-				<|> return im
-			Log.log Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
-				view inspectedId im' ~~
-				length (im' ^.. inspectionResult . _Right . moduleDeclarations . each . declarationDocs . _Just)
-			updater $ return $ fromModule im'
+		scanDocs' w im
+			| not $ hasTag RefinedDocsTag im = runTask "scanning docs" (view inspectedId im) $ Log.scope "docs" $ do
+				Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
+				im' <-
+					liftExceptT
+						("Scanning docs for {} failed: {}" ~~ view inspectedId im)
+						(liftM (setTag RefinedDocsTag) $ S.scanModify (\opts _ -> inWorkerT w . inspectDocsGhc opts) im)
+					<|> return im
+				Log.log Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
+					view inspectedId im' ~~
+					length (im' ^.. inspectionResult . _Right . moduleDeclarations . each . declarationDocs . _Just)
+				updater $ return $ fromModule im'
+			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedId im
 		inWorkerT w = ExceptT . inWorker w . runExceptT 
 
 inferModTypes :: UpdateMonad m => [InspectedModule] -> m ()
 inferModTypes = runTasks . map inferModTypes' where
-	inferModTypes' im = runTask "inferring types" (view inspectedId im) $ Log.scope "docs" $ do
-		w <- askSession sessionGhc
-		Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
-		im' <-
-			liftExceptT
-				("Inferring types for {} failed: {}" ~~ view inspectedId im)
-				(S.scanModify (\opts cabal m -> inWorkerT w (inferTypes opts cabal m Nothing)) im)
-			<|> return im
-		Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
-		updater $ return $ fromModule im'
+	inferModTypes' im
+		| not $ hasTag InferredTypesTag im = runTask "inferring types" (view inspectedId im) $ Log.scope "docs" $ do
+			w <- askSession sessionGhc
+			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
+			im' <-
+				liftExceptT
+					("Inferring types for {} failed: {}" ~~ view inspectedId im)
+					(liftM (setTag InferredTypesTag) $ S.scanModify (\opts cabal m -> inWorkerT w (inferTypes opts cabal m Nothing)) im)
+				<|> return im
+			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
+			updater $ return $ fromModule im'
+		| otherwise = Log.log Log.Trace $ "Types for {} already inferred" ~~ view inspectedId im
 	inWorkerT w = ExceptT . inWorker w . runExceptT
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.

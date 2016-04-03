@@ -73,7 +73,7 @@ at_ :: (Int -> Maybe String) -> Int -> String
 at_ g = fromMaybe "" . g
 
 inspect :: Monad m => ModuleLocation -> ExceptT String m Inspection -> ExceptT String m Module -> ExceptT String m InspectedModule
-inspect mloc insp act = lift $ execStateT inspect' (Inspected InspectionNone mloc (Left "not inspected")) where
+inspect mloc insp act = lift $ execStateT inspect' (notInspected mloc) where
 	inspect' = runExceptT $ do
 		i <- mapExceptT lift insp
 		modify (set inspection i)
