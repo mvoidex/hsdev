@@ -50,29 +50,36 @@ import System.Win32.FileMapping.NamePool
 #endif
 
 -- | Inits log chan and returns functions (print message, wait channel)
-initLog :: ServerOpts -> IO (Log, Log.Level -> String -> IO (), IO [String], IO ())
+initLog :: ServerOpts -> IO SessionLog
 initLog sopts = do
 	msgs <- F.newChan
-	l <- newLog (constant [rule']) $ concat [
+	rulesVar <- newMVar [ruleStr]
+	let
+		getRules = do
+			rs <- readMVar rulesVar
+			return $ map (parseRule_ . fromString) rs
+	l <- newLog (return getRules) $ concat [
 		[logger text console | not $ serverSilent sopts],
 		[logger text (chaner msgs)],
 		maybeToList $ (logger text . file) <$> serverLog sopts]
 	Log.writeLog l Log.Info ("Log politics: low = {}, high = {}" ~~ logLow ~~ logHigh)
 	let
 		listenLog = F.dupChan msgs >>= F.readChan
-	return (l, \lev -> writeLog l lev . T.pack, listenLog, stopLog l)
+	return $ SessionLog l rulesVar listenLog (stopLog l)
 	where
-		rule' :: Log.Rule
-		rule' = parseRule_ $ T.pack ("/: " ++ serverLogConfig sopts)
-		(Log.Politics logLow logHigh) = Log.rulePolitics rule' Log.defaultPolitics
+		ruleStr :: String
+		ruleStr = "/: {}" ~~ serverLogConfig sopts
+		(Log.Politics logLow logHigh) = Log.rulePolitics (parseRule_ (fromString ruleStr)) Log.defaultPolitics
 
 instance FormatBuild Log.Level where
 
 -- | Run server
 runServer :: ServerOpts -> ServerM IO () -> IO ()
-runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', outputStr, listenLog, waitOutput) -> Log.scopeLog logger' (T.pack "hsdev") $ Watcher.withWatcher $ \watcher -> do
+runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scopeLog (sessionLogger slog) (T.pack "hsdev") $ Watcher.withWatcher $ \watcher -> do
 	waitSem <- newQSem 0
 	db <- DB.newAsync
+	let
+		outputStr = Log.writeLog (sessionLogger slog)
 	withCache sopts () $ \cdir -> do
 		outputStr Log.Trace $ "Checking cache version in {}" ~~ cdir 
 		ver <- Cache.readVersion $ cdir </> Cache.versionCache
@@ -105,10 +112,7 @@ runServer sopts act = bracket (initLog sopts) (\(_, _, _, x) -> x) $ \(logger', 
 			db
 			(writeCache sopts)
 			(readCache sopts)
-			outputStr
-			logger'
-			listenLog
-			waitOutput
+			slog
 			watcher
 #if mingw32_HOST_OS
 			mmapPool

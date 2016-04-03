@@ -61,10 +61,10 @@ ghcRun opts f = do
 		(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
 		let fs'' = fs' {
 			ghcMode = CompManager,
-			-- ghcLink = LinkInMemory,
-			-- hscTarget = HscInterpreted }
-			ghcLink = NoLink,
-			hscTarget = HscNothing }
+			ghcLink = LinkInMemory,
+			hscTarget = HscInterpreted }
+			-- ghcLink = NoLink,
+			-- hscTarget = HscNothing }
 		void $ setSessionDynFlags fs''
 		f
 

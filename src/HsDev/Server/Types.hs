@@ -3,9 +3,9 @@
 
 module HsDev.Server.Types (
 	ServerMonadBase,
-	Session(..), SessionMonad(..), askSession, ServerM(..),
+	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandError(..), commandErrorMsg, commandErrorDetails, commandError, commandError_, CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogRules, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..), AddedContents(..),
@@ -16,6 +16,7 @@ module HsDev.Server.Types (
 	) where
 
 import Control.Applicative
+import Control.Concurrent.MVar (MVar, swapMVar)
 import Control.Lens (each, makeLenses)
 import Control.Monad.Base
 import Control.Monad.Catch
@@ -52,14 +53,17 @@ import System.Win32.FileMapping.NamePool (Pool)
 
 type ServerMonadBase m = (MonadCatchIO m, MonadBaseControl IO m)
 
+data SessionLog = SessionLog {
+	sessionLogger :: Log,
+	sessionLogRules :: MVar [String],
+	sessionListenLog :: IO [String],
+	sessionLogWait :: IO () }
+
 data Session = Session {
 	sessionDatabase :: DB.Async Database,
 	sessionWriteCache :: Database -> ServerM IO (),
 	sessionReadCache :: (FilePath -> ExceptT String IO Structured) -> ServerM IO (Maybe Database),
-	sessionLog :: Level -> String -> IO (),
-	sessionLogger :: Log,
-	sessionListenLog :: IO [String],
-	sessionLogWait :: IO (),
+	sessionLog :: SessionLog,
 	sessionWatcher :: Watcher,
 #if mingw32_HOST_OS
 	sessionMmapPool :: Maybe Pool,
@@ -80,7 +84,7 @@ askSession f = liftM f getSession
 newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a } deriving (Functor, Applicative, Monad, MonadReader Session, MonadIO, MonadTrans, MonadCatchIO, MonadThrow, MonadCatch)
 
 instance MonadCatchIO m => MonadLog (ServerM m) where
-	askLog = ServerM $ asks sessionLogger
+	askLog = ServerM $ asks (sessionLogger . sessionLog)
 
 instance ServerMonadBase m => SessionMonad (ServerM m) where
 	getSession = ask
@@ -165,7 +169,13 @@ withSession s act = runReaderT (runServerM act) s
 
 -- | Listen server's log
 serverListen :: SessionMonad m => m [String]
-serverListen = join . liftM liftIO $ askSession sessionListenLog
+serverListen = join . liftM liftIO $ askSession (sessionListenLog . sessionLog)
+
+-- | Set server's log config
+serverSetLogRules :: SessionMonad m => [String] -> m [String]
+serverSetLogRules rs = do
+	rvar <- askSession (sessionLogRules . sessionLog)
+	liftIO $ swapMVar rvar rs
 
 -- | Wait for server
 serverWait :: SessionMonad m => m ()
@@ -351,7 +361,8 @@ instance FromJSON Request where
 -- | Command from client
 data Command =
 	Ping |
-	Listen |
+	Listen (Maybe String) |
+	SetLogConfig [String] |
 	AddData { addedContents :: [AddedContents] } |
 	Scan {
 		scanProjects :: [FilePath],
@@ -511,7 +522,8 @@ instance Paths [TargetFilter] where
 instance FromCmd Command where
 	cmdP = subparser $ mconcat [
 		cmd "ping" "ping server" (pure Ping),
-		cmd "listen" "listen server log" (pure Listen),
+		cmd "listen" "listen server log" (Listen <$> optional ruleArg),
+		cmd "set-log" "set log config rules" (SetLogConfig <$> many (strArgument idm)),
 		cmd "add" "add info to database" (AddData <$> option readJSON idm),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
@@ -622,6 +634,7 @@ packageArg :: Parser String
 pathArg :: Mod OptionFields String -> Parser FilePath
 projectArg :: Parser String
 pureFlag :: Parser Bool
+ruleArg :: Parser String
 sandboxArg :: Parser FilePath
 wideFlag :: Parser Bool
 
@@ -648,12 +661,14 @@ packageDbArg =
 pathArg f = strOption (long "path" <> metavar "path" <> short 'p' <> f)
 projectArg = strOption (long "project" <> long "proj" <> metavar "project")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
+ruleArg = strOption (long "config" <> metavar "rule" <> help "set new log rules while in listen command")
 sandboxArg = strOption (long "sandbox" <> metavar "path" <> help "path to cabal sandbox")
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
 
 instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
-	toJSON Listen = cmdJson "listen" []
+	toJSON (Listen r) = cmdJson "listen" ["rule" .= r]
+	toJSON (SetLogConfig rs) = cmdJson "set-log" ["rules" .= rs]
 	toJSON (AddData cts) = cmdJson "add" ["data" .= cts]
 	toJSON (Scan projs cabal sboxes fs ps contents ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
@@ -698,7 +713,8 @@ instance ToJSON Command where
 instance FromJSON Command where
 	parseJSON = withObject "command" $ \v -> asum [
 		guardCmd "ping" v *> pure Ping,
-		guardCmd "listen" v *> pure Listen,
+		guardCmd "listen" v *> (Listen <$> v .::? "rule"),
+		guardCmd "set-log" v *> (SetLogConfig <$> v .:: "rules"),
 		guardCmd "add" v *> (AddData <$> v .:: "data"),
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>

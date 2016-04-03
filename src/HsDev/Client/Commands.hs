@@ -14,6 +14,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import qualified Control.Monad.State as State
 import Control.Monad.Catch (try, SomeException(..))
+import Control.Monad.CatchIO (bracket)
 import Data.Aeson hiding (Result, Error)
 import Data.List
 import Data.Foldable (toList)
@@ -72,8 +73,13 @@ toValue = liftM toJSON
 
 runCommand :: ServerMonadBase m => Command -> ClientM m Value
 runCommand Ping = toValue $ return $ object ["message" .= ("pong" :: String)]
-runCommand Listen = toValue $ do
+runCommand (Listen (Just r)) = bracket (serverSetLogRules ["/: {}" ~~ r]) serverSetLogRules $ \_ -> runCommand (Listen Nothing)
+runCommand (Listen Nothing) = toValue $ do
 	serverListen >>= mapM_ (\msg -> commandNotify (Notification $ object ["message" .= msg]))
+runCommand (SetLogConfig rs) = toValue $ do
+	rules' <- serverSetLogRules rs
+	Log.log Log.Debug $ "log rules switched from '{}' to '{}'" ~~ intercalate ", " rules' ~~ intercalate ", " rs
+	Log.log Log.Info $ "log rules updated to: {}" ~~ intercalate ", " rs
 runCommand (AddData cts) = toValue $ mapM_ updateData cts where
 	updateData (AddedDatabase db) = toValue $ serverUpdateDB db
 	updateData (AddedModule m) = toValue $ serverUpdateDB $ fromModule m
