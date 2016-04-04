@@ -32,7 +32,7 @@ import Control.Applicative
 import Control.Arrow
 import Control.Concurrent
 import Control.DeepSeq
-import Control.Exception (SomeException(..))
+import Control.Exception (SomeException(..), displayException)
 import Control.Lens (view, preview, _Just, over)
 import Control.Monad.Except
 import Control.Monad.Catch (MonadThrow(..), MonadCatch(..))
@@ -46,6 +46,7 @@ import Data.String (fromString)
 import Exception (gcatch)
 import System.Directory
 import System.FilePath (normalise)
+import System.Log.Simple (withNoLog)
 import Text.Read (readMaybe)
 
 import Language.Haskell.GhcMod (GhcModT, withOptions)
@@ -54,6 +55,7 @@ import qualified Language.Haskell.GhcMod.Monad as GhcMod
 import qualified Language.Haskell.GhcMod.Types as GhcMod
 
 import Control.Concurrent.Worker
+import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Sandbox (searchPackageDbStack)
@@ -259,7 +261,7 @@ runGhcMod opts act = do
 locateGhcModEnv :: FilePath -> IO (Either Project PackageDbStack)
 locateGhcModEnv f = do
 	mproj <- locateProject f
-	maybe (liftM Right $ searchPackageDbStack f) (return . Left) mproj
+	maybe (liftM Right $ withNoLog $ searchPackageDbStack f) (return . Left) mproj
 
 ghcModEnvPath :: FilePath -> Either Project PackageDbStack -> FilePath
 ghcModEnvPath defaultPath = either (view projectPath) (fromMaybe defaultPath . preview packageDb . topPackageDb)
@@ -308,11 +310,11 @@ dispatch file act = do
 		t <- pushTask w act
 		return (M.insert envPath' w wmap, t)
 
-waitMultiGhcMod :: Worker (ReaderT WorkerMap IO) -> FilePath -> GhcModT IO a -> ExceptT String IO a
+waitMultiGhcMod :: Worker (ReaderT WorkerMap IO) -> FilePath -> GhcModT IO a -> IO a
 waitMultiGhcMod w f =
 	liftIO . pushTask w . dispatch f >=>
 	asExceptT . waitCatch >=>
 	asExceptT . waitCatch
 	where
-		asExceptT :: Monad m => m (Either SomeException a) -> ExceptT String m a
-		asExceptT = ExceptT . liftM (left (\(SomeException e) -> show e))
+		asExceptT :: IO (Either SomeException a) -> IO a
+		asExceptT act = act >>= either (hsdevError . ToolError "ghc-mod" . displayException) return

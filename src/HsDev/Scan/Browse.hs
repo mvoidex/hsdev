@@ -14,6 +14,7 @@ module HsDev.Scan.Browse (
 
 import Control.Arrow
 import Control.Lens (view, preview, _Just)
+import Control.Monad.Catch (MonadCatch, catch, SomeException)
 import Control.Monad.Except
 import Data.List (isPrefixOf)
 import Data.Maybe
@@ -21,12 +22,15 @@ import Data.String (fromString)
 import Data.Version
 import System.Directory
 import System.FilePath
+import System.Log.Simple.Monad (MonadLog)
 
 import Data.Deps
 import HsDev.PackageDb
 import HsDev.Symbols
+import HsDev.Error
 import HsDev.Tools.Base (inspect)
-import HsDev.Util (liftIOErrors, ordNub)
+import HsDev.Tools.Ghc.Worker (GhcM(..), runGhcM)
+import HsDev.Util (ordNub)
 
 import qualified ConLike as GHC
 import qualified DataCon as GHC
@@ -34,6 +38,7 @@ import qualified DynFlags as GHC
 import qualified GHC
 import qualified GHC.PackageDb as GHC
 import qualified GhcMonad as GHC (liftIO)
+import GhcMonad (GhcMonad)
 import qualified GHC.Paths as GHC
 import qualified Name as GHC
 import qualified Outputable as GHC
@@ -45,49 +50,47 @@ import qualified Var as GHC
 import Pretty
 
 -- | Browse packages
-browsePackages :: [String] -> PackageDbStack -> ExceptT String IO [PackageConfig]
-browsePackages opts dbs = liftIOErrors $ withPackages_ (packageDbStackOpts dbs ++ opts) $
-	liftM (map readPackageConfig) $ lift packageConfigs
+browsePackages :: MonadLog m => [String] -> PackageDbStack -> m [PackageConfig]
+browsePackages opts dbs = withPackages_ (packageDbStackOpts dbs ++ opts) $
+	liftM (map readPackageConfig) packageConfigs
 
 -- | Get packages with deps
-browsePackagesDeps :: [String] -> PackageDbStack -> ExceptT String IO (Deps PackageConfig)
-browsePackagesDeps opts dbs = liftIOErrors $ withPackages (packageDbStackOpts dbs ++ opts) $ \df -> do
-	cfgs <- lift packageConfigs
+browsePackagesDeps :: MonadLog m => [String] -> PackageDbStack -> m (Deps PackageConfig)
+browsePackagesDeps opts dbs = withPackages (packageDbStackOpts dbs ++ opts) $ \df -> do
+	cfgs <- packageConfigs
 	return $ mapDeps (toPkg df) $ mconcat $ map (uncurry deps) $
 		map (GHC.installedPackageId &&& GHC.depends) cfgs
 	where
 		toPkg df' = readPackageConfig . GHC.getPackageDetails df' . GHC.resolveInstalledPackageId df'
 
-listModules :: [String] -> PackageDbStack -> ExceptT String IO [ModuleLocation]
-listModules opts dbs = liftIOErrors $ withPackages_ (packageDbStackOpts dbs ++ opts) $ do
-	ms <- lift packageDbModules
+listModules :: MonadLog m => [String] -> PackageDbStack -> m [ModuleLocation]
+listModules opts dbs = withPackages_ (packageDbStackOpts dbs ++ opts) $ do
+	ms <- packageDbModules
 	pdbs <- mapM (liftIO . ghcPackageDb . fst) ms
 	return [ghcModuleLocation pdb p m | (pdb, (p, m)) <- zip pdbs ms]
 
-browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> ExceptT String IO [InspectedModule]
-browseModules opts dbs mlocs = liftIOErrors $ withPackages_ (packageDbStackOpts dbs ++ opts) $ do
-	ms <- lift packageDbModules
+browseModules :: MonadLog m => [String] -> PackageDbStack -> [ModuleLocation] -> m [InspectedModule]
+browseModules opts dbs mlocs = withPackages_ (packageDbStackOpts dbs ++ opts) $ do
+	ms <- packageDbModules
 	pdbs <- mapM (liftIO . ghcPackageDb . fst) ms
 	liftM catMaybes $ sequence [browseModule' pdb p m | (pdb, (p, m)) <- zip pdbs ms, ghcModuleLocation pdb p m `elem` mlocs]
 	where
-		browseModule' :: PackageDb -> GHC.PackageConfig -> GHC.Module -> ExceptT String GHC.Ghc (Maybe InspectedModule)
+		browseModule' :: PackageDb -> GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
 		browseModule' pdb p m = tryT $ inspect (ghcModuleLocation pdb p m) (return $ InspectionAt 0 opts) (browseModule pdb p m)
 
 -- | Browse modules, if third argument is True - browse only modules in top of package-db stack
-browse :: [String] -> PackageDbStack -> ExceptT String IO [InspectedModule]
+browse :: MonadLog m => [String] -> PackageDbStack -> m [InspectedModule]
 browse opts dbs = listModules opts dbs >>= browseModules opts dbs
 
 -- | Browse modules in top of package-db stack
-browseDb :: [String] -> PackageDbStack -> ExceptT String IO [InspectedModule]
+browseDb :: MonadLog m => [String] -> PackageDbStack -> m [InspectedModule]
 browseDb opts dbs = listModules opts dbs >>= browseModules opts dbs . filter inTop where
 	inTop = (== Just (topPackageDb dbs)) . preview modulePackageDb
 
-browseModule :: PackageDb -> GHC.PackageConfig -> GHC.Module -> ExceptT String GHC.Ghc Module
+browseModule :: PackageDb -> GHC.PackageConfig -> GHC.Module -> GhcM Module
 browseModule pdb package' m = do
-	mi <- lift (GHC.getModuleInfo m) >>= maybe (throwError "Can't find module info") return
+	mi <- GHC.getModuleInfo m >>= maybe (hsdevError $ BrowseNoModuleInfo thisModule) return
 	ds <- mapM (toDecl mi) (GHC.modInfoExports mi)
-	let
-		thisModule = GHC.moduleNameString (GHC.moduleName m)
 	return Module {
 		_moduleName = fromString thisModule,
 		_moduleDocs = Nothing,
@@ -96,15 +99,16 @@ browseModule pdb package' m = do
 		_moduleImports = [import_ iname | iname <- ordNub (mapMaybe (preview definedModule) ds), iname /= fromString thisModule],
 		_moduleDeclarations = sortDeclarations ds }
 	where
+		thisModule = GHC.moduleNameString (GHC.moduleName m)
 		thisLoc = view moduleIdLocation $ mloc m
 		mloc m' = ModuleId (fromString mname') $
 			ghcModuleLocation pdb package' m'
 			where
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl minfo n = do
-			tyInfo <- lift $ GHC.modInfoLookupName minfo n
-			tyResult <- lift $ maybe (inModuleSource n) (return . Just) tyInfo
-			dflag <- lift GHC.getSessionDynFlags
+			tyInfo <- GHC.modInfoLookupName minfo n
+			tyResult <- maybe (inModuleSource n) (return . Just) tyInfo
+			dflag <- GHC.getSessionDynFlags
 			let
 				decl' = decl (fromString $ GHC.getOccString n) $ fromMaybe
 					(Function Nothing [] Nothing)
@@ -125,8 +129,8 @@ browseModule pdb package' m = do
 				| otherwise = Type
 		showResult _ _ = Nothing
 
-withInitializedPackages :: [String] -> (GHC.DynFlags -> GHC.Ghc a) -> IO a
-withInitializedPackages ghcOpts cont = GHC.runGhc (Just GHC.libdir) $ do
+withInitializedPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
+withInitializedPackages ghcOpts cont = runGhcM (Just GHC.libdir) $ do
 	fs <- GHC.getSessionDynFlags
 	GHC.defaultCleanupHandler fs $ do
 		(fs', _, _) <- GHC.parseDynamicFlags fs (map GHC.noLoc ghcOpts)
@@ -134,13 +138,13 @@ withInitializedPackages ghcOpts cont = GHC.runGhc (Just GHC.libdir) $ do
 		(result, _) <- GHC.liftIO $ GHC.initPackages fs'
 		cont result
 
-withPackages :: [String] -> (GHC.DynFlags -> ExceptT String GHC.Ghc a) -> ExceptT String IO a
-withPackages ghcOpts cont = ExceptT $ withInitializedPackages ghcOpts (runExceptT . cont)
+withPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
+withPackages ghcOpts cont = withInitializedPackages ghcOpts cont
 
-withPackages_ :: [String] -> ExceptT String GHC.Ghc a -> ExceptT String IO a
+withPackages_ :: MonadLog m => [String] -> GhcM a -> m a
 withPackages_ ghcOpts act = withPackages ghcOpts (const act)
 
-inModuleSource :: GHC.Name -> GHC.Ghc (Maybe GHC.TyThing)
+inModuleSource :: GhcMonad m => GHC.Name -> m (Maybe GHC.TyThing)
 inModuleSource nm = GHC.getModuleInfo (GHC.nameModule nm) >> GHC.lookupGlobalName nm
 
 formatType :: GHC.NamedThing a => GHC.DynFlags -> (a -> GHC.Type) -> a -> String
@@ -166,8 +170,8 @@ showUnqualifiedPage dflag = Pretty.showDoc Pretty.LeftMode 0 . GHC.withPprStyleD
 styleUnqualified :: GHC.PprStyle
 styleUnqualified = GHC.mkUserStyle GHC.neverQualify GHC.AllTheWay
 
-tryT :: Monad m => ExceptT e m a -> ExceptT e m (Maybe a)
-tryT act = catchError (liftM Just act) (const $ return Nothing)
+tryT :: MonadCatch m => m a -> m (Maybe a)
+tryT act = catch (liftM Just act) (const (return Nothing) . (id :: SomeException -> SomeException))
 
 readPackage :: GHC.PackageConfig -> ModulePackage
 readPackage pc = ModulePackage (GHC.packageNameString pc) (showVersion (GHC.packageVersion pc))
@@ -224,10 +228,10 @@ packageDbCandidate fpath = liftM Just (msum [global', user', sandbox', stack']) 
 packageDbCandidate_ :: FilePath -> IO PackageDb
 packageDbCandidate_ = packageDbCandidate >=> maybe (return GlobalDb) return
 
-packageConfigs :: GHC.GhcMonad m => m [GHC.PackageConfig]
+packageConfigs :: GhcM [GHC.PackageConfig]
 packageConfigs = liftM (fromMaybe [] . GHC.pkgDatabase) GHC.getSessionDynFlags
 
-packageDbModules :: GHC.GhcMonad m => m [(GHC.PackageConfig, GHC.Module)]
+packageDbModules :: GhcM [(GHC.PackageConfig, GHC.Module)]
 packageDbModules = do
 	pkgs <- packageConfigs
 	dflags <- GHC.getSessionDynFlags

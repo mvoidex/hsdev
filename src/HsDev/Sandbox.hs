@@ -12,6 +12,7 @@ module HsDev.Sandbox (
 
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
+import Control.Monad.Catch (MonadCatch(..))
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Control.Lens (view, makeLenses)
@@ -24,6 +25,7 @@ import Distribution.System
 import qualified Distribution.Text as T (display)
 import System.FilePath
 import System.Directory
+import System.Log.Simple (MonadLog(..))
 
 import System.Directory.Paths
 import HsDev.PackageDb
@@ -93,31 +95,30 @@ searchSandbox :: FilePath -> IO (Maybe Sandbox)
 searchSandbox p = runMaybeT $ searchPath p (MaybeT . findSandbox)
 
 -- | Get package-db stack for sandbox
-sandboxPackageDbStack :: Sandbox -> ExceptT String IO PackageDbStack
+sandboxPackageDbStack :: (MonadLog m, MonadCatch m) => Sandbox -> m PackageDbStack
 sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
 	dir <- cabalSandboxPackageDb
 	return $ PackageDbStack [PackageDb $ fpath </> dir]
-sandboxPackageDbStack (Sandbox StackWork fpath) = maybeToExceptT "Can't locate stack environment" $
-	liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory fpath
+sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory fpath
 
 -- | Search package-db stack with user-db as default
-searchPackageDbStack :: FilePath -> IO PackageDbStack
+searchPackageDbStack :: (MonadLog m, MonadCatch m) => FilePath -> m PackageDbStack
 searchPackageDbStack p = do
-	mbox <- searchSandbox p
+	mbox <- liftIO $ searchSandbox p
 	case mbox of
 		Nothing -> return userDb
-		Just sbox -> liftM (either (const userDb) id) $ runExceptT $ sandboxPackageDbStack sbox
+		Just sbox -> sandboxPackageDbStack sbox
 
 -- | Restore package-db stack by package-db
-restorePackageDbStack :: PackageDb -> IO PackageDbStack
+restorePackageDbStack :: (MonadLog m, MonadCatch m) => PackageDb -> m PackageDbStack
 restorePackageDbStack GlobalDb = return globalDb
 restorePackageDbStack UserDb = return userDb
 restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDb p) $ runMaybeT $ do
-	sbox <- MaybeT $ searchSandbox p
-	exceptToMaybeT $ sandboxPackageDbStack sbox
+	sbox <- MaybeT $ liftIO $ searchSandbox p
+	lift $ sandboxPackageDbStack sbox
 
 -- | Get actual sandbox build path: <arch>-<platform>-<compiler>-<version>
-cabalSandboxLib :: ExceptT String IO FilePath
+cabalSandboxLib :: MonadLog m => m FilePath
 cabalSandboxLib = do
 	res <- withPackages ["-no-user-package-db"] $
 		return .
@@ -131,5 +132,5 @@ cabalSandboxLib = do
 	return $ T.display buildPlatform ++ "-" ++ compiler ++ "-" ++ ver
 
 -- | Get sandbox package-db: <arch>-<platform>-<compiler>-<version>-packages.conf.d
-cabalSandboxPackageDb :: ExceptT String IO FilePath
+cabalSandboxPackageDb :: MonadLog m => m FilePath
 cabalSandboxPackageDb = liftM (++ "-packages.conf.d") cabalSandboxLib

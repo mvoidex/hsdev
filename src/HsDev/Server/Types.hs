@@ -42,7 +42,7 @@ import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
 import HsDev.Tools.GhcMod (OutputMessage, WorkerMap)
-import HsDev.Tools.Ghc.Worker (Worker, Ghc)
+import HsDev.Tools.Ghc.Worker (Worker, GhcM)
 import HsDev.Tools.Types (Note)
 import HsDev.Tools.AutoFix (Correction)
 import HsDev.Util
@@ -51,7 +51,7 @@ import HsDev.Util
 import System.Win32.FileMapping.NamePool (Pool)
 #endif
 
-type ServerMonadBase m = (MonadCatchIO m, MonadBaseControl IO m)
+type ServerMonadBase m = (MonadThrow m, MonadCatch m, MonadCatchIO m, MonadBaseControl IO m, Alternative m)
 
 data SessionLog = SessionLog {
 	sessionLogger :: Log,
@@ -68,8 +68,8 @@ data Session = Session {
 #if mingw32_HOST_OS
 	sessionMmapPool :: Maybe Pool,
 #endif
-	sessionGhc :: Worker Ghc,
-	sessionGhci :: Worker Ghc,
+	sessionGhc :: Worker GhcM,
+	sessionGhci :: Worker GhcM,
 	sessionGhcMod :: Worker (ReaderT WorkerMap IO),
 	sessionExit :: IO (),
 	sessionWait :: IO (),
@@ -81,7 +81,7 @@ class (ServerMonadBase m, MonadLog m) => SessionMonad m where
 askSession :: SessionMonad m => (Session -> a) -> m a
 askSession f = liftM f getSession
 
-newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a } deriving (Functor, Applicative, Monad, MonadReader Session, MonadIO, MonadTrans, MonadCatchIO, MonadThrow, MonadCatch)
+newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a } deriving (Functor, Applicative, Alternative, Monad, MonadReader Session, MonadIO, MonadTrans, MonadCatchIO, MonadThrow, MonadCatch)
 
 instance MonadCatchIO m => MonadLog (ServerM m) where
 	askLog = ServerM $ asks (sessionLogger . sessionLog)

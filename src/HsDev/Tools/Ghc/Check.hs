@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PatternGuards, OverloadedStrings #-}
 
 module HsDev.Tools.Ghc.Check (
 	checkFiles, check, checkFile, checkSource,
@@ -14,14 +14,18 @@ module HsDev.Tools.Ghc.Check (
 	) where
 
 import Control.Lens (preview, view, each, _Just, (^..))
+import Control.Monad.CatchIO (throw)
 import Control.Monad.Except
+import Control.Monad.Catch (MonadThrow(..))
 import Data.Maybe (fromMaybe)
 import System.FilePath (makeRelative)
 import System.Directory (doesDirectoryExist)
+import System.Log.Simple (MonadLog(..), scope)
 
 import GHC hiding (Warning, Module, moduleName)
 
 import Control.Concurrent.FiniteChan
+import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.Symbols (moduleOpts)
@@ -33,8 +37,8 @@ import HsDev.Tools.Types
 import HsDev.Util (readFileUtf8, ordNub)
 
 -- | Check files and collect warnings and errors
-checkFiles :: [String] -> PackageDbStack -> [FilePath] -> Maybe Project -> Ghc [Note OutputMessage]
-checkFiles opts pdbs files _ = do
+checkFiles :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> [FilePath] -> Maybe Project -> m [Note OutputMessage]
+checkFiles opts pdbs files _ = scope "check-files" $ do
 	ch <- liftIO newChan
 	withFlags $ do
 		modifyFlags (\fs -> fs { log_action = logToChan ch })
@@ -45,17 +49,17 @@ checkFiles opts pdbs files _ = do
 	liftIO $ recalcNotesTabs notes
 
 -- | Check module source
-check :: [String] -> PackageDbStack -> Module -> Maybe String -> ExceptT String Ghc [Note OutputMessage]
-check opts pdbs m msrc = case view moduleLocation m of
+check :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> Maybe String -> m [Note OutputMessage]
+check opts pdbs m msrc = scope "check" $ case view moduleLocation m of
 	FileModule file proj -> do
 		ch <- liftIO newChan
-		pkgs <- mapExceptT liftIO $ browsePackages opts pdbs
+		pkgs <- browsePackages opts pdbs
 		let
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file) $
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
-		lift $ withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
+		withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
 			_ <- setCmdOpts $ concat [
 				["-Wall"],
 				packageDbStackOpts pdbs,
@@ -67,14 +71,14 @@ check opts pdbs m msrc = case view moduleLocation m of
 			loadTargets [target]
 		notes <- liftIO $ stopChan ch
 		liftIO $ recalcNotesTabs notes
-	_ -> throwError "Module is not source"
+	_ -> scope "check" $ hsdevError $ ModuleNotSource (view moduleLocation m)
 
 -- | Check module and collect warnings and errors
-checkFile :: [String] -> PackageDbStack -> Module -> ExceptT String Ghc [Note OutputMessage]
+checkFile :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> m [Note OutputMessage]
 checkFile opts pdbs m = check opts pdbs m Nothing
 
 -- | Check module and collect warnings and errors
-checkSource :: [String] -> PackageDbStack -> Module -> String -> ExceptT String Ghc [Note OutputMessage]
+checkSource :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> String -> m [Note OutputMessage]
 checkSource opts pdbs m src = check opts pdbs m (Just src)
 
 -- Recalc tabs for notes

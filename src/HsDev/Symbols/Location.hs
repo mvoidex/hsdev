@@ -34,7 +34,7 @@ import System.FilePath
 import Text.Read (readMaybe)
 
 import HsDev.PackageDb
-import HsDev.Project
+import HsDev.Project.Types
 import HsDev.Util ((.::), (.::?), (.::?!), objectUnion)
 
 -- | Just package name and version without its location

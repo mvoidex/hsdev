@@ -33,6 +33,8 @@ import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe)
+import Data.Function
+import Data.Ord
 import Data.Text (Text, unpack)
 import qualified Data.Text as T
 import Data.Set (Set)
@@ -43,6 +45,7 @@ import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented
+import HsDev.Types
 import HsDev.Util (tab, tabs, (.::), (.::?), (.::?!), noNulls)
 
 -- | What to export/import for data/class etc
@@ -483,11 +486,19 @@ data Inspected i t a = Inspected {
 	_inspection :: Inspection,
 	_inspectedId :: i,
 	_inspectionTags :: Set t,
-	_inspectionResult :: Either String a }
-		deriving (Eq, Ord)
+	_inspectionResult :: Either HsDevError a }
+
+inspectedTup :: Inspected i t a -> (Inspection, i, Set t, Maybe a)
+inspectedTup (Inspected insp i tags res) = (insp, i, tags, either (const Nothing) Just res)
+
+instance (Eq i, Eq t, Eq a) => Eq (Inspected i t a) where
+	(==) = (==) `on` inspectedTup
+
+instance (Ord i, Ord t, Ord a) => Ord (Inspected i t a) where
+	compare = comparing inspectedTup
 
 notInspected :: Ord t => i -> Inspected i t a
-notInspected i = Inspected mempty i noTags (Left "not inspected")
+notInspected i = Inspected mempty i noTags (Left NotInspected)
 
 instance Functor (Inspected i t) where
 	fmap f insp = insp {
@@ -526,8 +537,8 @@ type InspectedModule = Inspected ModuleLocation ModuleTag Module
 
 instance Show InspectedModule where
 	show (Inspected i mi ts m) = unlines [either showError show m, "\tinspected: " ++ show i, "\ttags: " ++ intercalate ", " (map show $ S.toList ts)] where
-		showError :: String -> String
-		showError e = unlines $ ("\terror: " ++ e) : case mi of
+		showError :: HsDevError -> String
+		showError e = unlines $ ("\terror: " ++ show e) : case mi of
 			FileModule f p -> ["file: " ++ f, "project: " ++ maybe "" (view projectPath) p]
 			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ n]
 			ModuleSource src -> ["source: " ++ fromMaybe "" src]

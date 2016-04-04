@@ -1,8 +1,9 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PatternGuards, OverloadedStrings, GeneralizedNewtypeDeriving #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Worker (
 	-- * Workers
+	GhcM(..), runGhcM, liftGhc,
 	ghcWorker, ghciWorker,
 	-- * Initializers and actions
 	ghcRun,
@@ -22,7 +23,9 @@ module HsDev.Tools.Ghc.Worker (
 
 import Control.Monad
 import Control.Monad.Catch
+import Control.Monad.CatchIO
 import Control.Monad.Except
+import Control.Monad.Reader
 import Data.Dynamic
 import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
@@ -30,10 +33,16 @@ import Data.Version (showVersion)
 import Packages
 import StringBuffer
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
-import Text.Read
+import qualified  System.Log.Simple as Log
+import System.Log.Simple.Monad (MonadLog(..))
+import Text.Read (readMaybe)
+import Text.Format
 
+import Exception (ExceptionMonad(..))
 import GHC hiding (Warning, Module, moduleName)
+import GhcMonad (Ghc(..))
 import GHC.Paths
+import DynFlags (HasDynFlags(..))
 import Outputable
 import qualified ErrUtils as E
 import FastString (unpackFS)
@@ -44,17 +53,53 @@ import System.Directory.Paths
 import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage, ModuleLocation(..))
 import HsDev.Tools.Types
 
+instance MonadThrow Ghc where
+	throwM = liftIO . throwM
+
+instance MonadCatch Ghc where
+	catch = gcatch
+
+instance MonadCatchIO Ghc where
+	catch = gcatch
+	block act = Ghc $ block . unGhc act
+	unblock act = Ghc $ unblock . unGhc act
+
+instance ExceptionMonad m => ExceptionMonad (ReaderT r m) where
+	gcatch act onError = ReaderT $ \v -> gcatch (runReaderT act v) (flip runReaderT v . onError)
+	gmask f = ReaderT $ \v -> gmask (\h -> flip runReaderT v (f $ \act -> ReaderT (\v' -> h (runReaderT act v'))))
+
+instance (Monad m, HasDynFlags m) => HasDynFlags (ReaderT r m) where
+	getDynFlags = lift getDynFlags
+
+instance (Monad m, GhcMonad m) => GhcMonad (ReaderT r m) where
+	getSession = lift getSession
+	setSession = lift . setSession
+
+newtype GhcM a = GhcM { unGhcM :: ReaderT Log.Log Ghc a }
+	deriving (Functor, Applicative, Monad, MonadIO, MonadCatchIO, MonadThrow, MonadCatch, ExceptionMonad, HasDynFlags, MonadLog, GhcMonad)
+
+runGhcM :: MonadLog m => Maybe FilePath -> GhcM a -> m a
+runGhcM dir act = do
+	l <- askLog
+	liftIO $ runGhc dir (runReaderT (unGhcM act) l)
+
+liftGhc :: Ghc a -> GhcM a
+liftGhc = GhcM . lift
+
 -- | Ghc worker. Pass options and initializer action
-ghcWorker :: [String] -> Ghc () -> IO (Worker Ghc)
-ghcWorker opts initialize = startWorker (runGhc (Just libdir)) ghcInit id where
-	ghcInit f = ghcRun opts (initialize >> f)
+ghcWorker :: MonadLog m => [String] -> GhcM () -> m (Worker GhcM)
+ghcWorker opts initialize = do
+	l <- askLog
+	liftIO $ startWorker (flip runReaderT l . runGhcM (Just libdir)) (ghcRun opts . (initialize >>)) (Log.scope "ghc")
 
 -- | Interpreter worker is worker with @preludeModules@ loaded
-ghciWorker :: IO (Worker Ghc)
-ghciWorker = ghcWorker [] (importModules preludeModules)
+ghciWorker :: MonadLog m => m (Worker GhcM)
+ghciWorker = do
+	l <- askLog
+	liftIO $ startWorker (flip runReaderT l . runGhcM (Just libdir)) (ghcRun [] . (importModules preludeModules >>)) (Log.scope "ghc")
 
 -- | Run ghc
-ghcRun :: [String] -> Ghc a -> Ghc a
+ghcRun :: GhcMonad m => [String] -> m a -> m a
 ghcRun opts f = do
 	fs <- getSessionDynFlags
 	defaultCleanupHandler fs $ do
@@ -69,11 +114,11 @@ ghcRun opts f = do
 		f
 
 -- | Alter @DynFlags@ temporary
-withFlags :: Ghc a -> Ghc a
+withFlags :: GhcMonad m => m a -> m a
 withFlags = gbracket getSessionDynFlags (\fs -> setSessionDynFlags fs >> return ()) . const
 
 -- | Update @DynFlags@
-modifyFlags :: (DynFlags -> DynFlags) -> Ghc ()
+modifyFlags :: GhcMonad m => (DynFlags -> DynFlags) -> m ()
 modifyFlags f = do
 	fs <- getSessionDynFlags
 	let
@@ -83,25 +128,29 @@ modifyFlags f = do
 	return ()
 
 -- | Add options without reinit session
-addCmdOpts :: [String] -> Ghc ()
+addCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
 addCmdOpts opts = do
+	Log.log Log.Trace $ "setting ghc options: {}" ~~ unwords opts
 	fs <- getSessionDynFlags
 	(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
 	let fs'' = fs' {
 		ghcMode = CompManager,
-		ghcLink = NoLink,
-		hscTarget = HscNothing }
+		ghcLink = LinkInMemory,
+		hscTarget = HscInterpreted }
+		-- ghcLink = NoLink,
+		-- hscTarget = HscNothing }
 	void $ setSessionDynFlags fs''
 
 -- | Set options after session reinit
-setCmdOpts :: [String] -> Ghc ()
+setCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
 setCmdOpts opts = do
+	Log.log Log.Trace $ "restarting ghc session with: {}" ~~ unwords opts
 	initGhcMonad (Just libdir)
 	addCmdOpts opts
 	modifyFlags (\fs -> fs { log_action = logToNull })
 
 -- | Import some modules
-importModules :: [String] -> Ghc ()
+importModules :: GhcMonad m => [String] -> m ()
 importModules mods = mapM parseImportDecl ["import " ++ m | m <- mods] >>= setContext . map IIDecl
 
 -- | Default interpreter modules
@@ -109,16 +158,16 @@ preludeModules :: [String]
 preludeModules = ["Prelude", "Data.List", "Control.Monad", "HsDev.Tools.Ghc.Prelude"]
 
 -- | Evaluate expression
-evaluate :: String -> Ghc String
-evaluate expr = liftM fromDynamic (dynCompileExpr $ "show (" ++ expr ++ ")") >>=
+evaluate :: GhcMonad m => String -> m String
+evaluate expr = liftM fromDynamic (dynCompileExpr $ "show ({})" ~~ expr) >>=
 	maybe (fail "evaluate fail") return
 
 -- | Clear loaded targets
-clearTargets :: Ghc ()
+clearTargets :: GhcMonad m => m ()
 clearTargets = loadTargets []
 
 -- | Make target with its source code optional
-makeTarget :: String -> Maybe String -> Ghc Target
+makeTarget :: GhcMonad m => String -> Maybe String -> m Target
 makeTarget name Nothing = guessTarget name Nothing
 makeTarget name (Just cts) = do
 	t <- guessTarget name Nothing
@@ -126,11 +175,11 @@ makeTarget name (Just cts) = do
 	return t { targetContents = Just (stringToStringBuffer cts, tm) }
 
 -- | Load all targets
-loadTargets :: [Target] -> Ghc ()
+loadTargets :: GhcMonad m => [Target] -> m ()
 loadTargets ts = setTargets ts >> load LoadAllTargets >> return ()
 
 -- | Get list of installed packages
-listPackages :: Ghc [ModulePackage]
+listPackages :: GhcMonad m => m [ModulePackage]
 listPackages = liftM (mapMaybe readPackage . fromMaybe [] . pkgDatabase) getSessionDynFlags
 
 readPackage :: PackageConfig -> Maybe ModulePackage
@@ -142,7 +191,7 @@ spanRegion (RealSrcSpan s) = Position (srcSpanStartLine s) (srcSpanStartCol s) `
 spanRegion _ = Position 0 0 `region` Position 0 0
 
 -- | Set current directory and restore it after action
-withCurrentDirectory :: FilePath -> Ghc a -> Ghc a
+withCurrentDirectory :: GhcMonad m => FilePath -> m a -> m a
 withCurrentDirectory dir act = gbracket (liftIO getCurrentDirectory) (liftIO . setCurrentDirectory) $
 	const (liftIO (setCurrentDirectory dir) >> act)
 
@@ -174,9 +223,3 @@ logToNull :: DynFlags -> E.Severity -> SrcSpan -> PprStyle -> SDoc -> IO ()
 logToNull _ _ _ _ _ = return ()
 
 -- TODO: Load target by @ModuleLocation@, which may cause updating @DynFlags@
-
-instance MonadThrow Ghc where
-	throwM = liftIO . throwM
-
-instance MonadCatch Ghc where
-	catch = gcatch

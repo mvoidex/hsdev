@@ -16,6 +16,7 @@ module HsDev.Stack (
 import Control.Arrow
 import Control.Lens (makeLenses, Lens', at, ix, lens, (^?), (^.))
 import Control.Monad
+import Control.Monad.Catch (MonadCatch(..))
 import Control.Monad.Trans.Maybe
 import Control.Monad.IO.Class
 import Data.Char
@@ -29,17 +30,19 @@ import System.Directory
 import System.Environment
 import System.FilePath
 import System.Process
+import System.Log.Simple (MonadLog(..))
 
 import qualified GHC
 import qualified Packages as GHC
 
+import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Scan.Browse (withPackages)
 import HsDev.Util (withCurrentDirectory)
 
 -- | Get compiler version
-stackCompiler :: MaybeT IO String
-stackCompiler = exceptToMaybeT $ do
+stackCompiler :: MonadLog m => m String
+stackCompiler = do
 	res <- withPackages ["-no-user-package-db"] $
 		return .
 		map (GHC.packageNameString &&& GHC.packageVersion) .
@@ -54,12 +57,13 @@ stackCompiler = exceptToMaybeT $ do
 -- | Get arch for stack
 stackArch :: String
 stackArch = T.display buildArch
+
 -- | Invoke stack command, we are trying to get actual stack near current hsdev executable
-stack :: [String] -> MaybeT IO String
-stack cmd = do
+stack :: (MonadLog m, MonadCatch m) => [String] -> m String
+stack cmd = hsdevLiftIO $ do
 	curExe <- liftIO getExecutablePath
 	withCurrentDirectory (takeDirectory curExe) $ do
-		stackExe <- MaybeT $ findExecutable "stack"
+		stackExe <- liftIO (findExecutable "stack") >>= maybe (hsdevError $ ToolNotFound "stack") return
 		comp <- stackCompiler
 		liftIO $ readProcess stackExe (cmd ++ ["--compiler", comp, "--arch", stackArch]) ""
 
@@ -71,7 +75,7 @@ yaml (Just y) = ["--stack-yaml", y]
 type Paths = Map String FilePath
 
 -- | Stack path
-path :: Maybe FilePath -> MaybeT IO Paths
+path :: (MonadLog m, MonadCatch m) => Maybe FilePath -> m Paths
 path mcfg = liftM (M.fromList . map breakPath . lines) $ stack ("path" : yaml mcfg) where
 	breakPath :: String -> (String, FilePath)
 	breakPath = second (dropWhile isSpace . drop 1) . break (== ':')
@@ -81,15 +85,15 @@ pathOf :: String -> Lens' Paths (Maybe FilePath)
 pathOf = at
 
 -- | Build stack project
-build :: [String] -> Maybe FilePath -> MaybeT IO ()
+build :: (MonadLog m, MonadCatch m) => [String] -> Maybe FilePath -> m ()
 build opts mcfg = void $ stack $ "build" : (opts ++ yaml mcfg)
 
 -- | Build only dependencies
-buildDeps :: Maybe FilePath -> MaybeT IO ()
+buildDeps :: (MonadLog m, MonadCatch m) => Maybe FilePath -> m ()
 buildDeps = build ["--only-dependencies"]
 
 -- | Configure project
-configure :: Maybe FilePath -> MaybeT IO ()
+configure :: (MonadLog m, MonadCatch m) => Maybe FilePath -> m ()
 configure = build ["--only-configure"]
 
 data StackEnv = StackEnv {
@@ -112,12 +116,12 @@ getStackEnv p = StackEnv <$>
 	(p ^. pathOf "local-pkg-db")
 
 -- | Projects paths
-projectEnv :: FilePath -> MaybeT IO StackEnv
-projectEnv p = do
+projectEnv :: (MonadLog m, MonadCatch m) => FilePath -> m StackEnv
+projectEnv p = hsdevLiftIO $ do
 	hasConfig <- liftIO $ doesFileExist yaml'
-	guard hasConfig
+	unless hasConfig $ hsdevError $ FileNotFound yaml'
 	paths' <- path (Just yaml')
-	MaybeT $ return $ getStackEnv paths'
+	maybe (hsdevError $ ToolError "stack" "can't get paths") return $ getStackEnv paths'
 	where
 		yaml' = p </> "stack.yaml"
 

@@ -231,7 +231,7 @@ locateSourceDir :: FilePath -> IO (Maybe (Extensions FilePath))
 locateSourceDir f = runMaybeT $ do
 	file <- liftIO $ canonicalizePath f
 	p <- MaybeT $ locateProject file
-	proj <- MaybeT $ fmap (either (const Nothing) Just) $ runExceptT $ loadProject p
+	proj <- lift $ loadProject p
 	MaybeT $ return $ findSourceDir proj file
 
 -- | Make `Info` for standalone `Module`

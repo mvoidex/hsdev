@@ -1,6 +1,8 @@
 module HsDev (
 	module Data.Default,
 
+	module HsDev.Types,
+	module HsDev.Error,
 	module HsDev.Server.Base,
 	module HsDev.Server.Commands,
 	module HsDev.Client.Commands,
@@ -16,6 +18,8 @@ module HsDev (
 
 import Data.Default
 
+import HsDev.Types
+import HsDev.Error
 import HsDev.Server.Base
 import HsDev.Server.Commands
 import HsDev.Client.Commands

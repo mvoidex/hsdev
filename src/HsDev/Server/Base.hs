@@ -103,8 +103,8 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scop
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"
 #endif
-	ghcw <- ghcWorker [] (return ())
-	ghciw <- ghciWorker
+	ghcw <- withLog (sessionLogger slog) $ ghcWorker [] (return ())
+	ghciw <- withLog (sessionLogger slog) ghciWorker
 	ghcmodw <- ghcModMultiWorker
 	defs <- getDefines
 	let

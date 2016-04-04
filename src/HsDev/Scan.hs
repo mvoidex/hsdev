@@ -19,13 +19,14 @@ module HsDev.Scan (
 import Control.DeepSeq
 import Control.Lens (view, preview, set, over, each, _Right, _1, _2, _3, (^.), (^..))
 import Control.Monad.Except
-import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.List (intercalate)
 import System.Directory
 import Text.Format
 
-import HsDev.Scan.Browse (browsePackages)
-import HsDev.Server.Types (FileContents(..))
+import HsDev.Error
+import HsDev.Scan.Browse (browsePackages, browseModules)
+import HsDev.Server.Types (FileContents(..), CommandMonad(..))
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Types
@@ -69,7 +70,7 @@ instance FormatBuild ScanContents where
 			~~ (intercalate ", " $ map (display . topPackageDb) $ cs ^.. each)
 
 class EnumContents a where
-	enumContents :: a -> ExceptT String IO ScanContents
+	enumContents :: CommandMonad m => a -> m ScanContents
 
 instance EnumContents ModuleLocation where
 	enumContents mloc = return $ ScanContents [(mloc, [], Nothing)] [] []
@@ -91,8 +92,8 @@ instance {-# OVERLAPPING #-} EnumContents a => EnumContents [a] where
 
 instance {-# OVERLAPS #-} EnumContents FilePath where
 	enumContents f
-		| haskellSource f = do
-			mproj <- liftEIO $ locateProject f
+		| haskellSource f = hsdevLiftIO $ do
+			mproj <- liftIO $ locateProject f
 			case mproj of
 				Nothing -> enumContents $ FileModule f Nothing
 				Just proj -> do
@@ -108,10 +109,10 @@ instance EnumContents FileContents where
 		| otherwise = return mempty
 
 -- | Enum project sources
-enumProject :: Project -> ExceptT String IO ScanContents
-enumProject p = do
-	p' <- loadProject p
-	pdbs <- liftE $ searchPackageDbStack (view projectPath p')
+enumProject :: CommandMonad m => Project -> m ScanContents
+enumProject p = hsdevLiftIO $ do
+	p' <- liftIO $ loadProject p
+	pdbs <- searchPackageDbStack (view projectPath p')
 	pkgs <- liftM (map $ view (package . packageName)) $ browsePackages [] pdbs
 	let
 		projOpts :: FilePath -> [String]
@@ -121,25 +122,25 @@ enumProject p = do
 				["-hide-all-packages"],
 				["-package " ++ view projectName p'],
 				["-package " ++ dep | dep <- view infoDepends i, dep `elem` pkgs]]
-	srcs <- projectSources p'
+	srcs <- liftIO $ projectSources p'
 	let
 		mlocs = over each (\src -> over ghcOptions (++ projOpts (view entity src)) . over entity (\f -> FileModule f (Just p')) $ src) srcs
 	mods <- liftM modulesToScan $ enumContents mlocs
 	return $ ScanContents [] [(p', mods)] [] -- (sandboxCabals sboxes)
 
 -- | Enum sandbox
-enumSandbox :: Sandbox -> ExceptT String IO ScanContents
+enumSandbox :: CommandMonad m => Sandbox -> m ScanContents
 enumSandbox = sandboxPackageDbStack >=> enumContents
 
 -- | Enum directory modules
-enumDirectory :: FilePath -> ExceptT String IO ScanContents
-enumDirectory dir = do
-	cts <- liftException $ traverseDirectory dir
+enumDirectory :: CommandMonad m => FilePath -> m ScanContents
+enumDirectory dir = hsdevLiftIO $ do
+	cts <- liftIO $ traverseDirectory dir
 	let
 		projects = filter cabalFile cts
 		sources = filter haskellSource cts
-	dirs <- liftE $ filterM doesDirectoryExist cts
-	sboxes <- liftM catMaybes $ triesMap (liftE . findSandbox) dirs
+	dirs <- liftIO $ filterM doesDirectoryExist cts
+	sboxes <- liftM catMaybes $ triesMap (liftIO . findSandbox) dirs
 	pdbs <- mapM enumSandbox sboxes
 	projs <- liftM mconcat $ triesMap (enumProject . project) projects
 	let
@@ -151,14 +152,14 @@ enumDirectory dir = do
 		mconcat pdbs]
 
 -- | Scan project file
-scanProjectFile :: [String] -> FilePath -> ExceptT String IO Project
-scanProjectFile _ f = do
-	proj <- (liftE $ locateProject f) >>= maybe (throwError "Can't locate project") return
-	loadProject proj
+scanProjectFile :: CommandMonad m => [String] -> FilePath -> m Project
+scanProjectFile _ f = hsdevLiftIO $ do
+	proj <- (liftIO $ locateProject f) >>= maybe (hsdevError $ FileNotFound f) return
+	liftIO $ loadProject proj
 
 -- | Scan module
-scanModule :: [(String, String)] -> [String] -> ModuleLocation -> Maybe String -> ExceptT String IO InspectedModule
-scanModule defines opts (FileModule f p) mcts = liftM setProj $ inspectFile defines opts f mcts where
+scanModule :: CommandMonad m => [(String, String)] -> [String] -> ModuleLocation -> Maybe String -> m InspectedModule
+scanModule defines opts (FileModule f p) mcts = hsdevLiftIO $ liftM setProj $ liftIO $ inspectFile defines opts f mcts where
 	setProj =
 		set (inspectedId . moduleProject) p .
 		set (inspectionResult . _Right . moduleLocation . moduleProject) p
@@ -166,19 +167,20 @@ scanModule defines opts (FileModule f p) mcts = liftM setProj $ inspectFile defi
 -- 	infer' m = tryInfer <|> return m where
 -- 		tryInfer = mapExceptT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
 -- 			runGhcMod defaultOptions $ inferTypes opts Cabal m
-scanModule _ opts (InstalledModule c p n) _ = do
-	pdbs <- liftIO $ getDbs c
-	browse opts pdbs n p
+scanModule _ opts mloc@(InstalledModule c _ n) _ = hsdevLiftIO $ do
+	pdbs <- getDbs c
+	ims <- browseModules opts pdbs [mloc]
+	maybe (hsdevError $ BrowseNoModuleInfo n) return $ listToMaybe ims
 	where
-		getDbs :: PackageDb -> IO PackageDbStack
+		getDbs :: CommandMonad m => PackageDb -> m PackageDbStack
 		getDbs = maybe (return userDb) searchPackageDbStack . preview packageDb
-scanModule _ _ (ModuleSource _) _ = throwError "Can inspect only modules in file or cabal"
+scanModule _ _ (ModuleSource _) _ = hsdevError $ InspectError "Can inspect only modules in file or cabal"
 
 -- | Scan additional info and modify scanned module
-scanModify :: ([String] -> PackageDbStack -> Module -> ExceptT String IO Module) -> InspectedModule -> ExceptT String IO InspectedModule
+scanModify :: CommandMonad m => ([String] -> PackageDbStack -> Module -> m Module) -> InspectedModule -> m InspectedModule
 scanModify f im = traverse f' im where
 	f' m = do
-		pdbs <- liftIO $ case view moduleLocation m of
+		pdbs <- case view moduleLocation m of
 			-- TODO: Get actual sandbox stack
 			FileModule fpath _ -> searchPackageDbStack fpath
 			InstalledModule pdb _ _ -> maybe (return userDb) searchPackageDbStack $ preview packageDb pdb
@@ -186,27 +188,27 @@ scanModify f im = traverse f' im where
 		f (fromMaybe [] $ preview (inspection . inspectionOpts) im) pdbs m
 
 -- | Is inspected module up to date?
-upToDate :: [String] -> InspectedModule -> ExceptT String IO Bool
+upToDate :: [String] -> InspectedModule -> IO Bool
 upToDate opts im = case view inspectedId im of
 	FileModule f _ -> liftM (== view inspection im) $ fileInspection f opts
 	InstalledModule _ _ _ -> return $ view inspection im == browseInspection opts
 	_ -> return False
 
 -- | Rescan inspected module
-rescanModule :: [(String, String)] -> [String] -> InspectedModule -> ExceptT String IO (Maybe InspectedModule)
+rescanModule :: CommandMonad m => [(String, String)] -> [String] -> InspectedModule -> m (Maybe InspectedModule)
 rescanModule defines opts im = do
-	up <- upToDate opts im
+	up <- liftIO $ upToDate opts im
 	if up
 		then return Nothing
 		else fmap Just $ scanModule defines opts (view inspectedId im) Nothing
 
 -- | Is module new or recently changed
-changedModule :: Database -> [String] -> ModuleLocation -> ExceptT String IO Bool
-changedModule db opts m = maybe (return True) (liftM not . upToDate opts) m' where
+changedModule :: Database -> [String] -> ModuleLocation -> IO Bool
+changedModule db opts m = maybe (return True) (liftM not . liftIO . upToDate opts) m' where
 	m' = lookupInspected m db
 
 -- | Returns new (to scan) and changed (to rescan) modules
-changedModules :: Database -> [String] -> [ModuleToScan] -> ExceptT String IO [ModuleToScan]
+changedModules :: Database -> [String] -> [ModuleToScan] -> IO [ModuleToScan]
 changedModules db opts = filterM $ \m -> if isJust (m ^. _3)
 	then return True
 	else changedModule db (opts ++ (m ^. _2)) (m ^. _1)

@@ -10,6 +10,7 @@ module HsDev.Database.Update.Types (
 import Control.Applicative
 import Control.Lens (makeLenses)
 import Control.Monad.Base
+import Control.Monad.Catch
 import Control.Monad.CatchIO
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -88,7 +89,7 @@ makeLenses ''UpdateOptions
 type UpdateMonad m = (CommandMonad m, MonadReader UpdateOptions m, MonadWriter [ModuleLocation] m)
 
 newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateOptions (WriterT [ModuleLocation] (ClientM m)) a }
-	deriving (Applicative, Monad, MonadIO, MonadCatchIO, Functor, MonadReader UpdateOptions, MonadWriter [ModuleLocation])
+	deriving (Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadCatchIO, Functor, MonadReader UpdateOptions, MonadWriter [ModuleLocation])
 
 instance MonadTrans UpdateM where
 	lift = UpdateM . lift . lift . lift

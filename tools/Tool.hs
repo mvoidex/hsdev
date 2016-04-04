@@ -2,8 +2,11 @@
 
 module Tool (
 	-- * Tool
-	ToolM, toolMain, printExceptT, printResult,
+	ToolM, toolMain, printExceptT, printResult, runToolClient,
 
+	ClientM,
+
+	toJSON, Value,
 	module Options.Applicative,
 	module HsDev.Util
 	) where
@@ -13,10 +16,13 @@ import Control.Monad.IO.Class
 import Control.Monad (liftM)
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as L (putStrLn)
+import Data.Default
 import Options.Applicative
 import System.Environment
 import System.IO
 
+import HsDev.Client.Commands
+import HsDev.Server.Base
 import HsDev.Tools.Base (ToolM)
 import HsDev.Util (cmd, parseArgs)
 
@@ -34,3 +40,7 @@ printExceptT act = runExceptT act >>= either putStrLn return
 
 printResult :: (ToJSON a, MonadIO m) => m a -> m ()
 printResult act = act >>= liftIO . L.putStrLn . encode
+
+runToolClient :: ToJSON a => ClientM IO a -> IO ()
+runToolClient act = runServer (def { serverSilent = True }) $
+	runClient def act >>= liftIO . L.putStrLn . encode

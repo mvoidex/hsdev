@@ -9,6 +9,7 @@ module HsDev.Tools.Ghc.Types (
 import Control.DeepSeq
 import Control.Lens (over, view, set, each, preview, makeLenses, _Just)
 import Control.Monad
+import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class
 import Data.Aeson
 import Data.Generics
@@ -17,6 +18,7 @@ import Data.Maybe
 import Data.String (fromString)
 import System.Directory
 import System.FilePath
+import System.Log.Simple (MonadLog(..), scope)
 
 import GHC hiding (exprType, Module, moduleName)
 import GHC.SYB.Utils (everythingStaged, Stage(TypeChecker))
@@ -29,6 +31,7 @@ import PprTyThing
 import Pretty
 
 import System.Directory.Paths (canonicalize)
+import HsDev.Error
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.PackageDb
 import HsDev.Symbols
@@ -98,18 +101,18 @@ instance FromJSON TypedExpr where
 		v .:: "type"
 
 -- | Get all types in module
-fileTypes :: [String] -> PackageDbStack -> Module -> Maybe String -> ExceptT String Ghc [Note TypedExpr]
-fileTypes opts pdbs m msrc = case view moduleLocation m of
+fileTypes :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> Maybe String -> m [Note TypedExpr]
+fileTypes opts pdbs m msrc = scope "types" $ case view moduleLocation m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
 		cts <- maybe (liftIO $ readFileUtf8 file') return msrc
-		pkgs <- mapExceptT liftIO $ browsePackages opts pdbs
+		pkgs <- browsePackages opts pdbs
 		let
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file') $
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
-		lift $ withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
+		withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
 			_ <- setCmdOpts $ concat [
 				packageDbStackOpts pdbs,
 				moduleOpts pkgs m,
@@ -119,7 +122,7 @@ fileTypes opts pdbs m msrc = case view moduleLocation m of
 			ts <- moduleTypes file'
 			df <- getSessionDynFlags
 			return $ map (setExpr cts . recalcTabs cts 8 . uncurry (toNote df)) ts
-	_ -> throwError "Module is not source"
+	_ -> hsdevError $ ModuleNotSource (view moduleLocation m)
 	where
 		toNote :: DynFlags -> SrcSpan -> Type -> Note String
 		toNote df spn tp = Note {
@@ -144,5 +147,5 @@ setModuleTypes ts = over (moduleDeclarations . each) setType where
 		return $ set (declaration . functionType) (Just $ fromString $ view (note . typedType) tnote) d
 
 -- | Infer types in module
-inferTypes :: [String] -> PackageDbStack -> Module -> Maybe String -> ExceptT String Ghc Module
-inferTypes opts pdbs m msrc = liftM (`setModuleTypes` m) $ fileTypes opts pdbs m msrc
+inferTypes :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> Maybe String -> m Module
+inferTypes opts pdbs m msrc = scope "infer" $ liftM (`setModuleTypes` m) $ fileTypes opts pdbs m msrc

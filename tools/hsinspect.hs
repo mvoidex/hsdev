@@ -6,15 +6,14 @@ module Main (
 
 import Control.Monad (liftM, (>=>))
 import Control.Monad.IO.Class
-import Control.Monad.Except (ExceptT(..), runExceptT)
-import Data.Aeson (toJSON)
 import System.Directory (canonicalizePath)
 import System.FilePath (takeExtension)
 
+import HsDev.Error
+import HsDev.Inspect (inspectContents, inspectDocs, getDefines)
 import HsDev.PackageDb
 import HsDev.Project (readProject)
 import HsDev.Scan (scanModule, scanModify)
-import HsDev.Inspect (inspectContents, inspectDocs, getDefines)
 import HsDev.Symbols.Location (ModuleLocation(..))
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.Ghc.Worker
@@ -29,23 +28,24 @@ opts = Opts <$>
 	many (strOption (metavar "GHC_OPT" <> long "ghc" <> short 'g' <> help "options to pass to GHC"))
 
 main :: IO ()
-main = toolMain "hsinspect" "haskell inspect" opts (printExceptT . printResult . inspect') where
+main = toolMain "hsinspect" "haskell inspect" opts (runToolClient . inspect') where
+	inspect' :: Opts -> ClientM IO Value
 	inspect' (Opts Nothing ghcs) = do
 		cts <- liftIO getContents
 		defs <- liftIO getDefines
-		liftM toJSON $ inspectContents "stdin" defs ghcs cts
+		liftM toJSON $ liftIO $ hsdevLift $ inspectContents "stdin" defs ghcs cts
 	inspect' (Opts (Just fname@(takeExtension -> ".hs")) ghcs) = do
 		fname' <- liftIO $ canonicalizePath fname
 		defs <- liftIO getDefines
 		im <- scanModule defs ghcs (FileModule fname' Nothing) Nothing
-		ghc <- liftIO $ ghcWorker ghcs (return ())
+		ghc <- ghcWorker ghcs (return ())
 		let
 			scanAdditional =
-				scanModify' (\opts' _ -> inspectDocs opts') >=>
-				scanModify' (\opts' pdbs m -> ExceptT (inWorker ghc (runExceptT $ inferTypes opts' pdbs m Nothing)))
+				scanModify' (\opts' _ -> liftIO . inspectDocs opts') >=>
+				scanModify' (\opts' pdbs m -> liftIO (inWorker ghc (inferTypes opts' pdbs m Nothing)))
 		toJSON <$> scanAdditional im
 	inspect' (Opts (Just fcabal@(takeExtension -> ".cabal")) _) = do
 		fcabal' <- liftIO $ canonicalizePath fcabal
-		toJSON <$> readProject fcabal'
+		toJSON <$> liftIO (readProject fcabal')
 	inspect' (Opts (Just mname) ghcs) = toJSON <$> scanModule [] ghcs (InstalledModule UserDb Nothing mname) Nothing
 	scanModify' f im = scanModify f im <|> return im

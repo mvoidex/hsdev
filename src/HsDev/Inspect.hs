@@ -38,8 +38,10 @@ import System.FilePath
 import Data.Generics.Uniplate.Data
 import HDocs.Haddock
 
+import HsDev.Error
 import HsDev.Symbols
 import HsDev.Tools.Base
+import HsDev.Tools.Ghc.Worker ()
 import HsDev.Tools.HDocs (hdocsy, hdocs, hdocsProcess)
 import HsDev.Util
 
@@ -318,28 +320,28 @@ addDocs :: Map String String -> Module -> Module
 addDocs docsMap = over moduleDeclarations (map $ addDoc docsMap)
 
 -- | Extract files docs and set them to declarations
-inspectDocsChunk :: [String] -> [Module] -> ExceptT String IO [Module]
-inspectDocsChunk opts ms = do
-	docsMaps <- liftE $ hdocsy (map (view moduleLocation) ms) opts
+inspectDocsChunk :: [String] -> [Module] -> IO [Module]
+inspectDocsChunk opts ms = hsdevLiftIOWith (ToolError "hdocs") $ do
+	docsMaps <- hdocsy (map (view moduleLocation) ms) opts
 	return $ zipWith addDocs docsMaps ms
 
 -- | Extract file docs and set them to module declarations
-inspectDocs :: [String] -> Module -> ExceptT String IO Module
+inspectDocs :: [String] -> Module -> IO Module
 inspectDocs opts m = do
 	let
 		hdocsWorkaround = False
-	docsMap <- liftE $ if hdocsWorkaround
+	docsMap <- hsdevLiftIOWith (ToolError "hdocs") $ if hdocsWorkaround
 		then hdocsProcess (fromMaybe (T.unpack $ view moduleName m) (preview (moduleLocation . moduleFile) m)) opts
 		else liftM Just $ hdocs (view moduleLocation m) opts
 	return $ maybe id addDocs docsMap m
 
 -- | Like @inspectDocs@, but in @Ghc@ monad
-inspectDocsGhc :: [String] -> Module -> ExceptT String Ghc Module
+inspectDocsGhc :: [String] -> Module -> Ghc Module
 inspectDocsGhc opts m = case view moduleLocation m of
 	FileModule fpath _ -> do
-		docsMap <- liftM (fmap (formatDocs . snd) . listToMaybe) $ readSourcesGhc opts [fpath]
+		docsMap <- liftM (fmap (formatDocs . snd) . listToMaybe) $ hsdevLift $ readSourcesGhc opts [fpath]
 		return $ maybe id addDocs docsMap m
-	_ -> throwError "Can inspect only source file docs"
+	_ -> hsdevError $ ModuleNotSource (view moduleLocation m)
 
 -- | Inspect contents
 inspectContents :: String -> [(String, String)] -> [String] -> String -> ExceptT String IO InspectedModule
@@ -354,17 +356,17 @@ contentsInspection :: String -> [String] -> ExceptT String IO Inspection
 contentsInspection _ _ = return InspectionNone -- crc or smth
 
 -- | Inspect file
-inspectFile :: [(String, String)] -> [String] -> FilePath -> Maybe String -> ExceptT String IO InspectedModule
-inspectFile defines opts file mcts = do
-	proj <- liftE $ locateProject file
-	absFilename <- liftE $ Dir.canonicalizePath file
-	ex <- liftE $ Dir.doesFileExist absFilename
-	unless ex $ throwError $ "File '" ++ absFilename ++ "' doesn't exist"
+inspectFile :: [(String, String)] -> [String] -> FilePath -> Maybe String -> IO InspectedModule
+inspectFile defines opts file mcts = hsdevLiftIO $ do
+	proj <- locateProject file
+	absFilename <- Dir.canonicalizePath file
+	ex <- Dir.doesFileExist absFilename
+	unless ex $ hsdevError $ FileNotFound absFilename
 	inspect (FileModule absFilename proj) ((if isJust mcts then fileContentsInspection else fileInspection) absFilename opts) $ do
 		-- docsMap <- liftE $ if hdocsWorkaround
 		-- 	then hdocsProcess absFilename opts
 		-- 	else liftM Just $ hdocs (FileModule absFilename Nothing) opts
-		forced <- ExceptT $ E.handle onError $ do
+		forced <- hsdevLiftWith InspectError $ ExceptT $ E.handle onError $ do
 			analyzed <- liftM (\s -> analyzeModule exts (Just absFilename) s <|> analyzeModule_ exts (Just absFilename) s) $
 				maybe (readFileUtf8 absFilename >>= preprocess_ defines exts file) return mcts
 			force analyzed `deepseq` return analyzed
@@ -377,40 +379,40 @@ inspectFile defines opts file mcts = do
 		exts = mapMaybe flagExtension opts
 
 -- | File inspection data
-fileInspection :: FilePath -> [String] -> ExceptT String IO Inspection
+fileInspection :: FilePath -> [String] -> IO Inspection
 fileInspection f opts = do
-	tm <- liftE $ Dir.getModificationTime f
+	tm <- Dir.getModificationTime f
 	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ sort $ ordNub opts
 
 -- | File contents inspection data
-fileContentsInspection :: FilePath -> [String] -> ExceptT String IO Inspection
+fileContentsInspection :: FilePath -> [String] -> IO Inspection
 fileContentsInspection _ opts = do
-	tm <- liftE getPOSIXTime
+	tm <- getPOSIXTime
 	return $ InspectionAt tm $ sort $ ordNub opts
 
 -- | Enumerate project dirs
-projectDirs :: Project -> ExceptT String IO [Extensions FilePath]
+projectDirs :: Project -> IO [Extensions FilePath]
 projectDirs p = do
 	p' <- loadProject p
 	return $ ordNub $ map (fmap (normalise . (view projectPath p' </>))) $ maybe [] sourceDirs $ view projectDescription p'
 
 -- | Enumerate project source files
-projectSources :: Project -> ExceptT String IO [Extensions FilePath]
+projectSources :: Project -> IO [Extensions FilePath]
 projectSources p = do
 	dirs <- projectDirs p
 	let
 		enumCabals = liftM (map takeDirectory . filter cabalFile) . traverseDirectory
 		dirs' = map (view entity) dirs
 	-- enum inner projects and dont consider them as part of this project
-	subProjs <- liftM (delete (view projectPath p) . ordNub . concat) $ triesMap (liftE . enumCabals) dirs'
+	subProjs <- liftM (delete (view projectPath p) . ordNub . concat) $ triesMap (enumCabals) dirs'
 	let
 		enumHs = liftM (filter thisProjectSource) . traverseDirectory
 		thisProjectSource h = haskellSource h && not (any (`isParent` h) subProjs)
-	liftM (ordNub . concat) $ triesMap (liftM sequenceA . traverse (liftE . enumHs)) dirs
+	liftM (ordNub . concat) $ triesMap (liftM sequenceA . traverse (enumHs)) dirs
 
 -- | Inspect project
-inspectProject :: [(String, String)] -> [String] -> Project -> ExceptT String IO (Project, [InspectedModule])
-inspectProject defines opts p = do
+inspectProject :: [(String, String)] -> [String] -> Project -> IO (Project, [InspectedModule])
+inspectProject defines opts p = hsdevLiftIO $ do
 	p' <- loadProject p
 	srcs <- projectSources p'
 	modules <- mapM inspectFile' srcs
@@ -433,14 +435,17 @@ getDefines = E.handle onIO $ do
 		onIO :: E.IOException -> IO [(String, String)]
 		onIO _ = return []
 
-preprocess :: [(String, String)] -> FilePath -> String -> ExceptT String IO String
+preprocess :: [(String, String)] -> FilePath -> String -> IO String
 preprocess defines fpath cts = do
-	cts' <- liftE $ Cpphs.cppIfdef fpath defines [] Cpphs.defaultBoolOptions cts
+	cts' <- E.catch (Cpphs.cppIfdef fpath defines [] Cpphs.defaultBoolOptions cts) onIOError
 	return $ unlines $ map snd cts'
+	where
+		onIOError :: E.IOException -> IO [(Cpphs.Posn, String)]
+		onIOError _ = return []
 
 preprocess_ :: [(String, String)] -> [String] -> FilePath -> String -> IO String
 preprocess_ defines exts fpath cts
-	| hasCPP = runExceptT (preprocess defines fpath cts) >>= either (const $ return cts) return
+	| hasCPP = preprocess defines fpath cts
 	| otherwise = return cts
 	where
 		exts' = map H.parseExtension exts ++ maybe [] snd (H.readExtensions cts)

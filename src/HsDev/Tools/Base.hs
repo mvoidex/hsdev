@@ -13,6 +13,7 @@ module HsDev.Tools.Base (
 	) where
 
 import Control.Lens (set)
+import Control.Monad.Catch (MonadCatch)
 import Control.Monad.Except
 import Control.Monad.State
 import Data.Array (assocs)
@@ -22,6 +23,7 @@ import System.Exit
 import System.Process
 import Text.Regex.PCRE ((=~), MatchResult(..))
 
+import HsDev.Error
 import HsDev.Tools.Types
 import HsDev.Symbols
 import HsDev.Util (liftIOErrors)
@@ -72,15 +74,14 @@ at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
 at_ :: (Int -> Maybe String) -> Int -> String
 at_ g = fromMaybe "" . g
 
-inspect :: Monad m => ModuleLocation -> ExceptT String m Inspection -> ExceptT String m Module -> ExceptT String m InspectedModule
-inspect mloc insp act = lift $ execStateT inspect' (notInspected mloc) where
-	inspect' = runExceptT $ do
-		i <- mapExceptT lift insp
-		modify (set inspection i)
-		v <- mapExceptT lift act
-		modify (set inspectionResult (Right v))
-		`catchError`
-		\e -> modify (set inspectionResult (Left e))
+inspect :: MonadCatch m => ModuleLocation -> m Inspection -> m Module -> m InspectedModule
+inspect mloc insp act = execStateT inspect' (notInspected mloc) where
+	inspect' = do
+		r <- hsdevCatch $ hsdevLiftIO $ do
+			i <- lift insp
+			modify (set inspection i)
+			lift act
+		modify (set inspectionResult r)
 
 type ReadM a = StateT String [] a
 
