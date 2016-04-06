@@ -13,6 +13,7 @@ import Text.Format
 
 import HsDev.Symbols.Location
 
+-- | hsdev exception type
 data HsDevError =
 	ModuleNotSource ModuleLocation |
 	BrowseNoModuleInfo String |
@@ -23,7 +24,7 @@ data HsDevError =
 	InspectError String |
 	InspectCabalError FilePath String |
 	IOFailed String |
-	StringError String
+	OtherError String
 		deriving (Typeable)
 
 instance NFData HsDevError where
@@ -36,7 +37,7 @@ instance NFData HsDevError where
 	rnf (InspectError e) = rnf e
 	rnf (InspectCabalError c e) = rnf c `seq` rnf e
 	rnf (IOFailed e) = rnf e
-	rnf (StringError e) = rnf e
+	rnf (OtherError e) = rnf e
 
 instance Show HsDevError where
 	show (ModuleNotSource mloc) = format "module is not source: {}" ~~ show mloc
@@ -48,7 +49,7 @@ instance Show HsDevError where
 	show (InspectError e) = format "failed to inspect: {}" ~~ e
 	show (InspectCabalError c e) = format "failed to inspect cabal {}: {}" ~~ c ~~ e
 	show (IOFailed e) = format "io exception: {}" ~~ e
-	show (StringError e) = e
+	show (OtherError e) = e
 
 jsonErr :: String -> [Pair] -> Value
 jsonErr e = object . (("error" .= e) :)
@@ -63,7 +64,7 @@ instance ToJSON HsDevError where
 	toJSON (InspectError e) = jsonErr "inspect error" ["msg" .= e]
 	toJSON (InspectCabalError c e) = jsonErr "inspect cabal error" ["cabal" .= c, "msg" .= e]
 	toJSON (IOFailed e) = jsonErr "io error" ["msg" .= e]
-	toJSON (StringError e) = jsonErr "other error" ["msg" .= e]
+	toJSON (OtherError e) = jsonErr "other error" ["msg" .= e]
 
 instance FromJSON HsDevError where
 	parseJSON = withObject "hsdev-error" $ \v -> do
@@ -78,7 +79,7 @@ instance FromJSON HsDevError where
 			"inspect error" -> InspectError <$> v .: "msg"
 			"inspect cabal error" -> InspectCabalError <$> v .: "cabal" <*> v .: "msg"
 			"io error" -> IOFailed <$> v .: "msg"
-			"other error" -> StringError <$> v .: "msg"
+			"other error" -> OtherError <$> v .: "msg"
 			_ -> fail "invalid error"
 
 instance Exception HsDevError
