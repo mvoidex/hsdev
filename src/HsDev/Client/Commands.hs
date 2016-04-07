@@ -5,7 +5,6 @@ module HsDev.Client.Commands (
 	) where
 
 import Control.Applicative
-import Control.Arrow
 import Control.Concurrent.MVar
 import Control.Exception (displayException)
 import Control.Lens (view, preview, _Just)
@@ -13,7 +12,7 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 import qualified Control.Monad.State as State
-import Control.Monad.Catch (try, SomeException(..))
+import Control.Monad.Catch (try, catch, SomeException(..))
 import Control.Monad.CatchIO (bracket)
 import Data.Aeson hiding (Result, Error)
 import Data.List
@@ -23,7 +22,6 @@ import qualified Data.Map as M
 import Data.String (fromString)
 import Data.Text (unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
-import Data.Text.Lens (packed)
 import System.Directory
 import System.FilePath
 import qualified System.Log.Simple as Log
@@ -61,11 +59,8 @@ import qualified HsDev.Database.Update as Update
 
 runClient :: (ToJSON a, ServerMonadBase m) => CommandOptions -> ClientM m a -> ServerM m Result
 runClient copts = mapServerM toResult . runClientM where
-	toResult :: (ToJSON a, ServerMonadBase m) => ExceptT CommandError (ReaderT CommandOptions m) a -> m Result
-	toResult act = liftM asResult $ runReaderT (runExceptT act) copts
-	asResult :: ToJSON a => Either CommandError a -> Result
-	asResult (Left (CommandError e ds)) = Error e $ M.fromList $ map (first unpack) ds
-	asResult (Right r') = Result $ toJSON r'
+	toResult :: (ToJSON a, ServerMonadBase m) => ReaderT CommandOptions m a -> m Result
+	toResult act = liftM (either Error (Result . toJSON)) $ runReaderT (try act) copts
 	mapServerM :: (Monad m, Monad n) => (m a -> n b) -> ServerM m a -> ServerM n b
 	mapServerM f = ServerM . mapReaderT f . runServerM
 
@@ -73,22 +68,19 @@ toValue :: (ToJSON a, Monad m) => m a -> m Value
 toValue = liftM toJSON
 
 runCommand :: ServerMonadBase m => Command -> ClientM m Value
-runCommand c = hsdevCatch (runCommand_ c) >>= either (commandError_ . show) return
-
-runCommand_ :: ServerMonadBase m => Command -> ClientM m Value
-runCommand_ Ping = toValue $ return $ object ["message" .= ("pong" :: String)]
-runCommand_ (Listen (Just r)) = bracket (serverSetLogRules ["/: {}" ~~ r]) serverSetLogRules $ \_ -> runCommand_ (Listen Nothing)
-runCommand_ (Listen Nothing) = toValue $ do
+runCommand Ping = toValue $ return $ object ["message" .= ("pong" :: String)]
+runCommand (Listen (Just r)) = bracket (serverSetLogRules ["/: {}" ~~ r]) serverSetLogRules $ \_ -> runCommand (Listen Nothing)
+runCommand (Listen Nothing) = toValue $ do
 	serverListen >>= mapM_ (\msg -> commandNotify (Notification $ object ["message" .= msg]))
-runCommand_ (SetLogConfig rs) = toValue $ do
+runCommand (SetLogConfig rs) = toValue $ do
 	rules' <- serverSetLogRules rs
 	Log.log Log.Debug $ "log rules switched from '{}' to '{}'" ~~ intercalate ", " rules' ~~ intercalate ", " rs
 	Log.log Log.Info $ "log rules updated to: {}" ~~ intercalate ", " rs
-runCommand_ (AddData cts) = toValue $ mapM_ updateData cts where
+runCommand (AddData cts) = toValue $ mapM_ updateData cts where
 	updateData (AddedDatabase db) = toValue $ serverUpdateDB db
 	updateData (AddedModule m) = toValue $ serverUpdateDB $ fromModule m
 	updateData (AddedProject p) = toValue $ serverUpdateDB $ fromProject p
-runCommand_ (Scan projs cabal sboxes fs paths' fcts ghcs' docs' infer') = toValue $ do
+runCommand (Scan projs cabal sboxes fs paths' fcts ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
 		map (\(FileContents f cts) -> Update.scanFileContents ghcs' f (Just cts)) fcts,
@@ -97,7 +89,7 @@ runCommand_ (Scan projs cabal sboxes fs paths' fcts ghcs' docs' infer') = toValu
 		map (Update.scanDirectory ghcs') paths',
 		[Update.scanCabal ghcs' | cabal],
 		map (Update.scanSandbox ghcs') sboxes']
-runCommand_ (RefineDocs projs fs ms) = toValue $ do
+runCommand (RefineDocs projs fs ms) = toValue $ do
 	projects <- traverse findProject projs
 	dbval <- getDb
 	let
@@ -107,7 +99,7 @@ runCommand_ (RefineDocs projs fs ms) = toValue $ do
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs $ map (getInspected dbval) mods]
-runCommand_ (InferTypes projs fs ms) = toValue $ do
+runCommand (InferTypes projs fs ms) = toValue $ do
 	projects <- traverse findProject projs
 	dbval <- getDb
 	let
@@ -117,7 +109,7 @@ runCommand_ (InferTypes projs fs ms) = toValue $ do
 			map inModule ms]
 		mods = selectModules (filters . view moduleId) dbval
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes $ map (getInspected dbval) mods]
-runCommand_ (Remove projs cabal sboxes files) = toValue $ do
+runCommand (Remove projs cabal sboxes files) = toValue $ do
 	db <- askSession sessionDatabase
 	dbval <- getDb
 	w <- askSession sessionWatcher
@@ -156,112 +148,99 @@ runCommand_ (Remove projs cabal sboxes files) = toValue $ do
 				liftIO $ unwatchPackageDb w $ topPackageDb pdbs
 		-- Remove package-db stack when possible
 		removePackageDbStack = mapM_ removePackageDb . packageDbStacks
-runCommand_ RemoveAll = toValue $ do
+runCommand RemoveAll = toValue $ do
 	db <- askSession sessionDatabase
 	liftIO $ A.modifyAsync db A.Clear
 	w <- askSession sessionWatcher
 	wdirs <- liftIO $ readMVar (W.watcherDirs w)
 	liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir
-runCommand_ (InfoModules fs) = toValue $ do
+runCommand (InfoModules fs) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
 	return $ map (view moduleId) $ newestPackage $ selectModules (filter' . view moduleId) dbval
-runCommand_ InfoPackages = toValue $ (ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb
-runCommand_ InfoProjects = toValue $ (toList . databaseProjects) <$> getDb
-runCommand_ InfoSandboxes = toValue $ databasePackageDbs <$> getDb
-runCommand_ (InfoSymbol sq fs locals') = toValue $ do
+runCommand InfoPackages = toValue $ (ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb
+runCommand InfoProjects = toValue $ (toList . databaseProjects) <$> getDb
+runCommand InfoSandboxes = toValue $ databasePackageDbs <$> getDb
+runCommand (InfoSymbol sq fs locals') = toValue $ do
 	dbval <- liftM (localsDatabase locals') $ getDb
 	filter' <- targetFilters fs
 	return $ newestPackage $ filterMatch sq $
 		concatMap moduleModuleDeclarations $ filter (filter' . view moduleId) $ allModules dbval
-runCommand_ (InfoModule sq fs) = toValue $ do
+runCommand (InfoModule sq fs) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
 	return $ newestPackage $ filterMatch sq $ filter (filter' . view moduleId) $ allModules dbval
-runCommand_ (InfoResolve fpath exports) = toValue $ do
+runCommand (InfoResolve fpath exports) = toValue $ do
 	dbval <- getSDb fpath
 	let
 		getScope
 			| exports = exportsModule
 			| otherwise = scopeModule
-	case lookupFile fpath dbval of
-		Nothing -> commandError "File not found" []
-		Just m -> return $ getScope $ resolveOne dbval m
-runCommand_ (InfoProject (Left projName)) = toValue $ findProject projName
-runCommand_ (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
-runCommand_ (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
-runCommand_ (Lookup nm fpath) = toValue $ do
+	m <- refineSourceModule fpath
+	return $ getScope $ resolveOne dbval m
+runCommand (InfoProject (Left projName)) = toValue $ findProject projName
+runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
+runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
+runCommand (Lookup nm fpath) = toValue $ do
 	dbval <- getSDb fpath
-	mapCommandIO $ lookupSymbol dbval fpath nm
-runCommand_ (Whois nm fpath) = toValue $ do
+	liftIO $ hsdevLift $ lookupSymbol dbval fpath nm
+runCommand (Whois nm fpath) = toValue $ do
 	dbval <- getSDb fpath
-	mapCommandIO $ whois dbval fpath nm
-runCommand_ (ResolveScopeModules sq fpath) = toValue $ do
+	liftIO $ hsdevLift $ whois dbval fpath nm
+runCommand (ResolveScopeModules sq fpath) = toValue $ do
 	dbval <- getSDb fpath
-	liftM (filterMatch sq . map (view moduleId)) $ mapCommandIO $ scopeModules dbval fpath
-runCommand_ (ResolveScope sq global fpath) = toValue $ do
+	liftM (filterMatch sq . map (view moduleId)) $ liftIO $ hsdevLift $ scopeModules dbval fpath
+runCommand (ResolveScope sq global fpath) = toValue $ do
 	dbval <- getSDb fpath
-	liftM (filterMatch sq) $ mapCommandIO $ scope dbval fpath global
-runCommand_ (Complete input wide fpath) = toValue $ do
+	liftM (filterMatch sq) $ liftIO $ hsdevLift $ scope dbval fpath global
+runCommand (Complete input wide fpath) = toValue $ do
 	dbval <- getSDb fpath
-	mapCommandIO $ completions dbval fpath input wide
-runCommand_ (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
+	liftIO $ hsdevLift $ completions dbval fpath input wide
+runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
-	mapCommandIO $ Hayoo.hayoo hq (Just i)
-runCommand_ (CabalList packages) = toValue $ mapCommandIO $ Cabal.cabalList packages
-runCommand_ (Lint fs fcts) = toValue $ do
-	mapCommandIO $ liftM2 (++)
+	liftIO $ hsdevLift $ Hayoo.hayoo hq (Just i)
+runCommand (CabalList packages) = toValue $ liftIO $ hsdevLift $ Cabal.cabalList packages
+runCommand (Lint fs fcts) = toValue $ do
+	liftIO $ hsdevLift $ liftM2 (++)
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f c) -> HLint.hlintSource f c) fcts)
-runCommand_ (Check fs fcts ghcs') = toValue $ Log.scope "check" $ do
-	dbval <- getDb
+runCommand (Check fs fcts ghcs') = toValue $ Log.scope "check" $ do
 	ghc <- askSession sessionGhc
 	liftIO $ restartWorker ghc
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			pdbs <- searchPackageDbStack file
-			m <- maybe
-				(commandError_ $ "File '{}' not found" ~~ file)
-				return
-				(lookupFile file dbval)
-			inWorkerWith (commandError_ . show) ghc (fn pdbs m)
+			m <- refineSourceModule file
+			inWorkerWith (hsdevError . GhcError . displayException) ghc (fn pdbs m)
 	liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
 		[(f, \pdbs m -> Check.checkSource ghcs' pdbs m src) | FileContents f src <- fcts]
-runCommand_ (CheckLint fs fcts ghcs') = toValue $ do
-	dbval <- getDb
+runCommand (CheckLint fs fcts ghcs') = toValue $ do
 	ghc <- askSession sessionGhc
 	liftIO $ restartWorker ghc
 	let
 		checkSome file fn = do
 			pdbs <- searchPackageDbStack file
-			m <- maybe
-				(commandError_ $ "File '" ++ file ++ "' not found")
-				return
-				(lookupFile file dbval)
-			inWorkerWith (commandError_ . show) ghc (fn pdbs m)
+			m <- refineSourceModule file
+			inWorkerWith (hsdevError . GhcError . displayException) ghc (fn pdbs m)
 	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
 		[(f, \pdbs m -> Check.checkSource ghcs' pdbs m src) | FileContents f src <- fcts]
-	lintMsgs <- mapCommandIO $ liftM2 (++)
+	lintMsgs <- liftIO $ hsdevLift $ liftM2 (++)
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) fcts)
 	return $ checkMsgs ++ lintMsgs
-runCommand_ (Types fs fcts ghcs') = toValue $ do
-	dbval <- getDb
+runCommand (Types fs fcts ghcs') = toValue $ do
 	ghc <- askSession sessionGhc
 	let
 		cts = [(f, Nothing) | f <- fs] ++ [(f, Just src) | FileContents f src <- fcts]
 	liftM concat $ forM cts $ \(file, msrc) -> do
 		pdbs <- searchPackageDbStack file
-		m <- maybe
-			(commandError_ $ "File '" ++ file ++ "' not found")
-			return
-			(lookupFile file dbval)
-		inWorkerWith (commandError_ . show) ghc (Types.fileTypes ghcs' pdbs m msrc)
-runCommand_ (GhcMod GhcModLang) = toValue $ mapCommandIO GhcMod.langs
-runCommand_ (GhcMod GhcModFlags) = toValue $ mapCommandIO GhcMod.flags
-runCommand_ (GhcMod (GhcModType (Position line column) fpath ghcs')) = toValue $ do
+		m <- refineSourceModule file
+		inWorkerWith (hsdevError . GhcError . displayException) ghc (Types.fileTypes ghcs' pdbs m msrc)
+runCommand (GhcMod GhcModLang) = toValue $ liftIO $ hsdevLift GhcMod.langs
+runCommand (GhcMod GhcModFlags) = toValue $ liftIO $ hsdevLift GhcMod.flags
+runCommand (GhcMod (GhcModType (Position line column) fpath ghcs')) = toValue $ do
 	ghcmod <- askSession sessionGhcMod
 	dbval <- getDb
 	pdbs <- searchPackageDbStack fpath
@@ -269,12 +248,12 @@ runCommand_ (GhcMod (GhcModType (Position line column) fpath ghcs')) = toValue $
 	(fpath', m', _) <- liftIO $ hsdevLift $ fileCtx dbval fpath
 	liftIO $ GhcMod.waitMultiGhcMod ghcmod fpath' $
 		GhcMod.typeOf (ghcs' ++ moduleOpts pkgs m') pdbs fpath' line column
-runCommand_ (GhcMod (GhcModLint fs hlints')) = toValue $ do
+runCommand (GhcMod (GhcModLint fs hlints')) = toValue $ do
 	ghcmod <- askSession sessionGhcMod
 	liftIO $ liftM concat $ forM fs $ \file ->
 		GhcMod.waitMultiGhcMod ghcmod file $
 			GhcMod.lint hlints' file
-runCommand_ (GhcMod (GhcModCheck fs ghcs')) = toValue $ do
+runCommand (GhcMod (GhcModCheck fs ghcs')) = toValue $ do
 	ghcmod <- askSession sessionGhcMod
 	dbval <- getDb
 	liftM concat $ forM fs $ \file -> do
@@ -284,7 +263,7 @@ runCommand_ (GhcMod (GhcModCheck fs ghcs')) = toValue $ do
 		(_, m', _) <- liftIO $ hsdevLift $ fileCtx dbval file
 		liftIO $ GhcMod.waitMultiGhcMod ghcmod file $
 			GhcMod.check (ghcs' ++ moduleOpts pkgs m') pdbs [file] mproj
-runCommand_ (GhcMod (GhcModCheckLint fs ghcs' hlints')) = toValue $ do
+runCommand (GhcMod (GhcModCheckLint fs ghcs' hlints')) = toValue $ do
 	ghcmod <- askSession sessionGhcMod
 	dbval <- getDb
 	liftM concat $ forM fs $ \file -> do
@@ -296,8 +275,8 @@ runCommand_ (GhcMod (GhcModCheckLint fs ghcs' hlints')) = toValue $ do
 			checked <- GhcMod.check (ghcs' ++ moduleOpts pkgs m') pdbs [file] mproj
 			linted <- GhcMod.lint hlints' file
 			return $ checked ++ linted
-runCommand_ (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
-runCommand_ (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
+runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
+runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
 	let
 		doFix :: FilePath -> String -> ([Tools.Note AutoFix.Correction], String)
@@ -316,19 +295,19 @@ runCommand_ (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 				liftIO $ writeFileUtf8 file cts'
 				return corrs'
 	liftM concat $ mapM runFix files
-runCommand_ (GhcEval exprs) = toValue $ do
+runCommand (GhcEval exprs) = toValue $ do
 	ghci <- askSession sessionGhci
 	async' <- liftIO $ pushTask ghci $ mapM (try . evaluate) exprs
 	res <- waitAsync async'
 	return $ map toValue' res
 	where
 		waitAsync :: CommandMonad m => Async a -> m a
-		waitAsync a = liftIO (waitCatch a) >>= either (commandError_ . displayException) return
+		waitAsync a = liftIO (waitCatch a) >>= either (hsdevError . GhcError . displayException) return
 		toValue' :: ToJSON a => Either SomeException a -> Value
 		toValue' (Left (SomeException e)) = object ["fail" .= show e]
 		toValue' (Right s) = toJSON s
-runCommand_ (Link hold) = toValue $ commandLink >> when hold commandHold
-runCommand_ Exit = toValue serverExit
+runCommand (Link hold) = toValue $ commandLink >> when hold commandHold
+runCommand Exit = toValue serverExit
 
 targetFilters :: CommandMonad m => [TargetFilter] -> m (ModuleId -> Bool)
 targetFilters fs = do
@@ -363,10 +342,13 @@ findSandbox :: (CommandMonad m, Functor m) => FilePath -> m Sandbox
 findSandbox fpath = do
 	fpath' <- findPath fpath
 	sbox <- liftIO $ S.findSandbox fpath'
-	maybe
-		(commandError ("Sandbox {} not found" ~~ fpath') ["sandbox" .= fpath'])
-		return
-		sbox
+	maybe (hsdevError $ FileNotFound fpath') return sbox
+
+-- | Get module by source
+refineSourceModule :: (CommandMonad m, Functor m) => FilePath -> m Module
+refineSourceModule fpath = do
+	db' <- getDb
+	maybe (hsdevError (NotInspected $ FileModule fpath Nothing)) return $ lookupFile fpath db'
 
 -- | Get list of enumerated sandboxes
 getSandboxes :: (CommandMonad m, Functor m) => [FilePath] -> m [Sandbox]
@@ -381,7 +363,7 @@ findProject proj = do
 		resultProj =
 			refineProject db' (project proj') <|>
 			find ((== proj) . view projectName) (databaseProjects db')
-	maybe (commandError_ $ "Project {} not found" ~~ proj) return resultProj
+	maybe (hsdevError $ ProjectNotFound proj) return resultProj
 	where
 		addCabal p
 			| takeExtension p == ".cabal" = p
@@ -394,7 +376,7 @@ findDep depName = do
 	proj <- msum [
 		do
 			p <- liftIO (locateProject depPath)
-			p' <- maybe (commandError_ $ "Project {} not found" ~~ depName) return p
+			p' <- maybe (hsdevError $ ProjectNotFound depName) return p
 			liftIO $ loadProject p',
 		findProject depName]
 	let
@@ -428,12 +410,11 @@ getSDb fpath = do
 	pdbs <- searchPackageDbStack fpath
 	return $ filterDB (restrictPackageDbStack pdbs) (const True) dbval
 
-mapCommandIO :: CommandMonad m => ExceptT String IO a -> m a
-mapCommandIO act = liftIO (runExceptT act) >>= either commandError_ return
-
 -- | Run DB update action
 updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()
-updateProcess uopts acts = Update.runUpdate uopts $ sequence_ [act `catchError` (Log.log Log.Error . view (commandErrorMsg . packed)) | act <- acts]
+updateProcess uopts acts = Update.runUpdate uopts $ mapM_ runAct acts where
+	runAct act = catch act onError
+	onError e = Log.log Log.Error $ "{}" ~~ (e :: HsDevError)
 
 -- | Filter declarations with prefix and infix
 filterMatch :: Symbol a => SearchQuery -> [a] -> [a]

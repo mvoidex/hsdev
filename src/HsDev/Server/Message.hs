@@ -8,18 +8,14 @@ module HsDev.Server.Message (
 	groupResponses, responsesById
 	) where
 
-import Control.Arrow (first)
 import Control.Applicative
 import Control.Lens (makeLenses)
 import Control.Monad (join)
 import Data.Aeson hiding (Error, Result)
-import Data.Aeson.Types (Pair)
 import Data.Either (lefts, isRight)
 import Data.List (unfoldr)
-import Data.Map (Map)
-import qualified Data.Map as M
-import Data.Text (unpack)
 
+import HsDev.Types
 import HsDev.Util ((.::), (.::?), objectUnion)
 
 -- | Message with id to link request and response
@@ -60,20 +56,16 @@ instance FromJSON Notification where
 data Result =
 	Result Value |
 	-- ^ Result
-	Error String (Map String Value)
+	Error HsDevError
 	-- ^ Error
 		deriving (Show)
 
 instance ToJSON Result where
 	toJSON (Result r) = object ["result" .= r]
-	toJSON (Error msg rs) = object [
-		"error" .= msg,
-		"details" .= toJSON rs]
+	toJSON (Error e) = toJSON e
 
 instance FromJSON Result where
-	parseJSON = withObject "result" $ \v ->
-		(Result <$> v .:: "result") <|>
-		(Error <$> v .:: "error" <*> v .:: "details")
+	parseJSON j = (withObject "result" (\v -> (Result <$> v .:: "result")) j) <|> (Error <$> parseJSON j)
 
 -- | Part of result list, returns via notification
 data ResultPart = ResultPart Value
@@ -95,8 +87,8 @@ notification = Response . Left . Notification . toJSON
 result :: ToJSON a => a -> Response
 result = Response . Right . Result . toJSON
 
-responseError :: String -> [Pair] -> Response
-responseError e ds = Response $ Right $ Error e $ M.fromList $ map (first unpack) ds
+responseError :: HsDevError -> Response
+responseError = Response . Right . Error
 
 resultPart :: ToJSON a => a  -> Notification
 resultPart = Notification . toJSON . ResultPart . toJSON
@@ -116,7 +108,7 @@ groupResponses = unfoldr break' where
 		(ns, cs') = break (isRight . unResponse) cs
 		r = case cs' of
 			(Response (Right r') : _) -> r'
-			[] -> Error "groupResponses: no result" mempty
+			[] -> Error $ OtherError "groupResponses: no result"
 			_ -> error "groupResponses: impossible happened"
 
 responsesById :: Maybe String -> [Message Response] -> [([Notification], Result)]

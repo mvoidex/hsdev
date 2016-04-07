@@ -42,5 +42,5 @@ printResult :: (ToJSON a, MonadIO m) => m a -> m ()
 printResult act = act >>= liftIO . L.putStrLn . encode
 
 runToolClient :: ToJSON a => ClientM IO a -> IO ()
-runToolClient act = runServer (def { serverSilent = True }) $
+runToolClient act = runServer silentOpts $
 	runClient def act >>= liftIO . L.putStrLn . encode

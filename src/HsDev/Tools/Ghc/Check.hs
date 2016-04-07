@@ -14,7 +14,6 @@ module HsDev.Tools.Ghc.Check (
 	) where
 
 import Control.Lens (preview, view, each, _Just, (^..))
-import Control.Monad.CatchIO (throw)
 import Control.Monad.Except
 import Control.Monad.Catch (MonadThrow(..))
 import Data.Maybe (fromMaybe)

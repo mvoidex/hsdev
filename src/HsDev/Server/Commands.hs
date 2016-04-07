@@ -14,7 +14,6 @@ module HsDev.Server.Commands (
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.Async
-import Control.Exception (SomeException)
 import Control.Lens (set, traverseOf, view, over, Lens', Lens, _1, _2, _Left)
 import Control.Monad
 import Control.Monad.CatchIO
@@ -24,7 +23,6 @@ import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Lazy.Char8 (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
-import qualified Data.Map as M
 import Data.Maybe
 import Data.String (fromString)
 import qualified Data.Text as T (pack)
@@ -48,6 +46,7 @@ import qualified HsDev.Client.Commands as Client
 import qualified HsDev.Database.Async as DB
 import HsDev.Server.Base
 import HsDev.Server.Types
+import HsDev.Error
 import HsDev.Util
 import HsDev.Version
 
@@ -72,7 +71,7 @@ sendCommand copts noFile c onNotification = do
 	asyncAct <- async sendReceive
 	res <- waitCatch asyncAct
 	case res of
-		Left e -> return $ Error (show e) $ M.fromList []
+		Left e -> return $ Error $ OtherError (show e)
 		Right r -> return r
 	where
 		sendReceive = do
@@ -100,7 +99,7 @@ sendCommand copts noFile c onNotification = do
 			parseResponse h resp
 
 		parseResponse h str = case eitherDecode str of
-			Left e -> return $ Error e $ M.fromList [("response", toJSON $ fromUtf8 str)]
+			Left e -> return $ Error $ ResponseError ("can't parse: {}" ~~ e) (fromUtf8 str)
 			Right (Message _ r) -> do
 				Response r' <- unMmap r
 				case r' of
@@ -209,7 +208,7 @@ runServerCommand (Connect copts) = do
 	bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [(1 :: Integer)..] $ \i -> ignoreIO $ do
 		input' <- hGetLineBS stdin
 		case decodeMsg input' of
-			Left em -> L.putStrLn $ encodeMessage $ set msg (Message Nothing $ responseError "invalid command" []) em
+			Left em -> L.putStrLn $ encodeMessage $ set msg (Message Nothing $ responseError $ OtherError "invalid command") em
 			Right m -> do
 				L.hPutStrLn h $ encodeMessage $ set msg (Message (Just $ show i) $ Request (view msg m) curDir True (clientTimeout copts) False) m
 				waitResp h
@@ -316,7 +315,7 @@ processClient name rchan send' = do
 			case decodeMessage req' of
 				Left em -> do
 					Log.log Log.Warning $ "Invalid request {}" ~~ fromUtf8 req'
-					answer $ set msg (Message Nothing $ responseError "Invalid request" ["request" .= fromUtf8 req']) em
+					answer $ set msg (Message Nothing $ responseError $ RequestError "invalid request" $ fromUtf8 req') em
 				Right m -> Log.scope (T.pack $ fromMaybe "_" (view (msg . messageId) m)) $ do
 					resp' <- flip (traverseOf (msg . message)) m $ \(Request c cdir noFile tm silent) -> do
 						let
@@ -324,7 +323,7 @@ processClient name rchan send' = do
 								| silent = return ()
 								| otherwise = traverseOf (msg . message) (const $ mmap' noFile (Response $ Left n)) m >>= answer
 						Log.log Log.Trace $ "{} >> {}" ~~ name ~~ fromUtf8 (encode c)
-						resp <- liftIO $ fmap (Response . Right) $ handleTimeout tm $ handleError $ withSession s $
+						resp <- liftIO $ fmap (Response . Right) $ handleTimeout tm $ hsdevLiftIO $ withSession s $
 							processRequest
 								CommandOptions {
 									commandOptionsRoot = cdir,
@@ -337,12 +336,7 @@ processClient name rchan send' = do
 	where
 		handleTimeout :: Int -> IO Result -> IO Result
 		handleTimeout 0 = id
-		handleTimeout tm = fmap (fromMaybe $ Error "Timeout" M.empty) . timeout tm
-
-		handleError :: IO Result -> IO Result
-		handleError = flip catch onErr where
-			onErr :: SomeException -> IO Result
-			onErr e = return $ Error "Exception" $ M.fromList [("what", toJSON $ show e)]
+		handleTimeout tm = fmap (fromMaybe $ Error $ OtherError "timeout") . timeout tm
 
 		mmap' :: SessionMonad m => Bool -> Response -> m Response
 #if mingw32_HOST_OS
@@ -414,9 +408,9 @@ unMmap (Response (Right (Result v)))
 	| Just (MmapFile f) <- parseMaybe parseJSON v = do
 		cts <- runExceptT (fmap L.fromStrict (readMapFile f))
 		case cts of
-			Left _ -> return $ responseError "Unable to read map view of file" ["file" .= f]
+			Left _ -> return $ responseError $ ResponseError "can't read map view of file" f
 			Right r' -> case eitherDecode r' of
-				Left e' -> return $ responseError "Invalid response" ["response" .= fromUtf8 r', "parser error" .= e']
+				Left e' -> return $ responseError $ ResponseError ("can't parse response: {}" ~~ e') (fromUtf8 r')
 				Right r'' -> return r''
 #endif
 unMmap r = return r

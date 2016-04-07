@@ -15,9 +15,9 @@ module HsDev.Symbols.Types (
 	ModuleDeclaration(..), declarationModuleId, moduleDeclaration,
 	ExportedDeclaration(..), exportedBy, exportedDeclaration,
 	Inspection(..), inspectionAt, inspectionOpts,
-	Inspected(..), inspection, inspectedId, inspectionTags, inspectionResult, notInspected, noTags,
+	Inspected(..), inspection, inspectedId, inspectionTags, inspectionResult, noTags,
 	ModuleTag(..),
-	InspectedModule,
+	InspectedModule, notInspected,
 
 	module HsDev.PackageDb,
 	module HsDev.Project,
@@ -497,9 +497,6 @@ instance (Eq i, Eq t, Eq a) => Eq (Inspected i t a) where
 instance (Ord i, Ord t, Ord a) => Ord (Inspected i t a) where
 	compare = comparing inspectedTup
 
-notInspected :: Ord t => i -> Inspected i t a
-notInspected i = Inspected mempty i noTags (Left NotInspected)
-
 instance Functor (Inspected i t) where
 	fmap f insp = insp {
 		_inspectionResult = fmap f (_inspectionResult insp) }
@@ -556,6 +553,9 @@ instance FromJSON InspectedModule where
 		v .:: "location" <*>
 		(S.fromList <$> (v .::?! "tags")) <*>
 		((Left <$> v .:: "error") <|> (Right <$> v .:: "module"))
+
+notInspected :: ModuleLocation -> InspectedModule
+notInspected mloc = Inspected mempty mloc noTags (Left $ NotInspected mloc)
 
 instance Symbol Module where
 	symbolName = _moduleName

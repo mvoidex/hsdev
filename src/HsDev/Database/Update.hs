@@ -18,9 +18,6 @@ module HsDev.Database.Update (
 	scan,
 	updateEvent, processEvent,
 
-	-- * Helpers
-	liftExceptT, liftExceptT_,
-
 	module HsDev.Watcher,
 
 	module Control.Monad.Except
@@ -31,6 +28,7 @@ import Control.Arrow
 import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
 import Control.Lens (preview, _Just, view, over, set, _1, mapMOf_, each, (^..), _head, _Right)
+import Control.Monad.Catch (catch)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -61,7 +59,7 @@ import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (isParent, ordNub)
-import HsDev.Server.Types (commandNotify, serverWriteCache, serverReadCache, CommandError(..), commandError_)
+import HsDev.Server.Types (commandNotify, serverWriteCache, serverReadCache)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -112,21 +110,13 @@ runUpdate uopts act = Log.scope "update" $ do
 			return r
 		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
 		scanDocs_ im = do
-			im' <-
-				liftExceptT
-					("Scanning docs for {} failed: {}" ~~ view inspectedId im)
-					(S.scanModify (\opts _ -> liftIO . inspectDocs opts) im)
-				<|> return im
+			im' <- (S.scanModify (\opts _ -> liftIO . inspectDocs opts) im) <|> return im
 			updater $ return $ fromModule im'
 		inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
 		inferModTypes_ im = do
 			-- TODO: locate sandbox
 			s <- getSession
-			im' <-
-				liftExceptT
-					("Inferring types for {} failed: {}" ~~ view inspectedId im)
-					(S.scanModify (infer' s) im)
-				<|> return im
+			im' <- (S.scanModify (infer' s) im) <|> return im
 			updater $ return $ fromModule im'
 		infer' :: UpdateMonad m => Session -> [String] -> PackageDbStack -> Module -> m Module
 		infer' s opts pdbs m = case preview (moduleLocation . moduleFile) m of
@@ -179,13 +169,13 @@ getCache act check = do
 
 -- | Run one task
 runTask :: (Display t, UpdateMonad m, NFData a) => String -> t -> m a -> m a
-runTask action subj act = Log.scope "task" $ liftExceptT_ $ do
+runTask action subj act = Log.scope "task" $ do
 	postStatus $ set taskStatus StatusWorking task
 	x <- childTask task act
 	x `deepseq` postStatus (set taskStatus StatusOk task)
 	return x
-	`catchError`
-	(\c@(CommandError e _) -> postStatus (set taskStatus (StatusError e) task) >> throwError c)
+	`catch`
+	(\e -> postStatus (set taskStatus (StatusError e) task) >> hsdevError e)
 	where
 		task = Task {
 			_taskName = action,
@@ -210,7 +200,7 @@ readDB = askSession sessionDatabase >>= liftIO . readAsync
 scanModule :: UpdateMonad m => [String] -> ModuleLocation -> Maybe String -> m ()
 scanModule opts mloc mcts = runTask "scanning" mloc $ Log.scope "module" $ do
 	defs <- askSession sessionDefines
-	im <- liftExceptT_ $ S.scanModule defs opts mloc mcts
+	im <- S.scanModule defs opts mloc mcts
 	updater $ return $ fromModule im
 	_ <- return $ view inspectionResult im
 	return ()
@@ -359,22 +349,28 @@ scanDocs ims = do
 	-- w <- liftIO $ ghcWorker ["-haddock"] (return ())
 	w <- askSession sessionGhc
 	liftIO $ restartWorker w
-	liftIO $ inWorker w $ setCmdOpts ["-haddock"]
-	runTasks $ map (scanDocs' w) ims
+	runTasks $ map scanDocs' ims
 	where
-		scanDocs' w im
+		scanDocs' im
 			| not $ hasTag RefinedDocsTag im = runTask "scanning docs" (view inspectedId im) $ Log.scope "docs" $ do
 				Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
-				im' <-
-					liftExceptT
-						("Scanning docs for {} failed: {}" ~~ view inspectedId im)
-						(liftM (setTag RefinedDocsTag) $ S.scanModify (\opts _ -> liftIO . inWorker w . liftGhc . inspectDocsGhc opts) im)
+				im' <- (liftM (setTag RefinedDocsTag) $ S.scanModify doScan im)
 					<|> return im
 				Log.log Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
 					view inspectedId im' ~~
 					length (im' ^.. inspectionResult . _Right . moduleDeclarations . each . declarationDocs . _Just)
 				updater $ return $ fromModule im'
 			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedId im
+		doScan opts _ m = do
+			w <- askSession sessionGhc
+			pdbs <- case view moduleLocation m of
+				FileModule fpath _ -> searchPackageDbStack fpath
+				InstalledModule pdb _ _ -> restorePackageDbStack pdb
+				ModuleSource _ -> return userDb
+			pkgs <- browsePackages opts pdbs
+			liftIO $ inWorker w $ do
+				setCmdOpts ("-haddock" : (opts ++ moduleOpts pkgs m))
+				liftGhc $ inspectDocsGhc (opts ++ moduleOpts pkgs m) m
 
 inferModTypes :: UpdateMonad m => [InspectedModule] -> m ()
 inferModTypes = runTasks . map inferModTypes' where
@@ -382,10 +378,7 @@ inferModTypes = runTasks . map inferModTypes' where
 		| not $ hasTag InferredTypesTag im = runTask "inferring types" (view inspectedId im) $ Log.scope "docs" $ do
 			w <- askSession sessionGhc
 			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
-			im' <-
-				liftExceptT
-					("Inferring types for {} failed: {}" ~~ view inspectedId im)
-					(liftM (setTag InferredTypesTag) $ S.scanModify (\opts cabal m -> liftIO (inWorker w (inferTypes opts cabal m Nothing))) im)
+			im' <- (liftM (setTag InferredTypesTag) $ S.scanModify (\opts cabal m -> liftIO (inWorker w (inferTypes opts cabal m Nothing))) im)
 				<|> return im
 			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
 			updater $ return $ fromModule im'
@@ -408,7 +401,7 @@ scan cache' part' mlocs opts act = Log.scope "scan" $ do
 	dbval <- getCache cache' part'
 	let
 		obsolete = filterDB (\m -> view moduleIdLocation m `notElem` (mlocs ^.. each . _1)) (const False) dbval
-	changed <- liftExceptT "Getting changed modules failed: {}" $ liftIO $ S.changedModules dbval opts mlocs
+	changed <- liftIO $ S.changedModules dbval opts mlocs
 	cleaner $ return obsolete
 	act changed
 
@@ -446,15 +439,6 @@ updateEvent WatchedModule e
 				preview (inspection . inspectionOpts) $ getInspected dbval m
 		scanFile opts $ view eventPath e
 	| otherwise = return ()
-
-liftExceptT_ :: CommandMonad m => m a -> m a
-liftExceptT_ = liftExceptT "{}"
-
-liftExceptT :: CommandMonad m => Format -> m a -> m a
-liftExceptT msg act = hsdevCatch act >>= either onError return where
-	onError e = do
-		Log.log Log.Error $ msg ~~ show e
-		commandError_ $ msg ~~ show e
 
 processEvent :: UpdateOptions -> Watched -> Event -> ClientM IO ()
 processEvent uopts w e = runUpdate uopts $ updateEvent w e

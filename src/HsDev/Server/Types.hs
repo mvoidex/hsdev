@@ -4,9 +4,9 @@
 module HsDev.Server.Types (
 	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
-	CommandOptions(..), CommandError(..), commandErrorMsg, commandErrorDetails, commandError, commandError_, CommandMonad(..), askOptions, ClientM(..),
+	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
 	withSession, serverListen, serverSetLogRules, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, serverExit, commandRoot, commandNotify, commandLink, commandHold,
-	ServerCommand(..), ConnectionPort(..), ServerOpts(..), ClientOpts(..), serverOptsArgs, Request(..),
+	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..), AddedContents(..),
 	GhcModCommand(..),
@@ -17,7 +17,7 @@ module HsDev.Server.Types (
 
 import Control.Applicative
 import Control.Concurrent.MVar (MVar, swapMVar)
-import Control.Lens (each, makeLenses)
+import Control.Lens (each)
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.CatchIO
@@ -28,6 +28,7 @@ import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Default
+import Data.Monoid
 import Data.Foldable (asum)
 import Options.Applicative
 import System.Log.Simple hiding (Command)
@@ -51,7 +52,7 @@ import HsDev.Util
 import System.Win32.FileMapping.NamePool (Pool)
 #endif
 
-type ServerMonadBase m = (MonadThrow m, MonadCatch m, MonadCatchIO m, MonadBaseControl IO m, Alternative m)
+type ServerMonadBase m = (MonadThrow m, MonadCatch m, MonadCatchIO m, MonadBaseControl IO m, Alternative m, MonadPlus m)
 
 data SessionLog = SessionLog {
 	sessionLogger :: Log,
@@ -81,7 +82,8 @@ class (ServerMonadBase m, MonadLog m) => SessionMonad m where
 askSession :: SessionMonad m => (Session -> a) -> m a
 askSession f = liftM f getSession
 
-newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a } deriving (Functor, Applicative, Alternative, Monad, MonadReader Session, MonadIO, MonadTrans, MonadCatchIO, MonadThrow, MonadCatch)
+newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a }
+	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadCatchIO, MonadReader Session, MonadTrans, MonadThrow, MonadCatch)
 
 instance MonadCatchIO m => MonadLog (ServerM m) where
 	askLog = ServerM $ asks (sessionLogger . sessionLog)
@@ -106,60 +108,32 @@ data CommandOptions = CommandOptions {
 instance Default CommandOptions where
 	def = CommandOptions "." (const $ return ()) (return ()) (return ())
 
-data CommandError = CommandError {
-	_commandErrorMsg :: String,
-	_commandErrorDetails :: [A.Pair] }
-
-makeLenses ''CommandError
-
-instance Monoid CommandError where
-	mempty = CommandError "" []
-	mappend (CommandError lmsg lp) (CommandError rmsg rp) = CommandError (lmsg ++ ", " ++ rmsg) (lp ++ rp)
-
-class (SessionMonad m, MonadError CommandError m, MonadPlus m) => CommandMonad m where
+class (SessionMonad m, MonadPlus m) => CommandMonad m where
 	getOptions :: m CommandOptions
-
-commandError :: CommandMonad m => String -> [A.Pair] -> m a
-commandError m ds = throwError $ CommandError m ds
-
-commandError_ :: CommandMonad m => String -> m a
-commandError_ m = commandError m []
 
 askOptions :: CommandMonad m => (CommandOptions -> a) -> m a
 askOptions f = liftM f getOptions
 
-newtype ClientM m a = ClientM { runClientM :: ServerM (ExceptT CommandError (ReaderT CommandOptions m)) a }
-	deriving (Functor, Applicative, Monad, MonadIO, MonadCatchIO, MonadThrow, MonadCatch)
+newtype ClientM m a = ClientM { runClientM :: ServerM (ReaderT CommandOptions m) a }
+	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadCatchIO, MonadThrow, MonadCatch)
 
 instance MonadTrans ClientM where
-	lift = ClientM . lift . lift . lift
+	lift = ClientM . lift . lift
 
 instance MonadCatchIO m => MonadLog (ClientM m) where
 	askLog = ClientM askLog
-
-instance Monad m => MonadError CommandError (ClientM m) where
-	throwError = ClientM . lift . throwError
-	catchError act handler = ClientM $ ServerM $ catchError (runServerM $ runClientM act) (runServerM . runClientM . handler)
-
-instance Monad m => Alternative (ClientM m) where
-	empty = ClientM $ ServerM empty
-	x <|> y = ClientM $ ServerM $ runServerM (runClientM x) <|> runServerM (runClientM y)
-
-instance Monad m => MonadPlus (ClientM m) where
-	mzero = ClientM $ ServerM mzero
-	mplus l r = ClientM $ ServerM $ runServerM (runClientM l) `mplus` runServerM (runClientM r)
 
 instance ServerMonadBase m => SessionMonad (ClientM m) where
 	getSession = ClientM getSession
 
 instance ServerMonadBase m => CommandMonad (ClientM m) where
-	getOptions = ClientM $ lift $ lift ask
+	getOptions = ClientM $ lift ask
 
 instance MonadBase b m => MonadBase b (ClientM m) where
 	liftBase = ClientM . liftBase
 
 instance MonadBaseControl b m => MonadBaseControl b (ClientM m) where
-	type StM (ClientM m) a = StM (ServerM (ExceptT CommandError (ReaderT CommandOptions m))) a
+	type StM (ClientM m) a = StM (ServerM (ReaderT CommandOptions m)) a
 	liftBaseWith f = ClientM $ liftBaseWith (\f' -> f (f' . runClientM))
 	restoreM = ClientM . restoreM
 
@@ -249,6 +223,10 @@ data ServerOpts = ServerOpts {
 
 instance Default ServerOpts where
 	def = ServerOpts def 0 Nothing "use default" Nothing False False
+
+-- | Silent server with no connection, useful for ghci
+silentOpts :: ServerOpts
+silentOpts = def { serverSilent = True }
 
 -- | Client options
 data ClientOpts = ClientOpts {

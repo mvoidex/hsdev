@@ -20,22 +20,23 @@ import Data.Aeson
 import Data.Default
 import qualified System.Log.Simple as Log
 
-import HsDev.Server.Types (ServerMonadBase, Session(..), CommandOptions(..), SessionMonad(..), askSession, CommandError, CommandMonad(..), ClientM(..))
+import HsDev.Server.Types (ServerMonadBase, Session(..), CommandOptions(..), SessionMonad(..), askSession, CommandMonad(..), ClientM(..))
 import HsDev.Symbols
+import HsDev.Types
 import HsDev.Util ((.::))
 
-data Status = StatusWorking | StatusOk | StatusError String
+data Status = StatusWorking | StatusOk | StatusError HsDevError
 
 instance ToJSON Status where
 	toJSON StatusWorking = toJSON ("working" :: String)
 	toJSON StatusOk = toJSON ("ok" :: String)
-	toJSON (StatusError e) = toJSON $ object ["error" .= e]
+	toJSON (StatusError e) = toJSON e
 
 instance FromJSON Status where
 	parseJSON v = msum $ map ($ v) [
 		withText "status" $ \t -> guard (t == "working") *> return StatusWorking,
 		withText "status" $ \t -> guard (t == "ok") *> return StatusOk,
-		withObject "status" $ \obj -> StatusError <$> (obj .:: "error"),
+		liftM StatusError . parseJSON,
 		fail "invalid status"]
 
 data Progress = Progress {
@@ -89,7 +90,7 @@ makeLenses ''UpdateOptions
 type UpdateMonad m = (CommandMonad m, MonadReader UpdateOptions m, MonadWriter [ModuleLocation] m)
 
 newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateOptions (WriterT [ModuleLocation] (ClientM m)) a }
-	deriving (Applicative, Monad, MonadIO, MonadThrow, MonadCatch, MonadCatchIO, Functor, MonadReader UpdateOptions, MonadWriter [ModuleLocation])
+	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadCatchIO, Functor, MonadReader UpdateOptions, MonadWriter [ModuleLocation])
 
 instance MonadTrans UpdateM where
 	lift = UpdateM . lift . lift . lift
@@ -102,18 +103,6 @@ instance ServerMonadBase m => SessionMonad (UpdateM m) where
 
 instance ServerMonadBase m => CommandMonad (UpdateM m) where
 	getOptions = UpdateM $ lift $ lift getOptions
-
-instance Monad m => MonadError CommandError (UpdateM m) where
-	throwError = UpdateM . lift . lift . throwError
-	catchError act handler = UpdateM $ catchError (runUpdateM act) (runUpdateM . handler)
-
-instance Monad m => Alternative (UpdateM m) where
-	empty = UpdateM empty
-	x <|> y = UpdateM $ runUpdateM x <|> runUpdateM y
-
-instance Monad m => MonadPlus (UpdateM m) where
-	mzero = UpdateM mzero
-	mplus l r = UpdateM $ runUpdateM l `mplus` runUpdateM r
 
 instance MonadBase b m => MonadBase b (UpdateM m) where
 	liftBase = UpdateM . liftBase

@@ -1,5 +1,5 @@
 module HsDev.Error (
-	hsdevError, hsdevLift, hsdevLiftWith, hsdevCatch, hsdevExcept, hsdevLiftIO, hsdevLiftIOWith, hsdevIgnore,
+	hsdevError, hsdevOtherError, hsdevLift, hsdevLiftWith, hsdevCatch, hsdevExcept, hsdevLiftIO, hsdevLiftIOWith, hsdevIgnore,
 	hsdevHandle, hsdevLog,
 
 	module HsDev.Types
@@ -18,6 +18,10 @@ import HsDev.Types
 -- | Throw `HsDevError`
 hsdevError :: MonadThrow m => HsDevError -> m a
 hsdevError = throwM
+
+-- | Throw as `OtherError`
+hsdevOtherError :: (Exception e, MonadThrow m) => e -> m a
+hsdevOtherError = hsdevError . OtherError . displayException
 
 -- | Throw as `OtherError`
 hsdevLift :: MonadThrow m => ExceptT String m a -> m a
@@ -51,7 +55,7 @@ hsdevIgnore v act = hsdevCatch act >>= either (const $ return v) return
 hsdevHandle :: MonadCatch m => (HsDevError -> m a) -> m a -> m a
 hsdevHandle h act = hsdevCatch act >>= either h return
 
--- | Log hsdev exception and ignore
-hsdevLog :: (MonadLog m, MonadCatch m) => Level -> a -> m a -> m a
-hsdevLog lev v act = hsdevCatch act >>= either logError return where
-	logError e = log lev (fromString $ show e) >> return v
+-- | Log hsdev exception and rethrow
+hsdevLog :: (MonadLog m, MonadCatch m) => Level -> m a -> m a
+hsdevLog lev act = hsdevCatch act >>= either logError return where
+	logError e = log lev (fromString $ show e) >> hsdevError e
