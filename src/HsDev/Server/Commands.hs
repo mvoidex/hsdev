@@ -60,7 +60,7 @@ import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
 import System.Win32.PowerShell (escape, quote, quoteDouble)
 #else
-import Control.Exception (handle)
+import Control.Exception (SomeException, handle)
 import System.Posix.Process
 import System.Posix.Files (removeLink)
 import System.Posix.IO
