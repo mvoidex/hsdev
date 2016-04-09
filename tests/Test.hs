@@ -5,6 +5,7 @@ module Main (
 	) where
 
 import Control.Lens
+import Control.Exception (displayException)
 import Data.Aeson hiding (Error)
 import Data.Aeson.Lens
 import Data.Default
@@ -18,8 +19,8 @@ call srv c = do
 	r <- inServer srv def c
 	case r of
 		Result v -> return $ Just v
-		Error e _ -> do
-			expectationFailure $ "command result error: " ++ e
+		Error e -> do
+			expectationFailure $ "command result error: " ++ displayException e
 			return Nothing
 
 exports :: Maybe Value -> [String]
