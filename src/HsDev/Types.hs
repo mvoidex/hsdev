@@ -20,6 +20,7 @@ data HsDevError =
 	FileNotFound FilePath |
 	ToolNotFound String |
 	ProjectNotFound String |
+	PackageNotFound String |
 	ToolError String String |
 	NotInspected ModuleLocation |
 	InspectError String |
@@ -37,6 +38,7 @@ instance NFData HsDevError where
 	rnf (FileNotFound f) = rnf f
 	rnf (ToolNotFound t) = rnf t
 	rnf (ProjectNotFound p) = rnf p
+	rnf (PackageNotFound p) = rnf p
 	rnf (ToolError t e) = rnf t `seq` rnf e
 	rnf (NotInspected mloc) = rnf mloc
 	rnf (InspectError e) = rnf e
@@ -53,6 +55,7 @@ instance Show HsDevError where
 	show (FileNotFound f) = format "file '{}' not found" ~~ f
 	show (ToolNotFound t) = format "tool '{}' not found" ~~ t
 	show (ProjectNotFound p) = format "project '{}' not found" ~~ p
+	show (PackageNotFound p) = format "package '{}' not found" ~~ p
 	show (ToolError t e) = format "tool '{}' failed: {}" ~~ t ~~ e
 	show (NotInspected mloc) = "module not inspected: {}" ~~ show mloc
 	show (InspectError e) = format "failed to inspect: {}" ~~ e
@@ -74,6 +77,7 @@ instance ToJSON HsDevError where
 	toJSON (FileNotFound f) = jsonErr "file not found" ["file" .= f]
 	toJSON (ToolNotFound t) = jsonErr "tool not found" ["tool" .= t]
 	toJSON (ProjectNotFound p) = jsonErr "project not found" ["project" .= p]
+	toJSON (PackageNotFound p) = jsonErr "package not found" ["package" .= p]
 	toJSON (ToolError t e) = jsonErr "tool error" ["tool" .= t, "msg" .= e]
 	toJSON (NotInspected mloc) = jsonErr "module not inspected" ["module" .= mloc]
 	toJSON (InspectError e) = jsonErr "inspect error" ["msg" .= e]
@@ -93,6 +97,7 @@ instance FromJSON HsDevError where
 			"file not found" -> FileNotFound <$> v .: "file"
 			"tool not found" -> ToolNotFound <$> v .: "tool"
 			"project not found" -> ProjectNotFound <$> v .: "project"
+			"package not found" -> PackageNotFound <$> v .: "package"
 			"tool error" -> ToolError <$> v .: "tool" <*> v .: "msg"
 			"module not inspected" -> NotInspected <$> v .: "module"
 			"inspect error" -> InspectError <$> v .: "msg"

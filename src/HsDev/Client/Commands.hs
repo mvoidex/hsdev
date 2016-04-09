@@ -7,7 +7,7 @@ module HsDev.Client.Commands (
 import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Exception (displayException)
-import Control.Lens (view, preview, _Just)
+import Control.Lens (view, preview, _Just, (^..), each)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -317,13 +317,13 @@ targetFilters fs = do
 targetFilter :: CommandMonad m => TargetFilter -> m (ModuleId -> Bool)
 targetFilter f = case f of
 	TargetProject proj -> liftM inProject $ findProject proj
-	TargetFile file -> return $ inFile file
+	TargetFile file -> liftM inFile $ refineSourceFile file
 	TargetModule mname -> return $ inModule mname
 	TargetDepsOf dep -> liftM inDeps $ findDep dep
 	TargetPackageDb pdb -> return $ inPackageDb pdb
 	TargetCabal -> return $ inPackageDbStack userDb
 	TargetSandbox sbox -> liftM inPackageDbStack $ findSandbox sbox >>= sandboxPackageDbStack
-	TargetPackage pack -> return $ inPackage pack
+	TargetPackage pack -> liftM inPackage $ refinePackage pack
 	TargetSourced -> return byFile
 	TargetStandalone -> return standalone
 
@@ -344,11 +344,29 @@ findSandbox fpath = do
 	sbox <- liftIO $ S.findSandbox fpath'
 	maybe (hsdevError $ FileNotFound fpath') return sbox
 
+-- | Get source file
+refineSourceFile :: (CommandMonad m, Functor m) => FilePath -> m FilePath
+refineSourceFile fpath = do
+	fpath' <- findPath fpath
+	db' <- getDb
+	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ do
+		m' <- lookupFile fpath' db'
+		preview (moduleLocation . moduleFile) m'
+
 -- | Get module by source
 refineSourceModule :: (CommandMonad m, Functor m) => FilePath -> m Module
 refineSourceModule fpath = do
+	fpath' <- findPath fpath
 	db' <- getDb
-	maybe (hsdevError (NotInspected $ FileModule fpath Nothing)) return $ lookupFile fpath db'
+	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ lookupFile fpath' db'
+
+-- | Ensure package exists
+refinePackage :: (CommandMonad m, Functor m) => String -> m String
+refinePackage pack = do
+	db' <- getDb
+	if pack `elem` (allPackages db' ^.. each . packageName)
+		then return pack
+		else hsdevError (PackageNotFound pack)
 
 -- | Get list of enumerated sandboxes
 getSandboxes :: (CommandMonad m, Functor m) => [FilePath] -> m [Sandbox]
