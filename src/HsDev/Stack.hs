@@ -108,7 +108,7 @@ makeLenses ''StackEnv
 
 getStackEnv :: Paths -> Maybe StackEnv
 getStackEnv p = StackEnv <$>
-	(p ^. pathOf "global-stack-root") <*>
+	(p ^. pathOf "stack-root") <*>
 	(p ^. pathOf "project-root") <*>
 	(p ^. pathOf "config-location") <*>
 	(p ^. pathOf "ghc-paths") <*>
