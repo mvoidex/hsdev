@@ -44,6 +44,7 @@ import HsDev.Symbols.Util
 import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Worker
+import qualified HsDev.Tools.Ghc.Compat as Compat
 import qualified HsDev.Tools.Ghc.Check as Check
 import qualified HsDev.Tools.Ghc.Types as Types
 import qualified HsDev.Tools.Hayoo as Hayoo
@@ -266,6 +267,10 @@ runCommand (GhcEval exprs) = toValue $ do
 		toValue' :: ToJSON a => Either SomeException a -> Value
 		toValue' (Left (SomeException e)) = object ["fail" .= show e]
 		toValue' (Right s) = toJSON s
+runCommand Langs = toValue $ return $ Compat.languages
+runCommand Flags = toValue $ return ["-f" ++ prefix ++ f |
+	f <- Compat.flags,
+	prefix <- ["", "no-"]]
 runCommand (Link hold) = toValue $ commandLink >> when hold commandHold
 runCommand Exit = toValue serverExit
 

@@ -398,6 +398,8 @@ data Command =
 		typesGhcOpts :: [String] } |
 	AutoFix { autoFixCommand :: AutoFixCommand } |
 	GhcEval { ghcEvalExpressions :: [String] } |
+	Langs |
+	Flags |
 	Link { linkHold :: Bool } |
 	Exit
 		deriving (Show)
@@ -522,6 +524,8 @@ instance FromCmd Command where
 		cmd "types" "get types for file expressions" (Types <$> many fileArg <*> many cmdP <*> ghcOpts),
 		cmd "autofix" "autofix commands" (AutoFix <$> cmdP),
 		cmd "ghc" "ghc commands" (subparser $ cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm))),
+		cmd "langs" "ghc language options" (pure Langs),
+		cmd "flags" "ghc flags" (pure Flags),
 		cmd "link" "link to server" (Link <$> holdFlag),
 		cmd "exit" "exit" (pure Exit)]
 
@@ -650,6 +654,8 @@ instance ToJSON Command where
 	toJSON (Types fs cs ghcs) = cmdJson "types" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
 	toJSON (AutoFix acmd) = toJSON acmd
 	toJSON (GhcEval exprs) = cmdJson "ghc eval" ["exprs" .= exprs]
+	toJSON Langs = cmdJson "langs" []
+	toJSON Flags = cmdJson "flags" []
 	toJSON (Link h) = cmdJson "link" ["hold" .= h]
 	toJSON Exit = cmdJson "exit" []
 
@@ -699,6 +705,8 @@ instance FromJSON Command where
 		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
 		AutoFix <$> parseJSON (Object v),
 		guardCmd "ghc eval" v *> (GhcEval <$> v .::?! "exprs"),
+		guardCmd "langs" v *> pure Langs,
+		guardCmd "flags" v *> pure Flags,
 		guardCmd "link" v *> (Link <$> (v .:: "hold" <|> pure False)),
 		guardCmd "exit" v *> pure Exit]
 
