@@ -2,7 +2,7 @@
 --  see http://haskell.org/cabal/users-guide/
 
 name:                hsdev
-version:             0.1.8.2
+version:             0.2.0.0
 synopsis:            Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references etc.
 description:
   Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
@@ -68,11 +68,10 @@ library
     HsDev.Tools.Cabal
     HsDev.Tools.ClearImports
     HsDev.Tools.Ghc.Check
+    HsDev.Tools.Ghc.Compat
     HsDev.Tools.Ghc.Prelude
     HsDev.Tools.Ghc.Types
     HsDev.Tools.Ghc.Worker
-    HsDev.Tools.GhcMod
-    HsDev.Tools.GhcMod.InferType
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Tools.HLint
@@ -96,6 +95,17 @@ library
     build-depends:
       unix >= 2.7.0
 
+  if impl(ghc >= 8.0)
+    build-depends:
+      haddock-api >= 2.17.0 && < 2.18.0,
+      ghc >= 8.0.0 && < 8.1.0,
+      ghc-boot
+  if impl(ghc < 8.0)
+    build-depends:
+      haddock-api >= 2.16.0 && < 2.17.0,
+      ghc >= 7.10.0 && < 7.11.0,
+      bin-package-db
+
   build-depends:
     base >= 4.7 && < 5,
     aeson >= 0.7.0,
@@ -103,7 +113,6 @@ library
     array >= 0.5.0,
     async >= 2.0,
     attoparsec >= 0.11.0,
-    bin-package-db,
     bytestring >= 0.10.0,
     Cabal >= 1.22.0,
     containers >= 0.5.0,
@@ -114,13 +123,10 @@ library
     exceptions >= 0.6.0,
     filepath >= 1.4.0,
     fsnotify >= 0.2.1,
-    ghc >= 7.10.0 && < 7.11.0,
-    ghc-mod >= 5.5.0.0 && < 5.6.0.0,
     ghc-paths >= 0.1.0,
     ghc-syb-utils >= 0.2.3,
-    haddock-api >= 2.16.0 && < 2.17.0,
     haskell-src-exts >= 1.17.0 && < 1.18.0,
-    hdocs >= 0.4.4,
+    hdocs >= 0.5.0,
     hformat >= 0.1,
     hlint >= 1.9.13 && < 2.0.0,
     HTTP >= 4000.2.0,
@@ -129,13 +135,12 @@ library
     monad-control >= 1.0,
     monad-loops >= 0.4,
     mtl >= 2.2.0,
-    MonadCatchIO-transformers >= 0.3.1,
     network >= 2.6.0,
     optparse-applicative >= 0.11,
     process >= 1.2.0,
     regex-pcre-builtin >= 0.94,
     scientific >= 0.3,
-    simple-log >= 0.3.4,
+    simple-log >= 0.4.0,
     syb >= 0.5.1,
     template-haskell,
     text >= 1.2.0,
@@ -209,7 +214,6 @@ executable hsclearimports
     containers >= 0.5.0,
     data-default >= 0.5.0,
     directory >= 1.2.0,
-    ghc >= 7.10.0 && < 7.11.0,
     haskell-src-exts >= 1.17.0 && < 1.18.0,
     lens >= 4.8,
     mtl >= 2.2.0,
@@ -272,6 +276,7 @@ executable hsautofix
     bytestring >= 0.10.0,
     data-default >= 0.5.0,
     directory >= 1.2.0,
+    filepath >= 1.4.0,
     lens >= 4.8,
     mtl >= 2.2.0,
     optparse-applicative >= 0.11,

@@ -16,7 +16,6 @@ module HsDev.Stack (
 import Control.Arrow
 import Control.Lens (makeLenses, Lens', at, ix, lens, (^?), (^.))
 import Control.Monad
-import Control.Monad.Catch (MonadCatch(..))
 import Control.Monad.Trans.Maybe
 import Control.Monad.IO.Class
 import Data.Char
@@ -32,13 +31,13 @@ import System.FilePath
 import System.Process
 import System.Log.Simple (MonadLog(..))
 
-import qualified GHC
 import qualified Packages as GHC
 
 import HsDev.Error
 import HsDev.PackageDb
+import qualified HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Scan.Browse (withPackages)
-import HsDev.Util (withCurrentDirectory)
+import HsDev.Util as Util
 
 -- | Get compiler version
 stackCompiler :: MonadLog m => m String
@@ -47,11 +46,11 @@ stackCompiler = do
 		return .
 		map (GHC.packageNameString &&& GHC.packageVersion) .
 		fromMaybe [] .
-		GHC.pkgDatabase
+		Compat.pkgDatabase
 	let
 		compiler = T.display buildCompilerFlavor
-		CompilerId _ version = buildCompilerId
-		ver = maybe (T.display version) T.display $ lookup compiler res
+		CompilerId _ version' = buildCompilerId
+		ver = maybe (T.display version') T.display $ lookup compiler res
 	return $ compiler ++ "-" ++ ver
 
 -- | Get arch for stack
@@ -59,13 +58,13 @@ stackArch :: String
 stackArch = T.display buildArch
 
 -- | Invoke stack command, we are trying to get actual stack near current hsdev executable
-stack :: (MonadLog m, MonadCatch m) => [String] -> m String
-stack cmd = hsdevLiftIO $ do
+stack :: MonadLog m => [String] -> m String
+stack cmd' = hsdevLiftIO $ do
 	curExe <- liftIO getExecutablePath
-	withCurrentDirectory (takeDirectory curExe) $ do
+	Util.withCurrentDirectory (takeDirectory curExe) $ do
 		stackExe <- liftIO (findExecutable "stack") >>= maybe (hsdevError $ ToolNotFound "stack") return
 		comp <- stackCompiler
-		liftIO $ readProcess stackExe (cmd ++ ["--compiler", comp, "--arch", stackArch]) ""
+		liftIO $ readProcess stackExe (cmd' ++ ["--compiler", comp, "--arch", stackArch]) ""
 
 -- | Make yaml opts
 yaml :: Maybe FilePath -> [String]
@@ -75,7 +74,7 @@ yaml (Just y) = ["--stack-yaml", y]
 type Paths = Map String FilePath
 
 -- | Stack path
-path :: (MonadLog m, MonadCatch m) => Maybe FilePath -> m Paths
+path :: MonadLog m => Maybe FilePath -> m Paths
 path mcfg = liftM (M.fromList . map breakPath . lines) $ stack ("path" : yaml mcfg) where
 	breakPath :: String -> (String, FilePath)
 	breakPath = second (dropWhile isSpace . drop 1) . break (== ':')
@@ -85,15 +84,15 @@ pathOf :: String -> Lens' Paths (Maybe FilePath)
 pathOf = at
 
 -- | Build stack project
-build :: (MonadLog m, MonadCatch m) => [String] -> Maybe FilePath -> m ()
+build :: MonadLog m => [String] -> Maybe FilePath -> m ()
 build opts mcfg = void $ stack $ "build" : (opts ++ yaml mcfg)
 
 -- | Build only dependencies
-buildDeps :: (MonadLog m, MonadCatch m) => Maybe FilePath -> m ()
+buildDeps :: MonadLog m => Maybe FilePath -> m ()
 buildDeps = build ["--only-dependencies"]
 
 -- | Configure project
-configure :: (MonadLog m, MonadCatch m) => Maybe FilePath -> m ()
+configure :: MonadLog m => Maybe FilePath -> m ()
 configure = build ["--only-configure"]
 
 data StackEnv = StackEnv {
@@ -116,7 +115,7 @@ getStackEnv p = StackEnv <$>
 	(p ^. pathOf "local-pkg-db")
 
 -- | Projects paths
-projectEnv :: (MonadLog m, MonadCatch m) => FilePath -> m StackEnv
+projectEnv :: MonadLog m => FilePath -> m StackEnv
 projectEnv p = hsdevLiftIO $ do
 	hasConfig <- liftIO $ doesFileExist yaml'
 	unless hasConfig $ hsdevError $ FileNotFound yaml'

@@ -511,7 +511,7 @@ instance (NFData i, NFData t, NFData a) => NFData (Inspected i t a) where
 	rnf (Inspected t i ts r) = rnf t `seq` rnf i `seq` rnf ts `seq` rnf r
 
 -- | Empty tags
-noTags :: Ord t => Set t
+noTags :: Set t
 noTags = S.empty
 
 data ModuleTag = InferredTypesTag | RefinedDocsTag deriving (Eq, Ord, Read, Show, Enum, Bounded)

@@ -56,6 +56,6 @@ hsdevHandle :: MonadCatch m => (HsDevError -> m a) -> m a -> m a
 hsdevHandle h act = hsdevCatch act >>= either h return
 
 -- | Log hsdev exception and rethrow
-hsdevLog :: (MonadLog m, MonadCatch m) => Level -> m a -> m a
+hsdevLog :: MonadLog m => Level -> m a -> m a
 hsdevLog lev act = hsdevCatch act >>= either logError return where
 	logError e = log lev (fromString $ show e) >> hsdevError e

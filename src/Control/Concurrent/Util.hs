@@ -7,7 +7,7 @@ import Control.Concurrent.Async
 import Control.Monad
 import Control.Monad.IO.Class
 
-fork :: (MonadIO m, Functor m) => IO () -> m ()
+fork :: MonadIO m => IO () -> m ()
 fork = liftIO . void . forkIO
 
 timeout :: Int -> IO a -> IO (Maybe a)

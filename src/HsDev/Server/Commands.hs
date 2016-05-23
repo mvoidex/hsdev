@@ -16,8 +16,7 @@ import Control.Concurrent
 import Control.Concurrent.Async
 import Control.Lens (set, traverseOf, view, over, Lens', Lens, _1, _2, _Left)
 import Control.Monad
-import Control.Monad.CatchIO
-import Control.Monad.Except
+import Control.Monad.Catch (bracket, finally)
 import Data.Aeson hiding (Result, Error)
 import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Char8 as BS

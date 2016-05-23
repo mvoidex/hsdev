@@ -50,7 +50,7 @@ startWorker run initialize wrap = do
 				when stopped (start >>= void . swapMVar taskVar)
 	return $ Worker ch wrap taskVar restart
 
-workerDone :: MonadIO m => Worker m -> IO Bool
+workerDone :: Worker m -> IO Bool
 workerDone = doneChan . workerChan
 
 sendTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Async a)
@@ -58,7 +58,7 @@ sendTask w act = mfix $ \async' -> do
 	var <- newEmptyMVar
 	let
 		act' = (workerWrap w act >>= liftIO . putMVar var . Right) `catch` onError
-		onError :: (MonadCatch m, MonadIO m) => SomeException -> m ()
+		onError :: MonadIO m => SomeException -> m ()
 		onError = liftIO . putMVar var . Left
 		f = do
 			p <- sendChan (workerChan w) (void async', void act')

@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module Main (
 	main
 	) where
@@ -5,23 +7,47 @@ module Main (
 import Control.Lens (view, preview)
 import Control.Arrow ((***))
 import Control.Monad (liftM)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.State (gets)
 import Control.Monad.Except (throwError)
-import Data.Aeson
+import Data.Aeson hiding (Error)
 import Data.List (partition, sort)
 import Data.Maybe (mapMaybe)
+import System.FilePath (normalise)
 import System.Directory (canonicalizePath)
+import Text.Read (readMaybe)
 
 import System.Directory.Paths (canonicalize)
 import HsDev.Symbols (moduleFile)
+import HsDev.Symbols.Location (ModuleLocation(..), regionAt, Position(..))
 import HsDev.Tools.Base
+import HsDev.Tools.Ghc.Check (recalcNotesTabs)
 import HsDev.Tools.AutoFix
-import HsDev.Tools.GhcMod (parseOutputMessages)
 import HsDev.Util (toUtf8, liftE, readFileUtf8, writeFileUtf8, ordNub)
 
 import Tool
 
 data FixCmd = ShowCmd Bool | FixCmd [Int] Bool
+
+parseOutputMessages :: String -> [Note OutputMessage]
+parseOutputMessages = mapMaybe parseOutputMessage . lines
+
+parseOutputMessage :: String -> Maybe (Note OutputMessage)
+parseOutputMessage s = do
+	groups <- matchRx "^(.+):(\\d+):(\\d+):(\\s*(Warning|Error):)?\\s*(.*)$" s
+	l <- readMaybe (groups `at` 2)
+	c <- readMaybe (groups `at` 3)
+	return Note {
+		_noteSource = FileModule (normalise (groups `at` 1)) Nothing,
+		_noteRegion = regionAt (Position l c),
+		_noteLevel = Just $ if groups 5 == Just "Warning" then Warning else Error,
+		_note = outputMessage $ nullToNL (groups `at` 6) }
+
+-- | Replace NULL with newline
+nullToNL :: String -> String
+nullToNL = map $ \case
+	'\0' -> '\n'
+	ch -> ch
 
 fixP :: Parser FixCmd
 fixP = subparser $ mconcat [
@@ -36,7 +62,7 @@ main = toolMain "hsautofix" "automatically fix some errors" fixP (printExceptT .
 		input <- liftE getContents
 		msgs <- if isJson
 			then maybe (throwError "Can't parse messages") return $ decode (toUtf8 input)
-			else return $ parseOutputMessages input
+			else liftIO $ recalcNotesTabs (parseOutputMessages input)
 		mapM (liftE . canonicalize) $ corrections msgs
 	go (FixCmd ns pure') = do
 		input <- liftE getContents

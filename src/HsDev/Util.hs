@@ -42,7 +42,6 @@ import Control.Concurrent.Async
 import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Catch as C
-import qualified Control.Monad.CatchIO as CatchIO
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
@@ -58,25 +57,24 @@ import Data.Text (Text)
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
 import Options.Applicative
-import System.Directory
+import qualified System.Directory as Dir
 import System.FilePath
 import System.IO
-import qualified System.Log.Simple as Log
 import Text.Read (readMaybe)
 
 import HsDev.Version
 
 -- | Run action with current directory set
-withCurrentDirectory :: CatchIO.MonadCatchIO m => FilePath -> m a -> m a
-withCurrentDirectory cur act = CatchIO.bracket (liftIO getCurrentDirectory) (liftIO . setCurrentDirectory) $
-	const (liftIO (setCurrentDirectory cur) >> act)
+withCurrentDirectory :: (MonadIO m, C.MonadMask m) => FilePath -> m a -> m a
+withCurrentDirectory cur act = C.bracket (liftIO Dir.getCurrentDirectory) (liftIO . Dir.setCurrentDirectory) $
+	const (liftIO (Dir.setCurrentDirectory cur) >> act)
 
 -- | Get directory contents safely
 directoryContents :: FilePath -> IO [FilePath]
 directoryContents p = handle ignore $ do
-	b <- doesDirectoryExist p
+	b <- Dir.doesDirectoryExist p
 	if b
-		then liftM (map (p </>) . filter (`notElem` [".", ".."])) (getDirectoryContents p)
+		then liftM (map (p </>) . filter (`notElem` [".", ".."])) (Dir.getDirectoryContents p)
 		else return []
 	where
 		ignore :: SomeException -> IO [FilePath]
@@ -87,7 +85,7 @@ traverseDirectory :: FilePath -> IO [FilePath]
 traverseDirectory path = handle onError $ do
 	cts <- directoryContents path
 	liftM concat $ forM cts $ \c -> do
-		isDir <- doesDirectoryExist c
+		isDir <- Dir.doesDirectoryExist c
 		if isDir
 			then (c :) <$> traverseDirectory c
 			else return [c]
@@ -98,8 +96,8 @@ traverseDirectory path = handle onError $ do
 -- | Search something up
 searchPath :: (MonadIO m, MonadPlus m) => FilePath -> (FilePath -> m a) -> m a
 searchPath path f = do
-	path' <- liftIO $ canonicalizePath path
-	isDir <- liftIO $ doesDirectoryExist path'
+	path' <- liftIO $ Dir.canonicalizePath path
+	isDir <- liftIO $ Dir.doesDirectoryExist path'
 	search' (if isDir then path' else takeDirectory path')
 	where
 		search' dir
@@ -205,7 +203,7 @@ liftExceptionM act = C.catch act onError where
 liftIOErrors :: C.MonadCatch m => ExceptT String m a -> ExceptT String m a
 liftIOErrors act = liftException (runExceptT act) >>= either throwError return
 
-eitherT :: (Monad m, MonadError String m) => Either String a -> m a
+eitherT :: MonadError String m => Either String a -> m a
 eitherT = either throwError return
 
 -- | Throw error as exception
@@ -238,15 +236,15 @@ logException pre out = handle onErr where
 	onErr :: SomeException -> IO ()
 	onErr e = out $ pre ++ displayException e
 
-logIO :: CatchIO.MonadCatchIO m => String -> (String -> m ()) -> m () -> m ()
-logIO pre out = flip CatchIO.catch (onIO out) where
-	onIO :: CatchIO.MonadCatchIO m => (String -> m ()) -> IOException -> m ()
+logIO :: C.MonadCatch m => String -> (String -> m ()) -> m () -> m ()
+logIO pre out = flip C.catch (onIO out) where
+	onIO :: (String -> a) -> IOException -> a
 	onIO out' e = out' $ pre ++ displayException e
 
-logAsync :: CatchIO.MonadCatchIO m => (String -> m ()) -> m () -> m ()
-logAsync out = flip CatchIO.catch (onAsync out) where
-	onAsync :: CatchIO.MonadCatchIO m => (String -> m ()) -> AsyncException -> m ()
-	onAsync out' e = out' (displayException e) >> CatchIO.throw e
+logAsync :: (MonadIO m, C.MonadCatch m) => (String -> m ()) -> m () -> m ()
+logAsync out = flip C.catch (onAsync out) where
+	onAsync :: (MonadIO m, C.MonadThrow m) => (String -> m ()) -> AsyncException -> m ()
+	onAsync out' e = out' (displayException e) >> C.throwM e
 
 ignoreIO :: IO () -> IO ()
 ignoreIO = handle (const (return ()) :: IOException -> IO ())
@@ -285,13 +283,8 @@ parseArgs nm p = handle' . execParserPure (prefs mempty) (p { infoParser = withH
 	handle' (Failure f) = Left $ fst $ renderFailure f nm
 	handle' _ = Left "error: completion invoked result"
 
-instance CatchIO.MonadCatchIO m => CatchIO.MonadCatchIO (ExceptT e m) where
-	catch act onError = ExceptT $ CatchIO.catch (runExceptT act) (runExceptT . onError)
-	block = ExceptT . CatchIO.block . runExceptT
-	unblock = ExceptT . CatchIO.unblock . runExceptT
-
-instance Log.MonadLog m => Log.MonadLog (ExceptT e m) where
-	askLog = lift Log.askLog
+-- instance Log.MonadLog m => Log.MonadLog (ExceptT e m) where
+-- 	askLog = lift Log.askLog
 
 -- | Get hsdev version as list of integers
 version :: Maybe [Int]

@@ -40,7 +40,6 @@ import qualified HsDev.Database.Async as DB
 import qualified HsDev.Database.Update as Update
 import HsDev.Inspect (getDefines)
 import HsDev.Tools.Ghc.Worker
-import HsDev.Tools.GhcMod (ghcModMultiWorker)
 import HsDev.Server.Types
 import HsDev.Server.Message
 import HsDev.Util
@@ -105,7 +104,6 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scop
 #endif
 	ghcw <- withLog (sessionLogger slog) $ ghcWorker [] (return ())
 	ghciw <- withLog (sessionLogger slog) ghciWorker
-	ghcmodw <- ghcModMultiWorker
 	defs <- getDefines
 	let
 		session = Session
@@ -119,7 +117,6 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scop
 #endif
 			ghcw
 			ghciw
-			ghcmodw
 			(do
 				outputStr Log.Trace "stopping server"
 				signalQSem waitSem)

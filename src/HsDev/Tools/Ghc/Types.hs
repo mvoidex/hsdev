@@ -9,7 +9,6 @@ module HsDev.Tools.Ghc.Types (
 import Control.DeepSeq
 import Control.Lens (over, view, set, each, preview, makeLenses, _Just)
 import Control.Monad
-import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.IO.Class
 import Data.Aeson
 import Data.Generics
@@ -28,16 +27,17 @@ import Desugar (deSugarExpr)
 import TcHsSyn (hsPatType)
 import Outputable
 import PprTyThing
-import Pretty
+import qualified Pretty
 
 import System.Directory.Paths (canonicalize)
 import HsDev.Error
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.PackageDb
 import HsDev.Symbols
-import HsDev.Tools.Ghc.Worker
+import HsDev.Tools.Ghc.Worker as Ghc
+import HsDev.Tools.Ghc.Compat
 import HsDev.Tools.Types
-import HsDev.Util hiding (withCurrentDirectory)
+import HsDev.Util
 
 class HasType a where
 	getType :: GhcMonad m => TypecheckedModule -> a -> m (Maybe (SrcSpan, Type))
@@ -101,7 +101,7 @@ instance FromJSON TypedExpr where
 		v .:: "type"
 
 -- | Get all types in module
-fileTypes :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> Maybe String -> m [Note TypedExpr]
+fileTypes :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> Module -> Maybe String -> m [Note TypedExpr]
 fileTypes opts pdbs m msrc = scope "types" $ case view moduleLocation m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
@@ -112,7 +112,7 @@ fileTypes opts pdbs m msrc = scope "types" $ case view moduleLocation m of
 				(sourceModuleRoot (view moduleName m) file') $
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
-		withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
+		withFlags $ (if dirExist then Ghc.withCurrentDirectory dir else id) $ do
 			_ <- setCmdOpts $ concat [
 				packageDbStackOpts pdbs,
 				moduleOpts pkgs m,
@@ -133,7 +133,7 @@ fileTypes opts pdbs m msrc = scope "types" $ case view moduleLocation m of
 		setExpr :: String -> Note String -> Note TypedExpr
 		setExpr cts n = over note (TypedExpr (regionStr (view noteRegion n) cts)) n
 		showType :: DynFlags -> Type -> String
-		showType df = showDoc OneLineMode 80 . withPprStyleDoc df unqualStyle . pprTypeForUser
+		showType df = renderStyle Pretty.OneLineMode 80 . withPprStyleDoc df unqualStyle . pprTypeForUser
 		unqualStyle :: PprStyle
 		unqualStyle = mkUserStyle neverQualify AllTheWay
 
@@ -147,5 +147,5 @@ setModuleTypes ts = over (moduleDeclarations . each) setType where
 		return $ set (declaration . functionType) (Just $ fromString $ view (note . typedType) tnote) d
 
 -- | Infer types in module
-inferTypes :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> Maybe String -> m Module
+inferTypes :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> Module -> Maybe String -> m Module
 inferTypes opts pdbs m msrc = scope "infer" $ liftM (`setModuleTypes` m) $ fileTypes opts pdbs m msrc

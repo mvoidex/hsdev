@@ -22,6 +22,7 @@ import GHC
 import GHC.Paths (libdir)
 
 import HsDev.Util
+import HsDev.Tools.Ghc.Compat
 
 -- | Dump minimal imports
 dumpMinimalImports :: [String] -> FilePath -> ExceptT String IO String
@@ -48,7 +49,7 @@ dumpMinimalImports opts f = do
 				hiDir = Just cur }
 		(df'', _, _) <- parseDynamicFlags df' (map noLoc ("-ddump-minimal-imports" : opts))
 		_ <- setSessionDynFlags df''
-		defaultCleanupHandler df'' $ do
+		cleanupHandler df'' $ do
 			t <- guessTarget file Nothing
 			setTargets [t]
 			load LoadAllTargets

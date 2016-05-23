@@ -11,7 +11,6 @@ import Control.Applicative
 import Control.Lens (makeLenses)
 import Control.Monad.Base
 import Control.Monad.Catch
-import Control.Monad.CatchIO
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -90,12 +89,12 @@ makeLenses ''UpdateOptions
 type UpdateMonad m = (CommandMonad m, MonadReader UpdateOptions m, MonadWriter [ModuleLocation] m)
 
 newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateOptions (WriterT [ModuleLocation] (ClientM m)) a }
-	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadCatchIO, Functor, MonadReader UpdateOptions, MonadWriter [ModuleLocation])
+	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask, Functor, MonadReader UpdateOptions, MonadWriter [ModuleLocation])
 
 instance MonadTrans UpdateM where
 	lift = UpdateM . lift . lift . lift
 
-instance MonadCatchIO m => Log.MonadLog (UpdateM m) where
+instance (MonadIO m, MonadMask m) => Log.MonadLog (UpdateM m) where
 	askLog = UpdateM $ lift $ lift Log.askLog
 
 instance ServerMonadBase m => SessionMonad (UpdateM m) where

@@ -15,7 +15,6 @@ module HsDev.Tools.Ghc.Check (
 
 import Control.Lens (preview, view, each, _Just, (^..))
 import Control.Monad.Except
-import Control.Monad.Catch (MonadThrow(..))
 import Data.Maybe (fromMaybe)
 import System.FilePath (makeRelative)
 import System.Directory (doesDirectoryExist)
@@ -32,6 +31,7 @@ import HsDev.Symbols.Location
 import HsDev.Symbols.Types
 import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker
+import HsDev.Tools.Ghc.Compat
 import HsDev.Tools.Types
 import HsDev.Util (readFileUtf8, ordNub)
 
@@ -40,7 +40,7 @@ checkFiles :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> [FilePat
 checkFiles opts pdbs files _ = scope "check-files" $ do
 	ch <- liftIO newChan
 	withFlags $ do
-		modifyFlags (\fs -> fs { log_action = logToChan ch })
+		modifyFlags $ setLogAction $ logToChan ch
 		_ <- setCmdOpts ("-Wall" : (packageDbStackOpts pdbs ++ opts))
 		clearTargets
 		mapM (`makeTarget` Nothing) files >>= loadTargets
@@ -48,7 +48,7 @@ checkFiles opts pdbs files _ = scope "check-files" $ do
 	liftIO $ recalcNotesTabs notes
 
 -- | Check module source
-check :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> Maybe String -> m [Note OutputMessage]
+check :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> Module -> Maybe String -> m [Note OutputMessage]
 check opts pdbs m msrc = scope "check" $ case view moduleLocation m of
 	FileModule file proj -> do
 		ch <- liftIO newChan
@@ -64,7 +64,7 @@ check opts pdbs m msrc = scope "check" $ case view moduleLocation m of
 				packageDbStackOpts pdbs,
 				moduleOpts pkgs m,
 				opts]
-			modifyFlags (\fs -> fs { log_action = logToChan ch })
+			modifyFlags $ setLogAction $ logToChan ch
 			clearTargets
 			target <- makeTarget (makeRelative dir file) msrc
 			loadTargets [target]
@@ -73,11 +73,11 @@ check opts pdbs m msrc = scope "check" $ case view moduleLocation m of
 	_ -> scope "check" $ hsdevError $ ModuleNotSource (view moduleLocation m)
 
 -- | Check module and collect warnings and errors
-checkFile :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> m [Note OutputMessage]
+checkFile :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> Module -> m [Note OutputMessage]
 checkFile opts pdbs m = check opts pdbs m Nothing
 
 -- | Check module and collect warnings and errors
-checkSource :: (MonadLog m, GhcMonad m, MonadThrow m) => [String] -> PackageDbStack -> Module -> String -> m [Note OutputMessage]
+checkSource :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> Module -> String -> m [Note OutputMessage]
 checkSource opts pdbs m src = check opts pdbs m (Just src)
 
 -- Recalc tabs for notes

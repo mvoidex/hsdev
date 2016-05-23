@@ -9,7 +9,6 @@ module HsDev.Server.Types (
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..), AddedContents(..),
-	GhcModCommand(..),
 	AutoFixCommand(..),
 	FileContents(..), TargetFilter(..), SearchQuery(..), SearchType(..),
 	FromCmd(..),
@@ -20,7 +19,6 @@ import Control.Concurrent.MVar (MVar, swapMVar)
 import Control.Lens (each)
 import Control.Monad.Base
 import Control.Monad.Catch
-import Control.Monad.CatchIO
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Trans.Control
@@ -42,9 +40,8 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
-import HsDev.Tools.GhcMod (OutputMessage, WorkerMap)
 import HsDev.Tools.Ghc.Worker (Worker, GhcM)
-import HsDev.Tools.Types (Note)
+import HsDev.Tools.Types (Note, OutputMessage)
 import HsDev.Tools.AutoFix (Correction)
 import HsDev.Util
 
@@ -52,7 +49,7 @@ import HsDev.Util
 import System.Win32.FileMapping.NamePool (Pool)
 #endif
 
-type ServerMonadBase m = (MonadThrow m, MonadCatch m, MonadCatchIO m, MonadBaseControl IO m, Alternative m, MonadPlus m)
+type ServerMonadBase m = (MonadIO m, MonadMask m, MonadBaseControl IO m, Alternative m, MonadPlus m)
 
 data SessionLog = SessionLog {
 	sessionLogger :: Log,
@@ -71,7 +68,6 @@ data Session = Session {
 #endif
 	sessionGhc :: Worker GhcM,
 	sessionGhci :: Worker GhcM,
-	sessionGhcMod :: Worker (ReaderT WorkerMap IO),
 	sessionExit :: IO (),
 	sessionWait :: IO (),
 	sessionDefines :: [(String, String)] }
@@ -83,9 +79,9 @@ askSession :: SessionMonad m => (Session -> a) -> m a
 askSession f = liftM f getSession
 
 newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a }
-	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadCatchIO, MonadReader Session, MonadTrans, MonadThrow, MonadCatch)
+	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadReader Session, MonadTrans, MonadThrow, MonadCatch, MonadMask)
 
-instance MonadCatchIO m => MonadLog (ServerM m) where
+instance (MonadIO m, MonadMask m) => MonadLog (ServerM m) where
 	askLog = ServerM $ asks (sessionLogger . sessionLog)
 
 instance ServerMonadBase m => SessionMonad (ServerM m) where
@@ -115,12 +111,12 @@ askOptions :: CommandMonad m => (CommandOptions -> a) -> m a
 askOptions f = liftM f getOptions
 
 newtype ClientM m a = ClientM { runClientM :: ServerM (ReaderT CommandOptions m) a }
-	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadCatchIO, MonadThrow, MonadCatch)
+	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask)
 
 instance MonadTrans ClientM where
 	lift = ClientM . lift . lift
 
-instance MonadCatchIO m => MonadLog (ClientM m) where
+instance (MonadIO m, MonadMask m) => MonadLog (ClientM m) where
 	askLog = ClientM askLog
 
 instance ServerMonadBase m => SessionMonad (ClientM m) where
@@ -400,7 +396,6 @@ data Command =
 		typesFiles :: [FilePath],
 		typesContents :: [FileContents],
 		typesGhcOpts :: [String] } |
-	GhcMod { ghcModCommand :: GhcModCommand } |
 	AutoFix { autoFixCommand :: AutoFixCommand } |
 	GhcEval { ghcEvalExpressions :: [String] } |
 	Link { linkHold :: Bool } |
@@ -414,15 +409,6 @@ data AddedContents =
 
 instance Show AddedContents where
 	show = L.unpack . encode
-
-data GhcModCommand =
-	GhcModLang |
-	GhcModFlags |
-	GhcModType Position FilePath [String] |
-	GhcModLint [FilePath] [String] |
-	GhcModCheck [FilePath] [String] |
-	GhcModCheckLint [FilePath] [String] [String]
-		deriving (Show)
 
 data AutoFixCommand =
 	AutoFixShow [Note OutputMessage] |
@@ -475,15 +461,7 @@ instance Paths Command where
 	paths f (Check fs fcts ghcs) = Check <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
 	paths f (CheckLint fs fcts ghcs) = CheckLint <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
 	paths f (Types fs fcts ghcs) = Types <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
-	paths f (GhcMod g) = GhcMod <$> paths f g
 	paths _ c = pure c
-
-instance Paths GhcModCommand where
-	paths f (GhcModType pos fpath opts) = GhcModType <$> pure pos <*> f fpath <*> pure opts
-	paths f (GhcModLint fs hlints) = GhcModLint <$> traverse f fs <*> pure hlints
-	paths f (GhcModCheck fs ghcs) = GhcModCheck <$> traverse f fs <*> pure ghcs
-	paths f (GhcModCheckLint fs ghcs hlints) = GhcModCheckLint <$> traverse f fs <*> pure ghcs <*> pure hlints
-	paths _ g = pure g
 
 instance Paths FileContents where
 	paths f (FileContents fpath cts) = FileContents <$> f fpath <*> pure cts
@@ -542,20 +520,10 @@ instance FromCmd Command where
 		cmd "check" "check source files or file contents" (Check <$> many fileArg <*> many cmdP <*> ghcOpts),
 		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many fileArg <*> many cmdP <*> ghcOpts),
 		cmd "types" "get types for file expressions" (Types <$> many fileArg <*> many cmdP <*> ghcOpts),
-		cmd "ghc-mod" "ghc-mod commands" (GhcMod <$> cmdP),
 		cmd "autofix" "autofix commands" (AutoFix <$> cmdP),
 		cmd "ghc" "ghc commands" (subparser $ cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm))),
 		cmd "link" "link to server" (Link <$> holdFlag),
 		cmd "exit" "exit" (pure Exit)]
-
-instance FromCmd GhcModCommand where
-	cmdP = subparser $ mconcat [
-		cmd "lang" "get LANGUAGE pragmas" (pure GhcModLang),
-		cmd "flags" "get OPTIONS_GHC pragmas" (pure GhcModFlags),
-		cmd "type" "infer type with 'ghc-mod type'" (GhcModType <$> (Position <$> argument auto idm <*> argument auto idm) <*> fileArg <*> ghcOpts),
-		cmd "lint" "lint source files" (GhcModLint <$> many (strArgument idm) <*> hlintOpts),
-		cmd "check" "check source files" (GhcModCheck <$> many (strArgument idm) <*> ghcOpts),
-		cmd "check-lint" "check & lint source files" (GhcModCheckLint <$> many (strArgument idm) <*> ghcOpts <*> hlintOpts)]
 
 instance FromCmd AutoFixCommand where
 	cmdP = subparser $ mconcat [
@@ -602,7 +570,6 @@ ghcOpts :: Parser [String]
 globalFlag :: Parser Bool
 hayooPageArg :: Parser Int
 hayooPagesArg :: Parser Int
-hlintOpts :: Parser [String]
 holdFlag :: Parser Bool
 inferFlag :: Parser Bool
 localsFlag :: Parser Bool
@@ -626,7 +593,6 @@ ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "
 globalFlag = switch (long "global" <> help "scope of project")
 hayooPageArg = option auto (long "page" <> metavar "n" <> short 'p' <> help "page number (0 by default)" <> value 0)
 hayooPagesArg = option auto (long "pages" <> metavar "count" <> short 'n' <> help "pages count (1 by default)" <> value 1)
-hlintOpts = many (strOption (long "hlint" <> metavar "option" <> short 'h' <> help "options to pass to hlint"))
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
@@ -682,7 +648,6 @@ instance ToJSON Command where
 	toJSON (Check fs cs ghcs) = cmdJson "check" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
 	toJSON (CheckLint fs cs ghcs) = cmdJson "check-lint" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
 	toJSON (Types fs cs ghcs) = cmdJson "types" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
-	toJSON (GhcMod gcmd) = toJSON gcmd
 	toJSON (AutoFix acmd) = toJSON acmd
 	toJSON (GhcEval exprs) = cmdJson "ghc eval" ["exprs" .= exprs]
 	toJSON (Link h) = cmdJson "link" ["hold" .= h]
@@ -732,7 +697,6 @@ instance FromJSON Command where
 		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
 		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
 		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
-		GhcMod <$> parseJSON (Object v),
 		AutoFix <$> parseJSON (Object v),
 		guardCmd "ghc eval" v *> (GhcEval <$> v .::?! "exprs"),
 		guardCmd "link" v *> (Link <$> (v .:: "hold" <|> pure False)),
@@ -748,23 +712,6 @@ instance FromJSON AddedContents where
 		AddedDatabase <$> v .:: "database",
 		AddedModule <$> v .:: "module",
 		AddedProject <$> v .:: "project"]
-
-instance ToJSON GhcModCommand where
-	toJSON GhcModLang = cmdJson "ghc-mod lang" []
-	toJSON GhcModFlags = cmdJson "ghc-mod flags" []
-	toJSON (GhcModType pos f ghcs) = cmdJson "ghc-mod type" ["position" .= pos, "file" .= f, "ghc-opts" .= ghcs]
-	toJSON (GhcModLint fs lints) = cmdJson "ghc-mod lint" ["files" .= fs, "hlint-opts" .= lints]
-	toJSON (GhcModCheck fs ghcs) = cmdJson "ghc-mod check" ["files" .= fs, "ghc-opts" .= ghcs]
-	toJSON (GhcModCheckLint fs ghcs lints) = cmdJson "ghc-mod check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "hlint-opts" .= lints]
-
-instance FromJSON GhcModCommand where
-	parseJSON = withObject "ghc-mod-command" $ \v -> asum [
-		guardCmd "ghc-mod lang" v *> pure GhcModLang,
-		guardCmd "ghc-mod flags" v *> pure GhcModFlags,
-		guardCmd "ghc-mod type" v *> (GhcModType <$> v .:: "position" <*> v .:: "file" <*> v .::?! "ghc-opts"),
-		guardCmd "ghc-mod lint" v *> (GhcModLint <$> v .:: "files" <*> v .::?! "hlint-opts"),
-		guardCmd "ghc-mod check" v *> (GhcModCheck <$> v .:: "files" <*> v .::?! "ghc-opts"),
-		guardCmd "ghc-mod check-lint" v *> (GhcModCheckLint <$> v .:: "files" <*> v .::?! "ghc-opts" <*> v .::?! "hlint-opts")]
 
 instance ToJSON AutoFixCommand where
 	toJSON (AutoFixShow ns) = cmdJson "autofix show" ["messages" .= ns]

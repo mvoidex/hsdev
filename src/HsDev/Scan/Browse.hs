@@ -30,6 +30,7 @@ import HsDev.Symbols
 import HsDev.Error
 import HsDev.Tools.Base (inspect)
 import HsDev.Tools.Ghc.Worker (GhcM(..), runGhcM)
+import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub)
 
 import qualified ConLike as GHC
@@ -43,11 +44,10 @@ import qualified GHC.Paths as GHC
 import qualified Name as GHC
 import qualified Outputable as GHC
 import qualified Packages as GHC
-import qualified PatSyn as GHC
 import qualified TyCon as GHC
 import qualified Type as GHC
 import qualified Var as GHC
-import Pretty
+import qualified Pretty
 
 -- | Browse packages
 browsePackages :: MonadLog m => [String] -> PackageDbStack -> m [PackageConfig]
@@ -59,9 +59,9 @@ browsePackagesDeps :: MonadLog m => [String] -> PackageDbStack -> m (Deps Packag
 browsePackagesDeps opts dbs = withPackages (packageDbStackOpts dbs ++ opts) $ \df -> do
 	cfgs <- packageConfigs
 	return $ mapDeps (toPkg df) $ mconcat $ map (uncurry deps) $
-		map (GHC.installedPackageId &&& GHC.depends) cfgs
+		map (Compat.unitId &&& Compat.depends df) cfgs
 	where
-		toPkg df' = readPackageConfig . GHC.getPackageDetails df' . GHC.resolveInstalledPackageId df'
+		toPkg df' = readPackageConfig . getPackageDetails df'
 
 listModules :: MonadLog m => [String] -> PackageDbStack -> m [ModuleLocation]
 listModules opts dbs = withPackages_ (packageDbStackOpts dbs ++ opts) $ do
@@ -119,7 +119,7 @@ browseModule pdb package' m = do
 		showResult dflags (GHC.AnId i) = Just $ Function (Just $ fromString $ formatType dflags GHC.varType i) [] Nothing
 		showResult dflags (GHC.AConLike c) = case c of
 			GHC.RealDataCon d -> Just $ Function (Just $ fromString $ formatType dflags GHC.dataConRepType d) [] Nothing
-			GHC.PatSynCon p -> Just $ Function (Just $ fromString $ formatType dflags GHC.patSynType p) [] Nothing
+			GHC.PatSynCon p -> Just $ Function (Just $ fromString $ formatType dflags patSynType p) [] Nothing
 		showResult _ (GHC.ATyCon t) = Just $ tcon $ TypeInfo Nothing (map (fromString . GHC.getOccString) $ GHC.tyConTyVars t) Nothing [] where
 			tcon
 				| GHC.isAlgTyCon t && not (GHC.isNewTyCon t) && not (GHC.isClassTyCon t) = Data
@@ -132,7 +132,7 @@ browseModule pdb package' m = do
 withInitializedPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
 withInitializedPackages ghcOpts cont = runGhcM (Just GHC.libdir) $ do
 	fs <- GHC.getSessionDynFlags
-	GHC.defaultCleanupHandler fs $ do
+	cleanupHandler fs $ do
 		(fs', _, _) <- GHC.parseDynamicFlags fs (map GHC.noLoc ghcOpts)
 		_ <- GHC.setSessionDynFlags fs'
 		(result, _) <- GHC.liftIO $ GHC.initPackages fs'
@@ -147,7 +147,7 @@ withPackages_ ghcOpts act = withPackages ghcOpts (const act)
 inModuleSource :: GhcMonad m => GHC.Name -> m (Maybe GHC.TyThing)
 inModuleSource nm = GHC.getModuleInfo (GHC.nameModule nm) >> GHC.lookupGlobalName nm
 
-formatType :: GHC.NamedThing a => GHC.DynFlags -> (a -> GHC.Type) -> a -> String
+formatType :: GHC.DynFlags -> (a -> GHC.Type) -> a -> String
 formatType dflag f x = showOutputable dflag (removeForAlls $ f x)
 
 removeForAlls :: GHC.Type -> GHC.Type
@@ -165,7 +165,7 @@ showOutputable :: GHC.Outputable a => GHC.DynFlags -> a -> String
 showOutputable dflag = unwords . lines . showUnqualifiedPage dflag . GHC.ppr
 
 showUnqualifiedPage :: GHC.DynFlags -> GHC.SDoc -> String
-showUnqualifiedPage dflag = Pretty.showDoc Pretty.LeftMode 0 . GHC.withPprStyleDoc dflag styleUnqualified
+showUnqualifiedPage dflag = renderStyle Pretty.LeftMode 0 . GHC.withPprStyleDoc dflag styleUnqualified
 
 styleUnqualified :: GHC.PprStyle
 styleUnqualified = GHC.mkUserStyle GHC.neverQualify GHC.AllTheWay
@@ -229,7 +229,7 @@ packageDbCandidate_ :: FilePath -> IO PackageDb
 packageDbCandidate_ = packageDbCandidate >=> maybe (return GlobalDb) return
 
 packageConfigs :: GhcM [GHC.PackageConfig]
-packageConfigs = liftM (fromMaybe [] . GHC.pkgDatabase) GHC.getSessionDynFlags
+packageConfigs = liftM (fromMaybe [] . pkgDatabase) GHC.getSessionDynFlags
 
 packageDbModules :: GhcM [(GHC.PackageConfig, GHC.Module)]
 packageDbModules = do

@@ -12,8 +12,7 @@ import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 import qualified Control.Monad.State as State
-import Control.Monad.Catch (try, catch, SomeException(..))
-import Control.Monad.CatchIO (bracket)
+import Control.Monad.Catch (try, catch, bracket, SomeException(..))
 import Data.Aeson hiding (Result, Error)
 import Data.List
 import Data.Foldable (toList)
@@ -47,21 +46,19 @@ import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Worker
 import qualified HsDev.Tools.Ghc.Check as Check
 import qualified HsDev.Tools.Ghc.Types as Types
-import qualified HsDev.Tools.GhcMod as GhcMod
 import qualified HsDev.Tools.Hayoo as Hayoo
 import qualified HsDev.Tools.HLint as HLint
 import qualified HsDev.Tools.Types as Tools
 import HsDev.Util
 import HsDev.Watcher
 
-import qualified HsDev.Scan.Browse as Scan
 import qualified HsDev.Database.Update as Update
 
 runClient :: (ToJSON a, ServerMonadBase m) => CommandOptions -> ClientM m a -> ServerM m Result
 runClient copts = mapServerM toResult . runClientM where
 	toResult :: (ToJSON a, ServerMonadBase m) => ReaderT CommandOptions m a -> m Result
 	toResult act = liftM (either Error (Result . toJSON)) $ runReaderT (try act) copts
-	mapServerM :: (Monad m, Monad n) => (m a -> n b) -> ServerM m a -> ServerM n b
+	mapServerM :: (m a -> n b) -> ServerM m a -> ServerM n b
 	mapServerM f = ServerM . mapReaderT f . runServerM
 
 toValue :: (ToJSON a, Monad m) => m a -> m Value
@@ -238,43 +235,6 @@ runCommand (Types fs fcts ghcs') = toValue $ do
 		pdbs <- searchPackageDbStack file
 		m <- refineSourceModule file
 		inWorkerWith (hsdevError . GhcError . displayException) ghc (Types.fileTypes ghcs' pdbs m msrc)
-runCommand (GhcMod GhcModLang) = toValue $ liftIO $ hsdevLift GhcMod.langs
-runCommand (GhcMod GhcModFlags) = toValue $ liftIO $ hsdevLift GhcMod.flags
-runCommand (GhcMod (GhcModType (Position line column) fpath ghcs')) = toValue $ do
-	ghcmod <- askSession sessionGhcMod
-	dbval <- getDb
-	pdbs <- searchPackageDbStack fpath
-	pkgs <- Scan.browsePackages ghcs' pdbs
-	(fpath', m', _) <- liftIO $ hsdevLift $ fileCtx dbval fpath
-	liftIO $ GhcMod.waitMultiGhcMod ghcmod fpath' $
-		GhcMod.typeOf (ghcs' ++ moduleOpts pkgs m') pdbs fpath' line column
-runCommand (GhcMod (GhcModLint fs hlints')) = toValue $ do
-	ghcmod <- askSession sessionGhcMod
-	liftIO $ liftM concat $ forM fs $ \file ->
-		GhcMod.waitMultiGhcMod ghcmod file $
-			GhcMod.lint hlints' file
-runCommand (GhcMod (GhcModCheck fs ghcs')) = toValue $ do
-	ghcmod <- askSession sessionGhcMod
-	dbval <- getDb
-	liftM concat $ forM fs $ \file -> do
-		mproj <- liftIO $ locateProject file
-		pdbs <- searchPackageDbStack file
-		pkgs <- Scan.browsePackages ghcs' pdbs
-		(_, m', _) <- liftIO $ hsdevLift $ fileCtx dbval file
-		liftIO $ GhcMod.waitMultiGhcMod ghcmod file $
-			GhcMod.check (ghcs' ++ moduleOpts pkgs m') pdbs [file] mproj
-runCommand (GhcMod (GhcModCheckLint fs ghcs' hlints')) = toValue $ do
-	ghcmod <- askSession sessionGhcMod
-	dbval <- getDb
-	liftM concat $ forM fs $ \file -> do
-		mproj <- liftIO $ locateProject file
-		pdbs <- searchPackageDbStack file
-		pkgs <- Scan.browsePackages ghcs' pdbs
-		(_, m', _) <- liftIO $ hsdevLift $ fileCtx dbval file
-		liftIO $ GhcMod.waitMultiGhcMod ghcmod file $ do
-			checked <- GhcMod.check (ghcs' ++ moduleOpts pkgs m') pdbs [file] mproj
-			linted <- GhcMod.lint hlints' file
-			return $ checked ++ linted
 runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
 runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
@@ -338,14 +298,14 @@ findPath = paths findPath' where
 		liftIO $ canonicalizePath (normalise $ if isRelative f then r </> f else f)
 
 -- | Find sandbox by path
-findSandbox :: (CommandMonad m, Functor m) => FilePath -> m Sandbox
+findSandbox :: CommandMonad m => FilePath -> m Sandbox
 findSandbox fpath = do
 	fpath' <- findPath fpath
 	sbox <- liftIO $ S.findSandbox fpath'
 	maybe (hsdevError $ FileNotFound fpath') return sbox
 
 -- | Get source file
-refineSourceFile :: (CommandMonad m, Functor m) => FilePath -> m FilePath
+refineSourceFile :: CommandMonad m => FilePath -> m FilePath
 refineSourceFile fpath = do
 	fpath' <- findPath fpath
 	db' <- getDb
@@ -354,14 +314,14 @@ refineSourceFile fpath = do
 		preview (moduleLocation . moduleFile) m'
 
 -- | Get module by source
-refineSourceModule :: (CommandMonad m, Functor m) => FilePath -> m Module
+refineSourceModule :: CommandMonad m => FilePath -> m Module
 refineSourceModule fpath = do
 	fpath' <- findPath fpath
 	db' <- getDb
 	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ lookupFile fpath' db'
 
 -- | Ensure package exists
-refinePackage :: (CommandMonad m, Functor m) => String -> m String
+refinePackage :: CommandMonad m => String -> m String
 refinePackage pack = do
 	db' <- getDb
 	if pack `elem` (allPackages db' ^.. each . packageName)
@@ -369,7 +329,7 @@ refinePackage pack = do
 		else hsdevError (PackageNotFound pack)
 
 -- | Get list of enumerated sandboxes
-getSandboxes :: (CommandMonad m, Functor m) => [FilePath] -> m [Sandbox]
+getSandboxes :: CommandMonad m => [FilePath] -> m [Sandbox]
 getSandboxes = traverse (findPath >=> findSandbox)
 
 -- | Find project by name or path

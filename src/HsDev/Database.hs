@@ -232,7 +232,7 @@ structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> 
 		"Different module projects"
 		(return (databaseProjects db ^.. each . projectCabal))
 	-- Check that list results in one element
-	unique :: (Eq a) => String -> String -> Either String [a] -> Either String a
+	unique :: String -> String -> Either String [a] -> Either String a
 	unique _ _ (Left e) = Left e
 	unique no _ (Right []) = Left no
 	unique _ _ (Right [x]) = Right x

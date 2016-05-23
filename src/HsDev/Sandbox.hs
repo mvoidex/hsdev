@@ -12,7 +12,6 @@ module HsDev.Sandbox (
 
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
-import Control.Monad.Catch (MonadCatch(..))
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Control.Lens (view, makeLenses)
@@ -31,9 +30,9 @@ import System.Directory.Paths
 import HsDev.PackageDb
 import HsDev.Scan.Browse (withPackages)
 import HsDev.Stack
+import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (searchPath)
 
-import qualified GHC
 import qualified Packages as GHC
 
 data SandboxType = CabalSandbox | StackWork deriving (Eq, Ord, Read, Show, Enum, Bounded)
@@ -95,14 +94,14 @@ searchSandbox :: FilePath -> IO (Maybe Sandbox)
 searchSandbox p = runMaybeT $ searchPath p (MaybeT . findSandbox)
 
 -- | Get package-db stack for sandbox
-sandboxPackageDbStack :: (MonadLog m, MonadCatch m) => Sandbox -> m PackageDbStack
+sandboxPackageDbStack :: MonadLog m => Sandbox -> m PackageDbStack
 sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
 	dir <- cabalSandboxPackageDb
 	return $ PackageDbStack [PackageDb $ fpath </> dir]
 sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory fpath
 
 -- | Search package-db stack with user-db as default
-searchPackageDbStack :: (MonadLog m, MonadCatch m) => FilePath -> m PackageDbStack
+searchPackageDbStack :: MonadLog m => FilePath -> m PackageDbStack
 searchPackageDbStack p = do
 	mbox <- liftIO $ searchSandbox p
 	case mbox of
@@ -110,7 +109,7 @@ searchPackageDbStack p = do
 		Just sbox -> sandboxPackageDbStack sbox
 
 -- | Restore package-db stack by package-db
-restorePackageDbStack :: (MonadLog m, MonadCatch m) => PackageDb -> m PackageDbStack
+restorePackageDbStack :: MonadLog m => PackageDb -> m PackageDbStack
 restorePackageDbStack GlobalDb = return globalDb
 restorePackageDbStack UserDb = return userDb
 restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDb p) $ runMaybeT $ do
@@ -124,7 +123,7 @@ cabalSandboxLib = do
 		return .
 		map (GHC.packageNameString &&& GHC.packageVersion) .
 		fromMaybe [] .
-		GHC.pkgDatabase
+		Compat.pkgDatabase
 	let
 		compiler = T.display buildCompilerFlavor
 		CompilerId _ version = buildCompilerId

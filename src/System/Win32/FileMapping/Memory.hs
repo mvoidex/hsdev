@@ -47,7 +47,7 @@ readMapFile name = mapExceptT (`runContT` return) $ do
 	ptr <- mapExceptT lift $ mapFile h fILE_MAP_ALL_ACCESS 0 0
 	liftIO $ BS.packCString ptr
 
-verify :: (Eq a, Monad m) => (a -> Bool) -> String -> m a -> ExceptT String m a
+verify :: Monad m => (a -> Bool) -> String -> m a -> ExceptT String m a
 verify p str act = do
 	x <- lift act
 	if p x then return x else throwError str

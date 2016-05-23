@@ -152,7 +152,7 @@ newestPackage =
 		mpackage _ = Nothing
 		pname = fmap (view packageName) . fst
 		pver = fmap (view packageVersion) . fst
-		groupPackages :: Symbol a => [(Maybe ModulePackage, a)] -> [(Maybe ModulePackage, [a])]
+		groupPackages :: [(Maybe ModulePackage, a)] -> [(Maybe ModulePackage, [a])]
 		groupPackages = map (first head . unzip) . groupBy ((==) `on` fst) . sortBy (comparing fst)
 		selectNewest :: [(Maybe ModulePackage, [a])] -> [a]
 		selectNewest =

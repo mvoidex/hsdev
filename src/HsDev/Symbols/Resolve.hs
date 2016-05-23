@@ -59,7 +59,7 @@ resolvedTopScope = filter isTop . view resolvedScope where
 	isTop = any (not . view importIsQualified) . fromMaybe [] . view declarationImported
 
 -- | Resolve modules, function is not IO, so all file names must be canonicalized
-resolve :: (Traversable t, Foldable t) => Database -> t Module -> t ResolvedModule
+resolve :: Traversable t => Database -> t Module -> t ResolvedModule
 resolve db = flip evalState M.empty . flip runReaderT (db, m) . runResolveM . traverse resolveModule where
 	m :: ModuleMap
 	m = M.fromList $ map ((view moduleName . head) &&& id) $

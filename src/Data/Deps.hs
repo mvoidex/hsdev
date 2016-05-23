@@ -18,7 +18,7 @@ import Data.Maybe (fromMaybe)
 data Deps a = Deps {
 	_depsMap :: Map a [a] }
 
-depsMap :: (Ord a, Ord b) => Lens (Deps a) (Deps b) (Map a [a]) (Map b [b])
+depsMap :: Lens (Deps a) (Deps b) (Map a [a]) (Map b [b])
 depsMap = lens _depsMap (const Deps)
 
 instance Ord a => Monoid (Deps a) where
@@ -34,15 +34,15 @@ instance Ord a => Ixed (Deps a) where
 instance Ord a => At (Deps a) where
 	at k = depsMap . at k
 
-mapDeps :: (Ord a, Ord b) => (a -> b) -> Deps a -> Deps b
+mapDeps :: Ord b => (a -> b) -> Deps a -> Deps b
 mapDeps f = Deps . M.mapKeys f . M.map (map f) . _depsMap
 
 -- | Make single dependency
-dep :: Ord a => a -> a -> Deps a
+dep :: a -> a -> Deps a
 dep x y = deps x [y]
 
 -- | Make dependency for one target, note that order of dependencies is matter
-deps :: Ord a => a -> [a] -> Deps a
+deps :: a -> [a] -> Deps a
 deps x ys = Deps $ M.singleton x ys
 
 -- | Inverse dependencies, i.e. make map where keys are dependencies and elements are targets depends on it

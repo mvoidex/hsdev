@@ -32,7 +32,6 @@ import HsDev.Symbols
 import HsDev.Symbols.Types
 import HsDev.Database
 import HsDev.Display
-import HsDev.Tools.GhcMod
 import HsDev.Inspect
 import HsDev.Util
 
@@ -163,10 +162,6 @@ scanModule defines opts (FileModule f p) mcts = hsdevLiftIO $ liftM setProj $ li
 	setProj =
 		set (inspectedId . moduleProject) p .
 		set (inspectionResult . _Right . moduleLocation . moduleProject) p
--- scanModule opts (FileModule f _) = inspectFile opts f >>= traverse infer' where
--- 	infer' m = tryInfer <|> return m where
--- 		tryInfer = mapExceptT (withCurrentDirectory (sourceModuleRoot (moduleName m) f)) $
--- 			runGhcMod defaultOptions $ inferTypes opts Cabal m
 scanModule _ opts mloc@(InstalledModule c _ n) _ = hsdevLiftIO $ do
 	pdbs <- getDbs c
 	ims <- browseModules opts pdbs [mloc]
@@ -191,7 +186,7 @@ scanModify f im = traverse f' im where
 upToDate :: [String] -> InspectedModule -> IO Bool
 upToDate opts im = case view inspectedId im of
 	FileModule f _ -> liftM (== view inspection im) $ fileInspection f opts
-	InstalledModule _ _ _ -> return $ view inspection im == browseInspection opts
+	InstalledModule _ _ _ -> return $ view inspection im == InspectionAt 0 opts
 	_ -> return False
 
 -- | Rescan inspected module

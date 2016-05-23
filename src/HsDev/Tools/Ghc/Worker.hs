@@ -23,7 +23,6 @@ module HsDev.Tools.Ghc.Worker (
 
 import Control.Monad
 import Control.Monad.Catch
-import Control.Monad.CatchIO
 import Control.Monad.Except
 import Control.Monad.Reader
 import Data.Dynamic
@@ -39,12 +38,11 @@ import Text.Read (readMaybe)
 import Text.Format
 
 import Exception (ExceptionMonad(..))
-import GHC hiding (Warning, Module, moduleName)
+import GHC hiding (Warning, Module, moduleName, pkgDatabase)
 import GhcMonad (Ghc(..))
 import GHC.Paths
 import DynFlags (HasDynFlags(..))
 import Outputable
-import qualified ErrUtils as E
 import FastString (unpackFS)
 
 import Control.Concurrent.FiniteChan
@@ -52,6 +50,7 @@ import Control.Concurrent.Worker
 import System.Directory.Paths
 import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage, ModuleLocation(..))
 import HsDev.Tools.Types
+import HsDev.Tools.Ghc.Compat
 
 instance MonadThrow Ghc where
 	throwM = liftIO . throwM
@@ -59,24 +58,24 @@ instance MonadThrow Ghc where
 instance MonadCatch Ghc where
 	catch = gcatch
 
-instance MonadCatchIO Ghc where
-	catch = gcatch
-	block act = Ghc $ block . unGhc act
-	unblock act = Ghc $ unblock . unGhc act
+instance MonadMask Ghc where
+	mask f = Ghc $ \s -> mask $ \g -> unGhc (f $ q g) s where
+		q :: (IO a -> IO a) -> Ghc a -> Ghc a
+		q g' act = Ghc $ g' . unGhc act
+	uninterruptibleMask f = Ghc $ \s -> uninterruptibleMask $ \g -> unGhc (f $ q g) s where
+		q :: (IO a -> IO a) -> Ghc a -> Ghc a
+		q g' act = Ghc $ g' . unGhc act
 
 instance ExceptionMonad m => ExceptionMonad (ReaderT r m) where
 	gcatch act onError = ReaderT $ \v -> gcatch (runReaderT act v) (flip runReaderT v . onError)
 	gmask f = ReaderT $ \v -> gmask (\h -> flip runReaderT v (f $ \act -> ReaderT (\v' -> h (runReaderT act v'))))
-
-instance (Monad m, HasDynFlags m) => HasDynFlags (ReaderT r m) where
-	getDynFlags = lift getDynFlags
 
 instance (Monad m, GhcMonad m) => GhcMonad (ReaderT r m) where
 	getSession = lift getSession
 	setSession = lift . setSession
 
 newtype GhcM a = GhcM { unGhcM :: ReaderT Log.Log Ghc a }
-	deriving (Functor, Applicative, Monad, MonadIO, MonadCatchIO, MonadThrow, MonadCatch, ExceptionMonad, HasDynFlags, MonadLog, GhcMonad)
+	deriving (Functor, Applicative, Monad, MonadIO, MonadMask, MonadThrow, MonadCatch, ExceptionMonad, HasDynFlags, MonadLog, GhcMonad)
 
 runGhcM :: MonadLog m => Maybe FilePath -> GhcM a -> m a
 runGhcM dir act = do
@@ -102,7 +101,7 @@ ghciWorker = do
 ghcRun :: GhcMonad m => [String] -> m a -> m a
 ghcRun opts f = do
 	fs <- getSessionDynFlags
-	defaultCleanupHandler fs $ do
+	cleanupHandler fs $ do
 		(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
 		let fs'' = fs' {
 			ghcMode = CompManager,
@@ -147,7 +146,7 @@ setCmdOpts opts = do
 	Log.log Log.Trace $ "restarting ghc session with: {}" ~~ unwords opts
 	initGhcMonad (Just libdir)
 	addCmdOpts opts
-	modifyFlags (\fs -> fs { log_action = logToNull })
+	modifyFlags $ setLogAction logToNull
 
 -- | Import some modules
 importModules :: GhcMonad m => [String] -> m ()
@@ -197,8 +196,8 @@ withCurrentDirectory dir act = gbracket (liftIO getCurrentDirectory) (liftIO . s
 
 -- | Log  ghc warnings and errors as to chan
 -- You may have to apply recalcTabs on result notes
-logToChan :: Chan (Note OutputMessage) -> DynFlags -> E.Severity -> SrcSpan -> PprStyle -> SDoc -> IO ()
-logToChan ch fs sev src _ msg
+logToChan :: Chan (Note OutputMessage) -> LogAction
+logToChan ch fs sev src msg
 	| Just sev' <- checkSev sev = do
 		src' <- canonicalize srcMod
 		putChan ch $ Note {
@@ -219,7 +218,7 @@ logToChan ch fs sev src _ msg
 			_ -> ModuleSource Nothing
 
 -- | Don't log ghc warnings and errors
-logToNull :: DynFlags -> E.Severity -> SrcSpan -> PprStyle -> SDoc -> IO ()
-logToNull _ _ _ _ _ = return ()
+logToNull :: LogAction
+logToNull _ _ _ _ = return ()
 
 -- TODO: Load target by @ModuleLocation@, which may cause updating @DynFlags@
