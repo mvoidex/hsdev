@@ -152,9 +152,11 @@ mapBy f = M.fromList . map (f &&& id)
 (.::) :: FromJSON a => HM.HashMap Text Value -> Text -> A.Parser a
 v .:: name = maybe (fail $ "key " ++ show name ++ " not present") parseJSON $ lookup name $ HM.toList v
 
+-- | Returns @Nothing@ when key doesn't exist or value is @Null@
 (.::?) :: FromJSON a => HM.HashMap Text Value -> Text -> A.Parser (Maybe a)
-v .::? name = traverse parseJSON $ lookup name $ HM.toList v
+v .::? name = fmap join $ traverse parseJSON $ lookup name $ HM.toList v
 
+-- | Same as @.::?@ for list, returns empty list for non-existant key or @Null@ value
 (.::?!) :: FromJSON a => HM.HashMap Text Value -> Text -> A.Parser [a]
 v .::?! name = fromMaybe [] <$> (v .::? name)
 
