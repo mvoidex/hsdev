@@ -88,7 +88,7 @@ flags :: [String]
 #if __GLASGOW_HASKELL__ >= 800
 flags = concat [
 	[option | (GHC.FlagSpec option _ _ _) <- GHC.fFlags],
-	[option | (GHC.FlagSpec option _ _ _) <- GHC.wWarningFlags],
+	["warn-" ++ option | (GHC.FlagSpec option _ _ _) <- GHC.wWarningFlags],
 	[option | (GHC.FlagSpec option _ _ _) <- GHC.fLangFlags]]
 #elif __GLASGOW_HASKELL__ >= 710
 flags = concat [
