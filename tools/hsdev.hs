@@ -7,7 +7,6 @@ import Data.List
 import Network.Socket (withSocketsDo)
 import Options.Applicative
 import System.Environment (getArgs)
-import System.Exit
 import System.IO
 
 import HsDev.Server.Commands (runServerCommand)
@@ -20,7 +19,7 @@ main = handle logErr' $ withSocketsDo $ do
 	hSetEncoding stdout utf8
 	as <- prepareArgs
 	case parseArgs "hsdev" (info cmdP (progDesc "hsdev tool")) as of
-		Left e -> putStrLn e >> exitFailure
+		Left e -> putStrLn e
 		Right scmd -> runServerCommand scmd
 	where
 		logErr' (SomeException e) = putStrLn $ "exception " ++ show e
@@ -29,7 +28,7 @@ main = handle logErr' $ withSocketsDo $ do
 prepareArgs :: IO [String]
 prepareArgs = getArgs >>= prepare where
 	prepare [] = return []
-	prepare ("head" : as) = prepare $ as ++ ["-?"]
+	prepare ("help" : as) = prepare $ as ++ ["-?"]
 	prepare as
 		| "--stdin" `elem` as = do
 			input <- getContents
