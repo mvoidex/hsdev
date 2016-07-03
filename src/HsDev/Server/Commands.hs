@@ -315,23 +315,24 @@ processClient name rchan send' = do
 				Left em -> do
 					Log.log Log.Warning $ "Invalid request {}" ~~ fromUtf8 req'
 					answer $ set msg (Message Nothing $ responseError $ RequestError "invalid request" $ fromUtf8 req') em
-				Right m -> Log.scope (T.pack $ fromMaybe "_" (view (msg . messageId) m)) $ do
-					resp' <- flip (traverseOf (msg . message)) m $ \(Request c cdir noFile tm silent) -> do
-						let
-							onNotify n
-								| silent = return ()
-								| otherwise = traverseOf (msg . message) (const $ mmap' noFile (Response $ Left n)) m >>= answer
-						Log.log Log.Trace $ "{} >> {}" ~~ name ~~ fromUtf8 (encode c)
-						resp <- liftIO $ fmap (Response . Right) $ handleTimeout tm $ hsdevLiftIO $ withSession s $
-							processRequest
-								CommandOptions {
-									commandOptionsRoot = cdir,
-									commandOptionsNotify = withSession s . onNotify,
-									commandOptionsLink = void (swapMVar linkVar exit),
-									commandOptionsHold = forever (F.getChan rchan) }
-								c
-						mmap' noFile resp
-					answer resp'
+				Right m -> void $ liftIO $ forkIO $ withSession s $
+					Log.scope (T.pack $ fromMaybe "_" (view (msg . messageId) m)) $ do
+						resp' <- flip (traverseOf (msg . message)) m $ \(Request c cdir noFile tm silent) -> do
+							let
+								onNotify n
+									| silent = return ()
+									| otherwise = traverseOf (msg . message) (const $ mmap' noFile (Response $ Left n)) m >>= answer
+							Log.log Log.Trace $ "{} >> {}" ~~ name ~~ fromUtf8 (encode c)
+							resp <- liftIO $ fmap (Response . Right) $ handleTimeout tm $ hsdevLiftIO $ withSession s $
+								processRequest
+									CommandOptions {
+										commandOptionsRoot = cdir,
+										commandOptionsNotify = withSession s . onNotify,
+										commandOptionsLink = void (swapMVar linkVar exit),
+										commandOptionsHold = forever (F.getChan rchan) }
+									c
+							mmap' noFile resp
+						answer resp'
 	where
 		handleTimeout :: Int -> IO Result -> IO Result
 		handleTimeout 0 = id
