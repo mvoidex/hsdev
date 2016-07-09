@@ -13,6 +13,7 @@ There are also several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`
 
 Main idea is to hold in memory scanned sourced and installed modules, so that getting info about symbols and modules is fast and simple.
 It also doesn't require much work to integrate with some editor:
+
 1. Create `hsdev run ...` process
 2. Connect to it via socket
 3. Send `scan` command with paths/files once
