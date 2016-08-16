@@ -304,7 +304,7 @@ minimalDecl = lens to' from' where
 
 -- | Common info for type, newtype, data and class
 data TypeInfo = TypeInfo {
-	_typeInfoContext :: Maybe Text,
+	_typeInfoContext :: Maybe Text, -- FIXME: Why not list of contexts?
 	_typeInfoArgs :: [Text],
 	_typeInfoDefinition :: Maybe Text,
 	_typeInfoFunctions :: [Text] }
