@@ -48,6 +48,7 @@ import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr, intercalate)
 import qualified Data.Map as M
 import Data.Maybe (catMaybes, fromMaybe)
+import Data.Monoid ((<>))
 import qualified Data.Set as Set
 import qualified Data.HashMap.Strict as HM (HashMap, toList, union)
 import qualified Data.ByteString.Char8 as B

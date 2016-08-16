@@ -8,6 +8,7 @@ module Tool (
 
 	toJSON, Value,
 	module Options.Applicative,
+	module Data.Monoid,
 	module HsDev.Util
 	) where
 
@@ -17,6 +18,7 @@ import Control.Monad (liftM)
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as L (putStrLn)
 import Data.Default
+import Data.Monoid
 import Options.Applicative
 import System.Environment
 import System.IO
