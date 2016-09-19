@@ -6,8 +6,9 @@ module HsDev.Sandbox (
 	findSandbox, searchSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
 
 	-- * cabal-sandbox util
-	cabalSandboxLib, cabalSandboxPackageDb
-	-- * stack-work util
+	cabalSandboxLib, cabalSandboxPackageDb,
+
+	getModuleOpts
 	) where
 
 import Control.Arrow
@@ -28,8 +29,10 @@ import System.Log.Simple (MonadLog(..))
 
 import System.Directory.Paths
 import HsDev.PackageDb
-import HsDev.Scan.Browse (withPackages)
+import HsDev.Scan.Browse (withPackages, browsePackages)
 import HsDev.Stack
+import HsDev.Symbols (moduleOpts)
+import HsDev.Symbols.Types (Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (searchPath)
 
@@ -133,3 +136,13 @@ cabalSandboxLib = do
 -- | Get sandbox package-db: <arch>-<platform>-<compiler>-<version>-packages.conf.d
 cabalSandboxPackageDb :: MonadLog m => m FilePath
 cabalSandboxPackageDb = liftM (++ "-packages.conf.d") cabalSandboxLib
+
+-- | Options for GHC for module and project
+getModuleOpts :: MonadLog m => [String] -> Module -> m [String]
+getModuleOpts opts m = do
+	pdbs <- case view moduleLocation m of
+		FileModule fpath _ -> searchPackageDbStack fpath
+		InstalledModule pdb _ _ -> restorePackageDbStack pdb
+		ModuleSource _ -> return userDb
+	pkgs <- browsePackages opts pdbs
+	return $ opts ++ moduleOpts pkgs m

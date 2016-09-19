@@ -102,8 +102,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scop
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"
 #endif
-	ghcw <- withLog (sessionLogger slog) $ ghcWorker [] (return ())
-	ghciw <- withLog (sessionLogger slog) ghciWorker
+	ghcw <- withLog (sessionLogger slog) $ ghcWorker
 	defs <- getDefines
 	let
 		session = Session
@@ -116,7 +115,6 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scop
 			mmapPool
 #endif
 			ghcw
-			ghciw
 			(do
 				outputStr Log.Trace "stopping server"
 				signalQSem waitSem)

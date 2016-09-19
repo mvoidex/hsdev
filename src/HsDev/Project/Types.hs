@@ -26,6 +26,7 @@ import Language.Haskell.Extension
 import Text.Format
 import System.FilePath
 
+import System.Directory.Paths
 import HsDev.Util
 
 -- | Cabal project
@@ -64,6 +65,9 @@ instance FromJSON Project where
 		v .:: "path" <*>
 		v .:: "cabal" <*>
 		v .:: "description"
+
+instance Paths Project where
+	paths f (Project nm p c desc) = Project nm <$> f p <*> f c <*> pure desc
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
@@ -204,6 +208,9 @@ instance Monoid Info where
 		(_infoExtensions l ++ _infoExtensions r)
 		(_infoGHCOptions l ++ _infoGHCOptions r)
 		(ordNub $ _infoSourceDirs l ++ _infoSourceDirs r)
+
+instance Ord Info where
+	compare l r = compare (_infoSourceDirs l, _infoDepends l, _infoGHCOptions l) (_infoSourceDirs r, _infoDepends r, _infoGHCOptions r)
 
 instance Show Info where
 	show i = unlines $ lang ++ exts ++ opts ++ sources where

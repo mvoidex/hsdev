@@ -43,7 +43,7 @@ import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util
 import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.Cabal as Cabal
-import HsDev.Tools.Ghc.Worker
+import HsDev.Tools.Ghc.Session
 import qualified HsDev.Tools.Ghc.Compat as Compat
 import qualified HsDev.Tools.Ghc.Check as Check
 import qualified HsDev.Tools.Ghc.Types as Types
@@ -203,24 +203,26 @@ runCommand (Lint fs fcts) = toValue $ do
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f c) -> HLint.hlintSource f c) fcts)
 runCommand (Check fs fcts ghcs') = toValue $ Log.scope "check" $ do
-	ghc <- askSession sessionGhc
-	liftIO $ restartWorker ghc
+	ghcw <- askSession sessionGhc
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			pdbs <- searchPackageDbStack file
 			m <- refineSourceModule file
-			inWorkerWith (hsdevError . GhcError . displayException) ghc (fn pdbs m)
+			inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
+				targetSession ghcs' m
+				fn pdbs m
 	liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
 		[(f, \pdbs m -> Check.checkSource ghcs' pdbs m src) | FileContents f src <- fcts]
 runCommand (CheckLint fs fcts ghcs') = toValue $ do
-	ghc <- askSession sessionGhc
-	liftIO $ restartWorker ghc
+	ghcw <- askSession sessionGhc
 	let
 		checkSome file fn = do
 			pdbs <- searchPackageDbStack file
 			m <- refineSourceModule file
-			inWorkerWith (hsdevError . GhcError . displayException) ghc (fn pdbs m)
+			inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
+				targetSession ghcs' m
+				fn pdbs m
 	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
 		[(f, \pdbs m -> Check.checkSource ghcs' pdbs m src) | FileContents f src <- fcts]
@@ -229,13 +231,15 @@ runCommand (CheckLint fs fcts ghcs') = toValue $ do
 		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) fcts)
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs fcts ghcs') = toValue $ do
-	ghc <- askSession sessionGhc
+	ghcw <- askSession sessionGhc
 	let
 		cts = [(f, Nothing) | f <- fs] ++ [(f, Just src) | FileContents f src <- fcts]
 	liftM concat $ forM cts $ \(file, msrc) -> do
 		pdbs <- searchPackageDbStack file
 		m <- refineSourceModule file
-		inWorkerWith (hsdevError . GhcError . displayException) ghc (Types.fileTypes ghcs' pdbs m msrc)
+		inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
+			targetSession ghcs' m
+			Types.fileTypes ghcs' pdbs m msrc
 runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
 runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
@@ -257,8 +261,10 @@ runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 				return corrs'
 	liftM concat $ mapM runFix files
 runCommand (GhcEval exprs) = toValue $ do
-	ghci <- askSession sessionGhci
-	async' <- liftIO $ pushTask ghci $ mapM (try . evaluate) exprs
+	ghcw <- askSession sessionGhc
+	async' <- liftIO $ pushTask ghcw $ do
+		ghciSession
+		mapM (try . evaluate) exprs
 	res <- waitAsync async'
 	return $ map toValue' res
 	where

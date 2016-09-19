@@ -1,10 +1,13 @@
-{-# LANGUAGE PatternGuards, OverloadedStrings, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE PatternGuards, OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Worker (
 	-- * Workers
-	GhcM(..), runGhcM, liftGhc,
-	ghcWorker, ghciWorker,
+	SessionTarget(..),
+	GhcM, GhcWorker, MGhcT(..), runGhcM,
+	ghcWorker,
+	workerSession,
+
 	-- * Initializers and actions
 	ghcRun,
 	withFlags, modifyFlags, addCmdOpts, setCmdOpts,
@@ -17,23 +20,23 @@ module HsDev.Tools.Ghc.Worker (
 	logToChan, logToNull,
 
 	Ghc,
+	LogT(..),
 
+	module HsDev.Tools.Ghc.MGhc,
 	module Control.Concurrent.Worker
 	) where
 
 import Control.Monad
-import Control.Monad.Catch
 import Control.Monad.Except
 import Control.Monad.Reader
+import Control.Monad.Catch
 import Data.Dynamic
 import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
 import Data.Version (showVersion)
-import Packages
-import StringBuffer
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import qualified  System.Log.Simple as Log
-import System.Log.Simple.Monad (MonadLog(..))
+import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Read (readMaybe)
 import Text.Format
 
@@ -41,9 +44,10 @@ import Exception (ExceptionMonad(..))
 import GHC hiding (Warning, Module, moduleName, pkgDatabase)
 import GhcMonad (Ghc(..))
 import GHC.Paths
-import DynFlags (HasDynFlags(..))
 import Outputable
 import FastString (unpackFS)
+import Packages
+import StringBuffer
 
 import Control.Concurrent.FiniteChan
 import Control.Concurrent.Worker
@@ -51,51 +55,59 @@ import System.Directory.Paths
 import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage, ModuleLocation(..))
 import HsDev.Tools.Types
 import HsDev.Tools.Ghc.Compat
+import HsDev.Tools.Ghc.MGhc
 
-instance MonadThrow Ghc where
-	throwM = liftIO . throwM
+data SessionTarget =
+	SessionGhci |
+	SessionGhc [String]
+		deriving (Read, Show)
 
-instance MonadCatch Ghc where
-	catch = gcatch
+instance Eq SessionTarget where
+	SessionGhci == SessionGhci = True
+	SessionGhc lopts == SessionGhc ropts = lopts == ropts
+	_ == _ = False
 
-instance MonadMask Ghc where
-	mask f = Ghc $ \s -> mask $ \g -> unGhc (f $ q g) s where
-		q :: (IO a -> IO a) -> Ghc a -> Ghc a
-		q g' act = Ghc $ g' . unGhc act
-	uninterruptibleMask f = Ghc $ \s -> uninterruptibleMask $ \g -> unGhc (f $ q g) s where
-		q :: (IO a -> IO a) -> Ghc a -> Ghc a
-		q g' act = Ghc $ g' . unGhc act
+instance Ord SessionTarget where
+	compare l r = compare (isGhci l) (isGhci r) where
+		isGhci SessionGhci = True
+		isGhci _ = False
 
-instance ExceptionMonad m => ExceptionMonad (ReaderT r m) where
-	gcatch act onError = ReaderT $ \v -> gcatch (runReaderT act v) (flip runReaderT v . onError)
-	gmask f = ReaderT $ \v -> gmask (\h -> flip runReaderT v (f $ \act -> ReaderT (\v' -> h (runReaderT act v'))))
+type GhcM a = MGhcT SessionTarget (LogT IO) a
+
+type GhcWorker = Worker (MGhcT SessionTarget (LogT IO))
 
 instance (Monad m, GhcMonad m) => GhcMonad (ReaderT r m) where
 	getSession = lift getSession
 	setSession = lift . setSession
 
-newtype GhcM a = GhcM { unGhcM :: ReaderT Log.Log Ghc a }
-	deriving (Functor, Applicative, Monad, MonadIO, MonadMask, MonadThrow, MonadCatch, ExceptionMonad, HasDynFlags, MonadLog, GhcMonad)
+instance ExceptionMonad m => ExceptionMonad (LogT m) where
+	gcatch act onError = LogT $ gcatch (runLogT act) (runLogT . onError)
+	gmask f = LogT $ gmask f' where
+		f' g' = runLogT $ f (LogT . g' . runLogT)
+
+instance MonadThrow Ghc where
+	throwM = liftIO . throwM
 
 runGhcM :: MonadLog m => Maybe FilePath -> GhcM a -> m a
 runGhcM dir act = do
 	l <- askLog
-	liftIO $ runGhc dir (runReaderT (unGhcM act) l)
+	liftIO $ withLog l $ runMGhcT dir act
 
-liftGhc :: Ghc a -> GhcM a
-liftGhc = GhcM . lift
-
--- | Ghc worker. Pass options and initializer action
-ghcWorker :: MonadLog m => [String] -> GhcM () -> m (Worker GhcM)
-ghcWorker opts initialize = do
+-- | Multi-session ghc worker
+ghcWorker :: MonadLog m => m GhcWorker
+ghcWorker = do
 	l <- askLog
-	liftIO $ startWorker (flip runReaderT l . runGhcM (Just libdir)) (ghcRun opts . (initialize >>)) (Log.scope "ghc")
+	liftIO $ startWorker (withLog l . runGhcM (Just libdir)) id (Log.scope "ghc")
 
--- | Interpreter worker is worker with @preludeModules@ loaded
-ghciWorker :: MonadLog m => m (Worker GhcM)
-ghciWorker = do
-	l <- askLog
-	liftIO $ startWorker (flip runReaderT l . runGhcM (Just libdir)) (ghcRun [] . (importModules preludeModules >>)) (Log.scope "ghc")
+-- | Create session with options
+workerSession :: SessionTarget -> GhcM ()
+workerSession SessionGhci = switchSession_ SessionGhci $ Just $ ghcRun [] (importModules preludeModules)
+workerSession s@(SessionGhc opts) = do
+	ms <- findSession s
+	case ms of
+		Just s'@(SessionGhc opts') -> when (opts /= opts') $ deleteSession s'
+		_ -> return ()
+	switchSession_ s $ Just $ ghcRun opts (return ())
 
 -- | Run ghc
 ghcRun :: GhcMonad m => [String] -> m a -> m a

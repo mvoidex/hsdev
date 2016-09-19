@@ -163,7 +163,8 @@ runServerCommand (Run sopts) = runServer sopts $ do
 		bracket (liftIO $ makeSocket (serverPort sopts)) (liftIO . close) $ \s -> do
 			liftIO $ do
 				setSocketOption s ReuseAddr 1
-				bind s (sockAddr (serverPort sopts) (tupleToHostAddress (127, 0, 0, 1)))
+				addr' <- inet_addr "127.0.0.1"
+				bind s (sockAddr (serverPort sopts) addr')
 				listen s maxListenQueue
 			forever $ logAsync (Log.log Log.Fatal . fromString) $ logIO "exception: " (Log.log Log.Error . fromString) $ do
 				Log.log Log.Trace "accepting connection"

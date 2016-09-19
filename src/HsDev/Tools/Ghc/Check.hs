@@ -41,7 +41,7 @@ checkFiles opts pdbs files _ = scope "check-files" $ do
 	ch <- liftIO newChan
 	withFlags $ do
 		modifyFlags $ setLogAction $ logToChan ch
-		_ <- setCmdOpts ("-Wall" : (packageDbStackOpts pdbs ++ opts))
+		-- _ <- setCmdOpts ("-Wall" : (packageDbStackOpts pdbs ++ opts))
 		clearTargets
 		mapM (`makeTarget` Nothing) files >>= loadTargets
 	notes <- liftIO $ stopChan ch
@@ -59,11 +59,11 @@ check opts pdbs m msrc = scope "check" $ case view moduleLocation m of
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
 		withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
-			_ <- setCmdOpts $ concat [
-				["-Wall"],
-				packageDbStackOpts pdbs,
-				moduleOpts pkgs m,
-				opts]
+			-- _ <- setCmdOpts $ concat [
+			-- 	["-Wall"],
+			-- 	packageDbStackOpts pdbs,
+			-- 	moduleOpts pkgs m,
+			-- 	opts]
 			modifyFlags $ setLogAction $ logToChan ch
 			clearTargets
 			target <- makeTarget (makeRelative dir file) msrc

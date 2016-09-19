@@ -29,7 +29,7 @@ import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Error
 import HsDev.Tools.Base (inspect)
-import HsDev.Tools.Ghc.Worker (GhcM(..), runGhcM)
+import HsDev.Tools.Ghc.Worker (GhcM, runGhcM, SessionTarget(..), workerSession)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub)
 
@@ -131,6 +131,7 @@ browseModule pdb package' m = do
 
 withInitializedPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
 withInitializedPackages ghcOpts cont = runGhcM (Just GHC.libdir) $ do
+	workerSession $ SessionGhc ghcOpts
 	fs <- GHC.getSessionDynFlags
 	cleanupHandler fs $ do
 		(fs', _, _) <- GHC.parseDynamicFlags fs (map GHC.noLoc ghcOpts)

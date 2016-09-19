@@ -12,7 +12,6 @@ import Control.Monad
 import Data.Aeson hiding (Error)
 
 import System.Directory.Paths
-import HsDev.Symbols ()
 import HsDev.Symbols.Location
 import HsDev.Util ((.::), (.::?))
 

@@ -33,6 +33,7 @@ import qualified Data.Text as T (split, unpack)
 import System.FilePath
 import Text.Read (readMaybe)
 
+import System.Directory.Paths
 import HsDev.PackageDb
 import HsDev.Project.Types
 import HsDev.Util ((.::), (.::?), (.::?!), objectUnion)
@@ -131,6 +132,11 @@ instance FromJSON ModuleLocation where
 		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .:: "project"))) <|>
 		(InstalledModule <$> v .:: "db" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
 		(ModuleSource <$> v .::? "source")
+
+instance Paths ModuleLocation where
+	paths f (FileModule fpath p) = FileModule <$> f fpath <*> traverse (paths f) p
+	paths f (InstalledModule c p n) = InstalledModule <$> paths f c <*> pure p <*> pure n
+	paths _ (ModuleSource m) = pure $ ModuleSource m
 
 noLocation :: ModuleLocation
 noLocation = ModuleSource Nothing

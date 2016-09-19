@@ -113,10 +113,10 @@ fileTypes opts pdbs m msrc = scope "types" $ case view moduleLocation m of
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
 		withFlags $ (if dirExist then Ghc.withCurrentDirectory dir else id) $ do
-			_ <- setCmdOpts $ concat [
-				packageDbStackOpts pdbs,
-				moduleOpts pkgs m,
-				opts]
+			-- _ <- setCmdOpts $ concat [
+			-- 	packageDbStackOpts pdbs,
+			-- 	moduleOpts pkgs m,
+			-- 	opts]
 			target <- makeTarget (makeRelative dir file') msrc
 			loadTargets [target]
 			ts <- moduleTypes file'

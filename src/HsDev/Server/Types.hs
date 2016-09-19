@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances, GeneralizedNewtypeDeriving, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, TypeFamilies, ConstraintKinds, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances, GeneralizedNewtypeDeriving, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, TypeFamilies, ConstraintKinds #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Types (
@@ -40,7 +40,7 @@ import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
-import HsDev.Tools.Ghc.Worker (Worker, GhcM)
+import HsDev.Tools.Ghc.Worker (GhcWorker)
 import HsDev.Tools.Types (Note, OutputMessage)
 import HsDev.Tools.AutoFix (Correction)
 import HsDev.Util
@@ -66,8 +66,7 @@ data Session = Session {
 #if mingw32_HOST_OS
 	sessionMmapPool :: Maybe Pool,
 #endif
-	sessionGhc :: Worker GhcM,
-	sessionGhci :: Worker GhcM,
+	sessionGhc :: GhcWorker,
 	sessionExit :: IO (),
 	sessionWait :: IO (),
 	sessionDefines :: [(String, String)] }

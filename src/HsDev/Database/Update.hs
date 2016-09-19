@@ -42,7 +42,6 @@ import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath
 import qualified System.Log.Simple as Log
 
-import Control.Concurrent.Worker (inWorker, restartWorker)
 import HsDev.Error
 import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
@@ -53,7 +52,8 @@ import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Stack
 import HsDev.Symbols
-import HsDev.Tools.Ghc.Worker (setCmdOpts, liftGhc)
+import HsDev.Tools.Ghc.Worker (liftGhc)
+import HsDev.Tools.Ghc.Session hiding (wait)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
@@ -121,7 +121,9 @@ runUpdate uopts act = Log.scope "update" $ do
 		infer' :: UpdateMonad m => Session -> [String] -> PackageDbStack -> Module -> m Module
 		infer' s opts pdbs m = case preview (moduleLocation . moduleFile) m of
 			Nothing -> return m
-			Just _ -> liftIO $ inWorker (sessionGhc s) $ inferTypes opts pdbs m Nothing
+			Just _ -> liftIO $ inWorker (sessionGhc s) $ do
+				targetSession opts m
+				inferTypes opts pdbs m Nothing
 
 -- | Post status
 postStatus :: UpdateMonad m => Task -> m ()
@@ -347,8 +349,7 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 scanDocs :: UpdateMonad m => [InspectedModule] -> m ()
 scanDocs ims = do
 	-- w <- liftIO $ ghcWorker ["-haddock"] (return ())
-	w <- askSession sessionGhc
-	liftIO $ restartWorker w
+	-- w <- askSession sessionGhc
 	runTasks $ map scanDocs' ims
 	where
 		scanDocs' im
@@ -363,14 +364,10 @@ scanDocs ims = do
 			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedId im
 		doScan opts _ m = do
 			w <- askSession sessionGhc
-			pdbs <- case view moduleLocation m of
-				FileModule fpath _ -> searchPackageDbStack fpath
-				InstalledModule pdb _ _ -> restorePackageDbStack pdb
-				ModuleSource _ -> return userDb
-			pkgs <- browsePackages opts pdbs
 			liftIO $ inWorker w $ do
-				setCmdOpts ("-haddock" : (opts ++ moduleOpts pkgs m))
-				liftGhc $ inspectDocsGhc (opts ++ moduleOpts pkgs m) m
+				opts' <- getModuleOpts opts m
+				haddockSession opts'
+				liftGhc $ inspectDocsGhc opts' m
 
 inferModTypes :: UpdateMonad m => [InspectedModule] -> m ()
 inferModTypes = runTasks . map inferModTypes' where
@@ -378,7 +375,8 @@ inferModTypes = runTasks . map inferModTypes' where
 		| not $ hasTag InferredTypesTag im = runTask "inferring types" (view inspectedId im) $ Log.scope "docs" $ do
 			w <- askSession sessionGhc
 			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
-			im' <- (liftM (setTag InferredTypesTag) $ S.scanModify (\opts cabal m -> liftIO (inWorker w (inferTypes opts cabal m Nothing))) im)
+			im' <- (liftM (setTag InferredTypesTag) $
+				S.scanModify (\opts cabal m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts cabal m Nothing))) im)
 				<|> return im
 			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
 			updater $ return $ fromModule im'

@@ -55,8 +55,6 @@ import qualified Data.Text as T (concat)
 import System.Directory
 import System.FilePath
 
-import System.Directory.Paths
-
 import HsDev.Symbols.Types
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented (Documented(..))
@@ -197,14 +195,6 @@ mergeExported =
 		merge' :: [ModuleDeclaration] -> ExportedDeclaration
 		merge' [] = error "mergeExported: impossible"
 		merge' ds@(d:_) = ExportedDeclaration (map (view declarationModuleId) ds) (view moduleDeclaration d)
-
-instance Paths Project where
-	paths f (Project nm p c desc) = Project nm <$> f p <*> f c <*> pure desc
-
-instance Paths ModuleLocation where
-	paths f (FileModule fpath p) = FileModule <$> f fpath <*> traverse (paths f) p
-	paths f (InstalledModule c p n) = InstalledModule <$> paths f c <*> pure p <*> pure n
-	paths _ (ModuleSource m) = pure $ ModuleSource m
 
 -- | Find project file is related to
 locateProject :: FilePath -> IO (Maybe Project)

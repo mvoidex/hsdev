@@ -17,6 +17,7 @@ import HsDev.Scan (scanModule, scanModify)
 import HsDev.Symbols.Location (ModuleLocation(..))
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.Ghc.Worker
+import HsDev.Tools.Ghc.Session (ghcSession)
 
 import Tool
 
@@ -38,11 +39,11 @@ main = toolMain "hsinspect" "haskell inspect" opts (runToolClient . inspect') wh
 		fname' <- liftIO $ canonicalizePath fname
 		defs <- liftIO getDefines
 		im <- scanModule defs ghcs (FileModule fname' Nothing) Nothing
-		ghc <- ghcWorker ghcs (return ())
+		ghc <- ghcWorker	
 		let
 			scanAdditional =
 				scanModify' (\opts' _ -> liftIO . inspectDocs opts') >=>
-				scanModify' (\opts' pdbs m -> liftIO (inWorker ghc (inferTypes opts' pdbs m Nothing)))
+				scanModify' (\opts' pdbs m -> liftIO (inWorker ghc (ghcSession opts' >> inferTypes opts' pdbs m Nothing)))
 		toJSON <$> scanAdditional im
 	inspect' (Opts (Just fcabal@(takeExtension -> ".cabal")) _) = do
 		fcabal' <- liftIO $ canonicalizePath fcabal
