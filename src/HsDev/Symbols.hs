@@ -227,7 +227,7 @@ locateSourceDir f = runMaybeT $ do
 -- | Make `Info` for standalone `Module`
 standaloneInfo :: [PackageConfig] -> Module -> Info
 standaloneInfo pkgs m = mempty { _infoDepends = pkgDeps ^.. each . package . packageName } where
-	pkgDeps = catMaybes [M.lookup mdep pkgMap >>= listToMaybe | mdep <- m ^.. moduleImports . each . importModuleName]
+	pkgDeps = catMaybes [M.lookup mdep pkgMap >>= listToMaybe | mdep <- "Prelude" : (m ^.. moduleImports . each . importModuleName)]
 	pkgMap = M.unionsWith mergePkgs [M.singleton m' [p] | p <- pkgs, m' <- view packageModules p]
 	mergePkgs ls rs = if null es then hs else es where
 		(es, hs) = partition (view packageExposed) $ uniqueBy (view package) (ls ++ rs)
