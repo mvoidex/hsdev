@@ -206,26 +206,24 @@ runCommand (Check fs fcts ghcs') = toValue $ Log.scope "check" $ do
 	ghcw <- askSession sessionGhc
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
-			pdbs <- searchPackageDbStack file
 			m <- refineSourceModule file
 			inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
 				targetSession ghcs' m
-				fn pdbs m
+				fn m
 	liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
-		[(f, \pdbs m -> Check.checkSource ghcs' pdbs m src) | FileContents f src <- fcts]
+		[(f, \m -> Check.checkSource ghcs' m src) | FileContents f src <- fcts]
 runCommand (CheckLint fs fcts ghcs') = toValue $ do
 	ghcw <- askSession sessionGhc
 	let
 		checkSome file fn = do
-			pdbs <- searchPackageDbStack file
 			m <- refineSourceModule file
 			inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
 				targetSession ghcs' m
-				fn pdbs m
+				fn m
 	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
 		[(f, Check.checkFile ghcs') | f <- fs] ++
-		[(f, \pdbs m -> Check.checkSource ghcs' pdbs m src) | FileContents f src <- fcts]
+		[(f, \m -> Check.checkSource ghcs' m src) | FileContents f src <- fcts]
 	lintMsgs <- liftIO $ hsdevLift $ liftM2 (++)
 		(liftM concat $ mapM HLint.hlintFile fs)
 		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) fcts)
@@ -235,11 +233,10 @@ runCommand (Types fs fcts ghcs') = toValue $ do
 	let
 		cts = [(f, Nothing) | f <- fs] ++ [(f, Just src) | FileContents f src <- fcts]
 	liftM concat $ forM cts $ \(file, msrc) -> do
-		pdbs <- searchPackageDbStack file
 		m <- refineSourceModule file
 		inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
 			targetSession ghcs' m
-			Types.fileTypes ghcs' pdbs m msrc
+			Types.fileTypes ghcs' m msrc
 runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
 runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns

@@ -6,12 +6,8 @@ module HsDev.Tools.Ghc.Session (
 	module HsDev.Tools.Ghc.Worker
 	) where
 
-import Control.Lens (view)
-import Data.Maybe (listToMaybe)
-
 import Control.Concurrent.Worker
-import HsDev.Project (fileTargets)
-import HsDev.Symbols.Types (Module(..), ModuleLocation(..), moduleLocation)
+import HsDev.Symbols.Types (Module(..))
 import HsDev.Sandbox (getModuleOpts)
 import HsDev.Tools.Ghc.Worker
 

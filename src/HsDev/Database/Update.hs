@@ -35,6 +35,7 @@ import Control.Monad.Writer
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
+import Data.List (intercalate)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe)
 import qualified Data.Text as T (unpack)
@@ -119,11 +120,11 @@ runUpdate uopts act = Log.scope "update" $ do
 			im' <- (S.scanModify (infer' s) im) <|> return im
 			updater $ return $ fromModule im'
 		infer' :: UpdateMonad m => Session -> [String] -> PackageDbStack -> Module -> m Module
-		infer' s opts pdbs m = case preview (moduleLocation . moduleFile) m of
+		infer' s opts _ m = case preview (moduleLocation . moduleFile) m of
 			Nothing -> return m
 			Just _ -> liftIO $ inWorker (sessionGhc s) $ do
 				targetSession opts m
-				inferTypes opts pdbs m Nothing
+				inferTypes opts m Nothing
 
 -- | Post status
 postStatus :: UpdateMonad m => Task -> m ()
@@ -362,10 +363,10 @@ scanDocs ims = do
 					length (im' ^.. inspectionResult . _Right . moduleDeclarations . each . declarationDocs . _Just)
 				updater $ return $ fromModule im'
 			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedId im
-		doScan opts _ m = do
+		doScan _ _ m = do
 			w <- askSession sessionGhc
 			liftIO $ inWorker w $ do
-				opts' <- getModuleOpts opts m
+				opts' <- getModuleOpts [] m
 				haddockSession opts'
 				liftGhc $ inspectDocsGhc opts' m
 
@@ -376,7 +377,7 @@ inferModTypes = runTasks . map inferModTypes' where
 			w <- askSession sessionGhc
 			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
 			im' <- (liftM (setTag InferredTypesTag) $
-				S.scanModify (\opts cabal m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts cabal m Nothing))) im)
+				S.scanModify (\opts _ m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts m Nothing))) im)
 				<|> return im
 			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
 			updater $ return $ fromModule im'

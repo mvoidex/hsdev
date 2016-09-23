@@ -145,4 +145,7 @@ getModuleOpts opts m = do
 		InstalledModule pdb _ _ -> restorePackageDbStack pdb
 		ModuleSource _ -> return userDb
 	pkgs <- browsePackages opts pdbs
-	return $ opts ++ moduleOpts pkgs m
+	return $ concat [
+		packageDbStackOpts pdbs,
+		moduleOpts pkgs m,
+		opts]

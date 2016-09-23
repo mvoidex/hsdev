@@ -31,8 +31,6 @@ import qualified Pretty
 
 import System.Directory.Paths (canonicalize)
 import HsDev.Error
-import HsDev.Scan.Browse (browsePackages)
-import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker as Ghc
 import HsDev.Tools.Ghc.Compat
@@ -101,22 +99,18 @@ instance FromJSON TypedExpr where
 		v .:: "type"
 
 -- | Get all types in module
-fileTypes :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> Module -> Maybe String -> m [Note TypedExpr]
-fileTypes opts pdbs m msrc = scope "types" $ case view moduleLocation m of
+fileTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe String -> m [Note TypedExpr]
+fileTypes opts m msrc = scope "types" $ case view moduleLocation m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
 		cts <- maybe (liftIO $ readFileUtf8 file') return msrc
-		pkgs <- browsePackages opts pdbs
 		let
 			dir = fromMaybe
 				(sourceModuleRoot (view moduleName m) file') $
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
 		withFlags $ (if dirExist then Ghc.withCurrentDirectory dir else id) $ do
-			-- _ <- setCmdOpts $ concat [
-			-- 	packageDbStackOpts pdbs,
-			-- 	moduleOpts pkgs m,
-			-- 	opts]
+			addCmdOpts opts
 			target <- makeTarget (makeRelative dir file') msrc
 			loadTargets [target]
 			ts <- moduleTypes file'
@@ -147,5 +141,5 @@ setModuleTypes ts = over (moduleDeclarations . each) setType where
 		return $ set (declaration . functionType) (Just $ fromString $ view (note . typedType) tnote) d
 
 -- | Infer types in module
-inferTypes :: (MonadLog m, GhcMonad m) => [String] -> PackageDbStack -> Module -> Maybe String -> m Module
-inferTypes opts pdbs m msrc = scope "infer" $ liftM (`setModuleTypes` m) $ fileTypes opts pdbs m msrc
+inferTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe String -> m Module
+inferTypes opts m msrc = scope "infer" $ liftM (`setModuleTypes` m) $ fileTypes opts m msrc

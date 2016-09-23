@@ -174,7 +174,6 @@ deleteSession key = do
 	cur <- saveSession
 	when (cur == Just key) $ do
 		modify (set sessionActive Nothing)
-		initSession
 	msess <- gets (view (sessionMap . at key))
 	modify (set (sessionMap . at key) Nothing)
 	case msess of

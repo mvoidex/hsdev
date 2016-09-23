@@ -43,7 +43,7 @@ main = toolMain "hsinspect" "haskell inspect" opts (runToolClient . inspect') wh
 		let
 			scanAdditional =
 				scanModify' (\opts' _ -> liftIO . inspectDocs opts') >=>
-				scanModify' (\opts' pdbs m -> liftIO (inWorker ghc (ghcSession opts' >> inferTypes opts' pdbs m Nothing)))
+				scanModify' (\opts' _ m -> liftIO (inWorker ghc (ghcSession opts' >> inferTypes opts' m Nothing)))
 		toJSON <$> scanAdditional im
 	inspect' (Opts (Just fcabal@(takeExtension -> ".cabal")) _) = do
 		fcabal' <- liftIO $ canonicalizePath fcabal

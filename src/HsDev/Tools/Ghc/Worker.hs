@@ -31,6 +31,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Catch
 import Data.Dynamic
+import Data.List (intercalate)
 import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
 import Data.Version (showVersion)
@@ -60,7 +61,12 @@ import HsDev.Tools.Ghc.MGhc
 data SessionTarget =
 	SessionGhci |
 	SessionGhc [String]
-		deriving (Read, Show)
+
+instance Show SessionTarget where
+	show SessionGhci = "ghci"
+	show (SessionGhc opts) = "ghc " ++ intercalate ", " opts
+
+instance FormatBuild SessionTarget
 
 instance Eq SessionTarget where
 	SessionGhci == SessionGhci = True
@@ -101,12 +107,15 @@ ghcWorker = do
 
 -- | Create session with options
 workerSession :: SessionTarget -> GhcM ()
-workerSession SessionGhci = switchSession_ SessionGhci $ Just $ ghcRun [] (importModules preludeModules)
+workerSession SessionGhci = do
+	Log.log Log.Trace $ "session: {}" ~~ SessionGhci
+	switchSession_ SessionGhci $ Just $ ghcRun [] (importModules preludeModules)
 workerSession s@(SessionGhc opts) = do
 	ms <- findSession s
 	case ms of
 		Just s'@(SessionGhc opts') -> when (opts /= opts') $ deleteSession s'
 		_ -> return ()
+	Log.log Log.Trace $ "session: {}" ~~ s
 	switchSession_ s $ Just $ ghcRun opts (return ())
 
 -- | Run ghc
@@ -122,6 +131,7 @@ ghcRun opts f = do
 			-- ghcLink = NoLink,
 			-- hscTarget = HscNothing }
 		void $ setSessionDynFlags fs''
+		modifyFlags $ setLogAction logToNull
 		f
 
 -- | Alter @DynFlags@ temporary
