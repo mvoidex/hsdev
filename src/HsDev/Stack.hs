@@ -61,10 +61,10 @@ stackArch = T.display buildArch
 stack :: MonadLog m => [String] -> m String
 stack cmd' = hsdevLiftIO $ do
 	curExe <- liftIO getExecutablePath
-	Util.withCurrentDirectory (takeDirectory curExe) $ do
-		stackExe <- liftIO (findExecutable "stack") >>= maybe (hsdevError $ ToolNotFound "stack") return
-		comp <- stackCompiler
-		liftIO $ readProcess stackExe (cmd' ++ ["--compiler", comp, "--arch", stackArch]) ""
+	stackExe <- Util.withCurrentDirectory (takeDirectory curExe) $
+		liftIO (findExecutable "stack") >>= maybe (hsdevError $ ToolNotFound "stack") return
+	comp <- stackCompiler
+	liftIO $ readProcess stackExe (cmd' ++ ["--compiler", comp, "--arch", stackArch]) ""
 
 -- | Make yaml opts
 yaml :: Maybe FilePath -> [String]
@@ -116,13 +116,9 @@ getStackEnv p = StackEnv <$>
 
 -- | Projects paths
 projectEnv :: MonadLog m => FilePath -> m StackEnv
-projectEnv p = hsdevLiftIO $ do
-	hasConfig <- liftIO $ doesFileExist yaml'
-	unless hasConfig $ hsdevError $ FileNotFound yaml'
-	paths' <- path (Just yaml')
-	maybe (hsdevError $ ToolError "stack" "can't get paths") return $ getStackEnv paths'
-	where
-		yaml' = p </> "stack.yaml"
+projectEnv p = hsdevLiftIO $ Util.withCurrentDirectory p $ do
+	paths' <- path Nothing
+	maybe (hsdevError $ ToolError "stack" ("can't get paths for " ++ p)) return $ getStackEnv paths'
 
 -- | Get package-db stack for stack environment
 stackPackageDbStack :: Lens' StackEnv PackageDbStack

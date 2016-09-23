@@ -35,7 +35,6 @@ import Control.Monad.Writer
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
-import Data.List (intercalate)
 import qualified Data.Map as M
 import Data.Maybe (mapMaybe, isJust, fromMaybe)
 import qualified Data.Text as T (unpack)
@@ -60,6 +59,7 @@ import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (isParent, ordNub)
+import qualified HsDev.Util as Util (withCurrentDirectory)
 import HsDev.Server.Types (commandNotify, serverWriteCache, serverReadCache)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
@@ -112,13 +112,13 @@ runUpdate uopts act = Log.scope "update" $ do
 		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
 		scanDocs_ im = do
 			im' <- (S.scanModify (\opts _ -> liftIO . inspectDocs opts) im) <|> return im
-			updater $ return $ fromModule im'
+			updater $ fromModule im'
 		inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
 		inferModTypes_ im = do
 			-- TODO: locate sandbox
 			s <- getSession
 			im' <- (S.scanModify (infer' s) im) <|> return im
-			updater $ return $ fromModule im'
+			updater $ fromModule im'
 		infer' :: UpdateMonad m => Session -> [String] -> PackageDbStack -> Module -> m Module
 		infer' s opts _ m = case preview (moduleLocation . moduleFile) m of
 			Nothing -> return m
@@ -138,10 +138,9 @@ waiter act = do
 	wait db
 
 -- | Update task result to database
-updater :: UpdateMonad m => m Database -> m ()
-updater act = do
+updater :: UpdateMonad m => Database -> m ()
+updater db' = do
 	db <- askSession sessionDatabase
-	db' <- act
 	update db $ return $!! db'
 	tell $!! map (view moduleLocation) $ allModules db'
 
@@ -165,7 +164,7 @@ getCache act check = do
 	if nullDatabase dbval
 		then do
 			db <- loadCache act
-			waiter $ updater $ return db
+			waiter $ updater db
 			return db
 		else
 			return dbval
@@ -204,7 +203,7 @@ scanModule :: UpdateMonad m => [String] -> ModuleLocation -> Maybe String -> m (
 scanModule opts mloc mcts = runTask "scanning" mloc $ Log.scope "module" $ do
 	defs <- askSession sessionDefines
 	im <- S.scanModule defs opts mloc mcts
-	updater $ return $ fromModule im
+	updater $ fromModule im
 	_ <- return $ view inspectionResult im
 	return ()
 
@@ -261,10 +260,10 @@ scanCabal opts = Log.scope "cabal" $ do
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
 prepareSandbox :: UpdateMonad m => Sandbox -> m ()
 prepareSandbox sbox@(Sandbox StackWork fpath) = Log.scope "prepare" $ runTasks [
-	runTask "building dependencies" sbox $ void $ buildDeps myaml,
-	runTask "configuring" sbox $ void $ configure myaml]
+	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ buildDeps Nothing,
+	runTask "configuring" sbox $ void $ Util.withCurrentDirectory dir $ configure Nothing]
 	where
-		myaml = Just $ takeDirectory fpath </> "stack.yaml"
+		dir = takeDirectory fpath
 prepareSandbox _ = return ()
 
 -- | Scan sandbox modules, doesn't rescan if already scanned
@@ -290,14 +289,17 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 	scan (Cache.loadPackageDb (topPackageDb pdbs)) (packageDbDB (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- browseModules opts pdbs (mlocs' ^.. each . _1)
 		docs <- liftIO $ hsdevLiftWith (ToolError "hdocs") $ hdocsCabal pdbs opts
-		updater $ return $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
+		updater $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
 		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view moduleName m) docs
 
 -- | Scan project file
 scanProjectFile :: UpdateMonad m => [String] -> FilePath -> m Project
-scanProjectFile opts cabal = runTask "scanning" cabal $ S.scanProjectFile opts cabal
+scanProjectFile opts cabal = runTask "scanning" cabal $ do
+	proj <- S.scanProjectFile opts cabal
+	updater $ fromProject proj
+	return proj
 
 -- | Scan project and related package-db stack
 scanProjectStack :: UpdateMonad m => [String] -> FilePath -> m ()
@@ -313,9 +315,7 @@ scanProject opts cabal = runTask "scanning" (project cabal) $ Log.scope "project
 	proj <- scanProjectFile opts cabal
 	watch (\w -> watchProject w proj opts)
 	S.ScanContents _ [(_, sources)] _ <- S.enumProject proj
-	scan (Cache.loadProject $ view projectCabal proj) (projectDB proj) sources opts $ \ms -> do
-		scanModules opts ms
-		updater $ return $ fromProject proj
+	scan (Cache.loadProject $ view projectCabal proj) (projectDB proj) sources opts $ scanModules opts
 
 -- | Scan directory for source files and projects
 scanDirectory :: UpdateMonad m => [String] -> FilePath -> m ()
@@ -361,7 +361,7 @@ scanDocs ims = do
 				Log.log Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
 					view inspectedId im' ~~
 					length (im' ^.. inspectionResult . _Right . moduleDeclarations . each . declarationDocs . _Just)
-				updater $ return $ fromModule im'
+				updater $ fromModule im'
 			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedId im
 		doScan _ _ m = do
 			w <- askSession sessionGhc
@@ -380,7 +380,7 @@ inferModTypes = runTasks . map inferModTypes' where
 				S.scanModify (\opts _ m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts m Nothing))) im)
 				<|> return im
 			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
-			updater $ return $ fromModule im'
+			updater $ fromModule im'
 		| otherwise = Log.log Log.Trace $ "Types for {} already inferred" ~~ view inspectedId im
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
