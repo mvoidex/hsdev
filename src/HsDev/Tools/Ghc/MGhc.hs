@@ -4,7 +4,7 @@
 module HsDev.Tools.Ghc.MGhc (
 	SessionState(..), sessionActive, sessionMap,
 	MGhcT(..), runMGhcT, liftGhc,
-	hasSession, findSession, saveSession,
+	hasSession, findSession, findSessionBy, saveSession,
 	initSession, newSession,
 	switchSession, switchSession_,
 	deleteSession, restoreSession, usingSession
@@ -122,6 +122,12 @@ findSession key = do
 	mkeys <- gets (M.keys . view sessionMap)
 	return $ find (== key) mkeys
 
+-- | Find session by
+findSessionBy :: MonadIO m => (s -> Bool) -> MGhcT s m [s]
+findSessionBy p = do
+	mkeys <- gets (M.keys . view sessionMap)
+	return $ filter p mkeys
+
 -- | Save current session
 saveSession :: (MonadIO m, ExceptionMonad m, Ord s) => MGhcT s m (Maybe s)
 saveSession = do
@@ -143,21 +149,23 @@ initSession = do
 	void $ liftIO $ initPackages fs
 	void saveSession
 
+activateSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m (Maybe HscEnv)
+activateSession key = do
+	void saveSession
+	modify (set sessionActive $ Just key)
+	gets (view (sessionMap . at key))
+
 -- | Create new named session, deleting existing session
 newSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m ()
 newSession key = do
-	void saveSession
-	modify (set sessionActive $ Just key)
-	msess <- gets (view (sessionMap . at key))
+	msess <- activateSession key
 	maybe (return ()) (liftIO . cleanupSession) msess
 	initSession
 
 -- | Switch to session, creating if not exist, returns True if session was created
 switchSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m Bool
 switchSession key = do
-	void saveSession
-	modify (set sessionActive $ Just key)
-	msess <- gets (view (sessionMap . at key))
+	msess <- activateSession key
 	case msess of
 		Nothing -> initSession >> return True
 		Just sess -> setSession sess >> return False
@@ -172,7 +180,7 @@ switchSession_ key f = do
 deleteSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m ()
 deleteSession key = do
 	cur <- saveSession
-	when (cur == Just key) $ do
+	when (cur == Just key) $
 		modify (set sessionActive Nothing)
 	msess <- gets (view (sessionMap . at key))
 	modify (set (sessionMap . at key) Nothing)

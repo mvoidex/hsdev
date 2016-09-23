@@ -111,12 +111,15 @@ workerSession SessionGhci = do
 	Log.log Log.Trace $ "session: {}" ~~ SessionGhci
 	switchSession_ SessionGhci $ Just $ ghcRun [] (importModules preludeModules)
 workerSession s@(SessionGhc opts) = do
-	ms <- findSession s
-	case ms of
-		Just s'@(SessionGhc opts') -> when (opts /= opts') $ deleteSession s'
-		_ -> return ()
+	ms <- findSessionBy isGhcSession
+	forM_ ms $ \s'@(SessionGhc opts') -> when (opts /= opts') $ do
+		Log.log Log.Trace $ "killing session: {}" ~~ s'
+		deleteSession s'
 	Log.log Log.Trace $ "session: {}" ~~ s
 	switchSession_ s $ Just $ ghcRun opts (return ())
+	where
+		isGhcSession (SessionGhc _) = True
+		isGhcSession _ = False
 
 -- | Run ghc
 ghcRun :: GhcMonad m => [String] -> m a -> m a
