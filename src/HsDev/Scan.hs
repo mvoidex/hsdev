@@ -26,7 +26,7 @@ import Text.Format
 
 import HsDev.Error
 import HsDev.Scan.Browse (browsePackages, browseModules)
-import HsDev.Server.Types (FileContents(..), CommandMonad(..))
+import HsDev.Server.Types (FileSource(..), CommandMonad(..))
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Types
@@ -100,11 +100,11 @@ instance {-# OVERLAPS #-} EnumContents FilePath where
 					return $ ScanContents (filter ((== Just f) . preview (_1 . moduleFile)) mods) [] []
 		| otherwise = enumDirectory f
 
-instance EnumContents FileContents where
-	enumContents (FileContents f cts)
+instance EnumContents FileSource where
+	enumContents (FileSource f mcts)
 		| haskellSource f = do
 			ScanContents [(m, opts, _)] _ _ <- enumContents f
-			return $ ScanContents [(m, opts, Just cts)] [] []
+			return $ ScanContents [(m, opts, mcts)] [] []
 		| otherwise = return mempty
 
 -- | Enum project sources

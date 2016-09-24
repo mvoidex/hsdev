@@ -78,12 +78,11 @@ runCommand (AddData cts) = toValue $ mapM_ updateData cts where
 	updateData (AddedDatabase db) = toValue $ serverUpdateDB db
 	updateData (AddedModule m) = toValue $ serverUpdateDB $ fromModule m
 	updateData (AddedProject p) = toValue $ serverUpdateDB $ fromProject p
-runCommand (Scan projs cabal sboxes fs paths' fcts ghcs' docs' infer') = toValue $ do
+runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
-		map (\(FileContents f cts) -> Update.scanFileContents ghcs' f (Just cts)) fcts,
+		map (\(FileSource f mcts) -> Update.scanFileContents ghcs' f mcts) fs,
 		map (Update.scanProject ghcs') projs,
-		map (Update.scanFile ghcs') fs,
 		map (Update.scanDirectory ghcs') paths',
 		[Update.scanCabal ghcs' | cabal],
 		map (Update.scanSandbox ghcs') sboxes']
@@ -198,45 +197,26 @@ runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ 
 	(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
 	liftIO $ hsdevLift $ Hayoo.hayoo hq (Just i)
 runCommand (CabalList packages) = toValue $ liftIO $ hsdevLift $ Cabal.cabalList packages
-runCommand (Lint fs fcts) = toValue $ do
-	liftIO $ hsdevLift $ liftM2 (++)
-		(liftM concat $ mapM HLint.hlintFile fs)
-		(liftM concat $ mapM (\(FileContents f c) -> HLint.hlintSource f c) fcts)
-runCommand (Check fs fcts ghcs') = toValue $ Log.scope "check" $ do
-	ghcw <- askSession sessionGhc
+runCommand (Lint fs) = toValue $ do
+	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
+runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
-			m <- refineSourceModule file
-			inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
-				targetSession ghcs' m
-				fn m
-	liftM concat $ mapM (uncurry checkSome) $
-		[(f, Check.checkFile ghcs') | f <- fs] ++
-		[(f, \m -> Check.checkSource ghcs' m src) | FileContents f src <- fcts]
-runCommand (CheckLint fs fcts ghcs') = toValue $ do
-	ghcw <- askSession sessionGhc
+			m <- setFileSourceSession ghcs' file
+			inSessionGhc $ fn m
+	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check ghcs' m c)) fs
+runCommand (CheckLint fs ghcs') = toValue $ do
 	let
 		checkSome file fn = do
-			m <- refineSourceModule file
-			inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
-				targetSession ghcs' m
-				fn m
-	checkMsgs <- liftM concat $ mapM (uncurry checkSome) $
-		[(f, Check.checkFile ghcs') | f <- fs] ++
-		[(f, \m -> Check.checkSource ghcs' m src) | FileContents f src <- fcts]
-	lintMsgs <- liftIO $ hsdevLift $ liftM2 (++)
-		(liftM concat $ mapM HLint.hlintFile fs)
-		(liftM concat $ mapM (\(FileContents f src) -> HLint.hlintSource f src) fcts)
+			m <- setFileSourceSession ghcs' file
+			inSessionGhc $ fn m
+	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check ghcs' m c)) fs
+	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
 	return $ checkMsgs ++ lintMsgs
-runCommand (Types fs fcts ghcs') = toValue $ do
-	ghcw <- askSession sessionGhc
-	let
-		cts = [(f, Nothing) | f <- fs] ++ [(f, Just src) | FileContents f src <- fcts]
-	liftM concat $ forM cts $ \(file, msrc) -> do
-		m <- refineSourceModule file
-		inWorkerWith (hsdevError . GhcError . displayException) ghcw $ do
-			targetSession ghcs' m
-			Types.fileTypes ghcs' m msrc
+runCommand (Types fs ghcs') = toValue $ do
+	liftM concat $ forM fs $ \(FileSource file msrc) -> do
+		m <- setFileSourceSession ghcs' file
+		inSessionGhc $ Types.fileTypes ghcs' m msrc
 runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
 runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
@@ -257,10 +237,16 @@ runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 				liftIO $ writeFileUtf8 file cts'
 				return corrs'
 	liftM concat $ mapM runFix files
-runCommand (GhcEval exprs) = toValue $ do
+runCommand (GhcEval exprs mfile) = toValue $ do
 	ghcw <- askSession sessionGhc
+	case mfile of
+		Nothing -> inSessionGhc ghciSession
+		Just (FileSource f mcts) -> do
+			setFileSourceSession [] f
+			inSessionGhc $ do
+				t <- makeTarget f mcts
+				loadTargets [t]
 	async' <- liftIO $ pushTask ghcw $ do
-		ghciSession
 		mapM (try . evaluate) exprs
 	res <- waitAsync async'
 	return $ map toValue' res
@@ -327,6 +313,13 @@ refineSourceModule fpath = do
 	fpath' <- findPath fpath
 	db' <- getDb
 	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ lookupFile fpath' db'
+
+-- | Set session by source
+setFileSourceSession :: CommandMonad m => [String] -> FilePath -> m Module
+setFileSourceSession opts fpath = do
+	m <- refineSourceModule fpath
+	inSessionGhc $ targetSession opts m
+	return m
 
 -- | Ensure package exists
 refinePackage :: CommandMonad m => String -> m String

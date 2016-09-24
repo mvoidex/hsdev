@@ -5,17 +5,18 @@ module HsDev.Server.Types (
 	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogRules, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogRules, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..), AddedContents(..),
 	AutoFixCommand(..),
-	FileContents(..), TargetFilter(..), SearchQuery(..), SearchType(..),
+	FileSource(..), TargetFilter(..), SearchQuery(..), SearchType(..),
 	FromCmd(..),
 	) where
 
 import Control.Applicative
 import Control.Concurrent.MVar (MVar, swapMVar)
+import Control.Concurrent.Worker
 import Control.Lens (each)
 import Control.Monad.Base
 import Control.Monad.Catch
@@ -36,13 +37,15 @@ import Text.Format (FormatBuild(..))
 
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
+import HsDev.Error (hsdevError)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
-import HsDev.Tools.Ghc.Worker (GhcWorker)
+import HsDev.Tools.Ghc.Worker (GhcWorker, GhcM)
 import HsDev.Tools.Types (Note, OutputMessage)
 import HsDev.Tools.AutoFix (Correction)
+import HsDev.Types (HsDevError(..))
 import HsDev.Util
 
 #if mingw32_HOST_OS
@@ -167,6 +170,12 @@ serverReadCache act = do
 	s <- getSession
 	read' <- askSession sessionReadCache
 	liftIO $ withSession s $ read' act
+
+-- | In ghc session
+inSessionGhc :: SessionMonad m => GhcM a -> m a
+inSessionGhc act = do
+	ghcw <- askSession sessionGhc
+	inWorkerWith (hsdevError . GhcError . displayException) ghcw act
 
 -- | Exit session
 serverExit :: SessionMonad m => m ()
@@ -341,9 +350,8 @@ data Command =
 		scanProjects :: [FilePath],
 		scanCabal :: Bool,
 		scanSandboxes :: [FilePath],
-		scanFiles :: [FilePath],
+		scanFiles :: [FileSource],
 		scanPaths :: [FilePath],
-		scanContents :: [FileContents],
 		scanGhcOpts :: [String],
 		scanDocs :: Bool,
 		scanInferTypes :: Bool } |
@@ -381,22 +389,18 @@ data Command =
 		hayooPages :: Int } |
 	CabalList { cabalListPackages :: [String] } |
 	Lint {
-		lintFiles :: [FilePath],
-		lintContents :: [FileContents] } |
+		lintFiles :: [FileSource] } |
 	Check {
-		checkFiles :: [FilePath],
-		checkContents :: [FileContents],
+		checkFiles :: [FileSource],
 		checkGhcOpts :: [String] } |
 	CheckLint {
-		checkLintFiles :: [FilePath],
-		checkLintContents :: [FileContents],
+		checkLintFiles :: [FileSource],
 		checkLintGhcOpts :: [String] } |
 	Types {
-		typesFiles :: [FilePath],
-		typesContents :: [FileContents],
+		typesFiles :: [FileSource],
 		typesGhcOpts :: [String] } |
 	AutoFix { autoFixCommand :: AutoFixCommand } |
-	GhcEval { ghcEvalExpressions :: [String] } |
+	GhcEval { ghcEvalExpressions :: [String], ghcEvalSource :: Maybe FileSource } |
 	Langs |
 	Flags |
 	Link { linkHold :: Bool } |
@@ -416,7 +420,7 @@ data AutoFixCommand =
 	AutoFixFix [Note Correction] [Note Correction] Bool
 		deriving (Show)
 
-data FileContents = FileContents FilePath String deriving (Show)
+data FileSource = FileSource { fileSource :: FilePath, fileContents :: Maybe String } deriving (Show)
 data TargetFilter =
 	TargetProject String |
 	TargetFile FilePath |
@@ -433,13 +437,12 @@ data SearchQuery = SearchQuery String SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
 
 instance Paths Command where
-	paths f (Scan projs c cs fs ps fcts ghcs docs infer) = Scan <$>
+	paths f (Scan projs c cs fs ps ghcs docs infer) = Scan <$>
 		each f projs <*>
 		pure c <*>
 		(each . paths) f cs <*>
-		each f fs <*>
+		(each . paths) f fs <*>
 		each f ps <*>
-		(each . paths) f fcts <*>
 		pure ghcs <*>
 		pure docs <*>
 		pure infer
@@ -458,14 +461,15 @@ instance Paths Command where
 	paths f (ResolveScopeModules q fpath) = ResolveScopeModules q <$> f fpath
 	paths f (ResolveScope q g fpath) = ResolveScope q g <$> f fpath
 	paths f (Complete n g fpath) = Complete n g <$> f fpath
-	paths f (Lint fs fcts) = Lint <$> each f fs <*> (each . paths) f fcts
-	paths f (Check fs fcts ghcs) = Check <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
-	paths f (CheckLint fs fcts ghcs) = CheckLint <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
-	paths f (Types fs fcts ghcs) = Types <$> each f fs <*> (each . paths) f fcts <*> pure ghcs
+	paths f (Lint fs) = Lint <$> (each . paths) f fs
+	paths f (Check fs ghcs) = Check <$> (each . paths) f fs <*> pure ghcs
+	paths f (CheckLint fs ghcs) = CheckLint <$> (each . paths) f fs <*> pure ghcs
+	paths f (Types fs ghcs) = Types <$> (each . paths) f fs <*> pure ghcs
+	paths f (GhcEval e mf) = GhcEval e <$> traverse (paths f) mf
 	paths _ c = pure c
 
-instance Paths FileContents where
-	paths f (FileContents fpath cts) = FileContents <$> f fpath <*> pure cts
+instance Paths FileSource where
+	paths f (FileSource fpath mcts) = FileSource <$> f fpath <*> pure mcts
 
 instance Paths TargetFilter where
 	paths f (TargetFile fpath) = TargetFile <$> f fpath
@@ -486,9 +490,8 @@ instance FromCmd Command where
 			many projectArg <*>
 			cabalFlag <*>
 			many sandboxArg <*>
-			many fileArg <*>
-			many (pathArg $ help "path") <*>
 			many cmdP <*>
+			many (pathArg $ help "path") <*>
 			ghcOpts <*>
 			docsFlag <*>
 			inferFlag,
@@ -517,12 +520,12 @@ instance FromCmd Command where
 		cmd "complete" "show completions for input" (Complete <$> strArgument idm <*> wideFlag <*> ctx),
 		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
 		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (strArgument idm))),
-		cmd "lint" "lint source files or file contents" (Lint <$> many fileArg <*> many cmdP),
-		cmd "check" "check source files or file contents" (Check <$> many fileArg <*> many cmdP <*> ghcOpts),
-		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many fileArg <*> many cmdP <*> ghcOpts),
-		cmd "types" "get types for file expressions" (Types <$> many fileArg <*> many cmdP <*> ghcOpts),
+		cmd "lint" "lint source files or file contents" (Lint <$> many cmdP),
+		cmd "check" "check source files or file contents" (Check <$> many cmdP <*> ghcOpts),
+		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many cmdP <*> ghcOpts),
+		cmd "types" "get types for file expressions" (Types <$> many cmdP <*> ghcOpts),
 		cmd "autofix" "autofix commands" (AutoFix <$> cmdP),
-		cmd "ghc" "ghc commands" (subparser $ cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm))),
+		cmd "ghc" "ghc commands" (subparser $ cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm) <*> optional cmdP)),
 		cmd "langs" "ghc language options" (pure Langs),
 		cmd "flags" "ghc flags" (pure Flags),
 		cmd "link" "link to server" (Link <$> holdFlag),
@@ -536,8 +539,8 @@ instance FromCmd AutoFixCommand where
 			option readJSON (long "rest" <> metavar "correction" <> short 'r' <> help "update corrections") <*>
 			pureFlag)]
 
-instance FromCmd FileContents where
-	cmdP = option readJSON (long "contents")
+instance FromCmd FileSource where
+	cmdP = option readJSON (long "contents") <|> (FileSource <$> fileArg <*> pure Nothing)
 
 instance FromCmd TargetFilter where
 	cmdP = asum [
@@ -617,13 +620,12 @@ instance ToJSON Command where
 	toJSON (Listen r) = cmdJson "listen" ["rule" .= r]
 	toJSON (SetLogConfig rs) = cmdJson "set-log" ["rules" .= rs]
 	toJSON (AddData cts) = cmdJson "add" ["data" .= cts]
-	toJSON (Scan projs cabal sboxes fs ps contents ghcs docs' infer') = cmdJson "scan" [
+	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
 		"sandboxes" .= sboxes,
 		"files" .= fs,
 		"paths" .= ps,
-		"contents" .= contents,
 		"ghc-opts" .= ghcs,
 		"docs" .= docs',
 		"infer" .= infer']
@@ -647,12 +649,12 @@ instance ToJSON Command where
 	toJSON (Complete q w f) = cmdJson "complete" ["prefix" .= q, "wide" .= w, "file" .= f]
 	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
 	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
-	toJSON (Lint fs cs) = cmdJson "lint" ["files" .= fs, "contents" .= cs]
-	toJSON (Check fs cs ghcs) = cmdJson "check" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
-	toJSON (CheckLint fs cs ghcs) = cmdJson "check-lint" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
-	toJSON (Types fs cs ghcs) = cmdJson "types" ["files" .= fs, "contents" .= cs, "ghc-opts" .= ghcs]
+	toJSON (Lint fs) = cmdJson "lint" ["files" .= fs]
+	toJSON (Check fs ghcs) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs]
+	toJSON (CheckLint fs ghcs) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs]
+	toJSON (Types fs ghcs) = cmdJson "types" ["files" .= fs, "ghc-opts" .= ghcs]
 	toJSON (AutoFix acmd) = toJSON acmd
-	toJSON (GhcEval exprs) = cmdJson "ghc eval" ["exprs" .= exprs]
+	toJSON (GhcEval exprs f) = cmdJson "ghc eval" ["exprs" .= exprs, "file" .= f]
 	toJSON Langs = cmdJson "langs" []
 	toJSON Flags = cmdJson "flags" []
 	toJSON (Link h) = cmdJson "link" ["hold" .= h]
@@ -670,7 +672,6 @@ instance FromJSON Command where
 			v .::?! "sandboxes" <*>
 			v .::?! "files" <*>
 			v .::?! "paths" <*>
-			v .::?! "contents" <*>
 			v .::?! "ghc-opts" <*>
 			(v .:: "docs" <|> pure False) <*>
 			(v .:: "infer" <|> pure False)),
@@ -698,12 +699,12 @@ instance FromJSON Command where
 		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> (v .:: "wide" <|> pure False) <*> v .:: "file"),
 		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> (v .:: "page" <|> pure 0) <*> (v .:: "pages" <|> pure 1)),
 		guardCmd "cabal list" v *> (CabalList <$> v .::?! "packages"),
-		guardCmd "lint" v *> (Lint <$> v .::?! "files" <*> v .::?! "contents"),
-		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
-		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
-		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "contents" <*> v .::?! "ghc-opts"),
+		guardCmd "lint" v *> (Lint <$> v .::?! "files"),
+		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "ghc-opts"),
+		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "ghc-opts"),
+		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "ghc-opts"),
 		AutoFix <$> parseJSON (Object v),
-		guardCmd "ghc eval" v *> (GhcEval <$> v .::?! "exprs"),
+		guardCmd "ghc eval" v *> (GhcEval <$> v .::?! "exprs" <*> v .::? "file"),
 		guardCmd "langs" v *> pure Langs,
 		guardCmd "flags" v *> pure Flags,
 		guardCmd "link" v *> (Link <$> (v .:: "hold" <|> pure False)),
@@ -729,11 +730,11 @@ instance FromJSON AutoFixCommand where
 		guardCmd "autofix show" v *> (AutoFixShow <$> v .:: "messages"),
 		guardCmd "autofix fix" v *> (AutoFixFix <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True))]
 
-instance ToJSON FileContents where
-	toJSON (FileContents fpath cts) = object ["file" .= fpath, "contents" .= cts]
+instance ToJSON FileSource where
+	toJSON (FileSource fpath mcts) = object ["file" .= fpath, "contents" .= mcts]
 
-instance FromJSON FileContents where
-	parseJSON = withObject "file-contents" $ \v -> FileContents <$> v .:: "file" <*> v .:: "contents"
+instance FromJSON FileSource where
+	parseJSON = withObject "file-contents" $ \v -> FileSource <$> v .:: "file" <*> v .::? "contents"
 
 instance ToJSON TargetFilter where
 	toJSON (TargetProject pname) = object ["project" .= pname]
