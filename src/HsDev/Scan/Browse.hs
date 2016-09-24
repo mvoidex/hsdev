@@ -89,23 +89,24 @@ browseDb opts dbs = listModules opts dbs >>= browseModules opts dbs . filter inT
 
 browseModule :: PackageDb -> GHC.PackageConfig -> GHC.Module -> GhcM Module
 browseModule pdb package' m = do
+	df <- GHC.getSessionDynFlags
 	mi <- GHC.getModuleInfo m >>= maybe (hsdevError $ BrowseNoModuleInfo thisModule) return
-	ds <- mapM (toDecl mi) (GHC.modInfoExports mi)
+	ds <- mapM (toDecl df mi) (GHC.modInfoExports mi)
 	return Module {
 		_moduleName = fromString thisModule,
 		_moduleDocs = Nothing,
-		_moduleLocation = thisLoc,
+		_moduleLocation = thisLoc df,
 		_moduleExports = Just [ExportName Nothing (view declarationName d) ThingNothing | d <- ds],
 		_moduleImports = [import_ iname | iname <- ordNub (mapMaybe (preview definedModule) ds), iname /= fromString thisModule],
 		_moduleDeclarations = sortDeclarations ds }
 	where
 		thisModule = GHC.moduleNameString (GHC.moduleName m)
-		thisLoc = view moduleIdLocation $ mloc m
-		mloc m' = ModuleId (fromString mname') $
-			ghcModuleLocation pdb package' m'
+		thisLoc df = view moduleIdLocation $ mloc df m
+		mloc df m' = ModuleId (fromString mname') $
+			ghcModuleLocation pdb (fromMaybe package' $ GHC.lookupPackage df (GHC.moduleUnitId m')) m'
 			where
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
-		toDecl minfo n = do
+		toDecl df minfo n = do
 			tyInfo <- GHC.modInfoLookupName minfo n
 			tyResult <- maybe (inModuleSource n) (return . Just) tyInfo
 			dflag <- GHC.getSessionDynFlags
@@ -113,7 +114,7 @@ browseModule pdb package' m = do
 				decl' = decl (fromString $ GHC.getOccString n) $ fromMaybe
 					(Function Nothing [] Nothing)
 					(tyResult >>= showResult dflag)
-			return $ decl' `definedIn` mloc (GHC.nameModule n)
+			return $ decl' `definedIn` mloc df (GHC.nameModule n)
 		definedModule = declarationDefined . _Just . moduleIdName
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe DeclarationInfo
 		showResult dflags (GHC.AnId i) = Just $ Function (Just $ fromString $ formatType dflags GHC.varType i) [] Nothing

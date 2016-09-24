@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Project.Types (
-	Project(..), projectName, projectPath, projectCabal, projectDescription, project,
+	Project(..), projectName, projectPath, projectCabal, projectDescription, project, absolutiseProjectPaths, relativiseProjectPaths,
 	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests,
 	Target(..),
 	Library(..), libraryModules, libraryBuildInfo,
@@ -67,7 +67,7 @@ instance FromJSON Project where
 		v .:: "description"
 
 instance Paths Project where
-	paths f (Project nm p c desc) = Project nm <$> f p <*> f c <*> pure desc
+	paths f (Project nm p c desc) = Project nm <$> f p <*> f c <*> traverse (paths f) desc
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
@@ -81,6 +81,14 @@ project file = Project {
 		cabal
 			| takeExtension file' == ".cabal" = file'
 			| otherwise = file' </> (takeBaseName file' <.> "cabal")
+
+-- | Make paths absolute, not relative
+absolutiseProjectPaths :: Project -> Project
+absolutiseProjectPaths proj = absolutise (_projectPath proj) proj
+
+-- | Make paths relative
+relativiseProjectPaths :: Project -> Project
+relativiseProjectPaths proj = relativise (_projectPath proj) proj
 
 data ProjectDescription = ProjectDescription {
 	_projectVersion :: String,
@@ -108,6 +116,9 @@ instance FromJSON ProjectDescription where
 		v .:: "library" <*>
 		v .:: "executables" <*>
 		v .:: "tests"
+
+instance Paths ProjectDescription where
+	paths f (ProjectDescription v lib exes tests) = ProjectDescription v <$> traverse (paths f) lib <*> traverse (paths f) exes <*> traverse (paths f) tests
 
 class Target a where
 	buildInfo :: a -> Info
@@ -137,6 +148,9 @@ instance FromJSON Library where
 		splitModule :: String -> [String]
 		splitModule = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break (== '.'))
 
+instance Paths Library where
+	paths f (Library ms info) = Library ms <$> paths f info
+
 -- | Executable
 data Executable = Executable {
 	_executableName :: String,
@@ -164,6 +178,9 @@ instance FromJSON Executable where
 		v .:: "path" <*>
 		v .:: "info"
 
+instance Paths Executable where
+	paths f (Executable n p info) = Executable n <$> f p <*> paths f info
+
 -- | Test
 data Test = Test {
 	_testName :: String,
@@ -190,6 +207,9 @@ instance FromJSON Test where
 		v .:: "name" <*>
 		v .:: "enabled" <*>
 		v .:: "info"
+
+instance Paths Test where
+	paths f (Test n e info) = Test n e <$> paths f info
 
 -- | Build info
 data Info = Info {
@@ -242,6 +262,9 @@ instance FromJSON Info where
 			parseDT :: Distribution.Text.Text a => String -> String -> Parser a
 			parseDT typeName v = maybe err return (simpleParse v) where
 				err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
+
+instance Paths Info where
+	paths f (Info deps lang exts opts dirs) = Info deps lang exts opts <$> traverse f dirs
 
 -- | Entity with project extensions
 data Extensions a = Extensions {

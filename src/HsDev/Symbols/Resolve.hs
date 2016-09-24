@@ -7,8 +7,9 @@ module HsDev.Symbols.Resolve (
 	mergeImported
 	) where
 
+import Control.Applicative ((<|>))
 import Control.Arrow
-import Control.Lens (makeLenses, view, preview, set, _Just)
+import Control.Lens (makeLenses, view, preview, set, _Just, over, each)
 import Control.Monad.Reader
 import Control.Monad.State
 import Data.Function (on)
@@ -76,8 +77,8 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 	resolveModule' = save $ case view moduleLocation m of
 		InstalledModule {} -> return ResolvedModule {
 			_resolvedModule = m,
-			_resolvedScope = view moduleDeclarations m,
-			_resolvedExports = view moduleDeclarations m }
+			_resolvedScope = map setSelfDefined $ view moduleDeclarations m,
+			_resolvedExports = map setSelfDefined $ view moduleDeclarations m }
 		_ -> do
 			scope' <-
 				liftM (thisDecls ++) .
@@ -91,6 +92,10 @@ resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' ret
 			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exported')
 	thisDecls :: [Declaration]
 	thisDecls = map (selfDefined . selfImport) $ view moduleDeclarations m
+	setSelfDefined :: Declaration -> Declaration
+	setSelfDefined =
+		over (declaration . localDeclarations . each . declarationDefined) (<|> Just (view moduleId m)) .
+		over declarationDefined (<|> Just (view moduleId m))
 	selfDefined :: Declaration -> Declaration
 	selfDefined = set declarationDefined (Just $ view moduleId m)
 	selfImport :: Declaration -> Declaration
