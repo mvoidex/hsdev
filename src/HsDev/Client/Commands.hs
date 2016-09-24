@@ -200,12 +200,14 @@ runCommand (CabalList packages) = toValue $ liftIO $ hsdevLift $ Cabal.cabalList
 runCommand (Lint fs) = toValue $ do
 	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
 runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do
+	ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			m <- setFileSourceSession ghcs' file
 			inSessionGhc $ fn m
 	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check ghcs' m c)) fs
 runCommand (CheckLint fs ghcs') = toValue $ do
+	ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
 		checkSome file fn = do
 			m <- setFileSourceSession ghcs' file
@@ -214,6 +216,7 @@ runCommand (CheckLint fs ghcs') = toValue $ do
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs') = toValue $ do
+	ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	liftM concat $ forM fs $ \(FileSource file msrc) -> do
 		m <- setFileSourceSession ghcs' file
 		inSessionGhc $ Types.fileTypes ghcs' m msrc
@@ -238,6 +241,7 @@ runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 				return corrs'
 	liftM concat $ mapM runFix files
 runCommand (GhcEval exprs mfile) = toValue $ do
+	ensureUpToDate (Update.UpdateOptions [] [] False False) (maybeToList mfile)
 	ghcw <- askSession sessionGhc
 	case mfile of
 		Nothing -> inSessionGhc ghciSession
@@ -394,6 +398,10 @@ updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m 
 updateProcess uopts acts = Update.runUpdate uopts $ mapM_ runAct acts where
 	runAct act = catch act onError
 	onError e = Log.log Log.Error $ "{}" ~~ (e :: HsDevError)
+
+-- | Ensure file is up to date
+ensureUpToDate :: ServerMonadBase m => Update.UpdateOptions -> [FileSource] -> ClientM m ()
+ensureUpToDate uopts fs = updateProcess uopts [Update.scanFileContents (view Update.updateGhcOpts uopts) f mcts | FileSource f mcts <- fs]
 
 -- | Filter declarations with prefix and infix
 filterMatch :: Symbol a => SearchQuery -> [a] -> [a]

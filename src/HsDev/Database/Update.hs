@@ -18,6 +18,8 @@ module HsDev.Database.Update (
 	scan,
 	updateEvent, processEvent,
 
+	module HsDev.Database.Update.Types,
+
 	module HsDev.Watcher,
 
 	module Control.Monad.Except
