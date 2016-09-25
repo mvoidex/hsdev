@@ -49,18 +49,20 @@ import HsDev.Util
 analyzeModule :: [String] -> Maybe FilePath -> String -> Either String Module
 analyzeModule exts file source = case H.parseFileContentsWithMode (parseMode file exts) source' of
 	H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
-	H.ParseOk (H.Module _ (H.ModuleName mname) _ _ mexports imports declarations) -> Right Module {
+	H.ParseOk (H.Module _ (Just (H.ModuleHead _ (H.ModuleName _ mname) _ mexports)) _ imports declarations) -> Right Module {
 		_moduleName = fromString mname,
 		_moduleDocs =  Nothing,
 		_moduleLocation = ModuleSource Nothing,
-		_moduleExports = fmap (concatMap getExports) mexports,
+		_moduleExports = fmap (concatMap getExports . getSpec) mexports,
 		_moduleImports = map getImport imports,
 		_moduleDeclarations = sortDeclarations $ getDecls declarations }
+	_ -> Left "Unknown module"
 	where
 		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
 		source' = map untab source
 		untab '\t' = ' '
 		untab ch = ch
+		getSpec (H.ExportSpecList _ es) = es
 
 -- | Analize source contents
 analyzeModule_ :: [String] -> Maybe FilePath -> String -> Either String Module
@@ -71,8 +73,9 @@ analyzeModule_ exts file source = do
 		_moduleDocs = Nothing,
 		_moduleLocation = ModuleSource Nothing,
 		_moduleExports = do
-			H.PragmasAndModuleHead _ (_, _, mexports) <- parseModuleHead' source'
-			exports <- mexports
+			H.PragmasAndModuleHead _ _ mhead <- parseModuleHead' source'
+			H.ModuleHead _ (H.ModuleName _ mname) _ mexports <- mhead
+			H.ExportSpecList _ exports <- mexports
 			return $ concatMap getExports exports,
 		_moduleImports = map getImport $ mapMaybe (uncurry parseImport') parts,
 		_moduleDeclarations = sortDeclarations $ getDecls $ mapMaybe (uncurry parseDecl') parts }
@@ -91,23 +94,23 @@ analyzeModule_ exts file source = do
 			g <- matchRx "^module\\s+([\\w\\.]+)" cts
 			g 1
 
-		parseDecl' :: Int -> String -> Maybe H.Decl
+		parseDecl' :: Int -> String -> Maybe (H.Decl H.SrcSpanInfo)
 		parseDecl' offset cts = maybeResult $ fmap (transformBi $ addOffset offset) $
 			H.parseDeclWithMode (parseMode file exts) cts
 
-		parseImport' :: Int -> String -> Maybe H.ImportDecl
+		parseImport' :: Int -> String -> Maybe (H.ImportDecl H.SrcSpanInfo)
 		parseImport' offset cts = maybeResult $ fmap (transformBi $ addOffset offset) $
 			H.parseImportDeclWithMode (parseMode file exts) cts
 
-		parseModuleHead' :: String -> Maybe H.PragmasAndModuleHead
+		parseModuleHead' :: String -> Maybe (H.PragmasAndModuleHead H.SrcSpanInfo)
 		parseModuleHead' = maybeResult . fmap H.unNonGreedy . H.parseWithMode (parseMode file exts)
 
 		maybeResult :: H.ParseResult a -> Maybe a
 		maybeResult (H.ParseFailed _ _) = Nothing
 		maybeResult (H.ParseOk r) = Just r
 
-		addOffset :: Int -> H.SrcLoc -> H.SrcLoc
-		addOffset offset src = src { H.srcLine = H.srcLine src + offset }
+		addOffset :: Int -> H.SrcSpan -> H.SrcSpan
+		addOffset offset src = src { H.srcSpanStartLine = H.srcSpanStartLine src + offset, H.srcSpanEndLine = H.srcSpanEndLine src + offset }
 
 		-- Replace all tabs to spaces to make SrcLoc valid, otherwise it treats tab as 8 spaces
 		source' = map untab source
@@ -122,34 +125,33 @@ parseMode file exts = H.defaultParseMode {
 	H.fixities = Just H.baseFixities }
 
 -- | Get exports
-getExports :: H.ExportSpec -> [Export]
-getExports (H.EModuleContents (H.ModuleName m)) = [ExportModule $ fromString m]
-getExports (H.EVar n) = [uncurry ExportName (identOfQName n) ThingNothing]
-getExports (H.EAbs _ n) = [uncurry ExportName (identOfQName n) ThingNothing]
-getExports (H.EThingAll n) = [uncurry ExportName (identOfQName n) ThingAll]
-getExports (H.EThingWith n ns) = [uncurry ExportName (identOfQName n) $ ThingWith (map toStr ns)] where
-	toStr :: H.CName -> Text
-	toStr (H.VarName cn) = identOfName cn
-	toStr (H.ConName cn) = identOfName cn
+getExports :: H.ExportSpec H.SrcSpanInfo -> [Export]
+getExports (H.EModuleContents _ (H.ModuleName _ m)) = [ExportModule $ fromString m]
+getExports (H.EVar _ n) = [uncurry ExportName (identOfQName n) ThingNothing]
+getExports (H.EAbs _ _ n) = [uncurry ExportName (identOfQName n) ThingNothing]
+getExports (H.EThingWith _ _ n ns) = [uncurry ExportName (identOfQName n) $ ThingWith (map toStr ns)] where
+	toStr :: H.CName H.SrcSpanInfo -> Text
+	toStr (H.VarName _ cn) = identOfName cn
+	toStr (H.ConName _ cn) = identOfName cn
 
 -- | Get import
-getImport :: H.ImportDecl -> Import
+getImport :: H.ImportDecl H.SrcSpanInfo -> Import
 getImport d = Import
 	(mname (H.importModule d))
 	(H.importQualified d)
 	(mname <$> H.importAs d)
 	(importLst <$> H.importSpecs d)
-	(Just $ toPosition $ H.importLoc d)
+	(Just $ toPosition $ H.ann d)
 	where
-		mname (H.ModuleName n) = fromString n
-		importLst (hiding, specs) = ImportList hiding $ map impSpec specs
-		impSpec (H.IVar n) = ImportSpec (identOfName n) ThingNothing
-		impSpec (H.IAbs _ n) = ImportSpec (identOfName n) ThingNothing
-		impSpec (H.IThingAll n) = ImportSpec (identOfName n) ThingAll
-		impSpec (H.IThingWith n ns) = ImportSpec (identOfName n) $ ThingWith $ map identOfName (concatMap childrenBi ns :: [H.Name])
+		mname (H.ModuleName _ n) = fromString n
+		importLst (H.ImportSpecList _ hiding specs) = ImportList hiding $ map impSpec specs
+		impSpec (H.IVar _ n) = ImportSpec (identOfName n) ThingNothing
+		impSpec (H.IAbs _ _ n) = ImportSpec (identOfName n) ThingNothing
+		impSpec (H.IThingAll _ n) = ImportSpec (identOfName n) ThingAll
+		impSpec (H.IThingWith _ n ns) = ImportSpec (identOfName n) $ ThingWith $ map identOfName (concatMap childrenBi ns :: [H.Name H.SrcSpanInfo])
 
 -- | Decl declarations
-getDecls :: [H.Decl] -> [Declaration]
+getDecls :: [H.Decl H.SrcSpanInfo] -> [Declaration]
 getDecls decls =
 	map mergeDecls .
 	groupBy ((==) `on` view declarationName) .
@@ -171,117 +173,130 @@ getDecls decls =
 		mergeInfos l _ = l
 
 -- | Get local binds
-getLocalDecls :: H.Decl -> [Declaration]
+getLocalDecls :: H.Decl H.SrcSpanInfo -> [Declaration]
 getLocalDecls decl' = concatMap getDecls' binds' where
-	binds' :: [H.Binds]
+	binds' :: [H.Binds H.SrcSpanInfo]
 	binds' = universeBi decl'
-	getDecls' :: H.Binds -> [Declaration]
-	getDecls' (H.BDecls decls) = getDecls decls
+	getDecls' :: H.Binds H.SrcSpanInfo -> [Declaration]
+	getDecls' (H.BDecls _ decls) = getDecls decls
 	getDecls' _ = []
 
 -- | Get declaration and child declarations
-getDecl :: H.Decl -> [Declaration]
+getDecl :: H.Decl H.SrcSpanInfo -> [Declaration]
 getDecl decl' = case decl' of
 	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ oneLinePrint typeSignature) [] Nothing) | n <- names]
-	H.TypeDecl loc n args _ -> [mkType loc n Type args `withDef` decl']
-	H.DataDecl loc dataOrNew ctx n args cons _ -> (mkType loc n (ctor dataOrNew `withCtx` ctx) args `withDef` decl') : concatMap (map (addRel n) . getConDecl n args) cons
-	H.GDataDecl loc dataOrNew ctx n args _ gcons _ -> (mkType loc n (ctor dataOrNew `withCtx` ctx) args `withDef` decl') : concatMap (map (addRel n) . getGConDecl) gcons
-	H.ClassDecl loc ctx n args _ _ -> [mkType loc n (Class `withCtx` ctx) args `withDef` decl']
+	H.TypeDecl loc h t -> [mkType loc (tyName h) Type (tyArgs h) `withDef` decl']
+	H.DataDecl loc dataOrNew mctx h cons _ -> (mkType loc (tyName h) (ctor dataOrNew `withCtx` mctx) (tyArgs h) `withDef` decl') : concatMap (map (addRel $ tyName h) . getConDecl (tyName h) (tyArgs h)) cons
+	H.GDataDecl loc dataOrNew mctx h _ gcons _ -> (mkType loc (tyName h) (ctor dataOrNew `withCtx` mctx) (tyArgs h) `withDef` decl') : concatMap (map (addRel $ tyName h) . getGConDecl) gcons
+	H.ClassDecl loc ctx h _ _ -> [mkType loc (tyName h) (Class `withCtx` ctx) (tyArgs h) `withDef` decl']
 	_ -> []
 	where
-		mkType :: H.SrcLoc -> H.Name -> (TypeInfo -> DeclarationInfo) -> [H.TyVarBind] -> Declaration
+		mkType :: H.SrcSpanInfo -> H.Name H.SrcSpanInfo -> (TypeInfo -> DeclarationInfo) -> [H.TyVarBind H.SrcSpanInfo] -> Declaration
 		mkType loc n ctor' args = setPosition loc $ decl (identOfName n) $ ctor' $ TypeInfo Nothing (map oneLinePrint args) Nothing []
 
 		withDef :: H.Pretty a => Declaration -> a -> Declaration
 		withDef tyDecl' tyDef = set (declaration . typeInfo . typeInfoDefinition) (Just $ prettyPrint tyDef) tyDecl'
 
-		withCtx :: (TypeInfo -> DeclarationInfo) -> H.Context -> TypeInfo -> DeclarationInfo
-		withCtx ctor' ctx = ctor' . set typeInfoContext (makeCtx ctx)
+		withCtx :: (TypeInfo -> DeclarationInfo) -> Maybe (H.Context H.SrcSpanInfo) -> TypeInfo -> DeclarationInfo
+		withCtx ctor' mctx = ctor' . set typeInfoContext (fmap makeCtx mctx)
 
-		ctor :: H.DataOrNew -> TypeInfo -> DeclarationInfo
-		ctor H.DataType = Data
-		ctor H.NewType = NewType
+		ctor :: H.DataOrNew H.SrcSpanInfo -> TypeInfo -> DeclarationInfo
+		ctor (H.DataType _) = Data
+		ctor (H.NewType _) = NewType
 
-		makeCtx [] = Nothing
-		makeCtx ctx = Just $ fromString $ intercalate ", " $ map oneLinePrint ctx
+		makeCtx ctx = fromString $ oneLinePrint ctx
 
-		addRel :: H.Name -> Declaration -> Declaration
+		addRel :: H.Name H.SrcSpanInfo -> Declaration -> Declaration
 		addRel n = set (declaration . related) (Just $ identOfName n)
 
+		tyName :: H.DeclHead H.SrcSpanInfo -> H.Name H.SrcSpanInfo
+		tyName (H.DHead _ n) = n
+		tyName (H.DHInfix _ _ n) = n
+		tyName (H.DHParen _ h) = tyName h
+		tyName (H.DHApp _ h _) = tyName h
+
+		tyArgs :: H.DeclHead H.SrcSpanInfo -> [H.TyVarBind H.SrcSpanInfo]
+		tyArgs = universeBi
+
 -- | Get constructor and record fields declarations
-getConDecl :: H.Name -> [H.TyVarBind] -> H.QualConDecl -> [Declaration]
+getConDecl :: H.Name H.SrcSpanInfo -> [H.TyVarBind H.SrcSpanInfo] -> H.QualConDecl H.SrcSpanInfo -> [Declaration]
 getConDecl t as (H.QualConDecl loc _ _ cdecl) = case cdecl of
-	H.ConDecl n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ cts `tyFun` dataRes) [] Nothing)]
-	H.InfixConDecl ct n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ (ct : [cts]) `tyFun` dataRes) [] Nothing)]
-	H.RecDecl n fields -> mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` dataRes) [] Nothing) : concatMap (uncurry (getRec loc dataRes)) fields
+	H.ConDecl _ n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ cts `tyFun` dataRes) [] Nothing)]
+	H.InfixConDecl _ ct n cts -> [mkFun loc n (Function (Just $ oneLinePrint $ (ct : [cts]) `tyFun` dataRes) [] Nothing)]
+	H.RecDecl _ n fields -> mkFun loc n (Function (Just $ oneLinePrint $ map tyField fields `tyFun` dataRes) [] Nothing) : concatMap (getRec loc dataRes) fields
 	where
-		dataRes :: H.Type
-		dataRes = foldr (H.TyApp . H.TyVar . nameOf) (H.TyCon (H.UnQual t)) as where
-			nameOf :: H.TyVarBind -> H.Name
-			nameOf (H.KindedVar n' _) = n'
-			nameOf (H.UnkindedVar n') = n'
+		dataRes :: H.Type H.SrcSpanInfo
+		dataRes = foldr (H.TyApp loc . H.TyVar loc . nameOf) (H.TyCon loc (H.UnQual loc t)) as where
+			nameOf :: H.TyVarBind H.SrcSpanInfo -> H.Name H.SrcSpanInfo
+			nameOf (H.KindedVar _ n' _) = n'
+			nameOf (H.UnkindedVar _ n') = n'
+
+tyField :: H.FieldDecl H.SrcSpanInfo -> H.Type H.SrcSpanInfo
+tyField (H.FieldDecl _ _ t) = t
 
 -- | Get GADT constructor and record fields declarations
-getGConDecl :: H.GadtDecl -> [Declaration]
-getGConDecl (H.GadtDecl loc n fields r) = mkFun loc n (Function (Just $ oneLinePrint $ map snd fields `tyFun` r) [] Nothing) : concatMap (uncurry (getRec loc r)) fields
+getGConDecl :: H.GadtDecl H.SrcSpanInfo -> [Declaration]
+getGConDecl (H.GadtDecl loc n mfields r) = mkFun loc n (Function (Just $ oneLinePrint $ map tyField (fromMaybe [] mfields) `tyFun` r) [] Nothing) : concatMap (getRec loc r) (fromMaybe [] mfields)
 
 -- | Get record field declaration
-getRec :: H.SrcLoc -> H.Type -> [H.Name] -> H.Type -> [Declaration]
-getRec loc t ns rt = [mkFun loc n (Function (Just $ oneLinePrint $ t `H.TyFun` rt) [] Nothing) | n <- ns]
+getRec :: H.SrcSpanInfo -> H.Type H.SrcSpanInfo -> H.FieldDecl H.SrcSpanInfo -> [Declaration]
+getRec loc t (H.FieldDecl _ ns rt) = [mkFun loc n (Function (Just $ oneLinePrint $ H.TyFun loc t rt) [] Nothing) | n <- ns]
 
 -- | Get definitions
-getDef :: H.Decl -> [Declaration]
-getDef (H.FunBind []) = []
-getDef d@(H.FunBind (H.Match loc n _ _ _ _ : _)) = [setPosition loc $ decl (identOfName n) fun] where
+getDef :: H.Decl H.SrcSpanInfo -> [Declaration]
+getDef (H.FunBind _ []) = []
+getDef d@(H.FunBind _ (m : _)) = [setPosition (H.ann m) $ decl (identOfName $ identOfMatch m) fun] where
+	identOfMatch (H.Match _ n _ _ _) = n
+	identOfMatch (H.InfixMatch _ _ n _ _ _) = n
 	fun = Function Nothing (getLocalDecls d) Nothing
 getDef d@(H.PatBind loc pat _ _) = map (\name -> setPosition loc (decl (identOfName name) (Function Nothing (getLocalDecls d) Nothing))) (names pat) where
-	names :: H.Pat -> [H.Name]
-	names (H.PVar n) = [n]
-	names (H.PNPlusK n _) = [n]
-	names (H.PInfixApp l _ r) = names l ++ names r
-	names (H.PApp _ ns) = concatMap names ns
-	names (H.PTuple _ ns) = concatMap names ns
-	names (H.PList ns) = concatMap names ns
-	names (H.PParen n) = names n
-	names (H.PRec _ pf) = concatMap fieldNames pf
-	names (H.PAsPat n ns) = n : names ns
-	names H.PWildCard = []
-	names (H.PIrrPat n) = names n
+	names :: H.Pat H.SrcSpanInfo -> [H.Name H.SrcSpanInfo]
+	names (H.PVar _ n) = [n]
+	names (H.PNPlusK _ n _) = [n]
+	names (H.PInfixApp _ l _ r) = names l ++ names r
+	names (H.PApp _ _ ns) = concatMap names ns
+	names (H.PTuple _ _ ns) = concatMap names ns
+	names (H.PList _ ns) = concatMap names ns
+	names (H.PParen _ n) = names n
+	names (H.PRec _ _ pf) = concatMap fieldNames pf
+	names (H.PAsPat _ n ns) = n : names ns
+	names (H.PWildCard _) = []
+	names (H.PIrrPat _ n) = names n
 	names (H.PatTypeSig _ n _) = names n
-	names (H.PViewPat _ n) = names n
-	names (H.PBangPat n) = names n
+	names (H.PViewPat _ _ n) = names n
+	names (H.PBangPat _ n) = names n
 	names _ = []
 
-	fieldNames :: H.PatField -> [H.Name]
-	fieldNames (H.PFieldPat _ n) = names n
-	fieldNames (H.PFieldPun n) = case n of
-		H.Qual _ n' -> [n']
-		H.UnQual n' -> [n']
+	fieldNames :: H.PatField H.SrcSpanInfo -> [H.Name H.SrcSpanInfo]
+	fieldNames (H.PFieldPat _ _ n) = names n
+	fieldNames (H.PFieldPun _ n) = case n of
+		H.Qual _ _ n' -> [n']
+		H.UnQual _ n' -> [n']
 		_ -> []
-	fieldNames H.PFieldWildcard = []
+	fieldNames (H.PFieldWildcard _) = []
 getDef _ = []
 
 -- | Make function declaration by location, name and function type
-mkFun :: H.SrcLoc -> H.Name -> DeclarationInfo -> Declaration
+mkFun :: H.SrcSpanInfo -> H.Name H.SrcSpanInfo -> DeclarationInfo -> Declaration
 mkFun loc n = setPosition loc . decl (identOfName n)
 
 -- | Make function from arguments and result
 --
 -- @[a, b, c...] `tyFun` r == a `TyFun` b `TyFun` c ... `TyFun` r@
-tyFun :: [H.Type] -> H.Type -> H.Type
-tyFun as' r' = foldr H.TyFun r' as'
+tyFun :: [H.Type H.SrcSpanInfo] -> H.Type H.SrcSpanInfo -> H.Type H.SrcSpanInfo
+tyFun as' r' = foldr (H.TyFun H.noSrcSpan) r' as'
 
 -- | Get name of qualified name
-identOfQName :: H.QName -> (Maybe Text, Text)
-identOfQName (H.Qual (H.ModuleName mname) name) = (Just $ fromString mname, identOfName name)
-identOfQName (H.UnQual name) = (Nothing, identOfName name)
-identOfQName (H.Special sname) = (Nothing, fromString $ H.prettyPrint sname)
+identOfQName :: H.QName H.SrcSpanInfo -> (Maybe Text, Text)
+identOfQName (H.Qual _ (H.ModuleName _ mname) name) = (Just $ fromString mname, identOfName name)
+identOfQName (H.UnQual _ name) = (Nothing, identOfName name)
+identOfQName (H.Special _ sname) = (Nothing, fromString $ H.prettyPrint sname)
 
 -- | Get name of @H.Name@
-identOfName :: H.Name -> Text
+identOfName :: H.Name H.SrcSpanInfo -> Text
 identOfName name = fromString $ case name of
-	H.Ident s -> s
-	H.Symbol s -> s
+	H.Ident _ s -> s
+	H.Symbol _ s -> s
 
 -- | Print something in one line
 oneLinePrint :: (H.Pretty a, IsString s) => a -> s
@@ -302,12 +317,12 @@ prettyPrint = fromString . H.prettyPrintStyleMode (H.style { H.mode = H.PageMode
 		H.layout = H.PPOffsideRule,
 		H.linePragmas = False }
 
--- | Convert @H.SrcLoc@ to @Position
-toPosition :: H.SrcLoc -> Position
-toPosition (H.SrcLoc _ l c) = Position l c
+-- | Convert @H.SrcSpanInfo@ to @Position
+toPosition :: H.SrcSpanInfo -> Position
+toPosition s = Position (H.startLine s) (H.startColumn s)
 
 -- | Set @Declaration@ position
-setPosition :: H.SrcLoc -> Declaration -> Declaration
+setPosition :: H.SrcSpanInfo -> Declaration -> Declaration
 setPosition loc = set declarationPosition (Just $ toPosition loc)
 
 -- | Adds documentation to declaration

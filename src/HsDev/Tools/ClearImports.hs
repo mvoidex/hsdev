@@ -35,7 +35,8 @@ dumpMinimalImports opts f = do
 		Exts.ParseFailed loc err -> throwError $
 			"Failed to parse file at " ++
 			Exts.prettyPrint loc ++ ":" ++ err
-		Exts.ParseOk (Exts.Module _ (Exts.ModuleName mname) _ _ _ _ _) -> return mname
+		Exts.ParseOk (Exts.Module _ (Just (Exts.ModuleHead _ (Exts.ModuleName _ mname) _ _)) _ _ _) -> return mname
+		_ -> throwError "Error"
 
 	void $ liftE $ runGhc (Just libdir) $ do
 		df <- getSessionDynFlags

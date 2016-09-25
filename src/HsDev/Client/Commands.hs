@@ -246,10 +246,8 @@ runCommand (GhcEval exprs mfile) = toValue $ do
 	case mfile of
 		Nothing -> inSessionGhc ghciSession
 		Just (FileSource f mcts) -> do
-			setFileSourceSession [] f
-			inSessionGhc $ do
-				t <- makeTarget f mcts
-				loadTargets [t]
+			m <- setFileSourceSession [] f
+			inSessionGhc $ interpretModule m mcts
 	async' <- liftIO $ pushTask ghcw $ do
 		mapM (try . evaluate) exprs
 	res <- waitAsync async'
