@@ -217,7 +217,7 @@ executable hsclearimports
     containers >= 0.5.0,
     data-default >= 0.5.0,
     directory >= 1.2.0,
-    haskell-src-exts >= 1.17.0 && < 1.18.0,
+    haskell-src-exts >= 1.17.0 && < 1.19.0,
     lens >= 4.8,
     mtl >= 2.2.0,
     optparse-applicative >= 0.11,

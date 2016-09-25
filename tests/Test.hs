@@ -32,7 +32,7 @@ main = hspec $ do
 		it "should scan project" $ do
 			dir <- getCurrentDirectory
 			s <- startServer (def { serverSilent = True })
-			_ <- call s $ Scan [dir </> "tests/test-package"] False [] [] [] [] [] False False
+			_ <- call s $ Scan [dir </> "tests/test-package"] False [] [] [] [] False False
 			one <- call s $ InfoResolve (dir </> "tests/test-package/ModuleOne.hs") True
 			when (["test", "forkIO", "f"] /= exports one) $
 				expectationFailure "invalid exports of ModuleOne.hs"
