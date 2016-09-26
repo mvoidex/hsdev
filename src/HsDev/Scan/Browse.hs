@@ -103,7 +103,7 @@ browseModule pdb package' m = do
 		thisModule = GHC.moduleNameString (GHC.moduleName m)
 		thisLoc df = view moduleIdLocation $ mloc df m
 		mloc df m' = ModuleId (fromString mname') $
-			ghcModuleLocation pdb (fromMaybe package' $ GHC.lookupPackage df (GHC.moduleUnitId m')) m'
+			ghcModuleLocation pdb (fromMaybe package' $ GHC.lookupPackage df (moduleUnitId m')) m'
 			where
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl df minfo n = do

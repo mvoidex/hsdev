@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Compat (
-	pkgDatabase, UnitId, unitId, depends, getPackageDetails, patSynType, cleanupHandler, renderStyle,
+	pkgDatabase, UnitId, unitId, moduleUnitId, depends, getPackageDetails, patSynType, cleanupHandler, renderStyle,
 	LogAction, setLogAction,
 	languages, flags
 	) where
@@ -38,6 +38,13 @@ unitId :: GHC.PackageConfig -> UnitId
 unitId = GHC.unitId
 #elif __GLASGOW_HASKELL__ == 710
 unitId = GHC.packageKey
+#endif
+
+moduleUnitId :: GHC.Module -> UnitId
+#if __GLASGOW_HASKELL__ == 800
+moduleUnitId = GHC.moduleUnitId
+#elif __GLASGOW_HASKELL__ == 710
+moduleUnitId = GHC.modulePackageKey
 #endif
 
 depends :: GHC.DynFlags -> GHC.PackageConfig -> [UnitId]

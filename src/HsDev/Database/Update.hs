@@ -8,8 +8,6 @@ module HsDev.Database.Update (
 	UpdateM(..),
 	runUpdate,
 
-	UpdateMonad,
-
 	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks,
 	readDB,
 
@@ -54,7 +52,6 @@ import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Stack
 import HsDev.Symbols
-import HsDev.Tools.Ghc.Worker (liftGhc)
 import HsDev.Tools.Ghc.Session hiding (wait)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs

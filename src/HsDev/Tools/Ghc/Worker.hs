@@ -43,7 +43,6 @@ import Text.Format
 
 import Exception (ExceptionMonad(..))
 import GHC hiding (Warning, Module, moduleName, pkgDatabase)
-import GhcMonad (Ghc(..))
 import GHC.Paths
 import Outputable
 import FastString (unpackFS)

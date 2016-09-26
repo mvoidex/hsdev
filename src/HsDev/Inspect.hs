@@ -74,7 +74,7 @@ analyzeModule_ exts file source = do
 		_moduleLocation = ModuleSource Nothing,
 		_moduleExports = do
 			H.PragmasAndModuleHead _ _ mhead <- parseModuleHead' source'
-			H.ModuleHead _ (H.ModuleName _ mname) _ mexports <- mhead
+			H.ModuleHead _ _ _ mexports <- mhead
 			H.ExportSpecList _ exports <- mexports
 			return $ concatMap getExports exports,
 		_moduleImports = map getImport $ mapMaybe (uncurry parseImport') parts,
@@ -185,7 +185,7 @@ getLocalDecls decl' = concatMap getDecls' binds' where
 getDecl :: H.Decl H.SrcSpanInfo -> [Declaration]
 getDecl decl' = case decl' of
 	H.TypeSig loc names typeSignature -> [mkFun loc n (Function (Just $ oneLinePrint typeSignature) [] Nothing) | n <- names]
-	H.TypeDecl loc h t -> [mkType loc (tyName h) Type (tyArgs h) `withDef` decl']
+	H.TypeDecl loc h _ -> [mkType loc (tyName h) Type (tyArgs h) `withDef` decl']
 	H.DataDecl loc dataOrNew mctx h cons _ -> (mkType loc (tyName h) (ctor dataOrNew `withCtx` mctx) (tyArgs h) `withDef` decl') : concatMap (map (addRel $ tyName h) . getConDecl (tyName h) (tyArgs h)) cons
 	H.GDataDecl loc dataOrNew mctx h _ gcons _ -> (mkType loc (tyName h) (ctor dataOrNew `withCtx` mctx) (tyArgs h) `withDef` decl') : concatMap (map (addRel $ tyName h) . getGConDecl) gcons
 	H.ClassDecl loc ctx h _ _ -> [mkType loc (tyName h) (Class `withCtx` ctx) (tyArgs h) `withDef` decl']
