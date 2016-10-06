@@ -5,7 +5,7 @@ module HsDev.Cache.Structured (
 
 import Control.DeepSeq
 import Control.Exception
-import Control.Lens (preview)
+import Control.Lens (preview, (^.))
 import Control.Monad.Except
 import qualified Data.Map as M (assocs)
 import System.Directory
@@ -67,6 +67,6 @@ loadProject p dir = do
 loadFiles :: (FilePath -> Bool) -> FilePath -> ExceptT String IO Structured
 loadFiles f dir = do
 	dat <- loadData (dir </> Cache.standaloneCache)
-	ExceptT $ return $ structured [] [] $ filterDB f' (const False) dat
+	ExceptT $ return $ structured [] [] (dat ^. slice f')
 	where
-		f' = maybe False f . preview (moduleIdLocation . moduleFile)
+		f' = maybe False f . preview (moduleLocation . moduleFile)

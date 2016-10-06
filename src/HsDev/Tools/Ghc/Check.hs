@@ -47,12 +47,12 @@ checkFiles opts files _ = scope "check-files" $ do
 
 -- | Check module source
 check :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe String -> m [Note OutputMessage]
-check opts m msrc = scope "check" $ case view moduleLocation m of
+check opts m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
 	FileModule file proj -> do
 		ch <- liftIO newChan
 		let
 			dir = fromMaybe
-				(sourceModuleRoot (view moduleName m) file) $
+				(sourceModuleRoot (view (moduleId . moduleName) m) file) $
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
 		withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
@@ -63,7 +63,7 @@ check opts m msrc = scope "check" $ case view moduleLocation m of
 			loadTargets [target]
 		notes <- liftIO $ stopChan ch
 		liftIO $ recalcNotesTabs notes
-	_ -> scope "check" $ hsdevError $ ModuleNotSource (view moduleLocation m)
+	_ -> scope "check" $ hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
 
 -- | Check module and collect warnings and errors
 checkFile :: (MonadLog m, GhcMonad m) => [String] -> Module -> m [Note OutputMessage]

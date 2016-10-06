@@ -6,7 +6,6 @@ module HsDev.Display (
 	) where
 
 import Control.Lens (view)
-import Data.Maybe (fromMaybe)
 
 import Text.Format
 
@@ -28,7 +27,8 @@ instance Display PackageDb where
 instance Display ModuleLocation where
 	display (FileModule f _) = f
 	display (InstalledModule _ _ n) = n
-	display (ModuleSource s) = fromMaybe "" s
+	display (OtherLocation s) = s
+	display NoLocation = "<no-location>"
 	displayType _ = "module"
 
 instance Display Project where

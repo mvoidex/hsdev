@@ -40,10 +40,10 @@ interpretModule :: Module -> Maybe String -> GhcM ()
 interpretModule m mcts = do
 	targetSession [] m
 	let
-		f = preview (moduleLocation . moduleFile) m
+		f = preview (moduleId . moduleLocation . moduleFile) m
 	case f of
 		Nothing -> return ()
 		Just f' -> withCurrentDirectory (takeDirectory f') $ do
 			t <- makeTarget (takeFileName f') mcts
 			loadTargets [t]
-			GHC.setContext [GHC.IIModule $ GHC.mkModuleName $ unpack $ view moduleName m]
+			GHC.setContext [GHC.IIModule $ GHC.mkModuleName $ unpack $ view (moduleId . moduleName) m]

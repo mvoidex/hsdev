@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, MultiParamTypeClasses, RankNTypes #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.Update (
@@ -8,10 +8,10 @@ module HsDev.Database.Update (
 	UpdateM(..),
 	runUpdate,
 
-	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks,
+	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks, runTasks_,
 	readDB,
 
-	scanModule, scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
+	scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
 	scan,
 	updateEvent, processEvent,
@@ -27,16 +27,17 @@ import Control.Applicative ((<|>))
 import Control.Arrow
 import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
-import Control.Lens (preview, _Just, view, over, set, _1, mapMOf_, each, (^..), _head, _Right)
+import Control.Lens hiding ((%=), (.=))
 import Control.Monad.Catch (catch)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe, isJust, fromMaybe)
+import Data.Maybe
 import qualified Data.Text as T (unpack)
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath
@@ -47,11 +48,14 @@ import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async hiding (Event)
 import HsDev.Display
-import HsDev.Inspect (inspectDocs, inspectDocsGhc)
+import HsDev.Inspect
+import HsDev.Inspect.Order
 import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Stack
 import HsDev.Symbols
+import HsDev.Symbols.Resolve
+import HsDev.Symbols.Util
 import HsDev.Tools.Ghc.Session hiding (wait)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
@@ -86,9 +90,16 @@ runUpdate uopts act = Log.scope "update" $ do
 		stand = any moduleStandalone updatedMods
 
 		modifiedDb = mconcat $ concat [
-			map (`packageDbDB` dbval) dbs,
-			map (`projectDB` dbval) projs,
-			[standaloneDB dbval | stand]]
+			[dbval ^. packageDbSlice pdb | pdb <- dbs],
+			[dbval ^. projectSlice proj | proj <- projs],
+			[dbval ^. standaloneSlice | stand]]
+		-- resolvedDb
+		-- 	| not (null dbs) = resolveAll dbval
+		-- 	| otherwise = mconcat
+		-- 		(resolveStandalone (updatedMods ^.. each . moduleFile) dbval : map (`resolveProject` dbval) projs)
+
+	-- update db $ return $!! resolvedDb
+	-- serverWriteCache (modifiedDb `mappend` resolvedDb)
 	serverWriteCache modifiedDb
 	return r
 	where
@@ -100,7 +111,7 @@ runUpdate uopts act = Log.scope "update" $ do
 				getMods :: (MonadIO m) => m [InspectedModule]
 				getMods = do
 					db' <- liftIO $ readAsync db
-					return $ filter ((`elem` mlocs') . view inspectedId) $ toList $ databaseModules db'
+					return $ filter ((`elem` mlocs') . view inspectedKey) $ toList $ view databaseModules db'
 			when (view updateDocs uopts) $ do
 				Log.log Log.Trace "forking inspecting source docs"
 				void $ fork (getMods >>= waiter . mapM_ scanDocs_)
@@ -119,7 +130,7 @@ runUpdate uopts act = Log.scope "update" $ do
 			im' <- (S.scanModify (infer' s) im) <|> return im
 			updater $ fromModule im'
 		infer' :: UpdateMonad m => Session -> [String] -> PackageDbStack -> Module -> m Module
-		infer' s opts _ m = case preview (moduleLocation . moduleFile) m of
+		infer' s opts _ m = case preview (moduleId . moduleLocation . moduleFile) m of
 			Nothing -> return m
 			Just _ -> liftIO $ inWorker (sessionGhc s) $ do
 				targetSession opts m
@@ -141,7 +152,7 @@ updater :: UpdateMonad m => Database -> m ()
 updater db' = do
 	db <- askSession sessionDatabase
 	update db $ return $!! db'
-	tell $!! map (view moduleLocation) $ allModules db'
+	tell $!! map (view (moduleId . moduleLocation)) (db' ^.. databaseModules . each . inspected)
 
 -- | Clear obsolete data from database
 cleaner :: UpdateMonad m => m Database -> m ()
@@ -186,64 +197,93 @@ runTask action subj act = Log.scope "task" $ do
 			_taskProgress = Nothing }
 
 -- | Run many tasks with numeration
-runTasks :: UpdateMonad m => [m ()] -> m ()
-runTasks ts = zipWithM_ taskNum [1..] (map noErr ts) where
+runTasks :: UpdateMonad m => [m a] -> m [a]
+runTasks ts = liftM catMaybes $ zipWithM taskNum [1..] (map noErr ts) where
 	total = length ts
 	taskNum n = local setProgress where
 		setProgress = set (updateTasks . _head . taskProgress) (Just (Progress n total))
-	noErr v = v `mplus` return ()
+	noErr v = hsdevIgnore Nothing (Just <$> v)
+
+-- | Run many tasks with numeration
+runTasks_ :: UpdateMonad m => [m ()] -> m ()
+runTasks_ = void . runTasks
 
 -- | Get database value
 readDB :: SessionMonad m => m Database
 readDB = askSession sessionDatabase >>= liftIO . readAsync
 
--- | Scan module
-scanModule :: UpdateMonad m => [String] -> ModuleLocation -> Maybe String -> m ()
-scanModule opts mloc mcts = runTask "scanning" mloc $ Log.scope "module" $ do
-	defs <- askSession sessionDefines
-	im <- S.scanModule defs opts mloc mcts
-	updater $ fromModule im
-	_ <- return $ view inspectionResult im
-	return ()
+-- | Set inspection error
+inspectionFailed :: UpdateMonad m => ModuleLocation -> IO Inspection -> HsDevError -> m ()
+inspectionFailed mloc insp e = do
+	i <- liftIO insp
+	updater $ fromModule $ Inspected i mloc mempty (Left e)
+
+-- | Inspect stage, save on error, return result on success
+inspectStage :: UpdateMonad m => ModuleLocation -> IO Inspection -> m a -> m a
+inspectStage mloc insp act = hsdevOnError (inspectionFailed mloc insp) act
+
+-- | Inspect module and save result
+inspect :: UpdateMonad m => ModuleLocation -> IO Inspection -> m Module -> m ()
+inspect mloc insp act = hsdevOnError (inspectionFailed mloc insp) $ do
+	m <- act
+	i <- liftIO insp
+	updater $ fromModule $ Inspected i mloc mempty (Right m)
 
 -- | Scan modules
 scanModules :: UpdateMonad m => [String] -> [S.ModuleToScan] -> m ()
-scanModules opts ms = runTasks $
-	[scanProjectFile opts p >> return () | p <- ps] ++
-	[scanModule (opts ++ mopts) m mcts | (m, mopts, mcts) <- ms]
-	where
-		ps = ordNub $ mapMaybe (toProj . view _1) ms
-		toProj (FileModule _ p) = fmap (view projectCabal) p
-		toProj _ = Nothing
+scanModules opts ms = mapM_ (uncurry scanModules') grouped where
+	scanModules' mproj ms' = do
+		dbval <- readDB
+		defines <- askSession sessionDefines
+		let
+			inspectionInfos = M.fromList
+				[(mloc, sourceInspection mfile mcts (opts ++ mopts)) |
+					(mloc, mopts, mcts) <- ms',
+					mfile <- mloc ^.. moduleFile]
+			pload (mloc, mopts, mcts) = runTask "preloading" mloc $
+				inspectStage mloc (inspectionInfos ^?! ix mloc) $ liftIO $
+					preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts
+		pmods <- runTasks (map pload ms')
+		let
+			mods' = dbval ^.. (maybe (slice installed) projectDepsSlice mproj) . modules
+		case order pmods of
+			Left err -> Log.log Log.Error ("failed order dependencies for files: {}" ~~ show err)
+			Right ordered -> flip evalStateT mods' $ runTasks_ (map inspect' ordered) where
+				inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
+					envMods <- get
+					let
+						mloc = pmod ^. preloadedId . moduleLocation
+					inspect mloc (inspectionInfos ^?! ix mloc) $ do
+						m <- liftIO $ inspectPreloaded envMods pmod
+						modify (m:)
+						return m
+	grouped = M.toList $ M.unionsWith (++) [M.singleton (m ^? _1 . moduleProject . _Just) [m] | m <- ms]
 
--- | Scan source file
+-- | Scan source file, resolve dependent modules
 scanFile :: UpdateMonad m => [String] -> FilePath -> m ()
 scanFile opts fpath = scanFileContents opts fpath Nothing
 
--- | Scan source file with contents
+-- | Scan source file with contents and resolve dependent modules
 scanFileContents :: UpdateMonad m => [String] -> FilePath -> Maybe String -> m ()
-scanFileContents opts fpath mcts = Log.scope "file" $ hsdevLiftIO $ do
+scanFileContents opts fpath mcts = runTask "scanning" fpath $ Log.scope "file" $ hsdevLiftIO $ do
 	dbval <- readDB
 	fpath' <- liftIO $ canonicalizePath fpath
 	ex <- liftIO $ doesFileExist fpath'
-	mlocs <- if ex
-		then do
-			mloc <- case lookupFile fpath' dbval of
-				Just m -> return $ view moduleLocation m
-				Nothing -> do
-					mproj <- liftIO $ locateProject fpath'
-					return $ FileModule fpath' mproj
-			return [(mloc, [], mcts)]
-		else return []
-	mapMOf_ (each . _1) (watch . flip watchModule) mlocs
-	scan
-		(Cache.loadFiles (== fpath'))
-		(filterDB (inFile fpath') (const False) . standaloneDB)
-		mlocs
-		opts
-		(scanModules opts)
-	where
-		inFile f = maybe False (== f) . preview (moduleIdLocation . moduleFile)
+	when (not ex) $ hsdevError $ FileNotFound fpath
+	mloc <- case dbval ^? modules . filtered (inFile fpath') of
+		Just m -> return $ view (moduleId . moduleLocation) m
+		Nothing -> do
+			mproj <- locateProjectInfo fpath'
+			return $ FileModule fpath' mproj
+	watch $ flip watchModule mloc
+	runTasks_ [
+		runTask "scanning" mloc $ do
+			defines <- askSession sessionDefines
+			inspect mloc (sourceInspection fpath' mcts opts) $ liftIO $ do
+				pmod <- preload fpath' defines opts mloc mcts
+				inspectPreloaded (dbval ^.. fileDepsSlice fpath' . modules) pmod,
+		runTask "resolving" mloc $ do
+			updater $ resolveFile fpath' dbval]
 
 -- | Scan cabal modules, doesn't rescan if already scanned
 scanCabal :: UpdateMonad m => [String] -> m ()
@@ -254,11 +294,11 @@ scanCabal opts = Log.scope "cabal" $ do
 		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks userDb
 	if null unscannedDbs
 		then Log.log Log.Trace $ "cabal (global-db and user-db) already scanned"
-		else runTasks $ map (scanPackageDb opts) unscannedDbs
+		else runTasks_ $ map (scanPackageDb opts) unscannedDbs
 
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
 prepareSandbox :: UpdateMonad m => Sandbox -> m ()
-prepareSandbox sbox@(Sandbox StackWork fpath) = Log.scope "prepare" $ runTasks [
+prepareSandbox sbox@(Sandbox StackWork fpath) = Log.scope "prepare" $ runTasks_ [
 	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ buildDeps Nothing,
 	runTask "configuring" sbox $ void $ Util.withCurrentDirectory dir $ configure Nothing]
 	where
@@ -276,7 +316,7 @@ scanSandbox opts sbox = Log.scope "sandbox" $ do
 		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks pdbs
 	if null unscannedDbs
 		then Log.log Log.Trace $ "sandbox already scanned"
-		else runTasks $ map (scanPackageDb opts) unscannedDbs
+		else runTasks_ $ map (scanPackageDb opts) unscannedDbs
 
 -- | Scan top of package-db stack, usable for rescan
 scanPackageDb :: UpdateMonad m => [String] -> PackageDbStack -> m ()
@@ -285,13 +325,13 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 	mlocs <- liftM
 		(filter (\mloc -> preview modulePackageDb mloc == Just (topPackageDb pdbs))) $
 		listModules opts pdbs
-	scan (Cache.loadPackageDb (topPackageDb pdbs)) (packageDbDB (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+	scan (Cache.loadPackageDb (topPackageDb pdbs)) (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- browseModules opts pdbs (mlocs' ^.. each . _1)
 		docs <- liftIO $ hsdevLiftWith (ToolError "hdocs") $ hdocsCabal pdbs opts
 		updater $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
-		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view moduleName m) docs
+		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view (moduleId . moduleName) m) docs
 
 -- | Scan project file
 scanProjectFile :: UpdateMonad m => [String] -> FilePath -> m Project
@@ -299,6 +339,21 @@ scanProjectFile opts cabal = runTask "scanning" cabal $ do
 	proj <- S.scanProjectFile opts cabal
 	updater $ fromProject proj
 	return proj
+
+-- | Refine project info and update if necessary
+refineProjectInfo :: UpdateMonad m => Project -> m Project
+refineProjectInfo proj = do
+	dbval <- readDB
+	case refineProject dbval proj of
+		Nothing -> runTask "scanning" (proj ^. projectCabal) $ do
+			proj' <- liftIO $ loadProject proj
+			updater $ fromProject proj'
+			return proj'
+		Just proj' -> return proj'
+
+-- | Get project info for module
+locateProjectInfo :: UpdateMonad m => FilePath -> m (Maybe Project)
+locateProjectInfo cabal = liftIO (locateProject cabal) >>= traverse refineProjectInfo
 
 -- | Scan project and related package-db stack
 scanProjectStack :: UpdateMonad m => [String] -> FilePath -> m ()
@@ -314,54 +369,51 @@ scanProject opts cabal = runTask "scanning" (project cabal) $ Log.scope "project
 	proj <- scanProjectFile opts cabal
 	watch (\w -> watchProject w proj opts)
 	S.ScanContents _ [(_, sources)] _ <- S.enumProject proj
-	scan (Cache.loadProject $ view projectCabal proj) (projectDB proj) sources opts $ scanModules opts
+	scanModules opts sources
 
 -- | Scan directory for source files and projects
 scanDirectory :: UpdateMonad m => [String] -> FilePath -> m ()
 scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 	S.ScanContents standSrcs projSrcs pdbss <- S.enumDirectory dir
-	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
-	runTasks $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
+	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
+	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan (Cache.loadFiles (dir `isParent`)) (filterDB inDir (const False) . standaloneDB) standSrcs opts $ scanModules opts
+	scan (Cache.loadFiles (dir `isParent`)) (standaloneSlice . slice inDir) standSrcs opts $ scanModules opts
 	where
-		inDir = maybe False (dir `isParent`) . preview (moduleIdLocation . moduleFile)
+		inDir = maybe False (dir `isParent`) . preview (sourcedModule . moduleLocation . moduleFile)
 
 scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()
 scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	dbval <- readDB
 	let
-		projs = databaseProjects dbval ^.. each . projectCabal
+		projs = dbval ^.. databaseProjects . each . projectCabal
 		pdbs = databasePackageDbs dbval
-		files = allModules (standaloneDB dbval) ^.. each . moduleLocation . moduleFile
+		files = dbval ^.. standaloneSlice . modules . moduleId . moduleLocation . moduleFile
 		srcs = standSrcs ^.. each . _1 . moduleFile
 		inSrcs src = src `elem` srcs && src `notElem` files
-		inFiles = maybe False inSrcs . preview (moduleIdLocation . moduleFile)
-	mapMOf_ (each . _1 . projectCabal) (\p -> Log.log Log.Trace ("scanning project: {}" ~~ p)) projSrcs
-	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
-	mapMOf_ (each . _1 . moduleFile) (\f -> Log.log Log.Trace ("scanning file: {}" ~~ f)) standSrcs
+		inFiles = maybe False inSrcs . preview (sourcedModule . moduleLocation . moduleFile)
+	runTasks_ [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
+	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan (Cache.loadFiles inSrcs) (filterDB inFiles (const False) . standaloneDB) standSrcs opts $ scanModules opts
-	mapMOf_ each (\s -> Log.log Log.Trace ("scanning package-db: {}" ~~ topPackageDb s)) pdbss
-	runTasks [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
+	scan (Cache.loadFiles inSrcs) (standaloneSlice . slice inFiles) standSrcs opts $ scanModules opts
 
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [InspectedModule] -> m ()
 scanDocs ims = do
 	-- w <- liftIO $ ghcWorker ["-haddock"] (return ())
 	-- w <- askSession sessionGhc
-	runTasks $ map scanDocs' ims
+	runTasks_ $ map scanDocs' ims
 	where
 		scanDocs' im
-			| not $ hasTag RefinedDocsTag im = runTask "scanning docs" (view inspectedId im) $ Log.scope "docs" $ do
-				Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
+			| not $ hasTag RefinedDocsTag im = runTask "scanning docs" (view inspectedKey im) $ Log.scope "docs" $ do
+				Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedKey im
 				im' <- (liftM (setTag RefinedDocsTag) $ S.scanModify doScan im)
 					<|> return im
 				Log.log Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
-					view inspectedId im' ~~
-					length (im' ^.. inspectionResult . _Right . moduleDeclarations . each . declarationDocs . _Just)
+					view inspectedKey im' ~~
+					length (im' ^.. inspectionResult . _Right . moduleSymbols . symbolDocs . _Just)
 				updater $ fromModule im'
-			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedId im
+			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedKey im
 		doScan _ _ m = do
 			w <- askSession sessionGhc
 			liftIO $ inWorker w $ do
@@ -370,23 +422,23 @@ scanDocs ims = do
 				liftGhc $ inspectDocsGhc opts' m
 
 inferModTypes :: UpdateMonad m => [InspectedModule] -> m ()
-inferModTypes = runTasks . map inferModTypes' where
+inferModTypes = runTasks_ . map inferModTypes' where
 	inferModTypes' im
-		| not $ hasTag InferredTypesTag im = runTask "inferring types" (view inspectedId im) $ Log.scope "docs" $ do
+		| not $ hasTag InferredTypesTag im = runTask "inferring types" (view inspectedKey im) $ Log.scope "docs" $ do
 			w <- askSession sessionGhc
-			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
+			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedKey im
 			im' <- (liftM (setTag InferredTypesTag) $
 				S.scanModify (\opts _ m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts m Nothing))) im)
 				<|> return im
-			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
+			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedKey im
 			updater $ fromModule im'
-		| otherwise = Log.log Log.Trace $ "Types for {} already inferred" ~~ view inspectedId im
+		| otherwise = Log.log Log.Trace $ "Types for {} already inferred" ~~ view inspectedKey im
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
 scan :: UpdateMonad m
 	=> (FilePath -> ExceptT String IO Structured)
 	-- ^ Read data from cache
-	-> (Database -> Database)
+	-> Slice
 	-- ^ Get data from database
 	-> [S.ModuleToScan]
 	-- ^ Actual modules. Other modules will be removed from database
@@ -396,9 +448,9 @@ scan :: UpdateMonad m
 	-- ^ Function to update changed modules
 	-> m ()
 scan cache' part' mlocs opts act = Log.scope "scan" $ do
-	dbval <- getCache cache' part'
+	dbval <- getCache cache' (view part')
 	let
-		obsolete = filterDB (\m -> view moduleIdLocation m `notElem` (mlocs ^.. each . _1)) (const False) dbval
+		obsolete = dbval ^. slice (\m -> view moduleLocation m `notElem` (mlocs ^.. each . _1))
 	changed <- liftIO $ S.changedModules dbval opts mlocs
 	cleaner $ return obsolete
 	act changed
@@ -411,9 +463,7 @@ updateEvent (WatchedProject proj projOpts) e
 			~~ ("proj" %= view projectName proj)
 		dbval <- readDB
 		let
-			opts = fromMaybe [] $ do
-				m <- lookupFile (view eventPath e) dbval
-				preview (inspection . inspectionOpts) $ getInspected dbval m
+			opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each
 		scanFile opts $ view eventPath e
 	| isCabal e = do
 		Log.log Log.Info $ "Project {proj} changed"
@@ -432,9 +482,7 @@ updateEvent WatchedModule e
 			~~ ("file" %= view eventPath e)
 		dbval <- readDB
 		let
-			opts = fromMaybe [] $ do
-				m <- lookupFile (view eventPath e) dbval
-				preview (inspection . inspectionOpts) $ getInspected dbval m
+			opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each
 		scanFile opts $ view eventPath e
 	| otherwise = return ()
 

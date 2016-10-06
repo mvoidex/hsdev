@@ -14,6 +14,7 @@ module HsDev.Tools.Ghc.Worker (
 	importModules, preludeModules,
 	evaluate,
 	clearTargets, makeTarget, loadTargets,
+	loadInteractive, reload,
 	-- * Utils
 	listPackages, spanRegion,
 	withCurrentDirectory,
@@ -36,6 +37,7 @@ import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
 import Data.Version (showVersion)
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
+import System.FilePath
 import qualified  System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Read (readMaybe)
@@ -201,6 +203,27 @@ makeTarget name (Just cts) = do
 loadTargets :: GhcMonad m => [Target] -> m ()
 loadTargets ts = setTargets ts >> load LoadAllTargets >> return ()
 
+-- | Load and set interactive context
+loadInteractive :: GhcMonad m => FilePath -> Maybe String -> m ()
+loadInteractive fpath mcts = do
+	fpath' <- liftIO $ canonicalize fpath
+	withCurrentDirectory (takeDirectory fpath') $ do
+		clearTargets
+		t <- makeTarget (takeFileName fpath') mcts
+		loadTargets [t]
+		g <- getModuleGraph
+		setContext [IIModule (ms_mod_name m) | m <- g]
+
+-- | Reload targets
+reload :: GhcMonad m => m ()
+reload = do
+	ts <- getTargets
+	ctx <- getContext
+	setContext []
+	clearTargets
+	setTargets ts
+	setContext ctx
+
 -- | Get list of installed packages
 listPackages :: GhcMonad m => m [ModulePackage]
 listPackages = liftM (mapMaybe readPackage . fromMaybe [] . pkgDatabase) getSessionDynFlags
@@ -224,7 +247,7 @@ logToChan :: Chan (Note OutputMessage) -> LogAction
 logToChan ch fs sev src msg
 	| Just sev' <- checkSev sev = do
 		src' <- canonicalize srcMod
-		putChan ch $ Note {
+		putChan ch Note {
 			_noteSource = src',
 			_noteRegion = spanRegion src,
 			_noteLevel = Just sev',
@@ -239,7 +262,7 @@ logToChan ch fs sev src msg
 		checkSev _ = Nothing
 		srcMod = case src of
 			RealSrcSpan s' -> FileModule (unpackFS $ srcSpanFile s') Nothing
-			_ -> ModuleSource Nothing
+			_ -> NoLocation
 
 -- | Don't log ghc warnings and errors
 logToNull :: LogAction

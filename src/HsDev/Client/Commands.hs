@@ -7,7 +7,7 @@ module HsDev.Client.Commands (
 import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Exception (displayException)
-import Control.Lens (view, preview, _Just, (^..), each)
+import Control.Lens hiding ((%=), (.=), anyOf, (<.>))
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -15,7 +15,6 @@ import qualified Control.Monad.State as State
 import Control.Monad.Catch (try, catch, bracket, SomeException(..))
 import Data.Aeson hiding (Result, Error)
 import Data.List
-import Data.Foldable (toList)
 import Data.Maybe
 import qualified Data.Map as M
 import Data.String (fromString)
@@ -39,7 +38,6 @@ import HsDev.Server.Types
 import HsDev.Sandbox hiding (findSandbox)
 import qualified HsDev.Sandbox as S (findSandbox)
 import HsDev.Symbols
-import HsDev.Symbols.Resolve (resolveOne, scopeModule, exportsModule)
 import HsDev.Symbols.Util
 import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.Cabal as Cabal
@@ -81,11 +79,11 @@ runCommand (AddData cts) = toValue $ mapM_ updateData cts where
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
+		[Update.scanCabal ghcs' | cabal],
+		map (Update.scanSandbox ghcs') sboxes',
 		map (\(FileSource f mcts) -> Update.scanFileContents ghcs' f mcts) fs,
 		map (Update.scanProject ghcs') projs,
-		map (Update.scanDirectory ghcs') paths',
-		[Update.scanCabal ghcs' | cabal],
-		map (Update.scanSandbox ghcs') sboxes']
+		map (Update.scanDirectory ghcs') paths']
 runCommand (RefineDocs projs fs ms) = toValue $ do
 	projects <- traverse findProject projs
 	dbval <- getDb
@@ -94,8 +92,8 @@ runCommand (RefineDocs projs fs ms) = toValue $ do
 			map inProject projects,
 			map inFile fs,
 			map inModule ms]
-		mods = selectModules (filters . view moduleId) dbval
-	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs $ map (getInspected dbval) mods]
+		mods = dbval ^.. databaseModules . each . filtered (maybe False filters . preview inspected)
+	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs mods]
 runCommand (InferTypes projs fs ms) = toValue $ do
 	projects <- traverse findProject projs
 	dbval <- getDb
@@ -104,8 +102,8 @@ runCommand (InferTypes projs fs ms) = toValue $ do
 			map inProject projects,
 			map inFile fs,
 			map inModule ms]
-		mods = selectModules (filters . view moduleId) dbval
-	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes $ map (getInspected dbval) mods]
+		mods = dbval ^.. databaseModules . each . filtered (maybe False filters . preview inspected)
+	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes mods]
 runCommand (Remove projs cabal sboxes files) = toValue $ do
 	db <- askSession sessionDatabase
 	dbval <- getDb
@@ -113,7 +111,7 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 	projects <- traverse findProject projs
 	sboxes' <- getSandboxes sboxes
 	forM_ projects $ \proj -> do
-		DB.clear db (return $ projectDB proj dbval)
+		DB.clear db (return $ dbval ^. projectSlice proj)
 		liftIO $ unwatchProject w proj
 	dbPDbs <- mapM restorePackageDbStack $ databasePackageDbs dbval
 	flip State.evalStateT dbPDbs $ do
@@ -122,17 +120,17 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 			pdbs <- lift $ sandboxPackageDbStack sbox
 			removePackageDbStack pdbs
 	forM_ files $ \file -> do
-		DB.clear db (return $ filterDB (inFile file) (const False) dbval)
+		DB.clear db (return $ dbval ^. slice (inFile file))
 		let
-			mloc = fmap (view moduleLocation) $ lookupFile file dbval
+			mloc = fmap (view (moduleId . moduleLocation)) (dbval ^? modules . filtered (inFile file))
 		maybe (return ()) (liftIO . unwatchModule w) mloc
 	where
 		-- We can safely remove package-db from db iff doesn't used by some of other package-dbs
 		-- For example, we can't remove global-db if there are any other package-dbs, because all of them uses global-db
 		-- We also can't remove stack snapshot package-db if there are some local package-db not yet removed
 		canRemove pdbs = do
-			from <- State.get
-			return $ null $ filter (pdbs `isSubStack`) $ delete pdbs from
+			from' <- State.get
+			return $ null $ filter (pdbs `isSubStack`) $ delete pdbs from'
 		-- Remove top of package-db stack if possible
 		removePackageDb pdbs = do
 			db <- lift $ askSession sessionDatabase
@@ -141,7 +139,7 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 			can <- canRemove pdbs
 			when can $ do
 				State.modify (delete pdbs)
-				DB.clear db (return $ packageDbDB (topPackageDb pdbs) dbval)
+				DB.clear db (return $ dbval ^. packageDbSlice (topPackageDb pdbs))
 				liftIO $ unwatchPackageDb w $ topPackageDb pdbs
 		-- Remove package-db stack when possible
 		removePackageDbStack = mapM_ removePackageDb . packageDbStacks
@@ -154,49 +152,47 @@ runCommand RemoveAll = toValue $ do
 runCommand (InfoModules fs) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
-	return $ map (view moduleId) $ newestPackage $ selectModules (filter' . view moduleId) dbval
-runCommand InfoPackages = toValue $ (ordNub . sort . 	mapMaybe (preview (moduleLocation . modulePackage . _Just)) . allModules) <$> getDb
-runCommand InfoProjects = toValue $ (toList . databaseProjects) <$> getDb
+	return (dbval ^.. newestPackagesSlice . modules . filtered filter' . moduleId)
+runCommand InfoPackages = toValue $ do
+	dbval <- getDb
+	return $ ordNub (dbval ^.. packages)
+runCommand InfoProjects = toValue $ (toListOf $ databaseProjects . each) <$> getDb
 runCommand InfoSandboxes = toValue $ databasePackageDbs <$> getDb
-runCommand (InfoSymbol sq fs locals') = toValue $ do
-	dbval <- liftM (localsDatabase locals') $ getDb
+runCommand (InfoSymbol sq fs _) = toValue $ do
+	dbval <- getDb
 	filter' <- targetFilters fs
-	return $ newestPackage $ filterMatch sq $
-		concatMap moduleModuleDeclarations $ filter (filter' . view moduleId) $ allModules dbval
+	return (dbval ^.. newestPackagesSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq))
 runCommand (InfoModule sq fs) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
-	return $ newestPackage $ filterMatch sq $ filter (filter' . view moduleId) $ allModules dbval
-runCommand (InfoResolve fpath exports) = toValue $ do
-	dbval <- getSDb fpath
-	let
-		getScope
-			| exports = exportsModule
-			| otherwise = scopeModule
-	m <- refineSourceModule fpath
-	return $ getScope $ resolveOne dbval m
+	return (dbval ^.. newestPackagesSlice . modules . filtered filter' . filtered (matchQuery sq))
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $ do
-	dbval <- getSDb fpath
+	dbval <- getDb
 	liftIO $ hsdevLift $ lookupSymbol dbval fpath nm
 runCommand (Whois nm fpath) = toValue $ do
-	dbval <- getSDb fpath
+	dbval <- getDb
 	liftIO $ hsdevLift $ whois dbval fpath nm
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
-	dbval <- getSDb fpath
-	liftM (filterMatch sq . map (view moduleId)) $ liftIO $ hsdevLift $ scopeModules dbval fpath
-runCommand (ResolveScope sq global fpath) = toValue $ do
-	dbval <- getSDb fpath
-	liftM (filterMatch sq) $ liftIO $ hsdevLift $ scope dbval fpath global
-runCommand (Complete input wide fpath) = toValue $ do
-	dbval <- getSDb fpath
-	liftIO $ hsdevLift $ completions dbval fpath input wide
+	dbval <- getDb
+	ms <- liftIO $ hsdevLift $ scopeModules dbval fpath
+	return (ms ^.. each . filtered (matchQuery sq))
+runCommand (ResolveScope sq fpath) = toValue $ do
+	dbval <- getDb
+	ss <- liftIO $ hsdevLift $ scope dbval fpath
+	return (ss ^.. each . filtered (matchQuery sq))
+runCommand (Complete input True fpath) = toValue $ do
+	dbval <- getDb
+	liftIO $ hsdevLift $ wideCompletions dbval fpath input
+runCommand (Complete input False fpath) = toValue $ do
+	dbval <- getDb
+	liftIO $ hsdevLift $ completions dbval fpath input
 runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
-	(mapMaybe Hayoo.hayooAsDeclaration . Hayoo.resultResult) $
+	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
 	liftIO $ hsdevLift $ Hayoo.hayoo hq (Just i)
-runCommand (CabalList packages) = toValue $ liftIO $ hsdevLift $ Cabal.cabalList packages
+runCommand (CabalList packages') = toValue $ liftIO $ hsdevLift $ Cabal.cabalList packages'
 runCommand (Lint fs) = toValue $ do
 	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
 runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do
@@ -224,19 +220,16 @@ runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections n
 runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
 	let
-		doFix :: FilePath -> String -> ([Tools.Note AutoFix.Correction], String)
-		doFix file cts = AutoFix.edit cts fUpCorrs $ do
-			AutoFix.autoFix fCorrs
-			State.gets (view AutoFix.regions)
-			where
-				findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
-				findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
-				fCorrs = map (view Tools.note) $ findCorrs file ns
-				fUpCorrs = findCorrs file rest
+		doFix :: FilePath -> Maybe String -> ([Tools.Note AutoFix.Correction], Maybe String)
+		doFix file mcts = AutoFix.autoFix fCorrs (fUpCorrs, mcts) where
+			findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
+			findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
+			fCorrs = findCorrs file ns
+			fUpCorrs = findCorrs file rest
 		runFix file
-			| isPure = return $ fst $ doFix file ""
+			| isPure = return $ fst $ doFix file Nothing
 			| otherwise = do
-				(corrs', cts') <- liftM (doFix file) $ liftIO $ readFileUtf8 file
+				(corrs', Just cts') <- liftM (doFix file) $ liftIO $ Just <$> readFileUtf8 file
 				liftIO $ writeFileUtf8 file cts'
 				return corrs'
 	liftM concat $ mapM runFix files
@@ -265,13 +258,13 @@ runCommand Flags = toValue $ return ["-f" ++ prefix ++ f |
 runCommand (Link hold) = toValue $ commandLink >> when hold commandHold
 runCommand Exit = toValue serverExit
 
-targetFilters :: CommandMonad m => [TargetFilter] -> m (ModuleId -> Bool)
+targetFilters :: (CommandMonad m, Sourced a) => [TargetFilter] -> m (a -> Bool)
 targetFilters fs = do
 	fs_ <- mapM targetFilter fs
 	return $ foldr (liftM2 (&&)) (const True) fs_
 
-targetFilter :: CommandMonad m => TargetFilter -> m (ModuleId -> Bool)
-targetFilter f = case f of
+targetFilter :: (CommandMonad m, Sourced a) => TargetFilter -> m (a -> Bool)
+targetFilter f = liftM (. view sourcedModule) $ case f of
 	TargetProject proj -> liftM inProject $ findProject proj
 	TargetFile file -> liftM inFile $ refineSourceFile file
 	TargetModule mname -> return $ inModule mname
@@ -279,7 +272,7 @@ targetFilter f = case f of
 	TargetPackageDb pdb -> return $ inPackageDb pdb
 	TargetCabal -> return $ inPackageDbStack userDb
 	TargetSandbox sbox -> liftM inPackageDbStack $ findSandbox sbox >>= sandboxPackageDbStack
-	TargetPackage pack -> liftM inPackage $ refinePackage pack
+	TargetPackage pack -> liftM (inPackage . mkPackage) $ refinePackage pack
 	TargetSourced -> return byFile
 	TargetStandalone -> return standalone
 
@@ -306,15 +299,15 @@ refineSourceFile fpath = do
 	fpath' <- findPath fpath
 	db' <- getDb
 	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ do
-		m' <- lookupFile fpath' db'
-		preview (moduleLocation . moduleFile) m'
+		m' <- db' ^? modules . filtered (inFile fpath')
+		preview (moduleId . moduleLocation . moduleFile) m'
 
 -- | Get module by source
 refineSourceModule :: CommandMonad m => FilePath -> m Module
 refineSourceModule fpath = do
 	fpath' <- findPath fpath
 	db' <- getDb
-	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ lookupFile fpath' db'
+	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return (db' ^? modules . filtered (inFile fpath'))
 
 -- | Set session by source
 setFileSourceSession :: CommandMonad m => [String] -> FilePath -> m Module
@@ -327,7 +320,7 @@ setFileSourceSession opts fpath = do
 refinePackage :: CommandMonad m => String -> m String
 refinePackage pack = do
 	db' <- getDb
-	if pack `elem` (allPackages db' ^.. each . packageName)
+	if pack `elem` ordNub (db' ^.. packages . packageName)
 		then return pack
 		else hsdevError (PackageNotFound pack)
 
@@ -343,7 +336,7 @@ findProject proj = do
 	let
 		resultProj =
 			refineProject db' (project proj') <|>
-			find ((== proj) . view projectName) (databaseProjects db')
+			find ((== proj) . view projectName) (M.elems $ view databaseProjects db')
 	maybe (hsdevError $ ProjectNotFound proj) return resultProj
 	where
 		addCabal p
@@ -370,26 +363,14 @@ findDep depName = do
 -- FIXME: Doesn't work for file without project
 -- | Check if project or source depends from this module
 inDeps :: (Project, Maybe FilePath, PackageDbStack) -> ModuleId -> Bool
-inDeps (proj, src, pdbs) = liftM2 (&&) (restrictPackageDbStack pdbs) deps' where
+inDeps (proj, src, pdbs) = liftM2 (&&) (inPackageDbStack pdbs) deps' where
 	deps' = case src of
 		Nothing -> inDepsOfProject proj
 		Just src' -> inDepsOfFile proj src'
 
--- | Bring locals to top scope to search within them if 'locals' flag set
-localsDatabase :: Bool -> Database -> Database
-localsDatabase True = databaseLocals
-localsDatabase False = id
-
 -- | Get actual DB state
 getDb :: SessionMonad m => m Database
 getDb = askSession sessionDatabase >>= liftIO . DB.readAsync
-
--- | Get DB with filtered sanxboxes for file
-getSDb :: SessionMonad m => FilePath -> m Database
-getSDb fpath = do
-	dbval <- getDb
-	pdbs <- searchPackageDbStack fpath
-	return $ filterDB (restrictPackageDbStack pdbs) (const True) dbval
 
 -- | Run DB update action
 updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()
@@ -401,12 +382,14 @@ updateProcess uopts acts = Update.runUpdate uopts $ mapM_ runAct acts where
 ensureUpToDate :: ServerMonadBase m => Update.UpdateOptions -> [FileSource] -> ClientM m ()
 ensureUpToDate uopts fs = updateProcess uopts [Update.scanFileContents (view Update.updateGhcOpts uopts) f mcts | FileSource f mcts <- fs]
 
--- | Filter declarations with prefix and infix
-filterMatch :: Symbol a => SearchQuery -> [a] -> [a]
-filterMatch (SearchQuery q st) = filter match' where
-	match' m = case st of
-		SearchExact -> fromString q == symbolName m
-		SearchPrefix -> fromString q `T.isPrefixOf` symbolName m
-		SearchInfix -> fromString q `T.isInfixOf` symbolName m
-		SearchSuffix -> fromString q `T.isSuffixOf` symbolName m
-		SearchRegex -> unpack (symbolName m) =~ q
+-- | Check matching search query
+matchQuery :: Sourced a => SearchQuery -> a -> Bool
+matchQuery (SearchQuery q st) s = case st of
+	SearchExact -> sq == sn
+	SearchPrefix -> sq `T.isPrefixOf` sn
+	SearchInfix -> sq `T.isInfixOf` sn
+	SearchSuffix -> sq `T.isSuffixOf` sn
+	SearchRegex -> unpack sn =~ q
+	where
+		sq = fromString q
+		sn = view sourcedName s

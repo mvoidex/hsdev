@@ -1,176 +1,116 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, TemplateHaskell #-}
+{-# LANGUAGE RankNTypes #-}
 
 module HsDev.Symbols.Resolve (
-	ResolveM(..),ResolvedTree, ResolvedModule(..), resolvedModule, resolvedScope, resolvedExports,
-	scopeModule, exportsModule, resolvedTopScope,
-	resolve, resolveOne, resolveModule, resolveImports, resolveImport,
-	mergeImported
+	resolve,
+	resolveFile, resolveStandalone, resolveProject, resolveAll,
+	sourceDeps, sourceRDeps,
+	RefineTable, refineTable, refineSymbol, refineSymbols,
+	symbolUniqId
 	) where
 
-import Control.Applicative ((<|>))
-import Control.Arrow
-import Control.Lens (makeLenses, view, preview, set, _Just, over, each)
-import Control.Monad.Reader
-import Control.Monad.State
-import Data.Function (on)
-import Data.List (sortBy, groupBy, delete)
+import Control.Lens
 import qualified Data.Map as M
-import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
-import Data.Maybe.JustIf
-import Data.Ord (comparing)
-import qualified Data.Set as S
+import Data.List ((\\))
+import Data.Maybe (fromMaybe, maybeToList)
 import Data.String (fromString)
 import Data.Text (Text)
+import Data.Generics.Uniplate.Operations
+import Language.Haskell.Names (Scoped(..), annotate)
+import qualified Language.Haskell.Names as N (resolve)
+import Language.Haskell.Names.Imports (importTable)
+import Language.Haskell.Names.ModuleSymbols (moduleTable)
+import Language.Haskell.Names.Exports (exportedSymbols)
+import Language.Haskell.Exts as Exts (ModuleName(..), SrcSpanInfo, importModule)
+import System.FilePath
 
+import Data.Deps
 import HsDev.Database
-import HsDev.Symbols
+import HsDev.Symbols hiding (exportedSymbols)
 import HsDev.Symbols.Util
-import HsDev.Util (uniqueBy)
+import HsDev.Util (ordNub)
 
--- | Map from name to modules
-type ModuleMap = M.Map Text [Module]
+resolve :: [Module] -> [Module] -> [Module]
+resolve _ [] = []
+resolve envs ms = map (refineSymbols stbl . resolveModule) ms where
+	stbl = refineTable $ ms ^.. each . moduleSymbols ++ envs ^.. each . moduleSymbols
+	env = N.resolve (ms ^.. each . moduleSource . _Just) (environment envs)
+	resolveModule m = case view moduleSource m of
+		Nothing -> m
+		Just src -> set moduleExports exports . set moduleScope scope . over (moduleSource . _Just) annotateSource $ m where
+			imports = importTable env src
+			tbl = moduleTable imports src
+			scope = M.map (map fromSymbol) tbl
+			exports = map fromSymbol $ exportedSymbols tbl src
+			annotateSource = annotate env . fmap (\(Scoped _ l) -> l)
 
--- | Resolve monad uses existing @Database@ and @ResolvedTree@ as state.
-newtype ResolveM a = ResolveM { runResolveM :: ReaderT (Database, ModuleMap) (State ResolvedTree) a }
-	deriving (Functor, Applicative, Monad, MonadState ResolvedTree, MonadReader (Database, ModuleMap))
+resolveFile :: FilePath -> Database -> Database
+resolveFile fpath db = modulesUpdate db (resolve ems ms) where
+	deps' = sourceDeps db
+	dependent = maybe [] (fpath :) $ inverse deps' ^? ix fpath
+	dependencies = ordNub (concat [fromMaybe [] (deps' ^? ix dep') | dep' <- dependent]) \\ dependent
+	fileSlice = fileDepsSlice fpath . modules
+	ems = db ^.. fileSlice . filtered (\m -> or (not (byFile m) : [inFile d' m | d' <- dependencies]))
+	ms = db ^.. fileSlice . filtered (\m -> or [inFile dep' m | dep' <- dependent])
 
--- | Tree of resolved modules
-type ResolvedTree = Map ModuleId ResolvedModule
+resolveStandalone :: [FilePath] -> Database -> Database
+resolveStandalone [] _ = mempty
+resolveStandalone fpaths db = modulesUpdate db (resolve ems ms) where
+	deps' = sourceDeps db
+	dependent = ordNub $ concat $ fpaths : [fromMaybe [] (inverse deps' ^? ix fpath) | fpath <- fpaths]
+	dependencies = ordNub (concat [fromMaybe [] (deps' ^? ix dep') | dep' <- dependent]) \\ dependent
+	ems = db ^.. slices [slice installed, standaloneSlice] . modules . filtered (\m -> or (not (byFile m) : [inFile d' m | d' <- dependencies]))
+	ms = db ^.. slice (\m -> or [inFile dep' m | dep' <- dependent]) . modules
 
--- | Module with declarations bringed to scope and with exported declarations
-data ResolvedModule = ResolvedModule {
-	_resolvedModule :: Module,
-	_resolvedScope :: [Declaration],
-	_resolvedExports :: [Declaration] }
+resolveProject :: Project -> Database -> Database
+resolveProject proj db = modulesUpdate db (resolve (db ^.. projectDepsSlice proj . modules) (db ^.. projectSlice proj . modules))
 
-makeLenses ''ResolvedModule
+resolveAll :: Database -> Database
+resolveAll db = mconcat (resolveStandalone stand db : map (`resolveProject` db) projs) where
+	projs = db ^.. databaseProjects . each
+	stand = db ^.. standaloneSlice . modules . moduleId . moduleLocation . moduleFile
 
--- | Make @Module@ with scope declarations
-scopeModule :: ResolvedModule -> Module
-scopeModule r = set moduleDeclarations (view resolvedScope r) (view resolvedModule r)
-
--- | Make @Module@ with exported only declarations
-exportsModule :: ResolvedModule -> Module
-exportsModule r = set moduleDeclarations (view resolvedExports r) (view resolvedModule r)
-
--- | Get top-level scope
-resolvedTopScope :: ResolvedModule -> [Declaration]
-resolvedTopScope = filter isTop . view resolvedScope where
-	isTop :: Declaration -> Bool
-	isTop = any (not . view importIsQualified) . fromMaybe [] . view declarationImported
-
--- | Resolve modules, function is not IO, so all file names must be canonicalized
-resolve :: Traversable t => Database -> t Module -> t ResolvedModule
-resolve db = flip evalState M.empty . flip runReaderT (db, m) . runResolveM . traverse resolveModule where
-	m :: ModuleMap
-	m = M.fromList $ map ((view moduleName . head) &&& id) $
-		groupBy ((==) `on` view moduleName) $
-		sortBy (comparing (view moduleName)) $ allModules db
-
--- | Resolve one module
-resolveOne :: Database -> Module -> ResolvedModule
-resolveOne db = fromMaybe (error "Resolve: impossible happened") . resolve db . Just
-
--- | Resolve module
-resolveModule :: Module -> ResolveM ResolvedModule
-resolveModule m = gets (M.lookup $ view moduleId m) >>= maybe resolveModule' return where
-	resolveModule' = save $ case view moduleLocation m of
-		InstalledModule {} -> return ResolvedModule {
-			_resolvedModule = m,
-			_resolvedScope = map setSelfDefined $ view moduleDeclarations m,
-			_resolvedExports = map setSelfDefined $ view moduleDeclarations m }
-		_ -> do
-			scope' <-
-				liftM (thisDecls ++) .
-				resolveImports m .
-				(import_ (fromString "Prelude") :) .
-				view moduleImports $ m
-			let
-				exported' = case view moduleExports m of
-					Nothing -> thisDecls
-					Just exports' -> unique $ catMaybes $ mexported <$> scope' <*> exports'
-			return $ ResolvedModule m (sortDeclarations scope') (sortDeclarations exported')
-	thisDecls :: [Declaration]
-	thisDecls = map (selfDefined . selfImport) $ view moduleDeclarations m
-	setSelfDefined :: Declaration -> Declaration
-	setSelfDefined =
-		over (declaration . localDeclarations . each . declarationDefined) (<|> Just (view moduleId m)) .
-		over declarationDefined (<|> Just (view moduleId m))
-	selfDefined :: Declaration -> Declaration
-	selfDefined = set declarationDefined (Just $ view moduleId m)
-	selfImport :: Declaration -> Declaration
-	selfImport = set declarationImported (Just [import_ $ view moduleName m])
-	save :: ResolveM ResolvedModule -> ResolveM ResolvedModule
-	save act = do
-		rm <- act
-		modify $ M.insert (view (resolvedModule . moduleId) rm) rm
-		return rm
-	unique :: [Declaration] -> [Declaration]
-	unique = uniqueBy declId
-	declId :: Declaration -> (Text, Maybe ModuleId)
-	declId = view declarationName &&& view declarationDefined
-	mexported decl' e' = decl' `justIf` exported decl' e'
-
--- | Bring declarations into scope by imports
-resolveImports :: Module -> [Import] -> ResolveM [Declaration]
-resolveImports m is = do
-	db <- asks fst
-	let
-		deps = maybe S.empty S.fromList $ do
-			f <- preview (moduleLocation . moduleFile) m
-			p <- preview (moduleLocation . moduleProject . _Just) m
-			p' <- refineProject db p
-			return $ delete (view projectName p') $ concatMap (view infoDepends) $ fileTargets p' f
-	liftM (mergeImported . concat) $ mapM (resolveImport deps m) is
-
--- | Bring declarations into scope, first parameter is set of visible packages
-resolveImport :: S.Set String -> Module -> Import -> ResolveM [Declaration]
-resolveImport deps m i = liftM (map $ setImport i) resolveImport' where
-	resolveImport' :: ResolveM [Declaration]
-	resolveImport' = do
-		ms <- case view moduleLocation m of
-			FileModule file proj -> do
-				db <- asks fst
-				let
-					proj' = proj >>= refineProject db
-				case proj' of
-					Nothing -> selectImport i [
-						inFile $ importedModulePath (view moduleName m) file (view importModuleName i),
-						installed]
-					Just p -> selectImport i [
-						inProject p,
-						inDeps]
-			InstalledModule pdb _ _ -> selectImport i [inPackageDb pdb]
-			ModuleSource _ -> selectImport i [installed]
-		fromMaybe [] <$> traverse (liftM (filterImportList . view resolvedExports) . resolveModule) ms
-	setImport :: Import -> Declaration -> Declaration
-	setImport i' = set declarationImported (Just [i'])
-	selectImport :: Import -> [ModuleId -> Bool] -> ResolveM (Maybe Module)
-	selectImport i' fs = do
-		modsMap <- asks snd
-		let
-			mods = fromMaybe [] $ M.lookup (view importModuleName i') modsMap
-		return $
-			listToMaybe $
-			newestPackage $
-			fromMaybe [] $
-			listToMaybe $ dropWhile null
-				[filter (f . view moduleId) mods | f <- fs]
-	filterImportList :: [Declaration] -> [Declaration]
-	filterImportList = case view importList i of
-		Nothing -> id
-		Just il -> filter (`imported` il)
-	inDeps = maybe False (`S.member` deps) . preview (moduleIdLocation . modulePackage . _Just . packageName)
-
--- | Merge imported declarations
-mergeImported :: [Declaration] -> [Declaration]
-mergeImported =
-	map merge' .
-	groupBy ((==) `on` declId) .
-	sortBy (comparing declId)
+-- | Flattened dependencies
+sourceDeps :: Database -> Deps FilePath
+sourceDeps db = either (const mempty) id $ flatten $ mconcat $ do
+	src <- sources
+	fpath <- maybeToList $ preview (moduleId . moduleLocation . moduleFile) src
+	msrc <- maybeToList $ view moduleSource src
+	imp <- [n | ModuleName _ n <- map Exts.importModule (childrenBi msrc) :: [ModuleName (Scoped SrcSpanInfo)]]
+	im <- case preview (moduleId . moduleLocation . moduleProject . _Just) src of
+		Nothing -> maybeToList $ M.lookup (normalise (sourceModuleRoot (view (moduleId . moduleName) src) fpath </> importPath (fromString imp))) tbl
+		Just proj -> do
+			target <- fileTargets proj fpath
+			dir <- view infoSourceDirs target
+			maybeToList $ M.lookup (normalise $ view projectPath proj </> dir </> importPath (fromString imp)) tbl
+	ipath <- maybeToList $ preview (moduleId . moduleLocation . moduleFile) im
+	return $ dep fpath ipath
 	where
-		declId :: Declaration -> (Text, Maybe ModuleId)
-		declId = view declarationName &&& view declarationDefined
-		merge' :: [Declaration] -> Declaration
-		merge' [] = error "mergeImported: impossible"
-		merge' ds@(d:_) = set declarationImported (mconcat $ map (view declarationImported) ds) d
+		sources = db ^.. modules . filtered byFile
+		tbl = M.fromList $ do
+			src <- sources
+			Just fpath <- return $ preview (moduleId . moduleLocation . moduleFile) src
+			return (fpath, src)
+
+-- | Flattened reverse dependencies
+sourceRDeps :: Database -> Deps FilePath
+sourceRDeps = inverse . sourceDeps
+
+moduleUpdate :: Database -> Module -> Database
+moduleUpdate db m = maybe mempty fromModule $ set (_Just . inspectionResult . _Right) m (db ^? databaseModules . ix (view (moduleId . moduleLocation) m))
+
+modulesUpdate :: Database -> [Module] -> Database
+modulesUpdate db = mconcat . map (moduleUpdate db)
+
+type RefineTable = M.Map (Text, Text, SymbolInfo) Symbol
+
+refineTable :: [Symbol] -> RefineTable
+refineTable syms = M.fromList [(symbolUniqId s, s) | s <- syms]
+
+refineSymbol :: RefineTable -> Symbol -> Symbol
+refineSymbol tbl s = fromMaybe s $ M.lookup (symbolUniqId s) tbl
+
+refineSymbols :: RefineTable -> Module -> Module
+refineSymbols tbl = over moduleSymbols (refineSymbol tbl)
+
+symbolUniqId :: Symbol -> (Text, Text, SymbolInfo)
+symbolUniqId s = (view (symbolId . symbolName) s, view (symbolId . symbolModule . moduleName) s, nullifyInfo $ view symbolInfo s)

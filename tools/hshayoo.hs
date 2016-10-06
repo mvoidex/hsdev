@@ -19,4 +19,4 @@ hayooOpts = HayooOpts <$>
 main :: IO ()
 main = toolMain "hshayoo" "hayoo search" hayooOpts $ \(HayooOpts q page pages) -> printExceptT $ printResult $
 	liftM concat $ forM [page .. page + pred pages] $ \i ->
-		liftM (mapMaybe hayooAsDeclaration . resultResult) $ hayoo q (Just i)
+		liftM (mapMaybe hayooAsSymbol . resultResult) $ hayoo q (Just i)

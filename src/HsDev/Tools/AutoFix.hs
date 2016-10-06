@@ -3,7 +3,7 @@
 
 module HsDev.Tools.AutoFix (
 	Correction(..), correctionMessage, corrector,
-	correct, corrections,
+	corrections,
 	autoFix,
 	CorrectorMatch,
 	correctors,
@@ -15,7 +15,7 @@ module HsDev.Tools.AutoFix (
 	) where
 
 import Control.Applicative
-import Control.Lens (makeLenses, set, view, (^.), over)
+import Control.Lens hiding ((.=), at)
 import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Text.Region hiding (Region(..))
@@ -41,16 +41,7 @@ instance FromJSON Correction where
 		v .:: "message" <*>
 		v .:: "corrector"
 
-instance ApplyMap Correction where
-	applyMap m (Correction msg c) = Correction msg (applyMap m c)
-
-instance ApplyMap a => ApplyMap (Note a) where
-	applyMap m = over note (applyMap m)
-
 makeLenses ''Correction
-
-correct :: Correction -> Edit String
-correct c = Chain [_corrector c]
 
 corrections :: [Note OutputMessage] -> [Note Correction]
 corrections = mapMaybe toCorrection where
@@ -68,8 +59,9 @@ corrections = mapMaybe toCorrection where
 				n
 
 -- | Apply corrections
-autoFix :: ApplyMap r => [Correction] -> EditM String r ()
-autoFix = run . mconcat . map correct
+autoFix :: [Note Correction] -> ([Note Correction], Maybe String) -> ([Note Correction], Maybe String)
+autoFix ns (upd, mcts) = (over (each . note . corrector . replaceRegion) (update act) upd, over (_Just . contents) (apply act) mcts) where
+	act = Edit (ns ^.. each . note . corrector)
 
 type CorrectorMatch = Note OutputMessage -> Maybe (Note Correction)
 

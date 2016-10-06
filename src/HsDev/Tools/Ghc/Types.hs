@@ -100,13 +100,13 @@ instance FromJSON TypedExpr where
 
 -- | Get all types in module
 fileTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe String -> m [Note TypedExpr]
-fileTypes opts m msrc = scope "types" $ case view moduleLocation m of
+fileTypes opts m msrc = scope "types" $ case view (moduleId . moduleLocation) m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
 		cts <- maybe (liftIO $ readFileUtf8 file') return msrc
 		let
 			dir = fromMaybe
-				(sourceModuleRoot (view moduleName m) file') $
+				(sourceModuleRoot (view (moduleId . moduleName) m) file') $
 				preview (_Just . projectPath) proj
 		dirExist <- liftIO $ doesDirectoryExist dir
 		withFlags $ (if dirExist then Ghc.withCurrentDirectory dir else id) $ do
@@ -116,7 +116,7 @@ fileTypes opts m msrc = scope "types" $ case view moduleLocation m of
 			ts <- moduleTypes file'
 			df <- getSessionDynFlags
 			return $ map (setExpr cts . recalcTabs cts 8 . uncurry (toNote df)) ts
-	_ -> hsdevError $ ModuleNotSource (view moduleLocation m)
+	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
 	where
 		toNote :: DynFlags -> SrcSpan -> Type -> Note String
 		toNote df spn tp = Note {
@@ -133,12 +133,12 @@ fileTypes opts m msrc = scope "types" $ case view moduleLocation m of
 
 -- | Set types to module
 setModuleTypes :: [Note TypedExpr] -> Module -> Module
-setModuleTypes ts = over (moduleDeclarations . each) setType where
-	setType :: Declaration -> Declaration
+setModuleTypes ts = over (moduleScope . each . each) setType . over (moduleExports . each) setType where
+	setType :: Symbol -> Symbol
 	setType d = fromMaybe d $ do
-		pos <- view declarationPosition d
+		pos <- view symbolPosition d
 		tnote <- find ((== pos) . view (noteRegion . regionFrom)) ts
-		return $ set (declaration . functionType) (Just $ fromString $ view (note . typedType) tnote) d
+		return $ set (symbolInfo . functionType) (Just $ fromString $ view (note . typedType) tnote) d
 
 -- | Infer types in module
 inferTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe String -> m Module

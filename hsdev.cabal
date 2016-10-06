@@ -46,6 +46,7 @@ library
     HsDev.Display
     HsDev.Error
     HsDev.Inspect
+    HsDev.Inspect.Order
     HsDev.PackageDb
     HsDev.Project
     HsDev.Project.Types
@@ -59,9 +60,11 @@ library
     HsDev.Stack
     HsDev.Symbols
     HsDev.Symbols.Class
+    HsDev.Symbols.HaskellNames
     HsDev.Symbols.Location
     HsDev.Symbols.Documented
     HsDev.Symbols.Resolve
+    HsDev.Symbols.Parsed
     HsDev.Symbols.Types
     HsDev.Symbols.Util
     HsDev.Tools.AutoFix
@@ -128,6 +131,7 @@ library
     fsnotify >= 0.2.1,
     ghc-paths >= 0.1.0,
     ghc-syb-utils >= 0.2.3,
+    haskell-names >= 0.8.0 && < 0.9.0,
     haskell-src-exts >= 1.18.0 && < 1.19.0,
     hdocs >= 0.5.0,
     hformat >= 0.1,
@@ -147,7 +151,7 @@ library
     syb >= 0.5.1,
     template-haskell,
     text >= 1.2.0,
-    text-region >= 0.1,
+    text-region >= 0.2,
     time >= 1.5.0,
     transformers >= 0.4.0,
     transformers-base >= 0.4.0,
@@ -217,6 +221,7 @@ executable hsclearimports
     containers >= 0.5.0,
     data-default >= 0.5.0,
     directory >= 1.2.0,
+    haskell-names >= 0.8.0 && < 0.9.0,
     haskell-src-exts >= 1.18.0 && < 1.19.0,
     lens >= 4.8,
     mtl >= 2.2.0,

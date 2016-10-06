@@ -4,7 +4,7 @@ module HsDev.Project (
 	infoSourceDirsDef,
 	readProject, loadProject,
 	withExtensions,
-	infos, inTarget, fileTargets, findSourceDir, sourceDirs,
+	fileInTarget, fileTargets, findSourceDir, sourceDirs,
 	targetOpts,
 
 	-- * Helpers
@@ -13,7 +13,7 @@ module HsDev.Project (
 	) where
 
 import Control.Arrow
-import Control.Lens (Simple, Lens, view, lens)
+import Control.Lens (Lens', view, lens, _Just, toListOf, (^..))
 import Control.Monad.Except
 import Data.List
 import Data.Maybe
@@ -32,7 +32,7 @@ import HsDev.Error
 import HsDev.Util
 
 -- | infoSourceDirs lens with default
-infoSourceDirsDef :: Simple Lens Info [FilePath]
+infoSourceDirsDef :: Lens' Info [FilePath]
 infoSourceDirsDef = lens get' set' where
 	get' i = case _infoSourceDirs i of
 		[] -> ["."]
@@ -103,22 +103,15 @@ withExtensions x i = Extensions {
 	_ghcOptions = _infoGHCOptions i,
 	_entity = x }
 
--- | Returns build targets infos
-infos :: ProjectDescription -> [Info]
-infos p =
-	maybe [] (return . _libraryBuildInfo) (_projectLibrary p) ++
-	map _executableBuildInfo (_projectExecutables p) ++
-	map _testBuildInfo (_projectTests p)
-
 -- | Check if source related to target, source must be relative to project directory
-inTarget :: FilePath -> Info -> Bool
-inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ view infoSourceDirsDef info
+fileInTarget :: FilePath -> Info -> Bool
+fileInTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ view infoSourceDirsDef info
 
 -- | Get possible targets for source file
 -- There can be many candidates in case of module related to several executables or tests
 fileTargets :: Project -> FilePath -> [Info]
 fileTargets p f = case filter ((`isSuffixOf` f') . normalise . _executablePath) exes of
-	[] -> filter (f' `inTarget`) $ maybe [] infos $ _projectDescription p
+	[] -> filter (f' `fileInTarget`) (p ^.. projectDescription . _Just . infos)
 	exes' -> map _executableBuildInfo exes'
 	where
 		f' = makeRelative (_projectPath p) f
@@ -132,7 +125,7 @@ findSourceDir p f = do
 
 -- | Returns source dirs for library, executables and tests
 sourceDirs :: ProjectDescription -> [Extensions FilePath]
-sourceDirs = ordNub . concatMap dirs . infos where
+sourceDirs = ordNub . concatMap dirs . toListOf infos where
 	dirs i = map (`withExtensions` i) $ view infoSourceDirsDef i
 
 -- | Get options for specific target

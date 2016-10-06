@@ -13,13 +13,16 @@ module HsDev.Scan.Browse (
 	) where
 
 import Control.Arrow
-import Control.Lens (view, preview, _Just)
+import Control.Lens (preview)
 import Control.Monad.Catch (MonadCatch, catch, SomeException)
 import Control.Monad.Except
 import Data.List (isPrefixOf)
 import Data.Maybe
 import Data.String (fromString)
+import Data.Text (Text)
 import Data.Version
+import Language.Haskell.Exts.Fixity
+import Language.Haskell.Exts.Syntax (Assoc(..), QName(..), Name(Ident), ModuleName(..))
 import System.Directory
 import System.FilePath
 import System.Log.Simple.Monad (MonadLog)
@@ -31,7 +34,6 @@ import HsDev.Error
 import HsDev.Tools.Base (inspect)
 import HsDev.Tools.Ghc.Worker (GhcM, runGhcM, SessionTarget(..), workerSession)
 import HsDev.Tools.Ghc.Compat as Compat
-import HsDev.Util (ordNub)
 
 import qualified ConLike as GHC
 import qualified DataCon as GHC
@@ -41,9 +43,12 @@ import qualified GHC.PackageDb as GHC
 import qualified GhcMonad as GHC (liftIO)
 import GhcMonad (GhcMonad)
 import qualified GHC.Paths as GHC
+import qualified BasicTypes as GHC
 import qualified Name as GHC
+import qualified IdInfo as GHC
 import qualified Outputable as GHC
 import qualified Packages as GHC
+import qualified PatSyn as GHC
 import qualified TyCon as GHC
 import qualified Type as GHC
 import qualified Var as GHC
@@ -92,16 +97,20 @@ browseModule pdb package' m = do
 	df <- GHC.getSessionDynFlags
 	mi <- GHC.getModuleInfo m >>= maybe (hsdevError $ BrowseNoModuleInfo thisModule) return
 	ds <- mapM (toDecl df mi) (GHC.modInfoExports mi)
+	let
+		dirAssoc GHC.InfixL = AssocLeft ()
+		dirAssoc GHC.InfixR = AssocRight ()
+		dirAssoc GHC.InfixN = AssocNone ()
+		fixName o = Qual () (ModuleName () thisModule) (Ident () (GHC.occNameString o))
 	return Module {
-		_moduleName = fromString thisModule,
+		_moduleId = mloc df m,
 		_moduleDocs = Nothing,
-		_moduleLocation = thisLoc df,
-		_moduleExports = Just [ExportName Nothing (view declarationName d) ThingNothing | d <- ds],
-		_moduleImports = [import_ iname | iname <- ordNub (mapMaybe (preview definedModule) ds), iname /= fromString thisModule],
-		_moduleDeclarations = sortDeclarations ds }
+		_moduleExports = ds,
+		_moduleFixities = [Fixity (dirAssoc dir) pr (fixName oname) | (oname, GHC.Fixity _ pr dir) <- maybe [] GHC.mi_fixities (GHC.modInfoIface mi)],
+		_moduleScope = mempty,
+		_moduleSource = Nothing }
 	where
 		thisModule = GHC.moduleNameString (GHC.moduleName m)
-		thisLoc df = view moduleIdLocation $ mloc df m
 		mloc df m' = ModuleId (fromString mname') $
 			ghcModuleLocation pdb (fromMaybe package' $ GHC.lookupPackage df (moduleUnitId m')) m'
 			where
@@ -110,24 +119,42 @@ browseModule pdb package' m = do
 			tyInfo <- GHC.modInfoLookupName minfo n
 			tyResult <- maybe (inModuleSource n) (return . Just) tyInfo
 			dflag <- GHC.getSessionDynFlags
-			let
-				decl' = decl (fromString $ GHC.getOccString n) $ fromMaybe
-					(Function Nothing [] Nothing)
-					(tyResult >>= showResult dflag)
-			return $ decl' `definedIn` mloc df (GHC.nameModule n)
-		definedModule = declarationDefined . _Just . moduleIdName
-		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe DeclarationInfo
-		showResult dflags (GHC.AnId i) = Just $ Function (Just $ fromString $ formatType dflags GHC.varType i) [] Nothing
+			return $ Symbol {
+				_symbolId = SymbolId (fromString $ GHC.getOccString n) (mloc df (GHC.nameModule n)),
+				_symbolDocs = Nothing,
+				_symbolPosition = Nothing,
+				_symbolInfo = fromMaybe (Function Nothing) (tyResult >>= showResult dflag) }
+		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe SymbolInfo
+		showResult dflags (GHC.AnId i) = case GHC.idDetails i of
+			GHC.RecSelId p _ -> Just $ Selector (Just $ formatType dflags $ GHC.varType i) parent ctors where
+				parent = fromString $ case p of
+					GHC.RecSelData p' -> GHC.getOccString p'
+					GHC.RecSelPatSyn p' -> GHC.getOccString p'
+				ctors = map fromString $ case p of
+					GHC.RecSelData p' -> map GHC.getOccString (GHC.tyConDataCons p')
+					GHC.RecSelPatSyn p' -> [GHC.getOccString p']
+			GHC.ClassOpId cls -> Just $ Method (Just $ formatType dflags $ GHC.varType i) (fromString $ GHC.getOccString cls)
+			_ -> Just $ Function (Just $ formatType dflags $GHC.varType i)
 		showResult dflags (GHC.AConLike c) = case c of
-			GHC.RealDataCon d -> Just $ Function (Just $ fromString $ formatType dflags GHC.dataConRepType d) [] Nothing
-			GHC.PatSynCon p -> Just $ Function (Just $ fromString $ formatType dflags patSynType p) [] Nothing
-		showResult _ (GHC.ATyCon t) = Just $ tcon $ TypeInfo Nothing (map (fromString . GHC.getOccString) $ GHC.tyConTyVars t) Nothing [] where
-			tcon
-				| GHC.isAlgTyCon t && not (GHC.isNewTyCon t) && not (GHC.isClassTyCon t) = Data
-				| GHC.isNewTyCon t = NewType
-				| GHC.isClassTyCon t = Class
-				| GHC.isTypeSynonymTyCon t = Type
-				| otherwise = Type
+			GHC.RealDataCon d -> Just $ Constructor
+				(map (formatType dflags) $ GHC.dataConOrigArgTys d)
+				(fromString $ GHC.getOccString (GHC.dataConTyCon d))
+			GHC.PatSynCon p -> Just $ PatSyn
+				(map (formatType dflags) $ GHC.patSynArgs p)
+				[]
+		showResult dflags (GHC.ATyCon t)
+			| GHC.isTypeSynonymTyCon t = Just $ Type args ctx
+			| GHC.isNewTyCon t = Just $ NewType args ctx
+			| GHC.isDataTyCon t = Just $ Data args ctx
+			| GHC.isClassTyCon t = Just $ Class args ctx
+			| GHC.isTypeFamilyTyCon t = Just $ TypeFam args ctx Nothing
+			| GHC.isDataFamilyTyCon t = Just $ DataFam args ctx Nothing
+			| otherwise = Nothing
+			where
+				args = map (formatType dflags . GHC.mkTyVarTy) $ GHC.tyConTyVars t
+				ctx = case GHC.tyConClass_maybe t of
+					Nothing -> []
+					Just cls -> map (formatType dflags) $ GHC.classSCTheta cls
 		showResult _ _ = Nothing
 
 withInitializedPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
@@ -141,7 +168,7 @@ withInitializedPackages ghcOpts cont = runGhcM (Just GHC.libdir) $ do
 		cont result
 
 withPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
-withPackages ghcOpts cont = withInitializedPackages ghcOpts cont
+withPackages = withInitializedPackages
 
 withPackages_ :: MonadLog m => [String] -> GhcM a -> m a
 withPackages_ ghcOpts act = withPackages ghcOpts (const act)
@@ -149,8 +176,8 @@ withPackages_ ghcOpts act = withPackages ghcOpts (const act)
 inModuleSource :: GhcMonad m => GHC.Name -> m (Maybe GHC.TyThing)
 inModuleSource nm = GHC.getModuleInfo (GHC.nameModule nm) >> GHC.lookupGlobalName nm
 
-formatType :: GHC.DynFlags -> (a -> GHC.Type) -> a -> String
-formatType dflag f x = showOutputable dflag (removeForAlls $ f x)
+formatType :: GHC.DynFlags -> GHC.Type -> Text
+formatType dflag t = fromString $ showOutputable dflag (removeForAlls t)
 
 removeForAlls :: GHC.Type -> GHC.Type
 removeForAlls ty = removeForAlls' ty' tty' where
@@ -173,7 +200,7 @@ styleUnqualified :: GHC.PprStyle
 styleUnqualified = GHC.mkUserStyle GHC.neverQualify GHC.AllTheWay
 
 tryT :: MonadCatch m => m a -> m (Maybe a)
-tryT act = catch (liftM Just act) (const (return Nothing) . (id :: SomeException -> SomeException))
+tryT act = catch (fmap Just act) (const (return Nothing) . (id :: SomeException -> SomeException))
 
 readPackage :: GHC.PackageConfig -> ModulePackage
 readPackage pc = ModulePackage (GHC.packageNameString pc) (showVersion (GHC.packageVersion pc))

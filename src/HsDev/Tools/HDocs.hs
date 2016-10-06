@@ -10,7 +10,7 @@ module HsDev.Tools.HDocs (
 
 import Control.Exception
 import Control.DeepSeq
-import Control.Lens (set, view, over)
+import Control.Lens (set, view, over, each)
 import Control.Monad ()
 import Control.Monad.Except
 
@@ -46,14 +46,14 @@ hdocsCabal pdbs opts = liftM (M.map $ force . HDocs.formatDocs) $ HDocs.installe
 
 -- | Set docs for module
 setDocs :: Map String String -> Module -> Module
-setDocs d = over moduleDeclarations (map setDoc) where
-	setDoc decl' = set declarationDocs (M.lookup (view declarationName decl') d') decl'
+setDocs d = over (moduleExports . each) setDoc . over (moduleScope . each . each) setDoc where
+	setDoc sym' = set symbolDocs (M.lookup (view (symbolId . symbolName) sym') d') sym'
 	d' = M.mapKeys fromString . M.map fromString $ d
 
 -- | Load docs for module
 loadDocs :: [String] -> Module -> IO Module
 loadDocs opts m = do
-	d <- hdocs (view moduleLocation m) opts
+	d <- hdocs (view (moduleId . moduleLocation) m) opts
 	return $ setDocs d m
 
 hdocsProcess :: String -> [String] -> IO (Maybe (Map String String))

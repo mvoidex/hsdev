@@ -12,6 +12,7 @@ module HsDev.Server.Base (
 import Control.Applicative
 import Control.Concurrent
 import Control.Exception
+import Control.Lens hiding ((%=))
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -153,7 +154,7 @@ writeCache sopts db = withCache sopts () $ \cdir -> do
 		liftIO $ SC.dump cdir sd
 		forM_ (M.keys (structuredPackageDbs sd)) $ \c -> Log.log Log.Debug ("cache write: cabal {}" ~~ show c)
 		forM_ (M.keys (structuredProjects sd)) $ \p -> Log.log Log.Debug ("cache write: project {}" ~~ p)
-		case allModules (structuredFiles sd) of
+		case (structuredFiles sd) ^.. databaseModules . each of
 			[] -> return ()
 			ms -> Log.log Log.Debug $ "cache write: {} files" ~~ length ms
 	Log.log Log.Info $ "cache saved to {}" ~~ cdir
@@ -169,7 +170,7 @@ readCache sopts act = do
 		cacheOk s = do
 			forM_ (M.keys (structuredPackageDbs s)) $ \c -> Log.log Log.Debug ("cache read: cabal {}" ~~ show c)
 			forM_ (M.keys (structuredProjects s)) $ \p -> Log.log Log.Debug ("cache read: project {}" ~~ p)
-			case allModules (structuredFiles s) of
+			case (structuredFiles s) ^.. databaseModules . each of
 				[] -> return ()
 				ms -> Log.log Log.Debug $ "cache read: {} files" ~~ length ms
 			return $ Just $ merge s

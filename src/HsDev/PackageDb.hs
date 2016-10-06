@@ -19,7 +19,7 @@ import Data.List (tails, isSuffixOf)
 import System.Directory.Paths
 import HsDev.Util ((.::))
 
-data PackageDb = GlobalDb | UserDb | PackageDb { _packageDb :: FilePath } deriving (Eq, Ord, Read, Show)
+data PackageDb = GlobalDb | UserDb | PackageDb { _packageDb :: FilePath } deriving (Eq, Ord)
 
 makeLenses ''PackageDb
 
@@ -27,6 +27,11 @@ instance NFData PackageDb where
 	rnf GlobalDb = ()
 	rnf UserDb = ()
 	rnf (PackageDb p) = rnf p
+
+instance Show PackageDb where
+	show GlobalDb = "global-db"
+	show UserDb = "user-db"
+	show (PackageDb p) = "package-db:" ++ p
 
 instance ToJSON PackageDb where
 	toJSON GlobalDb = "global-db"
@@ -46,7 +51,7 @@ instance Paths PackageDb where
 	paths f (PackageDb p) = PackageDb <$> f p
 
 -- | Stack of PackageDb in reverse order
-newtype PackageDbStack = PackageDbStack { _packageDbStack :: [PackageDb] } deriving (Eq, Ord, Read, Show)
+newtype PackageDbStack = PackageDbStack { _packageDbStack :: [PackageDb] } deriving (Eq, Ord, Show)
 
 makeLenses ''PackageDbStack
 

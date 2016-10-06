@@ -2,7 +2,7 @@
 
 module HsDev.Project.Types (
 	Project(..), projectName, projectPath, projectCabal, projectDescription, project, absolutiseProjectPaths, relativiseProjectPaths,
-	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests,
+	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests, infos,
 	Target(..),
 	Library(..), libraryModules, libraryBuildInfo,
 	Executable(..), executableName, executablePath, executableBuildInfo,
@@ -13,7 +13,7 @@ module HsDev.Project.Types (
 
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
-import Control.Lens (makeLenses)
+import Control.Lens hiding ((%=), (.=), (<.>))
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.List
@@ -97,6 +97,13 @@ data ProjectDescription = ProjectDescription {
 	_projectTests :: [Test] }
 		deriving (Eq, Read)
 
+-- | Build target infos
+infos :: Traversal' ProjectDescription Info
+infos f desc = (\lib exes tests -> desc { _projectLibrary = lib, _projectExecutables = exes, _projectTests = tests }) <$>
+	(_Just . buildInfo) f (_projectLibrary desc) <*>
+	(each . buildInfo) f (_projectExecutables desc) <*>
+	(each . buildInfo) f (_projectTests desc)
+
 instance Show ProjectDescription where
 	show pd = unlines $
 		concatMap (lines . show) (maybeToList (_projectLibrary pd)) ++
@@ -121,16 +128,14 @@ instance Paths ProjectDescription where
 	paths f (ProjectDescription v lib exes tests) = ProjectDescription v <$> traverse (paths f) lib <*> traverse (paths f) exes <*> traverse (paths f) tests
 
 class Target a where
-	buildInfo :: a -> Info
+	targetName :: Traversal' a String
+	buildInfo :: Lens' a Info
 
 -- | Library in project
 data Library = Library {
 	_libraryModules :: [[String]],
 	_libraryBuildInfo :: Info }
 		deriving (Eq, Read)
-
-instance Target Library where
-	buildInfo = _libraryBuildInfo
 
 instance Show Library where
 	show l = unlines $
@@ -158,9 +163,6 @@ data Executable = Executable {
 	_executableBuildInfo :: Info }
 		deriving (Eq, Read)
 
-instance Target Executable where
-	buildInfo = _executableBuildInfo
-
 instance Show Executable where
 	show e = unlines $
 		["executable " ++ _executableName e, "\tpath: " ++ _executablePath e] ++
@@ -187,9 +189,6 @@ data Test = Test {
 	_testEnabled :: Bool,
 	_testBuildInfo :: Info }
 		deriving (Eq, Read)
-
-instance Target Test where
-	buildInfo = _testBuildInfo
 
 instance Show Test where
 	show t = unlines $
@@ -296,3 +295,15 @@ makeLenses ''Executable
 makeLenses ''Test
 makeLenses ''Info
 makeLenses ''Extensions
+
+instance Target Library where
+	targetName _ = pure
+	buildInfo = libraryBuildInfo
+
+instance Target Executable where
+	targetName = executableName
+	buildInfo = executableBuildInfo
+
+instance Target Test where
+	targetName = testName
+	buildInfo = testBuildInfo

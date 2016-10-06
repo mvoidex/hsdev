@@ -1,19 +1,22 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), PackageConfig(..), ModuleLocation(..), moduleStandalone, locationId, noLocation,
+	ModulePackage(..), mkPackage, PackageConfig(..), ModuleLocation(..), moduleStandalone, locationId, noLocation,
+	ModuleId(..), moduleName, moduleLocation,
+	SymbolId(..), symbolName, symbolModule,
 	Position(..), Region(..), region, regionAt, regionLines, regionStr,
 	Location(..),
 
 	packageName, packageVersion,
 	package, packageModules, packageExposed,
-	moduleFile, moduleProject, modulePackageDb, modulePackage, cabalModuleName, moduleSourceName,
+	moduleFile, moduleProject, modulePackageDb, modulePackage, cabalModuleName, otherLocationName,
 	positionLine, positionColumn,
 	regionFrom, regionTo,
 	locationModule, locationPosition,
 
 	sourceModuleRoot,
-	importedModulePath,
+	importPath,
+	moduleNameByFile,
 	packageOpt,
 	RecalcTabs(..),
 
@@ -22,11 +25,11 @@ module HsDev.Symbols.Location (
 
 import Control.Applicative
 import Control.DeepSeq (NFData(..))
-import Control.Lens (makeLenses, preview, view)
-import Control.Monad (join)
+import Control.Lens (makeLenses, preview, view, (^..), (^.), each, _Just)
+import Control.Monad (join, msum, mplus)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
-import Data.List (intercalate, findIndex)
+import Data.List (intercalate, findIndex, stripPrefix)
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T (split, unpack)
@@ -36,7 +39,7 @@ import Text.Read (readMaybe)
 import System.Directory.Paths
 import HsDev.PackageDb
 import HsDev.Project.Types
-import HsDev.Util ((.::), (.::?), (.::?!), objectUnion)
+import HsDev.Util ((.::), (.::?!), objectUnion, ordNub)
 
 -- | Just package name and version without its location
 data ModulePackage = ModulePackage {
@@ -45,6 +48,9 @@ data ModulePackage = ModulePackage {
 		deriving (Eq, Ord)
 
 makeLenses ''ModulePackage
+
+mkPackage :: String -> ModulePackage
+mkPackage n = ModulePackage n ""
 
 instance NFData ModulePackage where
 	rnf (ModulePackage n v) = rnf n `seq` rnf v
@@ -98,7 +104,8 @@ instance FromJSON PackageConfig where
 data ModuleLocation =
 	FileModule { _moduleFile :: FilePath, _moduleProject :: Maybe Project } |
 	InstalledModule { _modulePackageDb :: PackageDb, _modulePackage :: Maybe ModulePackage, _cabalModuleName :: String } |
-	ModuleSource { _moduleSourceName :: Maybe String }
+	OtherLocation { _otherLocationName :: String } |
+	NoLocation
 		deriving (Eq, Ord)
 
 makeLenses ''ModuleLocation
@@ -109,37 +116,86 @@ moduleStandalone = (== Just Nothing) . preview moduleProject
 locationId :: ModuleLocation -> String
 locationId (FileModule fpath _) = fpath
 locationId (InstalledModule cabal mpack nm) = intercalate ":" [show cabal, maybe "" show mpack, nm]
-locationId (ModuleSource msrc) = fromMaybe "" msrc
+locationId (OtherLocation src) = src
+locationId NoLocation = "<no-location>"
 
 instance NFData ModuleLocation where
 	rnf (FileModule f p) = rnf f `seq` rnf p
 	rnf (InstalledModule d p n) = rnf d `seq` rnf p `seq` rnf n
-	rnf (ModuleSource m) = rnf m
+	rnf (OtherLocation s) = rnf s
+	rnf NoLocation = ()
 
 instance Show ModuleLocation where
-	show (FileModule f p) = f ++ maybe "" (" in " ++) (fmap (view projectPath) p)
-	show (InstalledModule _ p n) = n ++ maybe "" (" in package " ++) (fmap show p)
-	show (ModuleSource m) = fromMaybe "" m
+	show = locationId
 
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap (view projectCabal) p]
 	toJSON (InstalledModule c p n) = object ["db" .= c, "package" .= fmap show p, "name" .= n]
-	toJSON (ModuleSource (Just s)) = object ["source" .= s]
-	toJSON (ModuleSource Nothing) = object []
+	toJSON (OtherLocation s) = object ["source" .= s]
+	toJSON NoLocation = object []
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .:: "project"))) <|>
 		(InstalledModule <$> v .:: "db" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
-		(ModuleSource <$> v .::? "source")
+		(OtherLocation <$> v .:: "source") <|>
+		(pure NoLocation)
 
 instance Paths ModuleLocation where
 	paths f (FileModule fpath p) = FileModule <$> f fpath <*> traverse (paths f) p
 	paths f (InstalledModule c p n) = InstalledModule <$> paths f c <*> pure p <*> pure n
-	paths _ (ModuleSource m) = pure $ ModuleSource m
+	paths _ (OtherLocation s) = pure $ OtherLocation s
+	paths _ NoLocation = pure NoLocation
 
 noLocation :: ModuleLocation
-noLocation = ModuleSource Nothing
+noLocation = NoLocation
+
+data ModuleId = ModuleId {
+	_moduleName :: Text,
+	_moduleLocation :: ModuleLocation }
+		deriving (Eq, Ord)
+
+makeLenses ''ModuleId
+
+instance NFData ModuleId where
+	rnf (ModuleId n l) = rnf n `seq` rnf l
+
+instance Show ModuleId where
+	show (ModuleId n l) = show l ++ ":" ++ T.unpack n
+
+instance ToJSON ModuleId where
+	toJSON m = object [
+		"name" .= _moduleName m,
+		"location" .= _moduleLocation m]
+
+instance FromJSON ModuleId where
+	parseJSON = withObject "module-id" $ \v -> ModuleId <$>
+		v .:: "name" <*>
+		v .:: "location"
+
+-- | Symbol
+data SymbolId = SymbolId {
+	_symbolName :: Text,
+	_symbolModule :: ModuleId }
+		deriving (Eq, Ord)
+
+makeLenses ''SymbolId
+
+instance NFData SymbolId where
+	rnf (SymbolId n m) = rnf n `seq` rnf m
+
+instance Show SymbolId where
+	show (SymbolId n m) = show m ++ ":" ++ T.unpack n
+
+instance ToJSON SymbolId where
+	toJSON s = object [
+		"name" .= _symbolName s,
+		"module" .= _symbolModule s]
+
+instance FromJSON SymbolId where
+	parseJSON = withObject "symbol-id" $ \v -> SymbolId <$>
+		v .:: "name" <*>
+		v .:: "module"
 
 data Position = Position {
 	_positionLine :: Int,
@@ -229,19 +285,24 @@ instance FromJSON Location where
 -- | Get source module root directory, i.e. for "...\src\Foo\Bar.hs" with module 'Foo.Bar' will return "...\src"
 sourceModuleRoot :: Text -> FilePath -> FilePath
 sourceModuleRoot mname = 
-	joinPath .
+	normalise . joinPath .
 	reverse . drop (length $ T.split (== '.') mname) . reverse .
 	splitDirectories
 
--- | Get path of imported module
--- >importedModulePath "Foo.Bar" "...\src\Foo\Bar.hs" "Quux.Blah" = "...\src\Quux\Blah.hs"
-importedModulePath :: Text -> FilePath -> Text -> FilePath
-importedModulePath mname file imp =
-	(`addExtension` "hs") . joinPath .
-	(++ ipath) . splitDirectories $
-	sourceModuleRoot mname file
-	where
-		ipath = map T.unpack $ T.split (== '.') imp
+-- | Path to module source
+-- >importPath "Quux.Blah" = "Quux/Blah.hs"
+importPath :: Text -> FilePath
+importPath = (`addExtension` "hs") . joinPath . map T.unpack . T.split (== '.')
+
+-- | Get supposed module name by its file and project
+moduleNameByFile :: FilePath -> Maybe Project -> String
+moduleNameByFile fpath Nothing = takeBaseName fpath
+moduleNameByFile fpath (Just proj) = maybe (takeBaseName fpath) (intercalate ".") $ do
+	suff <- stripPrefix (splitDirectories (proj ^. projectPath)) (splitDirectories fpath)
+	-- try cut any of source-dirs
+	flip mplus (return suff) $ msum [
+		stripPrefix (splitDirectories dir) suff
+		| dir <- ordNub (proj ^.. projectDescription . _Just . infos . infoSourceDirs . each)]
 
 packageOpt :: Maybe ModulePackage -> [String]
 packageOpt = maybeToList . fmap (("-package " ++) . view packageName)

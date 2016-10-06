@@ -22,12 +22,13 @@ import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Except
 import Control.Monad.Reader
+import Control.Monad.State
+import Control.Monad.Writer
 import Control.Monad.Trans.Control
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Default
-import Data.Monoid
 import Data.Foldable (asum)
 import Options.Applicative
 import System.Log.Simple hiding (Command)
@@ -97,6 +98,15 @@ instance MonadBaseControl b m => MonadBaseControl b (ServerM m) where
 	liftBaseWith f = ServerM $ liftBaseWith (\f' -> f (f' . runServerM))
 	restoreM = ServerM . restoreM
 
+instance SessionMonad m => SessionMonad (ReaderT r m) where
+	getSession = lift getSession
+
+instance (SessionMonad m, Monoid w) => SessionMonad (WriterT w m) where
+	getSession = lift getSession
+
+instance SessionMonad m => SessionMonad (StateT s m) where
+	getSession = lift getSession
+
 data CommandOptions = CommandOptions {
 	commandOptionsRoot :: FilePath,
 	commandOptionsNotify :: Notification -> IO (),
@@ -134,6 +144,15 @@ instance MonadBaseControl b m => MonadBaseControl b (ClientM m) where
 	type StM (ClientM m) a = StM (ServerM (ReaderT CommandOptions m)) a
 	liftBaseWith f = ClientM $ liftBaseWith (\f' -> f (f' . runClientM))
 	restoreM = ClientM . restoreM
+
+instance CommandMonad m => CommandMonad (ReaderT r m) where
+	getOptions = lift getOptions
+
+instance (CommandMonad m, Monoid w) => CommandMonad (WriterT w m) where
+	getOptions = lift getOptions
+
+instance CommandMonad m => CommandMonad (StateT s m) where
+	getOptions = lift getOptions
 
 -- | Run action on session
 withSession :: Session -> ServerM m a -> m a
@@ -375,13 +394,12 @@ data Command =
 	InfoSandboxes |
 	InfoSymbol SearchQuery [TargetFilter] Bool |
 	InfoModule SearchQuery [TargetFilter] |
-	InfoResolve FilePath Bool |
 	InfoProject (Either String FilePath) |
 	InfoSandbox FilePath |
 	Lookup String FilePath |
 	Whois String FilePath |
 	ResolveScopeModules SearchQuery FilePath |
-	ResolveScope SearchQuery Bool FilePath |
+	ResolveScope SearchQuery FilePath |
 	Complete String Bool FilePath |
 	Hayoo {
 		hayooQuery :: String,
@@ -453,13 +471,12 @@ instance Paths Command where
 	paths f (InfoModules t) = InfoModules <$> paths f t
 	paths f (InfoSymbol q t l) = InfoSymbol <$> pure q <*> paths f t <*> pure l
 	paths f (InfoModule q t) = InfoModule <$> pure q <*> paths f t
-	paths f (InfoResolve fpath es) = InfoResolve <$> f fpath <*> pure es
 	paths f (InfoProject (Right proj)) = InfoProject <$> (Right <$> f proj)
 	paths f (InfoSandbox fpath) = InfoSandbox <$> f fpath
 	paths f (Lookup n fpath) = Lookup <$> pure n <*> f fpath
 	paths f (Whois n fpath) = Whois <$> pure n <*> f fpath
 	paths f (ResolveScopeModules q fpath) = ResolveScopeModules q <$> f fpath
-	paths f (ResolveScope q g fpath) = ResolveScope q g <$> f fpath
+	paths f (ResolveScope q fpath) = ResolveScope q <$> f fpath
 	paths f (Complete n g fpath) = Complete n g <$> f fpath
 	paths f (Lint fs) = Lint <$> (each . paths) f fs
 	paths f (Check fs ghcs) = Check <$> (each . paths) f fs <*> pure ghcs
@@ -509,14 +526,13 @@ instance FromCmd Command where
 		cmd "sandboxes" "list sandboxes" (pure InfoSandboxes),
 		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> many cmdP <*> localsFlag),
 		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP),
-		cmd "resolve" "resolve module scope (or exports)" (InfoResolve <$> fileArg <*> exportsFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> pathArg (help "locate sandbox in parent of this path")),
 		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
 		cmd "whois" "get info for symbol" (Whois <$> strArgument idm <*> ctx),
 		cmd "scope" "get declarations accessible from module or within a project" (
 			subparser (cmd "modules" "get modules accessible from module or within a project" (ResolveScopeModules <$> cmdP <*> ctx)) <|>
-			ResolveScope <$> cmdP <*> globalFlag <*> ctx),
+			ResolveScope <$> cmdP <*> ctx),
 		cmd "complete" "show completions for input" (Complete <$> strArgument idm <*> wideFlag <*> ctx),
 		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
 		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (strArgument idm))),
@@ -570,10 +586,8 @@ cabalFlag :: Parser Bool
 ctx :: Parser FilePath
 depsArg :: Parser String
 docsFlag :: Parser Bool
-exportsFlag :: Parser Bool
 fileArg :: Parser FilePath
 ghcOpts :: Parser [String]
-globalFlag :: Parser Bool
 hayooPageArg :: Parser Int
 hayooPagesArg :: Parser Int
 holdFlag :: Parser Bool
@@ -593,10 +607,8 @@ cabalFlag = switch (long "cabal")
 ctx = fileArg
 depsArg = strOption (long "deps" <> metavar "object" <> help "filter to such that in dependency of specified object (file or project)")
 docsFlag = switch (long "docs" <> help "scan source file docs")
-exportsFlag = switch (long "exports" <> short 'e' <> help "resolve module exports")
 fileArg = strOption (long "file" <> metavar "path" <> short 'f')
 ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "options to pass to GHC"))
-globalFlag = switch (long "global" <> help "scope of project")
 hayooPageArg = option auto (long "page" <> metavar "n" <> short 'p' <> help "page number (0 by default)" <> value 0)
 hayooPagesArg = option auto (long "pages" <> metavar "count" <> short 'n' <> help "pages count (1 by default)" <> value 1)
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
@@ -639,13 +651,12 @@ instance ToJSON Command where
 	toJSON InfoSandboxes = cmdJson "sandboxes" []
 	toJSON (InfoSymbol q tf l) = cmdJson "symbol" ["query" .= q, "filters" .= tf, "locals" .= l]
 	toJSON (InfoModule q tf) = cmdJson "module" ["query" .= q, "filters" .= tf]
-	toJSON (InfoResolve f es) = cmdJson "resolve" ["file" .= f, "exports" .= es]
 	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
 	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
 	toJSON (Lookup n f) = cmdJson "lookup" ["name" .= n, "file" .= f]
 	toJSON (Whois n f) = cmdJson "whois" ["name" .= n, "file" .= f]
 	toJSON (ResolveScopeModules q f) = cmdJson "scope modules" ["query" .= q, "file" .= f]
-	toJSON (ResolveScope q g f) = cmdJson "scope" ["query" .= q, "global" .= g, "file" .= f]
+	toJSON (ResolveScope q f) = cmdJson "scope" ["query" .= q, "file" .= f]
 	toJSON (Complete q w f) = cmdJson "complete" ["prefix" .= q, "wide" .= w, "file" .= f]
 	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
 	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
@@ -689,13 +700,12 @@ instance FromJSON Command where
 		guardCmd "sandboxes" v *> pure InfoSandboxes,
 		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .::?! "filters" <*> (v .:: "locals" <|> pure False)),
 		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .::?! "filters"),
-		guardCmd "resolve" v *> (InfoResolve <$> v .:: "file" <*> (v .:: "exports" <|> pure False)),
 		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
 		guardCmd "lookup" v *> (Lookup <$> v .:: "name" <*> v .:: "file"),
 		guardCmd "whois" v *> (Whois <$> v .:: "name" <*> v .:: "file"),
 		guardCmd "scope modules" v *> (ResolveScopeModules <$> v .:: "query" <*> v .:: "file"),
-		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> (v .:: "global" <|> pure False) <*> v .:: "file"),
+		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> v .:: "file"),
 		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> (v .:: "wide" <|> pure False) <*> v .:: "file"),
 		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> (v .:: "page" <|> pure 0) <*> (v .:: "pages" <|> pure 1)),
 		guardCmd "cabal list" v *> (CabalList <$> v .::?! "packages"),

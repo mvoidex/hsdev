@@ -32,7 +32,7 @@ import HsDev.PackageDb
 import HsDev.Scan.Browse (withPackages, browsePackages)
 import HsDev.Stack
 import HsDev.Symbols (moduleOpts)
-import HsDev.Symbols.Types (Module(..), ModuleLocation(..), moduleLocation)
+import HsDev.Symbols.Types (moduleId, Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (searchPath)
 
@@ -140,10 +140,10 @@ cabalSandboxPackageDb = liftM (++ "-packages.conf.d") cabalSandboxLib
 -- | Options for GHC for module and project
 getModuleOpts :: MonadLog m => [String] -> Module -> m [String]
 getModuleOpts opts m = do
-	pdbs <- case view moduleLocation m of
+	pdbs <- case view (moduleId . moduleLocation) m of
 		FileModule fpath _ -> searchPackageDbStack fpath
 		InstalledModule pdb _ _ -> restorePackageDbStack pdb
-		ModuleSource _ -> return userDb
+		_ -> return userDb
 	pkgs <- browsePackages opts pdbs
 	return $ concat [
 		packageDbStackOpts pdbs,
