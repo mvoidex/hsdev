@@ -3,12 +3,13 @@
 module HsDev.Sandbox (
 	SandboxType(..), Sandbox(..), sandboxType, sandbox,
 	isSandbox, guessSandboxType, sandboxFromPath,
-	findSandbox, searchSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
+	findSandbox, searchSandbox, sandboxPackageDbStack, packageDbSandbox, searchPackageDbStack, restorePackageDbStack,
 
 	-- * cabal-sandbox util
 	cabalSandboxLib, cabalSandboxPackageDb,
 
-	getModuleOpts
+	getModuleOpts,
+	pathInSandbox
 	) where
 
 import Control.Arrow
@@ -18,7 +19,7 @@ import Control.Monad.Except
 import Control.Lens (view, makeLenses)
 import Data.Aeson
 import Data.Maybe (isJust, fromMaybe)
-import Data.List ((\\))
+import Data.List ((\\), inits)
 import qualified Data.Text as T (unpack)
 import Distribution.Compiler
 import Distribution.System
@@ -34,7 +35,7 @@ import HsDev.Stack
 import HsDev.Symbols (moduleOpts)
 import HsDev.Symbols.Types (moduleId, Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Compat as Compat
-import HsDev.Util (searchPath)
+import HsDev.Util (searchPath, isParent)
 
 import qualified Packages as GHC
 
@@ -103,6 +104,13 @@ sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
 	return $ PackageDbStack [PackageDb $ fpath </> dir]
 sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory fpath
 
+-- | Get sandbox from package-db
+packageDbSandbox :: PackageDb -> Maybe Sandbox
+packageDbSandbox GlobalDb = Nothing
+packageDbSandbox UserDb = Nothing
+packageDbSandbox (PackageDb fpath) = msum [sandboxFromPath p | p <- parents] where
+	parents = map joinPath . tail . inits . splitDirectories $ fpath
+
 -- | Search package-db stack with user-db as default
 searchPackageDbStack :: MonadLog m => FilePath -> m PackageDbStack
 searchPackageDbStack p = do
@@ -149,3 +157,7 @@ getModuleOpts opts m = do
 		packageDbStackOpts pdbs,
 		moduleOpts pkgs m,
 		opts]
+
+-- | Is file in within sandbox, i.e. sandboxes parent is parent for file
+pathInSandbox :: FilePath -> Sandbox -> Bool
+pathInSandbox fpath (Sandbox _ spath) = takeDirectory spath `isParent` fpath

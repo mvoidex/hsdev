@@ -1,12 +1,13 @@
 module HsDev.Symbols.Util (
-	withName, inProject, inTarget, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inPackageDb, inPackageDbStack,
+	withName, inProject, inTarget, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inPackageDb, inPackageDbStack, inSandbox,
 	inPackage, inFile, inOtherLocation, inModule,
 	byFile, installed, standalone,
 	latestPackages, newestPackage,
 	allOf, anyOf
 	) where
 
-import Control.Lens (preview, view, _Just, (^..), (^.), each)
+import Control.Lens (preview, view, _Just, (^..), (^.), (^?), each)
+import Control.Monad (join)
 import Data.Function (on)
 import Data.Maybe
 import Data.List (maximumBy, groupBy, sortBy)
@@ -15,6 +16,7 @@ import Data.String (fromString)
 import Data.Text (Text)
 import System.FilePath (normalise)
 
+import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Util (ordNub)
 
@@ -54,6 +56,12 @@ inPackageDb c m = preview (sourcedModule . moduleLocation . modulePackageDb) m =
 inPackageDbStack :: Sourced s => PackageDbStack -> s -> Bool
 inPackageDbStack dbs m = maybe False (`elem` packageDbs dbs) $
 	preview (sourcedModule . moduleLocation . modulePackageDb) m
+
+-- | Check if module in sandbox, works both for installed and sourced modules
+inSandbox :: Sourced s => Sandbox -> s -> Bool
+inSandbox sbox m
+	| join (fmap packageDbSandbox (m ^? sourcedModule . moduleLocation . modulePackageDb)) == Just sbox = True
+	| otherwise = maybe False (`pathInSandbox` sbox) (m ^? sourcedModule . moduleLocation . moduleFile)
 
 -- | Check if module in package
 inPackage :: Sourced s => ModulePackage -> s -> Bool

@@ -2,10 +2,11 @@
 
 module HsDev.Database (
 	Database(..), databaseModules, databaseProjects,
-	databaseIntersection, nullDatabase, databasePackageDbs, modules, symbols, packages,
+	databaseIntersection, nullDatabase, databasePackageDbs, databaseSandboxes,
+	modules, symbols, packages,
 	fromModule, fromProject,
 	Slice, slice', pslice, slice, unionSlice, slices, inversedSlice,
-	targetSlice, projectSlice, packageSlice, newestPackagesSlice,
+	targetSlice, projectSlice, packageSlice, newestPackagesSlice, sandboxSlice,
 	targetDepsSlice, projectDepsSlice, packageDbSlice, packageDbStackSlice, standaloneSlice, fileDepsSlice,
 	refineProject,
 	
@@ -23,9 +24,12 @@ import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Function (on)
 import Data.Group (Group(..))
+import Data.List (find)
 import Data.Map (Map)
 import qualified Data.Map as M
+import Data.Maybe (mapMaybe)
 
+import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Util ((.::), ordNub)
@@ -79,6 +83,10 @@ nullDatabase db = M.null (_databaseModules db) && M.null (_databaseProjects db)
 -- | All scanned sandboxes
 databasePackageDbs :: Database -> [PackageDb]
 databasePackageDbs db = ordNub $ M.keys (_databaseModules db) ^.. each . modulePackageDb
+
+-- | Scanned sandboxes
+databaseSandboxes :: Database -> [Sandbox]
+databaseSandboxes = mapMaybe packageDbSandbox . databasePackageDbs
 
 -- | All modules
 modules :: Traversal' Database Module
@@ -151,13 +159,21 @@ newestPackagesSlice = slice' g' where
 		where
 			pkgs = latestPackages (db ^.. modules . moduleId . moduleLocation . modulePackage . _Just)
 
+-- | Restrict only sandbox for path
+sandboxSlice :: FilePath -> Slice
+sandboxSlice fpath = slice' g' where
+	g' db = db {
+		_databaseModules = M.filter (maybe True ((== mbox) . packageDbSandbox) . preview (inspected . moduleId . moduleLocation . modulePackageDb)) (_databaseModules db) }
+		where
+			mbox = find (pathInSandbox fpath) $ databaseSandboxes db
+
 -- | Dependencies of target
 targetDepsSlice :: Project -> Info -> Slice
-targetDepsSlice proj target = slice (inDepsOfTarget proj target)
+targetDepsSlice proj target = sandboxSlice (view projectPath proj) . slice (inDepsOfTarget proj target)
 
 -- | Dependencies of project
 projectDepsSlice :: Project -> Slice
-projectDepsSlice proj = slice (inDepsOfProject proj)
+projectDepsSlice proj = sandboxSlice (view projectPath proj) . slice (inDepsOfProject proj)
 
 -- | Package-db database
 packageDbSlice :: PackageDb -> Slice
@@ -173,7 +189,7 @@ standaloneSlice = slice check' where
 	check' m = standalone m && byFile m
 
 fileDepsSlice :: FilePath -> Slice
-fileDepsSlice fpath = slice' g' where
+fileDepsSlice fpath = sandboxSlice fpath . slice' g' where
 	g' db = case mproj of
 		Nothing -> db ^. slices [standaloneSlice, slice installed]
 		Just proj -> db ^. slices (projectSlice proj : map (targetDepsSlice proj) targets') where
