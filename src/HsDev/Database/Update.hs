@@ -246,16 +246,17 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 		pmods <- runTasks (map pload ms')
 		let
 			mods' = dbval ^.. (maybe (slice installed) projectDepsSlice mproj) . modules
+			aenv' = mconcat (map moduleAnalyzeEnv mods')
 		case order pmods of
 			Left err -> Log.log Log.Error ("failed order dependencies for files: {}" ~~ show err)
-			Right ordered -> flip evalStateT mods' $ runTasks_ (map inspect' ordered) where
+			Right ordered -> flip evalStateT aenv' $ runTasks_ (map inspect' ordered) where
 				inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
-					envMods <- get
+					aenv <- get
 					let
 						mloc = pmod ^. preloadedId . moduleLocation
 					inspect mloc (inspectionInfos ^?! ix mloc) $ do
-						m <- liftIO $ inspectPreloaded envMods pmod
-						modify (m:)
+						m <- liftIO $ inspectPreloaded aenv pmod
+						modify (mappend (moduleAnalyzeEnv m))
 						return m
 	grouped = M.toList $ M.unionsWith (++) [M.singleton (m ^? _1 . moduleProject . _Just) [m] | m <- ms]
 
@@ -281,7 +282,7 @@ scanFileContents opts fpath mcts = runTask "scanning" fpath $ Log.scope "file" $
 			defines <- askSession sessionDefines
 			inspect mloc (sourceInspection fpath' mcts opts) $ liftIO $ do
 				pmod <- preload fpath' defines opts mloc mcts
-				inspectPreloaded (dbval ^.. fileDepsSlice fpath' . modules) pmod,
+				inspectPreloaded (mconcat $ map moduleAnalyzeEnv $ dbval ^.. fileDepsSlice fpath' . modules) pmod,
 		runTask "resolving" mloc $ do
 			updater $ resolveFile fpath' dbval]
 

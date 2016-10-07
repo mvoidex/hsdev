@@ -59,6 +59,7 @@ library
     HsDev.Sandbox
     HsDev.Stack
     HsDev.Symbols
+    HsDev.Symbols.Name
     HsDev.Symbols.Class
     HsDev.Symbols.HaskellNames
     HsDev.Symbols.Location

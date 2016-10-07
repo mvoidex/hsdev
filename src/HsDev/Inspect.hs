@@ -2,6 +2,7 @@
 
 module HsDev.Inspect (
 	Preloaded(..), preloadedId, preloadedMode, preloadedModule, preloaded, preloadedImports, preload,
+	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
 	analyzePreloaded, inspectPreloaded, inspectDocsChunk, inspectDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, sourceInspection, fileInspection, fileContentsInspection,
@@ -30,10 +31,13 @@ import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
 import Language.Haskell.Exts.Fixity
 import qualified Language.Haskell.Names as N
+import qualified Language.Haskell.Names.Annotated as N
 import qualified Language.Haskell.Names.SyntaxUtils as N
 import qualified Language.Haskell.Names.Exports as N
 import qualified Language.Haskell.Names.Imports as N
 import qualified Language.Haskell.Names.ModuleSymbols as N
+import qualified Language.Haskell.Names.SyntaxUtils as N
+import qualified Language.Haskell.Names.Open as N
 import qualified Language.Preprocessor.Cpphs as Cpphs
 import qualified System.Directory as Dir
 import System.FilePath
@@ -44,7 +48,7 @@ import HDocs.Haddock
 import HsDev.Display ()
 import HsDev.Error
 import HsDev.Symbols
-import HsDev.Symbols.Resolve (refineSymbol, refineTable)
+import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable)
 import HsDev.Symbols.Parsed
 import qualified HsDev.Symbols.HaskellNames as HN
 import HsDev.Tools.Base
@@ -66,8 +70,6 @@ instance NFData Preloaded where
 preloadedImports :: Preloaded -> [String]
 preloadedImports p = [nm | H.ModuleName _ nm <- map H.importModule mimps] where
 	H.Module _ _ _ mimps _ = _preloadedModule p
-
-makeLenses ''Preloaded
 
 -- | Preload module - load head and imports to get actual extensions and dependencies
 preload :: String -> [(String, String)] -> [String] -> ModuleLocation -> Maybe String -> IO Preloaded
@@ -115,93 +117,125 @@ preload name defines opts mloc (Just cts) = do
 		untab ch = ch
 		exts = mapMaybe flagExtension opts
 
+data AnalyzeEnv = AnalyzeEnv {
+	_analyzeEnv :: N.Environment,
+	_analyzeFixities :: M.Map Name H.Fixity,
+	_analyzeRefine :: RefineTable }
+
+instance Monoid AnalyzeEnv where
+	mempty = AnalyzeEnv mempty mempty mempty
+	AnalyzeEnv lenv lf lt `mappend` AnalyzeEnv renv rf rt = AnalyzeEnv
+		(mappend lenv renv)
+		(mappend lf rf)
+		(mappend lt rt)
+
+moduleAnalyzeEnv :: Module -> AnalyzeEnv
+moduleAnalyzeEnv m = AnalyzeEnv
+	(environment m)
+	(m ^. fixitiesMap)
+	(refineTable (m ^.. exportedSymbols))
+
 -- | Inspect preloaded module
-analyzePreloaded :: [Module] -> Preloaded -> Either String Module
-analyzePreloaded ms p = case H.parseFileContentsWithMode (p' ^. preloadedMode) (p' ^. preloaded) of
+analyzePreloaded :: AnalyzeEnv -> Preloaded -> Either String Module
+analyzePreloaded (AnalyzeEnv env gfixities rtable) p = case H.parseFileContentsWithMode (_preloadedMode p') (_preloaded p') of
 	H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
-	H.ParseOk m -> Right Module {
-		_moduleId = p' ^. preloadedId,
+	H.ParseOk m -> Right $ over moduleSymbols (refineSymbol stbl) $ Module {
+		_moduleId = _preloadedId p',
 		_moduleDocs = Nothing,
-		_moduleExports = map (refineSymbol stbl) exports,
+		_moduleExports = map HN.fromSymbol $ N.exportedSymbols tbl m,
 		_moduleFixities = [Fixity (fvoid assoc) (fromMaybe 0 pr) (fixName opName) | H.InfixDecl _ assoc pr ops <- universeBi annotated :: [H.Decl Ann], opName <- childrenBi ops :: [H.Name Ann]],
-		_moduleScope = M.map (map (refineSymbol stbl)) scope,
+		_moduleScope = M.map (map HN.fromSymbol) tbl,
 		_moduleSource = Just annotated }
 		where
-			fixName o = H.Qual () (H.ModuleName () (T.unpack $ p' ^. preloadedId . moduleName)) (fvoid o)
+			fixName o = H.Qual () (H.ModuleName () (T.unpack $ (_preloadedId p') ^. moduleName)) (fvoid o)
 			itbl = N.importTable env m
 			defs = N.moduleSymbols itbl m
 			tbl = N.moduleTable itbl m
-			scope = M.map (map HN.fromSymbol) tbl
-			exports = map HN.fromSymbol $ N.exportedSymbols tbl m
-			annotated = N.annotate env m
-			syms =
-				set (each . symbolId . symbolModule) (p' ^. preloadedId) $
-					flip execState (map HN.fromSymbol defs) $ foldr (>=>) return [
-						transformBiM (examine examineDecl),
-						transformBiM (examine examineFieldDecl),
-						transformBiM (examine examineConDecl),
-						transformBiM (examine examineGadtDecl)]
-						annotated
-			stbl = refineTable $ syms ++ ms ^.. each . moduleSymbols
+			syms = set (each . symbolId . symbolModule) (_preloadedId p') $
+				flip execState (map HN.fromSymbol defs) $ examine annotated
+			stbl = refineTable syms `mappend` rtable
+			-- Not using 'annotate' because we already computed needed tables
+			annotated = H.Module l mhead' mpragmas idecls' decls' where
+				H.Module l mhead mpragmas idecls decls = fmap (N.Scoped N.None) m
+				mhead' = fmap scopeHead mhead
+				scopeHead (H.ModuleHead lh mname mwarns mexports) = H.ModuleHead lh mname mwarns $
+					fmap (N.annotateExportSpecList tbl . dropScope) mexports
+				idecls' = N.annotateImportDecls mname env (fmap dropScope idecls)
+				decls' = map (N.annotateDecl (N.initialScope (N.dropAnn mname) tbl) . dropScope) decls
+				mname = N.getModuleName m
 	where
-		env = environment ms
-		globFixities = M.unions [(m' ^. fixitiesMap) | m' <- ms]
-		qimps = M.keys $ N.importTable env (p ^. preloadedModule)
-		p' = p { _preloadedMode = (_preloadedMode p) { H.fixities = Just (mapMaybe (`M.lookup` globFixities) qimps) } }
+		qimps = M.keys $ N.importTable env (_preloadedModule p)
+		p' = p { _preloadedMode = (_preloadedMode p) { H.fixities = Just (mapMaybe (`M.lookup` gfixities) qimps) } }
+		dropScope :: Functor f => f (N.Scoped l) -> f l
+		dropScope = fmap (\(N.Scoped _ a) -> a)
 
 -- | Same as 'analyzePreloaded', but throws on error
-inspectPreloaded :: [Module] -> Preloaded -> IO Module
-inspectPreloaded ms = either (hsdevError . InspectError) return . analyzePreloaded ms
+inspectPreloaded :: AnalyzeEnv -> Preloaded -> IO Module
+inspectPreloaded aenv = either (hsdevError . InspectError) return . analyzePreloaded aenv
 
 -- | Try extract some additional info and set it to symbol
-examine :: (H.Annotated ast, Data (ast Ann)) => (ast Ann -> SymbolInfo -> SymbolInfo) -> ast Ann -> State [Symbol] (ast Ann)
-examine f x = case x ^? binders of
-	Nothing -> return x
-	Just n' -> do
-		modify $
-			over (each . filtered ((oneLinePrint n' ==) . view sourcedName))
-			upd
-		return x
-		where
-			upd =
-				set symbolPosition (x ^? defPos) .
-				over symbolInfo (f x)
+examine :: H.Module Ann -> State [Symbol] ()
+examine (H.Module _ _ _ _ decls) = mapM_ (ex examineDecl) decls where
+	examineDecl :: H.Decl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
+	examineDecl (H.TypeSig _ _ t) = return $ set functionType (Just $ oneLinePrint t)
+	examineDecl (H.PatSyn _ p _ _) = return $ set typeArgs as where
+		as = map oneLinePrint [n | H.PVar _ n <- universe p]
+	examineDecl (H.TypeDecl _ h _) = return $ set typeArgs (map oneLinePrint $ tyArgs h)
+	examineDecl (H.DataDecl _ _ mctx h cons _) = do
+		mapM_ (ex examineQualCon) cons
+		return $
+			set typeArgs (map oneLinePrint $ tyArgs h) .
+			set typeContext (map oneLinePrint $ maybe [] tyAssts mctx)
+	examineDecl (H.GDataDecl _ _ mctx h _ gcons _) = do
+		mapM_ (ex examineGadtDecl) gcons
+		return $
+			set typeArgs (map oneLinePrint $ tyArgs h) .
+			set typeContext (map oneLinePrint $ maybe [] tyAssts mctx)
+	examineDecl (H.ClassDecl _ mctx h _ _) = return $
+		set typeArgs (map oneLinePrint $ tyArgs h) .
+		set typeContext (map oneLinePrint $ maybe [] tyAssts mctx)
+	examineDecl _ = return id
 
-examineDecl :: H.Decl Ann -> SymbolInfo -> SymbolInfo
-examineDecl (H.TypeSig _ _ t) = set functionType (Just $ oneLinePrint t)
-examineDecl (H.PatSyn _ p _ _) = set typeArgs as where
-	as = map oneLinePrint [n | H.PVar _ n <- universe p]
-examineDecl d = fromMaybe id $ do
-	h <- N.getDeclHead d
-	ctx <- getContext d
-	let
-		args :: [H.TyVarBind Ann]
-		args = childrenBi h
-		ctxs :: [H.Asst Ann]
-		ctxs = childrenBi ctx
-	return $ set typeArgs (map oneLinePrint args) . set typeContext (map oneLinePrint ctxs)
+	examineQualCon :: H.QualConDecl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
+	examineQualCon (H.QualConDecl _ _ mctx cdecl) = do
+		ex examineConDecl cdecl
+		return $ set typeContext (map oneLinePrint $ maybe [] tyAssts mctx)
 
-getContext :: H.Decl l -> Maybe (H.Context l)
-getContext (H.DataDecl _ _ mctx _ _ _) = mctx
-getContext (H.GDataDecl _ _ mctx _ _ _ _) = mctx
-getContext (H.DataFamDecl _ mctx _ _) = mctx
-getContext (H.ClassDecl _ mctx _ _ _) = mctx
-getContext _ = Nothing
+	examineGadtDecl :: H.GadtDecl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
+	examineGadtDecl (H.GadtDecl _ _ mfields t) = do
+		mapM_ (ex examineFieldDecl) $ fromMaybe [] mfields
+		let
+			as = maybe (args t) (\fs -> [ft | H.FieldDecl _ _ ft <- fs]) mfields
+			args :: H.Type Ann -> [H.Type Ann]
+			args (H.TyFun _ x y) = x : args y
+			args _ = []
+		return $ set typeArgs (map oneLinePrint as)
 
-examineFieldDecl :: H.FieldDecl Ann -> SymbolInfo -> SymbolInfo
-examineFieldDecl (H.FieldDecl _ _ t) s = set functionType (Just $ format "{} -> {}" ~~ view parentType s ~~ (oneLinePrint t :: String)) s
+	examineConDecl :: H.ConDecl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
+	examineConDecl (H.ConDecl _ _ ts) = return $ set typeArgs (map oneLinePrint ts)
+	examineConDecl (H.InfixConDecl _ lt _ rt) = return $ set typeArgs (map oneLinePrint [lt, rt])
+	examineConDecl (H.RecDecl _ _ fields) = do
+		mapM_ (ex examineFieldDecl) fields
+		return $ set typeArgs (map oneLinePrint [t | H.FieldDecl _ _ t <- fields])
 
-examineConDecl :: H.ConDecl Ann -> SymbolInfo -> SymbolInfo
-examineConDecl (H.ConDecl _ _ ts) = set typeArgs (map oneLinePrint ts)
-examineConDecl (H.InfixConDecl _ lt _ rt) = set typeArgs (map oneLinePrint [lt, rt])
-examineConDecl (H.RecDecl _ _ fs) = set typeArgs (map oneLinePrint [t | H.FieldDecl _ _ t <- fs])
+	examineFieldDecl :: H.FieldDecl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
+	examineFieldDecl (H.FieldDecl _ _ t) = return $ \s -> set functionType
+		(Just $ format "{} -> {}" ~~ view parentType s ~~ (oneLinePrint t :: String)) s
 
-examineGadtDecl :: H.GadtDecl Ann -> SymbolInfo -> SymbolInfo
-examineGadtDecl (H.GadtDecl _ _ fs t) = set typeArgs (map oneLinePrint as) where
-	as = maybe (args t) (\fs' -> [ft | H.FieldDecl _ _ ft <- fs']) fs
-	args :: H.Type Ann -> [H.Type Ann]
-	args (H.TyFun _ x y) = x : args y
-	args _ = []
+
+	tyArgs :: H.DeclHead Ann -> [H.TyVarBind Ann]
+	tyArgs = universeBi
+	tyAssts :: H.Context Ann -> [H.Asst Ann]
+	tyAssts = universeBi
+
+	ex :: (H.Annotated ast, Data (ast Ann)) => (ast Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)) -> ast Ann -> State [Symbol] ()
+	ex fn node = do
+		modifier <- fn node
+		let
+			upd = set symbolPosition (node ^? defPos) . over symbolInfo modifier
+		case node ^? binders of
+			Nothing -> return ()
+			Just n' -> modify $ over (each . filtered (((oneLinePrint n') ==) . view sourcedName)) upd
 
 -- | Print something in one line
 oneLinePrint :: (H.Pretty a, IsString s) => a -> s
@@ -244,7 +278,7 @@ inspectDocsGhc opts m = case view (moduleId . moduleLocation) m of
 inspectContents :: String -> [(String, String)] -> [String] -> String -> ExceptT String IO InspectedModule
 inspectContents name defines opts cts = inspect (OtherLocation name) (contentsInspection cts opts) $ do
 	p <- lift $ preload name defines opts (OtherLocation name) (Just cts)
-	analyzed <- ExceptT $ return $ analyzePreloaded [] p
+	analyzed <- ExceptT $ return $ analyzePreloaded mempty p
 	return $ set (moduleId . moduleLocation) (OtherLocation name) analyzed
 
 contentsInspection :: String -> [String] -> ExceptT String IO Inspection
@@ -262,7 +296,7 @@ inspectFile defines opts file mproj mcts = hsdevLiftIO $ do
 		-- 	else liftM Just $ hdocs (FileModule absFilename Nothing) opts
 		forced <- hsdevLiftWith InspectError $ ExceptT $ E.handle onError $ do
 			p <- preload absFilename defines opts (FileModule absFilename mproj) mcts
-			return $!! analyzePreloaded [] p
+			return $!! analyzePreloaded mempty p
 		-- return $ setLoc absFilename mproj . maybe id addDocs docsMap $ forced
 		return $ set (moduleId . moduleLocation) (FileModule absFilename mproj) forced
 	where
@@ -339,3 +373,6 @@ preprocess_ defines exts fpath cts
 
 fvoid :: Functor f => f a -> f ()
 fvoid = fmap (const ())
+
+makeLenses ''Preloaded
+makeLenses ''AnalyzeEnv

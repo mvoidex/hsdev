@@ -2,7 +2,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
-	Name, nameModule, nameIdent, namePrefix, fromName_, toName_, fromName, toName,
 	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType,
@@ -13,13 +12,14 @@ module HsDev.Symbols.Types (
 
 	module HsDev.PackageDb,
 	module HsDev.Project,
+	module HsDev.Symbols.Name,
 	module HsDev.Symbols.Class,
 	module HsDev.Symbols.Location,
 	module HsDev.Symbols.Documented
 	) where
 
-import Control.Applicative
 import Control.Arrow
+import Control.Applicative
 import Control.Lens (makeLenses, set, view, Lens', lens, Traversal, Traversal', _Right, _Just)
 import Control.Monad
 import Control.DeepSeq (NFData(..))
@@ -44,59 +44,13 @@ import Text.Format
 import Control.Apply.Util (chain)
 import HsDev.PackageDb
 import HsDev.Project
+import HsDev.Symbols.Name
 import HsDev.Symbols.Class
 import HsDev.Symbols.Location
 import HsDev.Symbols.Documented
 import HsDev.Symbols.Parsed
 import HsDev.Types
 import HsDev.Util ((.::), (.::?), (.::?!), noNulls)
-
--- | Qualified name
-type Name = QName ()
-
-nameModule :: Name -> Maybe Text
-nameModule (Qual _ (ModuleName _ m) _) = Just $ fromString m
-nameModule _ = Nothing
-
-nameIdent :: Name -> Text
-nameIdent (Qual _ _ n) = fromName_ n
-nameIdent (UnQual _ n) = fromName_ n
-nameIdent s = fromName s
-
-namePrefix :: Name -> Name -> Bool
-namePrefix p s = nameModule p == nameModule s && nameIdent p `T.isPrefixOf` nameIdent s
-
-fromName_ :: Exts.Name () -> Text
-fromName_ (Exts.Ident _ s') = fromString s'
-fromName_ (Exts.Symbol _ s') = fromString s'
-
-toName_ :: Text -> Exts.Name ()
-toName_ = Exts.Ident () . T.unpack
-
-toName :: Text -> Name
-toName "()" = Special () (UnitCon ())
-toName "[]" = Special () (ListCon ())
-toName "->" = Special () (FunCon ())
-toName "(:)" = Special () (Cons ())
-toName "(# #)" = Special () (UnboxedSingleCon ())
-toName tup
-	| T.all (== ',') noBraces = Special () (TupleCon () Boxed (succ $ T.length noBraces))
-	where
-		noBraces = T.dropAround (`elem` ['(', ')']) tup
-toName n = case T.split (== '.') n of
-	[n'] -> UnQual () (Exts.Ident () $ T.unpack n')
-	ns -> Qual () (ModuleName () (T.unpack $ T.intercalate "." $ init ns)) (Exts.Ident () (T.unpack $ last ns))
-
-fromName :: Name -> Text
-fromName (Qual _ (ModuleName _ m) n) = T.concat [fromString m, ".", fromName_ n]
-fromName (UnQual _ n) = fromName_ n
-fromName (Special _ c) = case c of
-	UnitCon _ -> "()"
-	ListCon _ -> "[]"
-	FunCon _ -> "->"
-	TupleCon _ _ i -> fromString $ "(" ++ replicate (pred i) ',' ++ ")"
-	Cons _ -> "(:)"
-	UnboxedSingleCon _ -> "(# #)"
 
 instance NFData l => NFData (ModuleName l) where
 	rnf (ModuleName l n) = rnf l `seq` rnf n
