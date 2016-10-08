@@ -80,10 +80,10 @@ scope db file = do
 completions :: Database -> FilePath -> String -> ExceptT String IO [Symbol]
 completions db file prefix = do
 	mthis <- fileModule db file
-	return $ mthis ^.. scopeSymbols . filtered prefixed . _2 . briefSymbol
+	return $ mthis ^.. scopeSymbols . filtered prefixed . _1 . briefSymbol
 	where
 		qname = toName $ fromString prefix
-		prefixed = namePrefix qname . view _1
+		prefixed = any (namePrefix qname) . view _2
 
 -- | Wide completions
 wideCompletions :: Database -> FilePath -> String -> ExceptT String IO [Symbol]

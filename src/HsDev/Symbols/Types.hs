@@ -93,10 +93,10 @@ moduleSymbols f m = (\e s -> m { _moduleExports = e, _moduleScope = s }) <$>
 exportedSymbols :: Traversal' Module Symbol
 exportedSymbols f m = (\e -> m { _moduleExports = e }) <$> traverse f (_moduleExports m)
 
-scopeSymbols :: Traversal' Module (Name, Symbol)
-scopeSymbols f m = (\s -> m { _moduleScope = toMap s }) <$> traverse f (fromMap $ _moduleScope m) where
-	toMap ns = M.unionsWith (++) [M.singleton n [s] | (n, s) <- ns]
-	fromMap ms = [(n, s) | (n, ss) <- M.toList ms, s <- ss]
+scopeSymbols :: Traversal' Module (Symbol, [Name])
+scopeSymbols f m = (\s -> m { _moduleScope = invMap s }) <$> traverse f (M.toList . invMap . M.toList $ _moduleScope m) where
+	invMap :: Ord b => [(a, [b])] -> Map b [a]
+	invMap es = M.unionsWith (++) [M.singleton v [k] | (k, vs) <- es, v <- vs]
 
 fixitiesMap :: Lens' Module (Map Name Fixity)
 fixitiesMap = lens g' s' where
