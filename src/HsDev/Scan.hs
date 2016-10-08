@@ -4,7 +4,7 @@ module HsDev.Scan (
 	-- * Enumerate functions
 	CompileFlag, ModuleToScan, ProjectToScan, PackageDbToScan, ScanContents(..),
 	EnumContents(..),
-	enumProject, enumSandbox, enumDirectory,
+	enumRescan, enumDependent, enumProject, enumSandbox, enumDirectory,
 
 	-- * Scan
 	scanProjectFile,
@@ -17,8 +17,9 @@ module HsDev.Scan (
 	) where
 
 import Control.DeepSeq
-import Control.Lens (view, preview, set, over, each, _Right, _1, _2, _3, (^.), (^..), (^?), ix)
+import Control.Lens hiding ((%=))
 import Control.Monad.Except
+import Data.Async
 import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.List (intercalate)
 import System.Directory
@@ -26,10 +27,12 @@ import Text.Format
 
 import HsDev.Error
 import HsDev.Scan.Browse (browsePackages, browseModules)
-import HsDev.Server.Types (FileSource(..), CommandMonad(..))
+import HsDev.Server.Types (FileSource(..), Session(..), askSession, CommandMonad(..))
 import HsDev.Sandbox
 import HsDev.Symbols
+import HsDev.Symbols.Resolve
 import HsDev.Symbols.Types
+import HsDev.Symbols.Util (inFile)
 import HsDev.Database
 import HsDev.Display
 import HsDev.Inspect
@@ -86,10 +89,10 @@ instance EnumContents PackageDbStack where
 instance EnumContents Sandbox where
 	enumContents = enumSandbox
 
-instance {-# OVERLAPPING #-} EnumContents a => EnumContents [a] where
+instance {-# OVERLAPPABLE #-} EnumContents a => EnumContents [a] where
 	enumContents = liftM mconcat . tries . map enumContents
 
-instance {-# OVERLAPS #-} EnumContents FilePath where
+instance {-# OVERLAPPING #-} EnumContents FilePath where
 	enumContents f
 		| haskellSource f = hsdevLiftIO $ do
 			mproj <- liftIO $ locateProject f
@@ -106,6 +109,25 @@ instance EnumContents FileSource where
 			ScanContents [(m, opts, _)] _ _ <- enumContents f
 			return $ ScanContents [(m, opts, mcts)] [] []
 		| otherwise = return mempty
+
+-- | Enum rescannable (i.e. already scanned) file
+enumRescan :: CommandMonad m => FilePath -> m ScanContents
+enumRescan fpath = do
+	dbval <- askSession sessionDatabase >>= liftIO . readAsync
+	let
+		mloc = dbval ^? modules . filtered (inFile fpath) . moduleId . moduleLocation
+	return $ fromMaybe mempty $ do
+		loc <- mloc
+		return $ ScanContents [(loc, dbval ^.. databaseModules . ix loc . inspection . inspectionOpts . each, Nothing)] [] []
+
+-- | Enum file dependent
+enumDependent :: CommandMonad m => FilePath -> m ScanContents
+enumDependent fpath = do
+	dbval <- askSession sessionDatabase >>= liftIO . readAsync
+	let
+		rdeps = sourceRDeps (dbval ^. fileDepsSlice fpath)
+		dependent = fromMaybe [] $ rdeps ^? ix fpath
+	liftM mconcat $ mapM enumRescan dependent
 
 -- | Enum project sources
 enumProject :: CommandMonad m => Project -> m ScanContents

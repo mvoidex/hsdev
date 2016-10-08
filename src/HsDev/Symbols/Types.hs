@@ -7,7 +7,7 @@ module HsDev.Symbols.Types (
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
-	inspectedTup, noTags, ModuleTag(..), InspectedModule, notInspected,
+	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
 	briefSymbol,
 
 	module HsDev.PackageDb,
@@ -360,20 +360,27 @@ instance (NFData k, NFData t, NFData a) => NFData (Inspected k t a) where
 noTags :: Set t
 noTags = S.empty
 
-data ModuleTag = InferredTypesTag | RefinedDocsTag deriving (Eq, Ord, Read, Show, Enum, Bounded)
+-- | One tag
+tag :: t -> Set t
+tag = S.singleton
+
+data ModuleTag = InferredTypesTag | RefinedDocsTag | OnlyHeaderTag deriving (Eq, Ord, Read, Show, Enum, Bounded)
 
 instance NFData ModuleTag where
 	rnf InferredTypesTag = ()
 	rnf RefinedDocsTag = ()
+	rnf OnlyHeaderTag = ()
 
 instance ToJSON ModuleTag where
 	toJSON InferredTypesTag = toJSON ("types" :: String)
 	toJSON RefinedDocsTag = toJSON ("docs" :: String)
+	toJSON OnlyHeaderTag = toJSON ("header" :: String)
 
 instance FromJSON ModuleTag where
 	parseJSON = withText "module-tag" $ \txt -> msum [
 		guard (txt == "types") >> return InferredTypesTag,
-		guard (txt == "docs") >> return RefinedDocsTag]
+		guard (txt == "docs") >> return RefinedDocsTag,
+		guard (txt == "header") >> return OnlyHeaderTag]
 
 -- | Inspected module
 type InspectedModule = Inspected ModuleLocation ModuleTag Module

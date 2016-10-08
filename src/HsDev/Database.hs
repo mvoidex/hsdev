@@ -130,9 +130,9 @@ slice m = slice' g' where
 		_databaseModules = M.filter (maybe False m . preview (inspected . moduleId)) (_databaseModules db) }
 
 -- | Union slices
-unionSlice :: Slice -> Slice -> Slice
+unionSlice :: SliceC -> SliceC -> Slice
 unionSlice l r = slice' g' where
-	g' db = mconcat [view l db, view r db]
+	g' db = mconcat [getConst (l Const db), getConst (r Const db)]
 
 -- | Union slices
 slices :: [SliceC] -> Slice

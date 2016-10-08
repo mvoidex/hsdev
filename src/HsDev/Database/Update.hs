@@ -36,9 +36,12 @@ import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
+import Data.List (find, intercalate, (\\))
 import qualified Data.Map as M
 import Data.Maybe
 import qualified Data.Text as T (unpack)
+import qualified Language.Haskell.Exts as H
+import qualified Language.Haskell.Names as N
 import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath
 import qualified System.Log.Simple as Log
@@ -93,25 +96,45 @@ runUpdate uopts act = Log.scope "update" $ do
 			[dbval ^. packageDbSlice pdb | pdb <- dbs],
 			[dbval ^. projectSlice proj | proj <- projs],
 			[dbval ^. standaloneSlice | stand]]
-		-- resolvedDb
-		-- 	| not (null dbs) = resolveAll dbval
-		-- 	| otherwise = mconcat
-		-- 		(resolveStandalone (updatedMods ^.. each . moduleFile) dbval : map (`resolveProject` dbval) projs)
 
-	-- update db $ return $!! resolvedDb
-	-- serverWriteCache (modifiedDb `mappend` resolvedDb)
 	serverWriteCache modifiedDb
 	return r
 	where
 		act' = do
-			(r, mlocs') <- liftM (second $ filter (isJust . preview moduleFile)) $ listen act
+			(r, mlocs') <- listen act
 			db <- askSession sessionDatabase
 			wait db
+			dbval <- liftIO $ readAsync db
 			let
+				dbs = ordNub $ mlocs' ^.. each . modulePackageDb
+				-- If some sourced files depends on currently scanned package-dbs
+				-- We must resolve them and even rescan if there was errors scanning without
+				-- dependencies provided (lack of fixities can cause errors inspecting files)
+				sboxes = databaseSandboxes dbval
+				sboxOf :: FilePath -> Maybe Sandbox
+				sboxOf fpath = find (pathInSandbox fpath) sboxes
+				sboxUpdated s = s `elem` map packageDbSandbox dbs
+
+				projs = do
+					proj <- dbval ^.. databaseProjects . each
+					guard $ sboxUpdated $ sboxOf (proj ^. projectPath)
+					guard $ any (`notElem` mlocs') (dbval ^.. projectSlice proj . modules . moduleId . moduleLocation)
+					return proj
+				stands = do
+					sloc <- dbval ^.. standaloneSlice . modules . moduleId . moduleLocation
+					guard $ sboxUpdated $ sboxOf (sloc ^?! moduleFile)
+					guard (notElem sloc mlocs')
+					return (sloc, dbval ^.. databaseModules . ix sloc . inspection . inspectionOpts . each, Nothing)
+			Log.log Log.Trace $ "updated package-dbs: {}, have to rescan {} projects and {} files"
+				~~ intercalate ", " (map display dbs)
+				~~ length projs ~~ length stands
+			(_, rlocs') <- listen $ runTasks_ (scanModules [] stands : [scanProject [] (proj ^. projectCabal) | proj <- projs])
+			let
+				ulocs' = filter (isJust . preview moduleFile) (ordNub $ mlocs' ++ rlocs')
 				getMods :: (MonadIO m) => m [InspectedModule]
 				getMods = do
 					db' <- liftIO $ readAsync db
-					return $ filter ((`elem` mlocs') . view inspectedKey) $ toList $ view databaseModules db'
+					return $ filter ((`elem` ulocs') . view inspectedKey) $ toList $ view databaseModules db'
 			when (view updateDocs uopts) $ do
 				Log.log Log.Trace "forking inspecting source docs"
 				void $ fork (getMods >>= waiter . mapM_ scanDocs_)
@@ -152,7 +175,7 @@ updater :: UpdateMonad m => Database -> m ()
 updater db' = do
 	db <- askSession sessionDatabase
 	update db $ return $!! db'
-	tell $!! map (view (moduleId . moduleLocation)) (db' ^.. databaseModules . each . inspected)
+	tell $!! db' ^.. modules . moduleId . moduleLocation
 
 -- | Clear obsolete data from database
 cleaner :: UpdateMonad m => m Database -> m ()
@@ -219,8 +242,12 @@ inspectionFailed mloc insp e = do
 	updater $ fromModule $ Inspected i mloc mempty (Left e)
 
 -- | Inspect stage, save on error, return result on success
-inspectStage :: UpdateMonad m => ModuleLocation -> IO Inspection -> m a -> m a
-inspectStage mloc insp act = hsdevOnError (inspectionFailed mloc insp) act
+preinspect :: UpdateMonad m => ModuleLocation -> IO Inspection -> m Preloaded -> m Preloaded
+preinspect mloc insp act = hsdevOnError (inspectionFailed mloc insp) $ do
+	p <- act
+	i <- liftIO insp
+	updater $ fromModule $ Inspected i mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
+	return p
 
 -- | Inspect module and save result
 inspect :: UpdateMonad m => ModuleLocation -> IO Inspection -> m Module -> m ()
@@ -235,17 +262,37 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 	scanModules' mproj ms' = do
 		dbval <- readDB
 		defines <- askSession sessionDefines
+		-- Make table of already scanned and up to date modules
+		let
+			scanned' (_, _, Just _) = return Nothing
+			scanned' (mloc, mopts, Nothing) = case dbval ^? databaseModules . ix mloc of
+				Nothing -> return Nothing
+				Just im -> do
+					up <- S.upToDate (opts ++ mopts) im
+					return $ do
+						guard (up && not (hasTag OnlyHeaderTag im))
+						im ^? inspected
+			toMap ms' = M.fromList [(m' ^. moduleId . moduleLocation, m') | m' <- ms']
+		alreadyScanned <- liftIO $ liftM (toMap . catMaybes) $ traverse scanned' ms
 		let
 			inspectionInfos = M.fromList
 				[(mloc, sourceInspection mfile mcts (opts ++ mopts)) |
 					(mloc, mopts, mcts) <- ms',
 					mfile <- mloc ^.. moduleFile]
+			dropScope (N.Scoped _ v) = v
 			pload (mloc, mopts, mcts) = runTask "preloading" mloc $
-				inspectStage mloc (inspectionInfos ^?! ix mloc) $ liftIO $
-					preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts
+				case alreadyScanned ^? ix mloc of
+					Nothing -> preinspect mloc (inspectionInfos ^?! ix mloc) $ liftIO $
+						preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts
+					Just m' -> return $ Preloaded (m' ^. moduleId) H.defaultParseMode (fmap dropScope $ m' ^?! moduleSource . _Just) mempty
 		pmods <- runTasks (map pload ms')
 		let
-			mods' = dbval ^.. (maybe (slice installed) projectDepsSlice mproj) . modules
+			dbval' = dbval ^. maybe (slice installed) projectSlice mproj
+			deps' = sourceDeps dbval'
+			dependencies = ordNub (concat [fromMaybe [] (deps' ^? ix f) | f <- ms ^.. each . _1 . moduleFile]) \\ (ms ^.. each . _1 . moduleFile)
+			mods' = dbval ^.. unionSlice globalDeps localDeps . modules where
+				globalDeps = maybe (slice installed) projectDepsSlice mproj
+				localDeps = slice (\m -> or [inFile d m | d <- dependencies])
 			aenv' = mconcat (map moduleAnalyzeEnv mods')
 		case order pmods of
 			Left err -> Log.log Log.Error ("failed order dependencies for files: {}" ~~ show err)
@@ -255,7 +302,9 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 					let
 						mloc = pmod ^. preloadedId . moduleLocation
 					inspect mloc (inspectionInfos ^?! ix mloc) $ do
-						m <- liftIO $ inspectPreloaded aenv pmod
+						m <- either (hsdevError . InspectError) return $ case alreadyScanned ^? ix mloc of
+							Nothing -> analyzePreloaded aenv pmod
+							Just m' -> Right $ analyzeResolve aenv m'
 						modify (mappend (moduleAnalyzeEnv m))
 						return m
 	grouped = M.toList $ M.unionsWith (++) [M.singleton (m ^? _1 . moduleProject . _Just) [m] | m <- ms]
@@ -277,14 +326,8 @@ scanFileContents opts fpath mcts = runTask "scanning" fpath $ Log.scope "file" $
 			mproj <- locateProjectInfo fpath'
 			return $ FileModule fpath' mproj
 	watch $ flip watchModule mloc
-	runTasks_ [
-		runTask "scanning" mloc $ do
-			defines <- askSession sessionDefines
-			inspect mloc (sourceInspection fpath' mcts opts) $ liftIO $ do
-				pmod <- preload fpath' defines opts mloc mcts
-				inspectPreloaded (mconcat $ map moduleAnalyzeEnv $ dbval ^.. fileDepsSlice fpath' . modules) pmod,
-		runTask "resolving" mloc $ do
-			updater $ resolveFile fpath' dbval]
+	S.ScanContents dmods _ _ <- S.enumDependent fpath'
+	scanModules [] ((mloc, opts, mcts) : dmods)
 
 -- | Scan cabal modules, doesn't rescan if already scanned
 scanCabal :: UpdateMonad m => [String] -> m ()
