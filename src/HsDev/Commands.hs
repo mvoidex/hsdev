@@ -2,7 +2,7 @@
 
 module HsDev.Commands (
 	-- * Commands
-	findDeclaration, findModule,
+	findSymbol, findModule,
 	fileModule,
 	lookupSymbol,
 	whois,
@@ -31,8 +31,8 @@ import HsDev.Symbols.Util
 import HsDev.Util (liftE, ordNub, uniqueBy)
 
 -- | Find declaration by name
-findDeclaration :: Database -> String -> ExceptT String IO [Symbol]
-findDeclaration db ident = return $ db ^.. symbols . filtered checkName where
+findSymbol :: Database -> String -> ExceptT String IO [Symbol]
+findSymbol db ident = return $ db ^.. symbols . filtered checkName where
 	checkName :: Symbol -> Bool
 	checkName m =
 		(view (symbolId . symbolName) m == nameIdent qname) &&
@@ -54,7 +54,7 @@ fileModule db src = do
 lookupSymbol :: Database -> FilePath -> String -> ExceptT String IO [Symbol]
 lookupSymbol db file ident = do
 	void $ fileModule db file
-	liftM newestPackage $ findDeclaration (db ^. fileDepsSlice file) ident
+	liftM newestPackage $ findSymbol (db ^. fileDepsSlice file) ident
 
 -- | Whois symbol in scope
 whois :: Database -> FilePath -> String -> ExceptT String IO [Symbol]
