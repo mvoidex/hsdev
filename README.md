@@ -57,8 +57,7 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `scan` — scan installed modules, cabal projects and files
 * `docs`, `infer` — scan docs or infer types for sources
 * `remove`, `remove-all` — unload data
-* `modules`, `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
-* `resolve` — resolve scope symbols and exports for sources module, it takes reexports, export and import lists into account
+* `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
 * `symbol`, `module`, `project` — find symbol, module or project
 * `lookup`, `whois` — find project-visible or imported symbol
 * `scope`, `scope modules` — get modules or declarations, accessible from file
@@ -130,7 +129,7 @@ PS> hsdev scan --cabal
 {}
 PS> hsdev scan --project hsdev
 {}
-PS> hsdev modules --project hsdev | json | % { $_.result.name } | select -first 3
+PS> hsdev module --project hsdev --header | json | % { $_.result.name } | select -first 3
 Data.Async
 Data.Group
 HsDev

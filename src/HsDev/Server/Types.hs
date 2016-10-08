@@ -388,12 +388,11 @@ data Command =
 		removeSandboxes :: [FilePath],
 		removeFiles :: [FilePath] } |
 	RemoveAll |
-	InfoModules [TargetFilter] |
 	InfoPackages |
 	InfoProjects |
 	InfoSandboxes |
 	InfoSymbol SearchQuery [TargetFilter] Bool |
-	InfoModule SearchQuery [TargetFilter] |
+	InfoModule SearchQuery [TargetFilter] Bool |
 	InfoProject (Either String FilePath) |
 	InfoSandbox FilePath |
 	Lookup String FilePath |
@@ -468,9 +467,8 @@ instance Paths Command where
 	paths f (InferTypes projs fs ms) = InferTypes <$> each f projs <*> each f fs <*> pure ms
 	paths f (Remove projs c cs fs) = Remove <$> each f projs <*> pure c <*> (each . paths) f cs <*> each f fs
 	paths _ RemoveAll = pure RemoveAll
-	paths f (InfoModules t) = InfoModules <$> paths f t
 	paths f (InfoSymbol q t l) = InfoSymbol <$> pure q <*> paths f t <*> pure l
-	paths f (InfoModule q t) = InfoModule <$> pure q <*> paths f t
+	paths f (InfoModule q t h) = InfoModule <$> pure q <*> paths f t <*> pure h
 	paths f (InfoProject (Right proj)) = InfoProject <$> (Right <$> f proj)
 	paths f (InfoSandbox fpath) = InfoSandbox <$> f fpath
 	paths f (Lookup n fpath) = Lookup <$> pure n <*> f fpath
@@ -520,12 +518,11 @@ instance FromCmd Command where
 			many sandboxArg <*>
 			many fileArg,
 		cmd "remove-all" "remove all data" (pure RemoveAll),
-		cmd "modules" "list modules" (InfoModules <$> many cmdP),
 		cmd "packages" "list packages" (pure InfoPackages),
 		cmd "projects" "list projects" (pure InfoProjects),
 		cmd "sandboxes" "list sandboxes" (pure InfoSandboxes),
 		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> many cmdP <*> localsFlag),
-		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP),
+		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP <*> headerFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> pathArg (help "locate sandbox in parent of this path")),
 		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
@@ -590,6 +587,7 @@ fileArg :: Parser FilePath
 ghcOpts :: Parser [String]
 hayooPageArg :: Parser Int
 hayooPagesArg :: Parser Int
+headerFlag :: Parser Bool
 holdFlag :: Parser Bool
 inferFlag :: Parser Bool
 localsFlag :: Parser Bool
@@ -611,6 +609,7 @@ fileArg = strOption (long "file" <> metavar "path" <> short 'f')
 ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "options to pass to GHC"))
 hayooPageArg = option auto (long "page" <> metavar "n" <> short 'p' <> help "page number (0 by default)" <> value 0)
 hayooPagesArg = option auto (long "pages" <> metavar "count" <> short 'n' <> help "pages count (1 by default)" <> value 1)
+headerFlag = switch (long "header" <> short 'h' <> help "show only header of module")
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
@@ -645,12 +644,11 @@ instance ToJSON Command where
 	toJSON (InferTypes projs fs ms) = cmdJson "infer" ["projects" .= projs, "files" .= fs, "modules" .= ms]
 	toJSON (Remove projs cabal sboxes fs) = cmdJson "remove" ["projects" .= projs, "cabal" .= cabal, "sandboxes" .= sboxes, "files" .= fs]
 	toJSON RemoveAll = cmdJson "remove-all" []
-	toJSON (InfoModules tf) = cmdJson "modules" ["filters" .= tf]
 	toJSON InfoPackages = cmdJson "packages" []
 	toJSON InfoProjects = cmdJson "projects" []
 	toJSON InfoSandboxes = cmdJson "sandboxes" []
 	toJSON (InfoSymbol q tf l) = cmdJson "symbol" ["query" .= q, "filters" .= tf, "locals" .= l]
-	toJSON (InfoModule q tf) = cmdJson "module" ["query" .= q, "filters" .= tf]
+	toJSON (InfoModule q tf h) = cmdJson "module" ["query" .= q, "filters" .= tf, "header" .= h]
 	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
 	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
 	toJSON (Lookup n f) = cmdJson "lookup" ["name" .= n, "file" .= f]
@@ -694,12 +692,11 @@ instance FromJSON Command where
 			v .::?! "sandboxes" <*>
 			v .::?! "files"),
 		guardCmd "remove-all" v *> pure RemoveAll,
-		guardCmd "modules" v *> (InfoModules <$> v .::?! "filters"),
 		guardCmd "packages" v *> pure InfoPackages,
 		guardCmd "projects" v *> pure InfoProjects,
 		guardCmd "sandboxes" v *> pure InfoSandboxes,
 		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .::?! "filters" <*> (v .:: "locals" <|> pure False)),
-		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .::?! "filters"),
+		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .::?! "filters" <*> v .:: "header"),
 		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
 		guardCmd "lookup" v *> (Lookup <$> v .:: "name" <*> v .:: "file"),

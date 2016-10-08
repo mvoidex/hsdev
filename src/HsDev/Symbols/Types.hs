@@ -29,7 +29,6 @@ import Data.List (intercalate)
 import Data.Maybe (catMaybes)
 import Data.Function
 import Data.Ord
-import Data.String (fromString)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.Text (Text)

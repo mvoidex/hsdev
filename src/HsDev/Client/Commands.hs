@@ -149,10 +149,6 @@ runCommand RemoveAll = toValue $ do
 	w <- askSession sessionWatcher
 	wdirs <- liftIO $ readMVar (W.watcherDirs w)
 	liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir
-runCommand (InfoModules fs) = toValue $ do
-	dbval <- getDb
-	filter' <- targetFilters fs
-	return (dbval ^.. newestPackagesSlice . modules . filtered filter' . moduleId)
 runCommand InfoPackages = toValue $ do
 	dbval <- getDb
 	return $ ordNub (dbval ^.. packages)
@@ -162,10 +158,14 @@ runCommand (InfoSymbol sq fs _) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
 	return (dbval ^.. newestPackagesSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq))
-runCommand (InfoModule sq fs) = toValue $ do
+runCommand (InfoModule sq fs h) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
-	return (dbval ^.. newestPackagesSlice . modules . filtered filter' . filtered (matchQuery sq))
+	let
+		onlyHeaders
+			| h = toJSON . over each (view moduleId)
+			| otherwise = toJSON
+	return $ onlyHeaders (dbval ^.. newestPackagesSlice . modules . filtered filter' . filtered (matchQuery sq))
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'

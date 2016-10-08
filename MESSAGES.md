@@ -59,7 +59,18 @@ List of commands with additional fiels:
      - `sandboxes` — list of `sandbox` objects to remove (see above)
      - `files` — list of sources
  * `remove-all` — remove all data
- * `modules` — get list of modules
+ * `packages` — list of packages
+ * `projects` — list of projects
+ * `sandboxes` — list of sandboxes
+ * `symbol` — get symbol info
+     - `query` — `query` object:
+         + `input` — input string
+         + `type` — query type, one of:
+             * `exact` — exact match
+             * `prefix` — prefix match
+             * `infix` — infix match
+             * `suffix` — suffix match
+             * `regex` — regex match
      - `filters` — list of `filter`-objects:
          + `{"project":<project .cabal or name>}`
          + `{"file":<source file>}`
@@ -74,26 +85,11 @@ List of commands with additional fiels:
          + `{"package":<package name>}`
          + `"sources"` — search for sourced
          + `"standalone"` — search for standalone (project-free)
- * `packages` — list of packages
- * `projects` — list of projects
- * `sandboxes` — list of sandboxes
- * `symbol` — get symbol info
-     - `query` — `query` object:
-         + `input` — input string
-         + `type` — query type, one of:
-             * `exact` — exact match
-             * `prefix` — prefix match
-             * `infix` — infix match
-             * `suffix` — suffix match
-             * `regex` — regex match
-     - `filters` — list of `filter`-objects
      - `locals` — search in local declarations (default is `false`)
  * `module` — get module info
      - `query` — `query` object
      - `filters` — list of `filter` objects
- * `resolve` — resolve module scope/exports
-     - `file` — source file
-     - `exports` — scope (`false`) or exports (`true`)
+     - `header` — return only module header — name and location
  * `project` — get project info, one of:
      - `name` — name of project
      - `path` — path to `.cabal`

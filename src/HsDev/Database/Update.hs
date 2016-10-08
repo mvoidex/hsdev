@@ -24,7 +24,6 @@ module HsDev.Database.Update (
 	) where
 
 import Control.Applicative ((<|>))
-import Control.Arrow
 import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
 import Control.Lens hiding ((%=), (.=))
@@ -272,7 +271,7 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 					return $ do
 						guard (up && not (hasTag OnlyHeaderTag im))
 						im ^? inspected
-			toMap ms' = M.fromList [(m' ^. moduleId . moduleLocation, m') | m' <- ms']
+			toMap = M.fromList . map (\m' -> (m' ^. moduleId . moduleLocation, m'))
 		alreadyScanned <- liftIO $ liftM (toMap . catMaybes) $ traverse scanned' ms
 		let
 			inspectionInfos = M.fromList
