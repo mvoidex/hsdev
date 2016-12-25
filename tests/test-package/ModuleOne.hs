@@ -1,7 +1,7 @@
 module ModuleOne (
 	test,
 	forkIO,
-	f
+	untypedFoo
 	) where
 
 import Control.Concurrent (forkIO)
@@ -11,4 +11,4 @@ test :: IO ()
 test = return ()
 
 -- | Some function without type
-f x y = x + y
+untypedFoo x y = x + y

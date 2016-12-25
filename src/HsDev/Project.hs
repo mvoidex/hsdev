@@ -4,7 +4,7 @@ module HsDev.Project (
 	infoSourceDirsDef,
 	readProject, loadProject,
 	withExtensions,
-	infos, inTarget, fileTargets, findSourceDir, sourceDirs,
+	infos, inTarget, fileTarget, fileTargets, findSourceDir, sourceDirs,
 	targetOpts,
 
 	-- * Helpers
@@ -112,7 +112,11 @@ infos p =
 
 -- | Check if source related to target, source must be relative to project directory
 inTarget :: FilePath -> Info -> Bool
-inTarget src info = any ((`isPrefixOf` normalise src) . normalise) $ view infoSourceDirsDef info
+inTarget src info = any (`isParent` src) $ view infoSourceDirsDef info
+
+-- | Get first target for source file
+fileTarget :: Project -> FilePath -> Maybe Info
+fileTarget p f = listToMaybe $ fileTargets p f
 
 -- | Get possible targets for source file
 -- There can be many candidates in case of module related to several executables or tests

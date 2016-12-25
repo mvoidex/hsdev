@@ -209,7 +209,7 @@ runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do
 runCommand (CheckLint fs ghcs') = toValue $ do
 	ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
-		checkSome file fn = do
+		checkSome file fn = Log.scope "checkSome" $ do
 			m <- setFileSourceSession ghcs' file
 			inSessionGhc $ fn m
 	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check ghcs' m c)) fs

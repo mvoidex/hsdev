@@ -27,6 +27,7 @@ import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
+import HsDev.Project (fileTarget)
 import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.Ghc.Compat

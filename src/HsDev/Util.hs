@@ -108,7 +108,9 @@ searchPath path f = do
 -- | Is one path parent of another
 isParent :: FilePath -> FilePath -> Bool
 isParent dir file = norm dir `isPrefixOf` norm file where
-	norm = splitDirectories . normalise
+	norm = dropDot . splitDirectories . normalise
+	dropDot ("." : chs) = chs
+	dropDot chs = chs
 
 -- | Is haskell source?
 haskellSource :: FilePath -> Bool
