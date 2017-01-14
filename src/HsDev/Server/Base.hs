@@ -12,7 +12,7 @@ module HsDev.Server.Base (
 import Control.Applicative
 import Control.Concurrent
 import Control.Exception
-import Control.Lens hiding ((%=))
+import Control.Lens
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -31,7 +31,7 @@ import System.FilePath
 import qualified Control.Concurrent.FiniteChan as F
 import System.Directory.Paths (canonicalize)
 import qualified System.Directory.Watcher as Watcher
-import Text.Format ((~~), FormatBuild(..), (%=))
+import Text.Format ((~~), FormatBuild(..), (~%))
 
 import qualified HsDev.Cache as Cache
 import qualified HsDev.Cache.Structured as SC
@@ -86,9 +86,9 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scop
 		outputStr Log.Debug $ "Cache version: {}" ~~ strVersion ver
 		unless (sameVersion (cutVersion version) (cutVersion ver)) $ ignoreIO $ do
 			outputStr Log.Info $ "Cache version ({cache}) is incompatible with hsdev version ({hsdev}), removing cache ({dir})" ~~
-				("cache" %= strVersion ver) ~~
-				("hsdev" %= strVersion version) ~~
-				("dir" %= cdir)
+				("cache" ~% strVersion ver) ~~
+				("hsdev" ~% strVersion version) ~~
+				("dir" ~% cdir)
 			-- drop cache
 			removeDirectoryRecursive cdir
 		outputStr Log.Debug $ "Writing new cache version: {}" ~~ strVersion version

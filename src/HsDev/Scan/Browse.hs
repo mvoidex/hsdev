@@ -139,9 +139,10 @@ browseModule pdb package' m = do
 			GHC.RealDataCon d -> Just $ Constructor
 				(map (formatType dflags) $ GHC.dataConOrigArgTys d)
 				(fromString $ GHC.getOccString (GHC.dataConTyCon d))
-			GHC.PatSynCon p -> Just $ PatSyn
+			GHC.PatSynCon p -> Just $ PatConstructor
 				(map (formatType dflags) $ GHC.patSynArgs p)
-				[]
+				Nothing
+			-- TODO: Deal with `patSynFieldLabels` and `patSynFieldType`
 		showResult dflags (GHC.ATyCon t)
 			| GHC.isTypeSynonymTyCon t = Just $ Type args ctx
 			| GHC.isNewTyCon t = Just $ NewType args ctx

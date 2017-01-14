@@ -26,7 +26,7 @@ module HsDev.Database.Update (
 import Control.Applicative ((<|>))
 import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
-import Control.Lens hiding ((%=), (.=))
+import Control.Lens hiding ((.=))
 import Control.Monad.Catch (catch)
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -502,27 +502,27 @@ updateEvent :: ServerMonadBase m => Watched -> Event -> UpdateM m ()
 updateEvent (WatchedProject proj projOpts) e
 	| isSource e = do
 		Log.log Log.Info $ "File '{file}' in project {proj} changed"
-			~~ ("file" %= view eventPath e)
-			~~ ("proj" %= view projectName proj)
+			~~ ("file" ~% view eventPath e)
+			~~ ("proj" ~% view projectName proj)
 		dbval <- readDB
 		let
 			opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each
 		scanFile opts $ view eventPath e
 	| isCabal e = do
 		Log.log Log.Info $ "Project {proj} changed"
-			~~ ("proj" %= view projectName proj)
+			~~ ("proj" ~% view projectName proj)
 		scanProject projOpts $ view projectCabal proj
 	| otherwise = return ()
 updateEvent (WatchedPackageDb pdbs opts) e
 	| isConf e = do
 		Log.log Log.Info $ "Package db {package} changed"
-			~~ ("package" %= topPackageDb pdbs)
+			~~ ("package" ~% topPackageDb pdbs)
 		scanPackageDb opts pdbs
 	| otherwise = return ()
 updateEvent WatchedModule e
 	| isSource e = do
 		Log.log Log.Info $ "Module {file} changed"
-			~~ ("file" %= view eventPath e)
+			~~ ("file" ~% view eventPath e)
 		dbval <- readDB
 		let
 			opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each

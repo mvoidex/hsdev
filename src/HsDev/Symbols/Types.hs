@@ -4,7 +4,7 @@
 module HsDev.Symbols.Types (
 	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
-	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType,
+	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
 	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
@@ -212,7 +212,8 @@ data SymbolInfo =
 	Class { _typeArgs :: [Text], _typeContext :: [Text] } |
 	TypeFam { _typeArgs :: [Text], _typeContext :: [Text], _familyAssociate :: Maybe Text } |
 	DataFam { _typeArgs :: [Text], _typeContext :: [Text], _familyAssociate :: Maybe Text } |
-	PatSyn { _typeArgs :: [Text], _typeContext :: [Text] }
+	PatConstructor { _typeArgs :: [Text], _patternType :: Maybe Text } |
+	PatSelector { _functionType :: Maybe Text, _patternType :: Maybe Text, _patternConstructor :: Text }
 		deriving (Eq, Ord, Read, Show)
 
 instance NFData SymbolInfo where
@@ -224,22 +225,24 @@ instance NFData SymbolInfo where
 	rnf (NewType as ctx) = rnf as `seq` rnf ctx
 	rnf (Data as ctx) = rnf as `seq` rnf ctx
 	rnf (Class as ctx) = rnf as `seq` rnf ctx
-	rnf (PatSyn as ctx) = rnf as `seq` rnf ctx
 	rnf (TypeFam as ctx a) = rnf as `seq` rnf ctx `seq` rnf a
 	rnf (DataFam as ctx a) = rnf as `seq` rnf ctx `seq` rnf a
+	rnf (PatConstructor as t) = rnf as `seq` rnf t
+	rnf (PatSelector ft t c) = rnf ft `seq` rnf t `seq` rnf c
 
 instance ToJSON SymbolInfo where
 	toJSON (Function ft) = object [what "function", "type" .= ft]
 	toJSON (Method ft cls) = object [what "method", "type" .= ft, "class" .= cls]
-	toJSON (Selector ft t cs) = object [what "selector", "type" .= ft, "type" .= t, "constructors" .= cs]
+	toJSON (Selector ft t cs) = object [what "selector", "type" .= ft, "parent" .= t, "constructors" .= cs]
 	toJSON (Constructor as t) = object [what "ctor", "args" .= as, "type" .= t]
 	toJSON (Type as ctx) = object [what "type", "args" .= as, "ctx" .= ctx]
 	toJSON (NewType as ctx) = object [what "newtype", "args" .= as, "ctx" .= ctx]
 	toJSON (Data as ctx) = object [what "data", "args" .= as, "ctx" .= ctx]
 	toJSON (Class as ctx) = object [what "class", "args" .= as, "ctx" .= ctx]
-	toJSON (PatSyn as ctx) = object [what "patsyn", "args" .= as, "ctx" .= ctx]
 	toJSON (TypeFam as ctx a) = object [what "type-family", "args" .= as, "ctx" .= ctx, "associate" .= a]
 	toJSON (DataFam as ctx a) = object [what "data-family", "args" .= as, "ctx" .= ctx, "associate" .= a]
+	toJSON (PatConstructor as t) = object [what "pat-ctor", "args" .= as, "pat-type" .= t]
+	toJSON (PatSelector ft t c) = object [what "pat-selector", "type" .= ft, "pat-type" .= t, "constructor" .= c]
 
 class EmptySymbolInfo a where
 	infoOf :: a -> SymbolInfo
@@ -260,9 +263,10 @@ symbolType s = case _symbolInfo s of
 	NewType{} -> "newtype"
 	Data{} -> "data"
 	Class{} -> "class"
-	PatSyn{} -> "patsyn"
 	TypeFam{} -> "type-family"
 	DataFam{} -> "data-family"
+	PatConstructor{} -> "pat-ctor"
+	PatSelector{} -> "pat-selector"
 
 what :: String -> Pair
 what n = "what" .= n
@@ -271,15 +275,16 @@ instance FromJSON SymbolInfo where
 	parseJSON = withObject "symbol info" $ \v -> msum [
 		gwhat "function" v >> (Function <$> v .::? "type"),
 		gwhat "method" v >> (Method <$> v .::? "type" <*> v .:: "class"),
-		gwhat "selector" v >> (Selector <$> v .::? "type" <*> v .:: "type" <*> v .::?! "constructors"),
+		gwhat "selector" v >> (Selector <$> v .::? "type" <*> v .:: "parent" <*> v .::?! "constructors"),
 		gwhat "ctor" v >> (Constructor <$> v .::?! "args" <*> v .:: "type"),
 		gwhat "type" v >> (Type <$> v .::?! "args" <*> v .::?! "ctx"),
 		gwhat "newtype" v >> (NewType <$> v .::?! "args" <*> v .::?! "ctx"),
 		gwhat "data" v >> (Data <$> v .::?! "args" <*> v .::?! "ctx"),
 		gwhat "class" v >> (Class <$> v .::?! "args" <*> v .::?! "ctx"),
-		gwhat "patsyn" v >> (PatSyn <$> v .::?! "args" <*> v .::?! "ctx"),
 		gwhat "type-family" v >> (TypeFam <$> v .::?! "args" <*> v .::?! "ctx" <*> v .::? "associate"),
-		gwhat "data-family" v >> (DataFam <$> v .::?! "args" <*> v .::?! "ctx" <*> v .::? "associate")]
+		gwhat "data-family" v >> (DataFam <$> v .::?! "args" <*> v .::?! "ctx" <*> v .::? "associate"),
+		gwhat "pat-ctor" v >> (PatConstructor <$> v .::?! "args" <*> v .::? "pat-type"),
+		gwhat "pat-selector" v >> (PatSelector <$> v .::? "type" <*> v .::? "pat-type" <*> v .:: "constructor")]
 
 gwhat :: String -> Object -> Parser ()
 gwhat n v = do
@@ -436,9 +441,10 @@ instance Documented Symbol where
 			NewType args ctx -> "\t" ++ intercalate ", " ["newtype", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
 			Data args ctx -> "\t" ++ intercalate ", " ["data", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
 			Class args ctx -> "\t" ++ intercalate ", " ["class", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
-			PatSyn args ctx -> "\t" ++ intercalate ", " ["pattern synonym", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
 			TypeFam args ctx _ -> "\t" ++ intercalate ", " ["type family", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
 			DataFam args ctx _ -> "\t" ++ intercalate ", " ["data family", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			PatConstructor args p -> "\t" ++ intercalate ", " (catMaybes [Just "pattern constructor", Just $ "args: {}" ~~ T.unwords args, fmap ("pat-type: {}" ~~) p])
+			PatSelector t p _ -> "\t" ++ intercalate ", " (catMaybes [Just "pattern selector", fmap ("type: {}" ~~) t, fmap ("pat-type: {}" ~~) p])
 
 makeLenses ''Module
 makeLenses ''Symbol

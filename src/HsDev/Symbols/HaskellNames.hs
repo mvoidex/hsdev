@@ -39,7 +39,8 @@ fromSymbol s = Symbol sid Nothing Nothing info where
 		N.Class _ _ -> Class mempty mempty
 		N.TypeFam _ _ a -> TypeFam mempty mempty (fmap fromName_ a)
 		N.DataFam _ _ a -> DataFam mempty mempty (fmap fromName_ a)
-		N.PatSyn _ _ -> PatSyn mempty mempty
+		N.PatternConstructor _ _ p -> PatConstructor mempty (fmap fromName_ p)
+		N.PatternSelector _ _ p c -> PatSelector mempty (fmap fromName_ p) (fromName_ c)
 
 toSymbol :: Symbol -> N.Symbol
 toSymbol s = case view symbolInfo s of
@@ -53,7 +54,8 @@ toSymbol s = case view symbolInfo s of
 	Class _ _ -> N.Class m n
 	TypeFam _ _ a -> N.TypeFam m n (fmap toName_ a)
 	DataFam _ _ a -> N.DataFam m n (fmap toName_ a)
-	PatSyn _ _ -> N.PatSyn m n
+	PatConstructor _ p -> N.PatternConstructor m n (fmap toName_ p)
+	PatSelector _ p c -> N.PatternSelector m n (fmap toName_ p) (toName_ c)
 	where
 		m = H.ModuleName () (T.unpack $ view sourcedModuleName s)
 		n = toHName $ view sourcedName s

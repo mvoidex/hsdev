@@ -144,9 +144,6 @@ initSession :: (MonadIO m, ExceptionMonad m, Ord s) => MGhcT s m ()
 initSession = do
 	lib <- ask
 	initGhcMonad lib
-	fs <- getSessionDynFlags
-	void $ setSessionDynFlags fs
-	void $ liftIO $ initPackages fs
 	void saveSession
 
 activateSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m (Maybe HscEnv)

@@ -31,7 +31,7 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Default
 import Data.Foldable (asum)
 import Options.Applicative
-import System.Log.Simple hiding (Command)
+import System.Log.Simple hiding (Command, short)
 
 import System.Directory.Paths
 import Text.Format (FormatBuild(..))

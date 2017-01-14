@@ -38,7 +38,7 @@ import qualified System.Log.Simple as Log
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
-import Text.Format ((~~), (%=))
+import Text.Format ((~~), (~%))
 import System.Directory.Paths
 
 import qualified HsDev.Client.Commands as Client
@@ -120,9 +120,9 @@ runServerCommand (Start sopts) = do
 		-- start-process foo '"bar baz"' ⇒ foo "bar baz" -- ok
 		biescape = escape quote . escape quoteDouble
 		script = "try {{ start-process {process} {args} -WindowStyle Hidden -WorkingDirectory {dir} }} catch {{ $_.Exception, $_.InvocationInfo.Line }}"
-			~~ ("process" %= escape quote myExe)
-			~~ ("args" %= intercalate ", " (map biescape args))
-			~~ ("dir" %= escape quote curDir)
+			~~ ("process" ~% escape quote myExe)
+			~~ ("args" ~% intercalate ", " (map biescape args))
+			~~ ("dir" ~% escape quote curDir)
 	r <- readProcess "powershell" [
 		"-Command",
 		script] ""
@@ -222,8 +222,8 @@ runServerCommand (Connect copts) = do
 			Right m -> do
 				Response r' <- unMmap $ view (msg . message) m
 				putStrLn $ "{id}: {response}"
-					~~ ("id" %= fromMaybe "_" (view (msg . messageId) m))
-					~~ ("response" %= fromUtf8 (encodeMsg $ set msg (Response r') m))
+					~~ ("id" ~% fromMaybe "_" (view (msg . messageId) m))
+					~~ ("response" ~% fromUtf8 (encodeMsg $ set msg (Response r') m))
 				case unResponse (view (msg . message) m) of
 					Left _ -> waitResp h
 					_ -> return ()

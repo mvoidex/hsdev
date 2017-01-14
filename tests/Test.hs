@@ -29,15 +29,19 @@ exports v = v ^.. key "exports" . traverseArray . each . key "name" . each . _Ju
 main :: IO ()
 main = hspec $ do
 	describe "scan project" $ do
+		dir <- runIO getCurrentDirectory
+		s <- runIO $ startServer (def { serverSilent = True })
 		it "should scan project" $ do
-			dir <- getCurrentDirectory
-			s <- startServer (def { serverSilent = True })
 			_ <- call s $ Scan [dir </> "tests/test-package"] False [] [] [] [] False False
-			one <- call s $ InfoResolve (dir </> "tests/test-package/ModuleOne.hs") True
-			when (["test", "forkIO", "f"] /= exports one) $
+			one <- call s $ InfoModule (SearchQuery "ModuleOne" SearchExact) [] False
+			when (["test", "forkIO", "untypedFoo"] /= exports one) $
 				expectationFailure "invalid exports of ModuleOne.hs"
-			two <- call s $ InfoResolve (dir </> "tests/test-package/ModuleTwo.hs") True
-			when (["f", "twice"] /= exports two) $
+			two <- call s $ InfoModule (SearchQuery "ModuleTwo" SearchExact) [] False
+			when (["untypedFoo", "twice", "overloadedStrings"] /= exports two) $
 				expectationFailure "invalid exports of ModuleTwo.hs"
-			_ <- call s Exit
-			return ()
+		it "should pass extensions when checkings" $ do
+			checks <- call s (Check [FileSource (dir </> "tests/test-package/ModuleTwo.hs") Nothing] [])
+			when (("error" :: String) `elem` (checks ^.. traverseArray . key "level" . _Just)) $
+				expectationFailure "there should be no errors, only warnings"
+		_ <- runIO $ call s Exit
+		return ()
