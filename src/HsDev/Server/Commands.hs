@@ -18,6 +18,7 @@ import Control.Lens (set, traverseOf, view, over, Lens', Lens, _1, _2, _Left)
 import Control.Monad
 import Control.Monad.Catch (bracket, finally)
 import Data.Aeson hiding (Result, Error)
+import qualified Data.Aeson as A
 import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Char8 as BS
 import Data.ByteString.Lazy.Char8 (ByteString)
@@ -227,6 +228,13 @@ runServerCommand (Connect copts) = do
 				case unResponse (view (msg . message) m) of
 					Left _ -> waitResp h
 					_ -> return ()
+runServerCommand (Remote copts noFile c@(Listen _)) = sendCommand copts noFile c printLog >>= noResult where
+	printLog :: Notification -> IO ()
+	printLog (Notification v) = case fromJSON v of
+		A.Error _ -> putStrLn "incorrect notification"
+		A.Success (LogMessage s) -> putStrLn s
+	noResult :: Result -> IO ()
+	noResult _ = return ()
 runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue >>= printResult where
 	printValue :: ToJSON a => a -> IO ()
 	printValue = L.putStrLn . encodeValue
@@ -235,6 +243,14 @@ runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue
 	printResult e = printValue e
 	encodeValue :: ToJSON a => a -> L.ByteString
 	encodeValue = if clientPretty copts then encodePretty else encode
+
+newtype LogMessage = LogMessage String
+
+instance ToJSON LogMessage where
+	toJSON (LogMessage s) = object ["message" .= s]
+
+instance FromJSON LogMessage where
+	parseJSON = withObject "log-message" $ \v -> LogMessage <$> (v .:: "message")
 
 findPath :: MonadIO m => CommandOptions -> FilePath -> m FilePath
 findPath copts f = liftIO $ canonicalizePath (normalise f') where
