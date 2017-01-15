@@ -1,10 +1,10 @@
 module ModuleOne (
 	test,
-	forkIO,
+	newChan,
 	untypedFoo
 	) where
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent.Chan (newChan)
 
 -- | Some test function
 test :: IO ()

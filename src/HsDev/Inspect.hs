@@ -21,11 +21,13 @@ import Control.Monad
 import Control.Monad.State
 import Control.Monad.Except
 import Data.Data (Data)
+import Data.Function (on)
 import Data.List
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
+import Data.Ord (comparing)
 import Data.String (IsString, fromString)
-import qualified Data.Text as T (unpack)
+import qualified Data.Text as T (unpack, Text)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, getPOSIXTime)
 import qualified Data.Map as M
 import qualified Language.Haskell.Exts as H
@@ -47,7 +49,7 @@ import HDocs.Haddock
 import HsDev.Display ()
 import HsDev.Error
 import HsDev.Symbols
-import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable)
+import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable, symbolUniqId)
 import HsDev.Symbols.Parsed hiding (file)
 import qualified HsDev.Symbols.HaskellNames as HN
 import HsDev.Tools.Base
@@ -154,26 +156,27 @@ analyzeResolve (AnalyzeEnv env _ rtable) m = case m ^. moduleSource of
 	Just msrc -> over moduleSymbols (refineSymbol stbl) $ m {
 		_moduleExports = map HN.fromSymbol $ N.exportedSymbols tbl msrc,
 		_moduleFixities = [Fixity (fvoid assoc) (fromMaybe 0 pr) (fixName opName)
-			| H.InfixDecl _ assoc pr ops <- universeBi annotated :: [H.Decl Ann], opName <- childrenBi ops :: [H.Name Ann]],
+			| H.InfixDecl _ assoc pr ops <- decls', opName <- map getOpName ops],
 		_moduleScope = M.map (map HN.fromSymbol) tbl,
 		_moduleSource = Just annotated }
 		where
+			getOpName (H.VarOp _ nm) = nm
+			getOpName (H.ConOp _ nm) = nm
 			fixName o = H.Qual () (H.ModuleName () (T.unpack $ m ^. moduleId . moduleName)) (fvoid o)
 			itbl = N.importTable env msrc
-			defs = N.moduleSymbols itbl msrc
 			tbl = N.moduleTable itbl msrc
 			syms = set (each . symbolId . symbolModule) (m ^. moduleId) $
-				flip execState (map HN.fromSymbol defs) $ examine annotated
+				getSymbols decls'
 			stbl = refineTable syms `mappend` rtable
 			-- Not using 'annotate' because we already computed needed tables
-			annotated = H.Module l mhead' mpragmas idecls' decls' where
-				H.Module l mhead mpragmas idecls decls = fmap (\(N.Scoped _ v) -> N.Scoped N.None v) msrc
-				mhead' = fmap scopeHead mhead
-				scopeHead (H.ModuleHead lh mname mwarns mexports) = H.ModuleHead lh mname mwarns $
-					fmap (N.annotateExportSpecList tbl . dropScope) mexports
-				idecls' = N.annotateImportDecls mn env (fmap dropScope idecls)
-				decls' = map (N.annotateDecl (N.initialScope (N.dropAnn mn) tbl) . dropScope) decls
-				mn = dropScope $ N.getModuleName msrc
+			annotated = H.Module l mhead' mpragmas idecls' decls'
+			H.Module l mhead mpragmas idecls decls = fmap (\(N.Scoped _ v) -> N.Scoped N.None v) msrc
+			mhead' = fmap scopeHead mhead
+			scopeHead (H.ModuleHead lh mname mwarns mexports) = H.ModuleHead lh mname mwarns $
+				fmap (N.annotateExportSpecList tbl . dropScope) mexports
+			idecls' = N.annotateImportDecls mn env (fmap dropScope idecls)
+			decls' = map (N.annotateDecl (N.initialScope (N.dropAnn mn) tbl) . dropScope) decls
+			mn = dropScope $ N.getModuleName msrc
 
 -- | Inspect preloaded module
 analyzePreloaded :: AnalyzeEnv -> Preloaded -> Either String Module
@@ -194,70 +197,98 @@ analyzePreloaded aenv@(AnalyzeEnv env gfixities _) p = case H.parseFileContentsW
 inspectPreloaded :: AnalyzeEnv -> Preloaded -> IO Module
 inspectPreloaded aenv = either (hsdevError . InspectError) return . analyzePreloaded aenv
 
--- | Try extract some additional info and set it to symbol
-examine :: H.Module Ann -> State [Symbol] ()
-examine (H.Module _ _ _ _ decls) = mapM_ (ex examineDecl) decls where
-	examineDecl :: H.Decl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
-	examineDecl (H.TypeSig _ _ t) = return $ set functionType (Just $ oneLinePrint t)
-	examineDecl (H.PatSyn _ p _ _) = return $ set typeArgs as where
-		as = map oneLinePrint [n | H.PVar _ n <- universe p]
-	examineDecl (H.TypeDecl _ h _) = return $ set typeArgs (map oneLinePrint $ tyArgs h)
-	examineDecl (H.DataDecl _ _ mctx h cns _) = do
-		mapM_ (ex examineQualCon) cns
-		return $
-			set typeArgs (map oneLinePrint $ tyArgs h) .
-			set typeContext (map oneLinePrint $ maybe [] tyAssts mctx)
-	examineDecl (H.GDataDecl _ _ mctx h _ gcons _) = do
-		mapM_ (ex examineGadtDecl) gcons
-		return $
-			set typeArgs (map oneLinePrint $ tyArgs h) .
-			set typeContext (map oneLinePrint $ maybe [] tyAssts mctx)
-	examineDecl (H.ClassDecl _ mctx h _ _) = return $
-		set typeArgs (map oneLinePrint $ tyArgs h) .
-		set typeContext (map oneLinePrint $ maybe [] tyAssts mctx)
-	examineDecl _ = return id
 
-	examineQualCon :: H.QualConDecl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
-	examineQualCon (H.QualConDecl _ _ mctx cdecl) = do
-		ex examineConDecl cdecl
-		return $ set typeContext (map oneLinePrint $ maybe [] tyAssts mctx)
+-- | Get top symbols
+getSymbols :: [H.Decl Ann] -> [Symbol]
+getSymbols decls =
+	map mergeSymbols .
+	groupBy ((==) `on` symbolUniqId) .
+	sortBy (comparing symbolUniqId) $
+	concatMap getDecl decls
+	where
+		mergeSymbols :: [Symbol] -> Symbol
+		mergeSymbols [] = error "impossible"
+		mergeSymbols [s] = s
+		mergeSymbols ss@(s:_) = Symbol
+			(view symbolId s)
+			(msum $ map (view symbolDocs) ss)
+			(msum $ map (view symbolPosition) ss)
+			(foldr1 mergeInfo $ map (view symbolInfo) ss)
 
-	examineGadtDecl :: H.GadtDecl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
-	examineGadtDecl (H.GadtDecl _ _ mfields t) = do
-		mapM_ (ex examineFieldDecl) $ fromMaybe [] mfields
-		let
-			as = maybe (args t) (\fs -> [ft | H.FieldDecl _ _ ft <- fs]) mfields
-			args :: H.Type Ann -> [H.Type Ann]
-			args (H.TyFun _ x y) = x : args y
-			args _ = []
-		return $ set typeArgs (map oneLinePrint as)
+		mergeInfo :: SymbolInfo -> SymbolInfo -> SymbolInfo
+		mergeInfo (Function lt) (Function rt) = Function $ lt `mplus` rt
+		mergeInfo (PatConstructor las lt) (PatConstructor ras rt) = PatConstructor (if null las then ras else las) (lt `mplus` rt)
+		mergeInfo (Selector lt lp lc) (Selector rt rp rc)
+			| lt == rt && lp == rp = Selector lt lp (nub $ lc ++ rc)
+			| otherwise = Selector lt lp lc
+		mergeInfo l _ = l
 
-	examineConDecl :: H.ConDecl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
-	examineConDecl (H.ConDecl _ _ ts) = return $ set typeArgs (map oneLinePrint ts)
-	examineConDecl (H.InfixConDecl _ lt _ rt) = return $ set typeArgs (map oneLinePrint [lt, rt])
-	examineConDecl (H.RecDecl _ _ fields) = do
-		mapM_ (ex examineFieldDecl) fields
-		return $ set typeArgs (map oneLinePrint [t | H.FieldDecl _ _ t <- fields])
 
-	examineFieldDecl :: H.FieldDecl Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)
-	examineFieldDecl (H.FieldDecl _ _ t) = return $ \s -> set functionType
-		(Just $ format "{} -> {}" ~~ view parentType s ~~ (oneLinePrint t :: String)) s
+-- | Get symbols from declarations
+getDecl :: H.Decl Ann -> [Symbol]
+getDecl decl' = case decl' of
+	H.TypeDecl _ h _ -> [mkSymbol (tyName h) (Type (tyArgs h) [])]
+	H.TypeFamDecl _ h _ _ -> [mkSymbol (tyName h) (TypeFam (tyArgs h) [] Nothing)]
+	H.ClosedTypeFamDecl _ h _ _ _ -> [mkSymbol (tyName h) (TypeFam (tyArgs h) [] Nothing)]
+	H.DataDecl _ dt mctx h dcons _ -> mkSymbol nm ((getCtor dt) (tyArgs h) (getCtx mctx)) : concatMap (getConDecl nm) dcons where
+		nm = tyName h
+	H.GDataDecl _ dt mctx h _ gcons _ -> mkSymbol nm ((getCtor dt) (tyArgs h) (getCtx mctx)) : concatMap (getGConDecl nm) gcons where
+		nm = tyName h
+	H.DataFamDecl _ mctx h _ -> [mkSymbol (tyName h) (DataFam (tyArgs h) (getCtx mctx) Nothing)]
+	H.ClassDecl _ mctx h _ _ -> [mkSymbol (tyName h) (Class (tyArgs h) (getCtx mctx))]
+	H.TypeSig _ ns tsig -> [mkSymbol n (Function (Just $ oneLinePrint tsig)) | n <- ns]
+	H.PatSynSig _ n mas _ _ t -> [mkSymbol n (PatConstructor (maybe [] (map prp) mas) (Just $ oneLinePrint t))]
+	H.FunBind _ ms -> [mkSymbol (matchName m) (Function Nothing) | m <- ms] where
+		matchName (H.Match _ n _ _ _) = n
+		matchName (H.InfixMatch _ _ n _ _ _) = n
+	H.PatBind _ p _ _ -> [mkSymbol n (Function Nothing) | n <- patNames p] where
+		patNames :: H.Pat Ann -> [H.Name Ann]
+		patNames = childrenBi
+	H.PatSyn _ p _ _ -> case p of
+		H.PInfixApp _ _ qn _ -> [mkSymbol (qToName qn) (PatConstructor [] Nothing)]
+		H.PApp _ qn _ -> [mkSymbol (qToName qn) (PatConstructor [] Nothing)]
+		H.PRec _ qn fs -> mkSymbol (qToName qn) (PatConstructor [] Nothing) :
+			[mkSymbol (qToName n) (PatSelector Nothing Nothing (prp $ qToName qn)) | n <- (universeBi fs :: [H.QName Ann])]
+		_ -> []
+		where
+			qToName (H.Qual _ _ n) = n
+			qToName (H.UnQual _ n) = n
+			qToName _ = error "invalid qname"
+	_ -> []
+	where
+		tyName :: H.DeclHead Ann -> H.Name Ann
+		tyName = head . universeBi
+		tyArgs :: Data (ast Ann) => ast Ann -> [T.Text]
+		tyArgs n = map prp (universeBi n :: [H.TyVarBind Ann])
+		getCtx :: Maybe (H.Context Ann) -> [T.Text]
+		getCtx mctx = map prp (universeBi mctx :: [H.Asst Ann])
+		getCtor (H.DataType _) = Data
+		getCtor (H.NewType _) = NewType
 
-	tyArgs :: H.DeclHead Ann -> [H.TyVarBind Ann]
-	tyArgs = universeBi
-	tyAssts :: H.Context Ann -> [H.Asst Ann]
-	tyAssts = universeBi
+getConDecl :: H.Name Ann -> H.QualConDecl Ann -> [Symbol]
+getConDecl ptype (H.QualConDecl _ _ _ cdecl) = case cdecl of
+	H.ConDecl _ n ts -> [mkSymbol n (Constructor (map prp ts) (prp ptype))]
+	H.InfixConDecl _ lt n rt -> [mkSymbol n (Constructor (map prp [lt, rt]) (prp ptype))]
+	H.RecDecl _ n fs -> mkSymbol n (Constructor [prp t | H.FieldDecl _ _ t <- fs] (prp ptype)) :
+		[mkSymbol fn (Selector (Just $ prp ft) (prp ptype) [prp n]) | H.FieldDecl _ fns ft <- fs, fn <- fns]
 
-	ex :: (H.Annotated ast, Data (ast Ann)) => (ast Ann -> State [Symbol] (SymbolInfo -> SymbolInfo)) -> ast Ann -> State [Symbol] ()
-	ex fn node = do
-		modifier <- fn node
-		let
-			upd = set symbolPosition (node ^? defPos) . over symbolInfo modifier
-		case node ^? binders of
-			Nothing -> return ()
-			Just n' -> modify $ over (each . filtered (((oneLinePrint n') ==) . view sourcedName)) upd
+getGConDecl :: H.Name Ann -> H.GadtDecl Ann -> [Symbol]
+getGConDecl _ (H.GadtDecl _ n Nothing t) = [mkSymbol n (Constructor (map prp as) (prp res))] where
+	(as, res) = tyFunSplit t
+	tyFunSplit = go [] where
+		go as' (H.TyFun _ arg' res') = go (arg' : as') res'
+		go as' t' = (reverse as', t')
+getGConDecl ptype (H.GadtDecl _ n (Just fs) t) = mkSymbol n (Constructor [prp ft | H.FieldDecl _ _ ft <- fs] (prp t)) :
+	[mkSymbol fn (Selector (Just $ prp ft) (prp ptype) [prp n]) | H.FieldDecl _ fns ft <- fs, fn <- fns]
 
-examine _ = return ()
+
+prp :: H.Pretty a => a -> T.Text
+prp = fromString . H.prettyPrint
+
+
+mkSymbol :: H.Name Ann -> SymbolInfo -> Symbol
+mkSymbol nm = Symbol (SymbolId (prp nm) (ModuleId (fromString "") noLocation)) Nothing (nm ^? binders . defPos)
+
 
 -- | Print something in one line
 oneLinePrint :: (H.Pretty a, IsString s) => a -> s

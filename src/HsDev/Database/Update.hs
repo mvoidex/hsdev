@@ -26,8 +26,9 @@ module HsDev.Database.Update (
 import Control.Applicative ((<|>))
 import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
+import Control.Exception (ErrorCall, evaluate, displayException)
 import Control.Lens hiding ((.=))
-import Control.Monad.Catch (catch)
+import Control.Monad.Catch (catch, handle, MonadThrow)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -58,7 +59,7 @@ import HsDev.Stack
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
 import HsDev.Symbols.Util
-import HsDev.Tools.Ghc.Session hiding (wait)
+import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
@@ -234,27 +235,6 @@ runTasks_ = void . runTasks
 readDB :: SessionMonad m => m Database
 readDB = askSession sessionDatabase >>= liftIO . readAsync
 
--- | Set inspection error
-inspectionFailed :: UpdateMonad m => ModuleLocation -> IO Inspection -> HsDevError -> m ()
-inspectionFailed mloc insp e = do
-	i <- liftIO insp
-	updater $ fromModule $ Inspected i mloc mempty (Left e)
-
--- | Inspect stage, save on error, return result on success
-preinspect :: UpdateMonad m => ModuleLocation -> IO Inspection -> m Preloaded -> m Preloaded
-preinspect mloc insp act = hsdevOnError (inspectionFailed mloc insp) $ do
-	p <- act
-	i <- liftIO insp
-	updater $ fromModule $ Inspected i mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
-	return p
-
--- | Inspect module and save result
-inspect :: UpdateMonad m => ModuleLocation -> IO Inspection -> m Module -> m ()
-inspect mloc insp act = hsdevOnError (inspectionFailed mloc insp) $ do
-	m <- act
-	i <- liftIO insp
-	updater $ fromModule $ Inspected i mloc mempty (Right m)
-
 -- | Scan modules
 scanModules :: UpdateMonad m => [String] -> [S.ModuleToScan] -> m ()
 scanModules opts ms = mapM_ (uncurry scanModules') grouped where
@@ -281,11 +261,20 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 			dropScope (N.Scoped _ v) = v
 			pload (mloc, mopts, mcts) = runTask "preloading" mloc $
 				case alreadyScanned ^? ix mloc of
-					Nothing -> preinspect mloc (inspectionInfos ^?! ix mloc) $ liftIO $
-						preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts
-					Just m' -> return $ Preloaded (m' ^. moduleId) H.defaultParseMode (fmap dropScope $ m' ^?! moduleSource . _Just) mempty
-		pmods <- runTasks (map pload ms')
+					Nothing -> do
+						p <- liftIO $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts
+						return (p, True)
+					Just m' -> return (Preloaded (m' ^. moduleId) H.defaultParseMode (fmap dropScope $ m' ^?! moduleSource . _Just) mempty, False)
+
+		ploaded <- runTasks (map pload ms')
+		db' <- fmap mconcat $ forM (map fst $ filter snd ploaded) $ \p -> do
+			let
+				mloc = p ^. preloadedId . moduleLocation
+			insp <- liftIO $ inspectionInfos ^?! ix mloc
+			return $ fromModule $ Inspected insp mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
+		updater db'
 		let
+			pmods = map fst ploaded
 			dbval' = dbval ^. maybe (slice installed) projectSlice mproj
 			deps' = sourceDeps dbval'
 			dependencies = ordNub (concat [fromMaybe [] (deps' ^? ix f) | f <- ms ^.. each . _1 . moduleFile]) \\ (ms ^.. each . _1 . moduleFile)
@@ -295,18 +284,28 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 			aenv' = mconcat (map moduleAnalyzeEnv mods')
 		case order pmods of
 			Left err -> Log.log Log.Error ("failed order dependencies for files: {}" ~~ show err)
-			Right ordered -> flip evalStateT aenv' $ runTasks_ (map inspect' ordered) where
-				inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
-					aenv <- get
+			Right ordered -> do
+				ms'' <- flip evalStateT aenv' $ runTasks (map inspect' ordered)
+				db'' <- fmap mconcat $ forM ms'' $ \m -> do
 					let
-						mloc = pmod ^. preloadedId . moduleLocation
-					inspect mloc (inspectionInfos ^?! ix mloc) $ do
-						m <- either (hsdevError . InspectError) return $ case alreadyScanned ^? ix mloc of
+						mloc = m ^. moduleId . moduleLocation
+					insp <- liftIO $ inspectionInfos ^?! ix mloc
+					return $ fromModule $ Inspected insp mloc mempty (Right m)
+				updater db''
+				where
+					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
+						aenv <- get
+						let
+							mloc = pmod ^. preloadedId . moduleLocation
+						m <- either (hsdevError . InspectError) eval $ case alreadyScanned ^? ix mloc of
 							Nothing -> analyzePreloaded aenv pmod
 							Just m' -> Right $ analyzeResolve aenv m'
 						modify (mappend (moduleAnalyzeEnv m))
 						return m
 	grouped = M.toList $ M.unionsWith (++) [M.singleton (m ^? _1 . moduleProject . _Just) [m] | m <- ms]
+	eval v = handle onError (v `deepseq` liftIO (evaluate v)) where
+		onError :: MonadThrow m => ErrorCall -> m a
+		onError = hsdevError . OtherError . displayException
 
 -- | Scan source file, resolve dependent modules
 scanFile :: UpdateMonad m => [String] -> FilePath -> m ()

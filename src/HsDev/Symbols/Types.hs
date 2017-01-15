@@ -4,7 +4,7 @@
 module HsDev.Symbols.Types (
 	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
-	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType,
+	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
 	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
@@ -150,7 +150,7 @@ instance NFData Fixity where
 	rnf (Fixity assoc pr n) = rnf assoc `seq` rnf pr `seq` rnf n
 
 instance NFData Module where
-	rnf (Module i d e fs s _) = rnf i `seq` rnf d `seq` rnf e `seq` rnf fs `seq` rnf s
+	rnf (Module i d e fs s msrc) = msrc `seq` rnf i `seq` rnf d `seq` rnf e `seq` rnf fs `seq` rnf s
 
 instance Eq Module where
 	l == r = _moduleId l == _moduleId r
@@ -360,6 +360,20 @@ instance Traversable (Inspected k t) where
 instance (NFData k, NFData t, NFData a) => NFData (Inspected k t a) where
 	rnf (Inspected t i ts r) = rnf t `seq` rnf i `seq` rnf ts `seq` rnf r
 
+instance (ToJSON k, ToJSON t, ToJSON a) => ToJSON (Inspected k t a) where
+	toJSON im = object [
+		"inspection" .= _inspection im,
+		"location" .= _inspectedKey im,
+		"tags" .= S.toList (_inspectionTags im),
+		either ("error" .=) ("result" .=) (_inspectionResult im)]
+
+instance (FromJSON k, Ord t, FromJSON t, FromJSON a) => FromJSON (Inspected k t a) where
+	parseJSON = withObject "inspected" $ \v -> Inspected <$>
+		v .:: "inspection" <*>
+		v .:: "location" <*>
+		(S.fromList <$> (v .::?! "tags")) <*>
+		((Left <$> v .:: "error") <|> (Right <$> v .:: "result"))
+
 -- | Empty tags
 noTags :: Set t
 noTags = S.empty
@@ -397,20 +411,6 @@ instance Show InspectedModule where
 			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ n]
 			OtherLocation src -> ["other location: " ++ src]
 			NoLocation -> ["no location"]
-
-instance ToJSON InspectedModule where
-	toJSON im = object [
-		"inspection" .= _inspection im,
-		"location" .= _inspectedKey im,
-		"tags" .= S.toList (_inspectionTags im),
-		either ("error" .=) ("module" .=) (_inspectionResult im)]
-
-instance FromJSON InspectedModule where
-	parseJSON = withObject "inspected module" $ \v -> Inspected <$>
-		v .:: "inspection" <*>
-		v .:: "location" <*>
-		(S.fromList <$> (v .::?! "tags")) <*>
-		((Left <$> v .:: "error") <|> (Right <$> v .:: "module"))
 
 notInspected :: ModuleLocation -> InspectedModule
 notInspected mloc = Inspected mempty mloc noTags (Left $ NotInspected mloc)
@@ -463,7 +463,9 @@ nullifyInfo = chain [
 	set selectorConstructors mempty,
 	set typeArgs mempty,
 	set typeContext mempty,
-	set familyAssociate mempty]
+	set familyAssociate mempty,
+	set patternType mempty,
+	set patternConstructor mempty]
 
 instance Sourced Module where
 	sourcedName = moduleId . moduleName

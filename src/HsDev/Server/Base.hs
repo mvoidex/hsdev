@@ -2,7 +2,8 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Base (
-	initLog, runServer, Server, startServer, inServer,
+	initLog, runServer, Server, startServer, inServer, clientCommand, parseCommand, readCommand,
+	sendServer, sendServer_,
 	withCache, writeCache, readCache,
 
 	module HsDev.Server.Types,
@@ -22,6 +23,7 @@ import Data.Maybe
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T (pack, unpack)
+import Options.Applicative (info, progDesc)
 import System.Log.Simple hiding (Level(..), Message(..), Command(..), (%=))
 import qualified System.Log.Simple.Base as Log
 import qualified System.Log.Simple as Log
@@ -37,6 +39,7 @@ import qualified HsDev.Cache as Cache
 import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
 import HsDev.Database
+import HsDev.Error
 import qualified HsDev.Database.Async as DB
 import qualified HsDev.Database.Update as Update
 import HsDev.Inspect (getDefines)
@@ -130,10 +133,28 @@ type Server = Worker (ServerM IO)
 startServer :: ServerOpts -> IO Server
 startServer sopts = startWorker (runServer sopts) id id
 
-inServer :: Server -> CommandOptions -> Command -> IO Result
-inServer srv copts c = do
-	c' <- canonicalize c
-	inWorker srv (Client.runClient copts $ Client.runCommand c')
+inServer :: Server -> ServerM IO a -> IO a
+inServer = inWorker
+
+clientCommand :: CommandOptions -> Command -> ServerM IO Result
+clientCommand copts c = do
+	c' <- liftIO $ canonicalize c
+	Client.runClient copts (Client.runCommand c')
+
+parseCommand :: [String] -> Either String Command
+parseCommand = parseArgs "hsdev" (info cmdP (progDesc "hsdev tool"))
+
+readCommand :: [String] -> Command
+readCommand = either error id . parseCommand
+
+sendServer :: Server -> CommandOptions -> [String] -> IO Result
+sendServer srv copts args = do
+	case parseCommand args of
+		Left e -> hsdevError $ RequestError e (unwords args)
+		Right c -> inServer srv (clientCommand copts c)
+
+sendServer_ :: Server -> [String] -> IO Result
+sendServer_ srv = sendServer srv def
 
 chaner :: F.Chan String -> Consumer Text
 chaner ch = Consumer withChan where

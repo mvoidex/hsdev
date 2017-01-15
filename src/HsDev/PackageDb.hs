@@ -108,4 +108,8 @@ packageDbOpt (PackageDb p) = "-package-db " ++ p
 
 -- | Get ghc options for package-db stack
 packageDbStackOpts :: PackageDbStack -> [String]
-packageDbStackOpts (PackageDbStack ps) = "-no-user-package-db" : map packageDbOpt (reverse ps)
+packageDbStackOpts (PackageDbStack ps)
+	| "-user-package-db" `elem` opts' = opts'
+	| otherwise = "-no-user-package-db" : opts'
+	where
+		opts' = map packageDbOpt (reverse ps)

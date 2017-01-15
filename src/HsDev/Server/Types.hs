@@ -8,7 +8,7 @@ module HsDev.Server.Types (
 	withSession, serverListen, serverSetLogRules, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
-	Command(..), AddedContents(..),
+	Command(..),
 	AutoFixCommand(..),
 	FileSource(..), TargetFilter(..), SearchQuery(..), SearchType(..),
 	FromCmd(..),
@@ -364,7 +364,7 @@ data Command =
 	Ping |
 	Listen (Maybe String) |
 	SetLogConfig [String] |
-	AddData { addedContents :: [AddedContents] } |
+	AddData { addedData :: [FilePath] } |
 	Scan {
 		scanProjects :: [FilePath],
 		scanCabal :: Bool,
@@ -392,7 +392,7 @@ data Command =
 	InfoProjects |
 	InfoSandboxes |
 	InfoSymbol SearchQuery [TargetFilter] Bool |
-	InfoModule SearchQuery [TargetFilter] Bool |
+	InfoModule SearchQuery [TargetFilter] Bool Bool |
 	InfoProject (Either String FilePath) |
 	InfoSandbox FilePath |
 	Lookup String FilePath |
@@ -423,14 +423,6 @@ data Command =
 	Link { linkHold :: Bool } |
 	Exit
 		deriving (Show)
-
-data AddedContents =
-	AddedDatabase Database |
-	AddedModule InspectedModule |
-	AddedProject Project
-
-instance Show AddedContents where
-	show = L.unpack . encode
 
 data AutoFixCommand =
 	AutoFixShow [Note OutputMessage] |
@@ -468,7 +460,7 @@ instance Paths Command where
 	paths f (Remove projs c cs fs) = Remove <$> each f projs <*> pure c <*> (each . paths) f cs <*> each f fs
 	paths _ RemoveAll = pure RemoveAll
 	paths f (InfoSymbol q t l) = InfoSymbol <$> pure q <*> paths f t <*> pure l
-	paths f (InfoModule q t h) = InfoModule <$> pure q <*> paths f t <*> pure h
+	paths f (InfoModule q t h i) = InfoModule <$> pure q <*> paths f t <*> pure h <*> pure i
 	paths f (InfoProject (Right proj)) = InfoProject <$> (Right <$> f proj)
 	paths f (InfoSandbox fpath) = InfoSandbox <$> f fpath
 	paths f (Lookup n fpath) = Lookup <$> pure n <*> f fpath
@@ -500,7 +492,7 @@ instance FromCmd Command where
 		cmd "ping" "ping server" (pure Ping),
 		cmd "listen" "listen server log" (Listen <$> optional ruleArg),
 		cmd "set-log" "set log config rules" (SetLogConfig <$> many (strArgument idm)),
-		cmd "add" "add info to database" (AddData <$> option readJSON idm),
+		cmd "add" "add info to database" (AddData <$> many fileArg),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
 			cabalFlag <*>
@@ -522,7 +514,7 @@ instance FromCmd Command where
 		cmd "projects" "list projects" (pure InfoProjects),
 		cmd "sandboxes" "list sandboxes" (pure InfoSandboxes),
 		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> many cmdP <*> localsFlag),
-		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP <*> headerFlag),
+		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP <*> headerFlag <*> inspectionFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> pathArg (help "locate sandbox in parent of this path")),
 		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
@@ -590,6 +582,7 @@ hayooPagesArg :: Parser Int
 headerFlag :: Parser Bool
 holdFlag :: Parser Bool
 inferFlag :: Parser Bool
+inspectionFlag :: Parser Bool
 localsFlag :: Parser Bool
 moduleArg :: Parser String
 packageDbArg :: Parser PackageDb
@@ -612,6 +605,7 @@ hayooPagesArg = option auto (long "pages" <> metavar "count" <> short 'n' <> hel
 headerFlag = switch (long "header" <> short 'h' <> help "show only header of module")
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
+inspectionFlag = switch (long "inspection" <> short 'i' <> help "return inspection data")
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = strOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
 packageArg = strOption (long "package" <> metavar "name" <> help "module package")
@@ -630,7 +624,7 @@ instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
 	toJSON (Listen r) = cmdJson "listen" ["rule" .= r]
 	toJSON (SetLogConfig rs) = cmdJson "set-log" ["rules" .= rs]
-	toJSON (AddData cts) = cmdJson "add" ["data" .= cts]
+	toJSON (AddData fs) = cmdJson "add" ["files" .= fs]
 	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
@@ -648,7 +642,7 @@ instance ToJSON Command where
 	toJSON InfoProjects = cmdJson "projects" []
 	toJSON InfoSandboxes = cmdJson "sandboxes" []
 	toJSON (InfoSymbol q tf l) = cmdJson "symbol" ["query" .= q, "filters" .= tf, "locals" .= l]
-	toJSON (InfoModule q tf h) = cmdJson "module" ["query" .= q, "filters" .= tf, "header" .= h]
+	toJSON (InfoModule q tf h i) = cmdJson "module" ["query" .= q, "filters" .= tf, "header" .= h, "inspection" .= i]
 	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
 	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
 	toJSON (Lookup n f) = cmdJson "lookup" ["name" .= n, "file" .= f]
@@ -674,7 +668,7 @@ instance FromJSON Command where
 		guardCmd "ping" v *> pure Ping,
 		guardCmd "listen" v *> (Listen <$> v .::? "rule"),
 		guardCmd "set-log" v *> (SetLogConfig <$> v .:: "rules"),
-		guardCmd "add" v *> (AddData <$> v .:: "data"),
+		guardCmd "add" v *> (AddData <$> v .:: "files"),
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>
 			(v .:: "cabal" <|> pure False) <*>
@@ -696,7 +690,7 @@ instance FromJSON Command where
 		guardCmd "projects" v *> pure InfoProjects,
 		guardCmd "sandboxes" v *> pure InfoSandboxes,
 		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .::?! "filters" <*> (v .:: "locals" <|> pure False)),
-		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .::?! "filters" <*> v .:: "header"),
+		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .::?! "filters" <*> v .:: "header" <*> v .:: "inspection"),
 		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
 		guardCmd "lookup" v *> (Lookup <$> v .:: "name" <*> v .:: "file"),
@@ -716,17 +710,6 @@ instance FromJSON Command where
 		guardCmd "flags" v *> pure Flags,
 		guardCmd "link" v *> (Link <$> (v .:: "hold" <|> pure False)),
 		guardCmd "exit" v *> pure Exit]
-
-instance ToJSON AddedContents where
-	toJSON (AddedDatabase db) = object ["database" .= db]
-	toJSON (AddedModule im) = object ["module" .= im]
-	toJSON (AddedProject p) = object ["project" .= p]
-
-instance FromJSON AddedContents where
-	parseJSON = withObject "added-contents" $ \v -> asum [
-		AddedDatabase <$> v .:: "database",
-		AddedModule <$> v .:: "module",
-		AddedProject <$> v .:: "project"]
 
 instance ToJSON AutoFixCommand where
 	toJSON (AutoFixShow ns) = cmdJson "autofix show" ["messages" .= ns]

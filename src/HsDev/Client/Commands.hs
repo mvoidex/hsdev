@@ -14,6 +14,8 @@ import Control.Monad.Reader
 import qualified Control.Monad.State as State
 import Control.Monad.Catch (try, catch, bracket, SomeException(..))
 import Data.Aeson hiding (Result, Error)
+import qualified Data.Aeson as A
+import qualified Data.ByteString.Lazy.Char8 as L
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
@@ -72,10 +74,27 @@ runCommand (SetLogConfig rs) = toValue $ do
 	rules' <- serverSetLogRules rs
 	Log.log Log.Debug $ "log rules switched from '{}' to '{}'" ~~ intercalate ", " rules' ~~ intercalate ", " rs
 	Log.log Log.Info $ "log rules updated to: {}" ~~ intercalate ", " rs
-runCommand (AddData cts) = toValue $ mapM_ updateData cts where
-	updateData (AddedDatabase db) = toValue $ serverUpdateDB db
-	updateData (AddedModule m) = toValue $ serverUpdateDB $ fromModule m
-	updateData (AddedProject p) = toValue $ serverUpdateDB $ fromProject p
+runCommand (AddData fs) = toValue $ do
+	let
+		fromJSON' v = case fromJSON v of
+			A.Error _ -> Nothing
+			A.Success v' -> Just v'
+	forM_ fs $ \f -> do
+		commandNotify (Notification $ object ["message" .= ("adding data" :: String), "file" .= f])
+		cts <- liftIO $ L.readFile f
+		case eitherDecode cts of
+			Left e -> hsdevError $ OtherError e
+			Right v -> do
+				let
+					parsed = msum [
+						fromJSON' v,
+						fmap fromModule $ fromJSON' v,
+						fmap (mconcat . map fromModule) $ fromJSON' v,
+						fmap fromProject $ fromJSON' v,
+						fmap (mconcat . map fromProject) $ fromJSON' v]
+				case parsed of
+					Nothing -> hsdevError $ OtherError "unknown format"
+					Just db -> serverUpdateDB db
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
@@ -158,14 +177,21 @@ runCommand (InfoSymbol sq fs _) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
 	return (dbval ^.. newestPackagesSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq))
-runCommand (InfoModule sq fs h) = toValue $ do
+runCommand (InfoModule sq fs h i) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
 	let
-		onlyHeaders
-			| h = toJSON . over each (view moduleId)
-			| otherwise = toJSON
-	return $ onlyHeaders (dbval ^.. newestPackagesSlice . modules . filtered filter' . filtered (matchQuery sq))
+		ms = dbval ^.. newestPackagesSlice . modules . filtered filter' . filtered (matchQuery sq)
+		mlocs = map (view (moduleId . moduleLocation)) ms
+		ims = map (\mloc -> dbval ^?! databaseModules . ix mloc) mlocs
+		converted
+			| h && i = toJSON $ map (fmap shorten) ims
+			| h = toJSON $ map shorten ms
+			| i = toJSON ims
+			| otherwise = toJSON ms
+			where
+				shorten = view moduleId
+	return converted
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
