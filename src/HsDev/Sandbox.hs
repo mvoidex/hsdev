@@ -36,7 +36,7 @@ import HsDev.Stack
 import HsDev.Symbols (moduleOpts)
 import HsDev.Symbols.Types (Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Compat as Compat
-import HsDev.Util (searchPath)
+import HsDev.Util (searchPath, directoryContents)
 
 import qualified Packages as GHC
 
@@ -85,7 +85,7 @@ findSandbox fpath = do
 	isDir <- doesDirectoryExist fpath'
 	if isDir
 		then do
-			dirs <- liftM ((fpath' :) . map (fpath' </>) . (\\ [".", ".."])) $ getDirectoryContents fpath'
+			dirs <- liftM (fpath' :) $ directoryContents fpath'
 			return $ msum $ map sandboxFromDir dirs
 		else return Nothing
 	where
