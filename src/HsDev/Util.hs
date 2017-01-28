@@ -70,11 +70,12 @@ withCurrentDirectory :: (MonadIO m, C.MonadMask m) => FilePath -> m a -> m a
 withCurrentDirectory cur act = C.bracket (liftIO Dir.getCurrentDirectory) (liftIO . Dir.setCurrentDirectory) $
 	const (liftIO (Dir.setCurrentDirectory cur) >> act)
 
--- | Get directory contents safely
+-- | Get directory contents safely: no fail, ignoring symbolic links, also prepends paths with dir name
 directoryContents :: FilePath -> IO [FilePath]
 directoryContents p = handle ignore $ do
 	b <- Dir.doesDirectoryExist p
-	if b
+	link' <- Dir.isSymbolicLink p
+	if b && (not link')
 		then liftM (map (p </>) . filter (`notElem` [".", ".."])) (Dir.getDirectoryContents p)
 		else return []
 	where

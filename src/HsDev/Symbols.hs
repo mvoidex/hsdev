@@ -40,7 +40,7 @@ import HsDev.Symbols.Types
 import HsDev.Symbols.Class
 import HsDev.Symbols.Documented (Documented(..))
 import HsDev.Symbols.HaskellNames
-import HsDev.Util (searchPath, uniqueBy)
+import HsDev.Util (searchPath, uniqueBy, directoryContents)
 
 unnamedModuleId :: ModuleLocation -> ModuleId
 unnamedModuleId = ModuleId ""
@@ -56,10 +56,10 @@ locateProject file = do
 	if isDir then locateHere file' else locateParent (takeDirectory file')
 	where
 		locateHere path = do
-			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents path
+			cts <- filter (not . null . takeBaseName) <$> directoryContents path
 			return $ fmap (project . (path </>)) $ find ((== ".cabal") . takeExtension) cts
 		locateParent dir = do
-			cts <- filter (not . null . takeBaseName) <$> getDirectoryContents dir
+			cts <- filter (not . null . takeBaseName) <$> directoryContents dir
 			case find ((== ".cabal") . takeExtension) cts of
 				Nothing -> if isDrive dir then return Nothing else locateParent (takeDirectory dir)
 				Just cabalf -> return $ Just $ project (dir </> cabalf)
