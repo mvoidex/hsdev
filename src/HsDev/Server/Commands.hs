@@ -46,6 +46,7 @@ import qualified HsDev.Client.Commands as Client
 import qualified HsDev.Database.Async as DB
 import HsDev.Server.Base
 import HsDev.Server.Types
+import HsDev.Tools.Base (runTool_)
 import HsDev.Error
 import HsDev.Util
 import HsDev.Version
@@ -55,7 +56,6 @@ import Data.Aeson.Types hiding (Result, Error)
 import Data.Char
 import Data.List
 import System.Environment
-import System.Process
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
 import System.Win32.PowerShell (escape, quote, quoteDouble)
@@ -124,9 +124,9 @@ runServerCommand (Start sopts) = do
 			~~ ("process" ~% escape quote myExe)
 			~~ ("args" ~% intercalate ", " (map biescape args))
 			~~ ("dir" ~% escape quote curDir)
-	r <- readProcess "powershell" [
+	r <- runTool_ "powershell" [
 		"-Command",
-		script] ""
+		script]
 	if all isSpace r
 		then putStrLn $ "Server started at port {}" ~~ serverPort sopts
 		else mapM_ putStrLn [

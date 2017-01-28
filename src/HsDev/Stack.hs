@@ -38,6 +38,7 @@ import HsDev.PackageDb
 import qualified HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Scan.Browse (withPackages)
 import HsDev.Util as Util
+import HsDev.Tools.Base (runTool_)
 
 -- | Get compiler version
 stackCompiler :: MonadLog m => m String
@@ -64,7 +65,7 @@ stack cmd' = hsdevLiftIO $ do
 	stackExe <- Util.withCurrentDirectory (takeDirectory curExe) $
 		liftIO (findExecutable "stack") >>= maybe (hsdevError $ ToolNotFound "stack") return
 	comp <- stackCompiler
-	liftIO $ readProcess stackExe (cmd' ++ ["--compiler", comp, "--arch", stackArch]) ""
+	liftIO $ runTool_ stackExe (["--compiler", comp, "--arch", stackArch] ++ cmd')
 
 -- | Make yaml opts
 yaml :: Maybe FilePath -> [String]

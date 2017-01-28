@@ -19,11 +19,11 @@ import qualified Data.ByteString.Lazy.Char8 as L (pack)
 import Data.Map (Map)
 import qualified Data.Map as M
 import Data.String (fromString)
-import System.Process (readProcess)
 
 import qualified HDocs.Module as HDocs
 import qualified HDocs.Haddock as HDocs (readSource, readSources_)
 
+import HsDev.Tools.Base
 import HsDev.Symbols
 
 -- | Get docs for modules
@@ -57,7 +57,5 @@ loadDocs opts m = do
 	return $ setDocs d m
 
 hdocsProcess :: String -> [String] -> IO (Maybe (Map String String))
-hdocsProcess mname opts = handle onErr $ liftM (decode . L.pack . last . lines) $ readProcess "hdocs" opts' "" where
+hdocsProcess mname opts = liftM (decode . L.pack . last . lines) $ runTool_ "hdocs" opts' where
 	opts' = mname : concat [["-g", opt] | opt <- opts]
-	onErr :: SomeException -> IO (Maybe a)
-	onErr _ = return Nothing
