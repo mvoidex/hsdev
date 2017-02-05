@@ -74,7 +74,7 @@ waitImports f = retry 1000 $ do
 -- | Clean temporary files
 cleanTmpImports :: FilePath -> IO ()
 cleanTmpImports dir = do
-	dumps <- liftM (map (dir </>) . filter ((== ".imports") . takeExtension)) $ getDirectoryContents dir
+	dumps <- liftM (filter ((== ".imports") . takeExtension)) $ directoryContents dir
 	forM_ dumps $ handle ignoreIO' . retry 1000 . removeFile
 	where
 		ignoreIO' :: IOException -> IO ()

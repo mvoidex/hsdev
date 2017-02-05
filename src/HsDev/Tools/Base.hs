@@ -1,4 +1,5 @@
 module HsDev.Tools.Base (
+	runTool, runTool_,
 	Result, ToolM,
 	runWait, runWait_,
 	tool, tool_,
@@ -27,6 +28,24 @@ import HsDev.Error
 import HsDev.Tools.Types
 import HsDev.Symbols
 import HsDev.Util (liftIOErrors)
+
+-- | Run tool, throwing HsDevError on fail
+runTool :: FilePath -> [String] -> String -> IO String
+runTool name args input = hsdevLiftIOWith onIOError $ do
+	(code, out, err) <- readProcessWithExitCode name args input
+	case code of
+		ExitFailure ecode -> hsdevError $ ToolError name $
+			"exited with code " ++ show ecode ++ ": " ++ err
+		ExitSuccess -> return out
+	where
+		onIOError s = ToolError name $ unlines [
+			"args: [" ++ intercalate ", " args ++ "]",
+			"stdin: " ++ input,
+			"error: " ++ s]
+
+-- | Run tool with not stdin
+runTool_ :: FilePath -> [String] -> IO String
+runTool_ name args = runTool name args ""
 
 type Result = Either String String
 type ToolM a = ExceptT String IO a

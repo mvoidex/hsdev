@@ -345,7 +345,7 @@ inspectDocs :: [String] -> Module -> IO Module
 inspectDocs opts m = do
 	let
 		hdocsWorkaround = False
-	docsMap <- hsdevLiftIOWith (ToolError "hdocs") $ if hdocsWorkaround
+	docsMap <- if hdocsWorkaround
 		then hdocsProcess (fromMaybe (T.unpack $ view moduleName m) (preview (moduleLocation . moduleFile) m)) opts
 		else liftM Just $ hdocs (view moduleLocation m) opts
 	return $ maybe id addDocs docsMap m
