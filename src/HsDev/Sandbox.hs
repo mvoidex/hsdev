@@ -19,7 +19,7 @@ import Control.Monad.Except
 import Control.Lens (view, makeLenses)
 import Data.Aeson
 import Data.Maybe (isJust, fromMaybe)
-import Data.List ((\\), inits)
+import Data.List (inits)
 import qualified Data.Text as T (unpack)
 import Distribution.Compiler
 import Distribution.System

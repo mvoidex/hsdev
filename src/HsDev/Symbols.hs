@@ -108,15 +108,15 @@ moduleOpts pkgs m = case view (moduleId . moduleLocation) m of
 
 -- | Set tag to `Inspected`
 setTag :: Ord t => t -> Inspected i t a -> Inspected i t a
-setTag tag = over inspectionTags (S.insert tag)
+setTag tag' = over inspectionTags (S.insert tag')
 
 -- | Check whether `Inspected` has tag
 hasTag :: Ord t => t -> Inspected i t a -> Bool
-hasTag tag = has (inspectionTags . ix tag)
+hasTag tag' = has (inspectionTags . ix tag')
 
 -- | Drop tag from `Inspected`
 removeTag :: Ord t => t -> Inspected i t a -> Inspected i t a
-removeTag tag = over inspectionTags (S.delete tag)
+removeTag tag' = over inspectionTags (S.delete tag')
 
 -- | Drop all tags
 dropTags :: Inspected i t a -> Inspected i t a

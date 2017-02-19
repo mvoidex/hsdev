@@ -31,7 +31,7 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Default
 import Data.Foldable (asum)
 import Options.Applicative
-import System.Log.Simple hiding (Command, short)
+import System.Log.Simple hiding (Command)
 
 import System.Directory.Paths
 import Text.Format (FormatBuild(..))
@@ -39,7 +39,6 @@ import Text.Format (FormatBuild(..))
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
 import HsDev.Error (hsdevError)
-import HsDev.Project
 import HsDev.Symbols
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)

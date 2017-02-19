@@ -23,6 +23,7 @@ nameIdent (Qual _ _ n) = fromName_ n
 nameIdent (UnQual _ n) = fromName_ n
 nameIdent s = fromName s
 
+pattern Name :: Maybe Text -> Text -> Name
 pattern Name m n <- ((nameModule &&& nameIdent) -> (m, n)) where
 	Name Nothing n = UnQual () (Exts.Ident () (T.unpack n))
 	Name (Just m) n = Qual () (ModuleName () (T.unpack m)) (Exts.Ident () (T.unpack n))

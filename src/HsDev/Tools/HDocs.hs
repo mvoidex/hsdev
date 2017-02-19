@@ -8,7 +8,6 @@ module HsDev.Tools.HDocs (
 	module Control.Monad.Except
 	) where
 
-import Control.Exception
 import Control.DeepSeq
 import Control.Lens (set, view, over, each)
 import Control.Monad ()

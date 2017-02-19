@@ -1,0 +1,4938 @@
+[
+  {
+    "location": {
+      "name": "Prelude",
+      "package": "base-4.9.0.0",
+      "db": "global-db"
+    },
+    "inspection": {
+      "flags": [],
+      "mtime": 0
+    },
+    "result": {
+      "exports": [
+        {
+          "id": {
+            "name": "either",
+            "module": {
+              "location": {
+                "name": "Data.Either",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Either"
+            }
+          },
+          "docs": "Case analysis for the Either type.\n If the value is `Left a`, apply the first function to `a`;\n if it is `Right b`, apply the second function to `b`.\n*Examples*We create two values of type `Either String Int`, one using the\n Left constructor and another using the Right constructor. Then\n we apply \"either\" the `length` function (if we have a String)\n or the \"times-two\" function (if we have an Int):\n>>> let s = Left \"foo\" :: Either String Int\n\n>>> let n = Right 3 :: Either String Int\n\n>>> either length (*2) s\n3\n\n>>> either length (*2) n\n6",
+          "info": {
+            "what": "function",
+            "type": "(a -> c) -> (b -> c) -> Either a b -> c"
+          }
+        },
+        {
+          "id": {
+            "name": "all",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Determines whether all elements of the structure satisfy the predicate.",
+          "info": {
+            "what": "function",
+            "type": "Foldable t => (a -> Bool) -> t a -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "and",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "and returns the conjunction of a container of Bools. For the\n result to be True, the container must be finite; False, however,\n results from a False value finitely far from the left end.",
+          "info": {
+            "what": "function",
+            "type": "Foldable t => t Bool -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "any",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Determines whether any element of the structure satisfies the predicate.",
+          "info": {
+            "what": "function",
+            "type": "Foldable t => (a -> Bool) -> t a -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "concat",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "The concatenation of all the elements of a container of lists.",
+          "info": {
+            "what": "function",
+            "type": "Foldable t => t [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "concatMap",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Map a function over all the elements of a container and concatenate\n the resulting lists.",
+          "info": {
+            "what": "function",
+            "type": "Foldable t => (a -> [b]) -> t a -> [b]"
+          }
+        },
+        {
+          "id": {
+            "name": "mapM_",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Map each element of a structure to a monadic action, evaluate\n these actions from left to right, and ignore the results. For a\n version that doesn't ignore the results see\n Data.Traversable.mapM.\nAs of base 4.8.0.0, mapM_ is just traverse_, specialized to\n Monad.",
+          "info": {
+            "what": "function",
+            "type": "(Foldable t, Monad m) => (a -> m b) -> t a -> m ()"
+          }
+        },
+        {
+          "id": {
+            "name": "notElem",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "notElem is the negation of elem.",
+          "info": {
+            "what": "function",
+            "type": "(Foldable t, Eq a) => a -> t a -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "or",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "or returns the disjunction of a container of Bools. For the\n result to be False, the container must be finite; True, however,\n results from a True value finitely far from the left end.",
+          "info": {
+            "what": "function",
+            "type": "Foldable t => t Bool -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "sequence_",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Evaluate each monadic action in the structure from left to right,\n and ignore the results. For a version that doesn't ignore the\n results see Data.Traversable.sequence.\nAs of base 4.8.0.0, sequence_ is just sequenceA_, specialized\n to Monad.",
+          "info": {
+            "what": "function",
+            "type": "(Foldable t, Monad m) => t (m a) -> m ()"
+          }
+        },
+        {
+          "id": {
+            "name": "<$>",
+            "module": {
+              "location": {
+                "name": "Data.Functor",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Functor"
+            }
+          },
+          "docs": "An infix synonym for fmap.\nThe name of this operator is an allusion to `$`.\n Note the similarities between their types:\n     ($) :: (a -> b) -> a -> b\n    (<$>) :: Functor f => (a -> b) -> f a -> f b\n\nWhereas `$` is function application, <$> is function\n application lifted over a Functor.\n*Examples*Convert from a ``Maybe` `Int`` to a ``Maybe` `String`` using `show`:\n>>> show <$> Nothing\nNothing\n\n>>> show <$> Just 3\nJust \"3\"\n\nConvert from an ``Either` `Int` `Int`` to an ``Either` `Int``\n `String` using `show`:\n>>> show <$> Left 17\nLeft 17\n\n>>> show <$> Right 17\nRight \"17\"\n\nDouble each element of a list:\n>>> (*2) <$> [1,2,3]\n[2,4,6]\n\nApply `even` to the second element of a pair:\n>>> even <$> (2,2)\n(2,True)",
+          "info": {
+            "what": "function",
+            "type": "Functor f => (a -> b) -> f a -> f b"
+          }
+        },
+        {
+          "id": {
+            "name": "maybe",
+            "module": {
+              "location": {
+                "name": "Data.Maybe",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Maybe"
+            }
+          },
+          "docs": "The maybe function takes a default value, a function, and a Maybe\n value. If the Maybe value is Nothing, the function returns the\n default value. Otherwise, it applies the function to the value inside\n the Just and returns the result.\n*Examples*Basic usage:\n>>> maybe False odd (Just 3)\nTrue\n\n>>> maybe False odd Nothing\nFalse\n\nRead an integer from a string using `readMaybe`. If we succeed,\n return twice the integer; that is, apply `(*2)` to it. If instead\n we fail to parse an integer, return `0` by default:\n>>> import Text.Read ( readMaybe )\n\n>>> maybe 0 (*2) (readMaybe \"5\")\n10\n\n>>> maybe 0 (*2) (readMaybe \"\")\n0\n\nApply `show` to a `Maybe Int`. If we have `Just n`, we want to show\n the underlying Int `n`. But if we have Nothing, we return the\n empty string instead of (for example) \"Nothing\":\n>>> maybe \"\" show (Just 5)\n\"5\"\n\n>>> maybe \"\" show Nothing\n\"\"",
+          "info": {
+            "what": "function",
+            "type": "b -> (a -> b) -> Maybe a -> b"
+          }
+        },
+        {
+          "id": {
+            "name": "lines",
+            "module": {
+              "location": {
+                "name": "Data.OldList",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.OldList"
+            }
+          },
+          "docs": "lines breaks a string up into a list of strings at newline\n characters. The resulting strings do not contain newlines.\nNote that after splitting the string at newline characters, the\n last part of the string is considered a line even if it doesn't end\n with a newline. For example,\n    lines \"\" == []\n    lines \"\\n\" == [\"\"]\n    lines \"one\" == [\"one\"]\n    lines \"one\\n\" == [\"one\"]\n    lines \"one\\n\\n\" == [\"one\",\"\"]\n    lines \"one\\ntwo\" == [\"one\",\"two\"]\n    lines \"one\\ntwo\\n\" == [\"one\",\"two\"]\n\nThus `lines s` contains at least as many elements as newlines in `s`.",
+          "info": {
+            "what": "function",
+            "type": "String -> [String]"
+          }
+        },
+        {
+          "id": {
+            "name": "unlines",
+            "module": {
+              "location": {
+                "name": "Data.OldList",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.OldList"
+            }
+          },
+          "docs": "unlines is an inverse operation to lines.\n It joins lines, after appending a terminating newline to each.",
+          "info": {
+            "what": "function",
+            "type": "[String] -> String"
+          }
+        },
+        {
+          "id": {
+            "name": "unwords",
+            "module": {
+              "location": {
+                "name": "Data.OldList",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.OldList"
+            }
+          },
+          "docs": "unwords is an inverse operation to words.\n It joins words with separating spaces.",
+          "info": {
+            "what": "function",
+            "type": "[String] -> String"
+          }
+        },
+        {
+          "id": {
+            "name": "words",
+            "module": {
+              "location": {
+                "name": "Data.OldList",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.OldList"
+            }
+          },
+          "docs": "words breaks a string up into a list of words, which were delimited\n by white space.",
+          "info": {
+            "what": "function",
+            "type": "String -> [String]"
+          }
+        },
+        {
+          "id": {
+            "name": "curry",
+            "module": {
+              "location": {
+                "name": "Data.Tuple",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Tuple"
+            }
+          },
+          "docs": "curry converts an uncurried function to a curried function.",
+          "info": {
+            "what": "function",
+            "type": "((a, b) -> c) -> a -> b -> c"
+          }
+        },
+        {
+          "id": {
+            "name": "fst",
+            "module": {
+              "location": {
+                "name": "Data.Tuple",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Tuple"
+            }
+          },
+          "docs": "Extract the first component of a pair.",
+          "info": {
+            "what": "function",
+            "type": "(a, b) -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "snd",
+            "module": {
+              "location": {
+                "name": "Data.Tuple",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Tuple"
+            }
+          },
+          "docs": "Extract the second component of a pair.",
+          "info": {
+            "what": "function",
+            "type": "(a, b) -> b"
+          }
+        },
+        {
+          "id": {
+            "name": "uncurry",
+            "module": {
+              "location": {
+                "name": "Data.Tuple",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Tuple"
+            }
+          },
+          "docs": "uncurry converts a curried function to a function on pairs.",
+          "info": {
+            "what": "function",
+            "type": "(a -> b -> c) -> (a, b) -> c"
+          }
+        },
+        {
+          "id": {
+            "name": "$!",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Strict (call-by-value) application operator. It takes a function and an\n argument, evaluates the argument to weak head normal form (WHNF), then calls\n the function with that value.",
+          "info": {
+            "what": "function",
+            "type": "(a -> b) -> a -> b"
+          }
+        },
+        {
+          "id": {
+            "name": "++",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Append two lists, i.e.,\n    [x1, ..., xm] ++ [y1, ..., yn] == [x1, ..., xm, y1, ..., yn]\n    [x1, ..., xm] ++ [y1, ...] == [x1, ..., xm, y1, ...]\n\nIf the first list is not finite, the result is the first list.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": ".",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Function composition.",
+          "info": {
+            "what": "function",
+            "type": "(b -> c) -> (a -> b) -> a -> c"
+          }
+        },
+        {
+          "id": {
+            "name": "=<<",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Same as >>=, but with the arguments interchanged.",
+          "info": {
+            "what": "function",
+            "type": "Monad m => (a -> m b) -> m a -> m b"
+          }
+        },
+        {
+          "id": {
+            "name": "asTypeOf",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "asTypeOf is a type-restricted version of const. It is usually\n used as an infix operator, and its typing forces its first argument\n (which is usually overloaded) to have the same type as the second.",
+          "info": {
+            "what": "function",
+            "type": "a -> a -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "const",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "`const x` is a unary function which evaluates to `x` for all inputs.\nFor instance,\n>>> map (const 42) [0..3]\n[42,42,42,42]",
+          "info": {
+            "what": "function",
+            "type": "a -> b -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "flip",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "`flip f` takes its (first) two arguments in the reverse order of `f`.",
+          "info": {
+            "what": "function",
+            "type": "(a -> b -> c) -> b -> a -> c"
+          }
+        },
+        {
+          "id": {
+            "name": "id",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Identity function.",
+          "info": {
+            "what": "function",
+            "type": "a -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "map",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "map `f xs` is the list obtained by applying `f` to each element\n of `xs`, i.e.,\n    map f [x1, x2, ..., xn] == [f x1, f x2, ..., f xn]\n    map f [x1, x2, ...] == [f x1, f x2, ...]",
+          "info": {
+            "what": "function",
+            "type": "(a -> b) -> [a] -> [b]"
+          }
+        },
+        {
+          "id": {
+            "name": "otherwise",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "otherwise is defined as the value True. It helps to make\n guards more readable. eg.\n     f x | x < 0 = ...\n     | otherwise = ...",
+          "info": {
+            "what": "function",
+            "type": "Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "until",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "`until p f` yields the result of applying `f` until `p` holds.",
+          "info": {
+            "what": "function",
+            "type": "(a -> Bool) -> (a -> a) -> a -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "error",
+            "module": {
+              "location": {
+                "name": "GHC.Err",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Err"
+            }
+          },
+          "docs": "error stops execution and displays an error message.",
+          "info": {
+            "what": "function",
+            "type": "HasCallStack => [Char] -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "errorWithoutStackTrace",
+            "module": {
+              "location": {
+                "name": "GHC.Err",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Err"
+            }
+          },
+          "docs": "A variant of error that does not produce a stack trace.",
+          "info": {
+            "what": "function",
+            "type": "[Char] -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "undefined",
+            "module": {
+              "location": {
+                "name": "GHC.Err",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Err"
+            }
+          },
+          "docs": "A special case of error.\n It is expected that compilers will recognize this and insert error\n messages which are more appropriate to the context in which undefined\n appears.",
+          "info": {
+            "what": "function",
+            "type": "HasCallStack => a"
+          }
+        },
+        {
+          "id": {
+            "name": "ioError",
+            "module": {
+              "location": {
+                "name": "GHC.IO.Exception",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.IO.Exception"
+            }
+          },
+          "docs": "Raise an IOError in the IO monad.",
+          "info": {
+            "what": "function",
+            "type": "IOError -> IO a"
+          }
+        },
+        {
+          "id": {
+            "name": "userError",
+            "module": {
+              "location": {
+                "name": "GHC.IO.Exception",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.IO.Exception"
+            }
+          },
+          "docs": "Construct an IOError value with a string describing the error.\n The fail method of the IO instance of the Monad class raises a\n userError, thus:\n    instance Monad IO where\n     ...\n     fail s = ioError (userError s)",
+          "info": {
+            "what": "function",
+            "type": "String -> IOError"
+          }
+        },
+        {
+          "id": {
+            "name": "!!",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "List index (subscript) operator, starting from 0.\n It is an instance of the more general Data.List.genericIndex,\n which takes an index of any integral type.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> Int -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "break",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "break, applied to a predicate `p` and a list `xs`, returns a tuple where\n first element is longest prefix (possibly empty) of `xs` of elements that\n *do not satisfy* `p` and second element is the remainder of the list:\n    break (> 3) [1,2,3,4,1,2,3,4] == ([1,2,3],[4,1,2,3,4])\n    break (< 9) [1,2,3] == ([],[1,2,3])\n    break (> 9) [1,2,3] == ([1,2,3],[])\n\nbreak `p` is equivalent to `span (not . p)`.",
+          "info": {
+            "what": "function",
+            "type": "(a -> Bool) -> [a] -> ([a], [a])"
+          }
+        },
+        {
+          "id": {
+            "name": "cycle",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "cycle ties a finite list into a circular one, or equivalently,\n the infinite repetition of the original list. It is the identity\n on infinite lists.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "drop",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "drop `n xs` returns the suffix of `xs`\n after the first `n` elements, or `[]` if `n > length xs`:\n    drop 6 \"Hello World!\" == \"World!\"\n    drop 3 [1,2,3,4,5] == [4,5]\n    drop 3 [1,2] == []\n    drop 3 [] == []\n    drop (-1) [1,2] == [1,2]\n    drop 0 [1,2] == [1,2]\n\nIt is an instance of the more general Data.List.genericDrop,\n in which `n` may be of any integral type.",
+          "info": {
+            "what": "function",
+            "type": "Int -> [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "dropWhile",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "dropWhile `p xs` returns the suffix remaining after takeWhile `p xs`:\n    dropWhile (< 3) [1,2,3,4,5,1,2,3] == [3,4,5,1,2,3]\n    dropWhile (< 9) [1,2,3] == []\n    dropWhile (< 0) [1,2,3] == [1,2,3]",
+          "info": {
+            "what": "function",
+            "type": "(a -> Bool) -> [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "filter",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "filter, applied to a predicate and a list, returns the list of\n those elements that satisfy the predicate; i.e.,\n    filter p xs = [ x | x <- xs, p x]",
+          "info": {
+            "what": "function",
+            "type": "(a -> Bool) -> [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "head",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "Extract the first element of a list, which must be non-empty.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "init",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "Return all the elements of a list except the last one.\n The list must be non-empty.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "iterate",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "iterate `f x` returns an infinite list of repeated applications\n of `f` to `x`:\n    iterate f x == [x, f x, f (f x), ...]",
+          "info": {
+            "what": "function",
+            "type": "(a -> a) -> a -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "last",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "Extract the last element of a list, which must be finite and non-empty.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "lookup",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "lookup `key assocs` looks up a key in an association list.",
+          "info": {
+            "what": "function",
+            "type": "Eq a => a -> [(a, b)] -> Maybe b"
+          }
+        },
+        {
+          "id": {
+            "name": "repeat",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "repeat `x` is an infinite list, with `x` the value of every element.",
+          "info": {
+            "what": "function",
+            "type": "a -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "replicate",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "replicate `n x` is a list of length `n` with `x` the value of\n every element.\n It is an instance of the more general Data.List.genericReplicate,\n in which `n` may be of any integral type.",
+          "info": {
+            "what": "function",
+            "type": "Int -> a -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "reverse",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "reverse `xs` returns the elements of `xs` in reverse order.\n `xs` must be finite.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "scanl",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "scanl is similar to foldl, but returns a list of successive\n reduced values from the left:\n    scanl f z [x1, x2, ...] == [z, z `f` x1, (z `f` x1) `f` x2, ...]\n\nNote that\n    last (scanl f z xs) == foldl f z xs.",
+          "info": {
+            "what": "function",
+            "type": "(b -> a -> b) -> b -> [a] -> [b]"
+          }
+        },
+        {
+          "id": {
+            "name": "scanl1",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "scanl1 is a variant of scanl that has no starting value argument:\n    scanl1 f [x1, x2, ...] == [x1, x1 `f` x2, ...]",
+          "info": {
+            "what": "function",
+            "type": "(a -> a -> a) -> [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "scanr",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "scanr is the right-to-left dual of scanl.\n Note that\n    head (scanr f z xs) == foldr f z xs.",
+          "info": {
+            "what": "function",
+            "type": "(a -> b -> b) -> b -> [a] -> [b]"
+          }
+        },
+        {
+          "id": {
+            "name": "scanr1",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "scanr1 is a variant of scanr that has no starting value argument.",
+          "info": {
+            "what": "function",
+            "type": "(a -> a -> a) -> [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "span",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "span, applied to a predicate `p` and a list `xs`, returns a tuple where\n first element is longest prefix (possibly empty) of `xs` of elements that\n satisfy `p` and second element is the remainder of the list:\n    span (< 3) [1,2,3,4,1,2,3,4] == ([1,2],[3,4,1,2,3,4])\n    span (< 9) [1,2,3] == ([1,2,3],[])\n    span (< 0) [1,2,3] == ([],[1,2,3])\n\nspan `p xs` is equivalent to `(takeWhile p xs, dropWhile p xs)`",
+          "info": {
+            "what": "function",
+            "type": "(a -> Bool) -> [a] -> ([a], [a])"
+          }
+        },
+        {
+          "id": {
+            "name": "splitAt",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "splitAt `n xs` returns a tuple where first element is `xs` prefix of\n length `n` and second element is the remainder of the list:\n    splitAt 6 \"Hello World!\" == (\"Hello \",\"World!\")\n    splitAt 3 [1,2,3,4,5] == ([1,2,3],[4,5])\n    splitAt 1 [1,2,3] == ([1],[2,3])\n    splitAt 3 [1,2,3] == ([1,2,3],[])\n    splitAt 4 [1,2,3] == ([1,2,3],[])\n    splitAt 0 [1,2,3] == ([],[1,2,3])\n    splitAt (-1) [1,2,3] == ([],[1,2,3])\n\nIt is equivalent to `(take n xs, drop n xs)` when `n` is not `_|_`\n (`splitAt _|_ xs = _|_`).\n splitAt is an instance of the more general Data.List.genericSplitAt,\n in which `n` may be of any integral type.",
+          "info": {
+            "what": "function",
+            "type": "Int -> [a] -> ([a], [a])"
+          }
+        },
+        {
+          "id": {
+            "name": "tail",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "Extract the elements after the head of a list, which must be non-empty.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "take",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "take `n`, applied to a list `xs`, returns the prefix of `xs`\n of length `n`, or `xs` itself if `n > length xs`:\n    take 5 \"Hello World!\" == \"Hello\"\n    take 3 [1,2,3,4,5] == [1,2,3]\n    take 3 [1,2] == [1,2]\n    take 3 [] == []\n    take (-1) [1,2] == []\n    take 0 [1,2] == []\n\nIt is an instance of the more general Data.List.genericTake,\n in which `n` may be of any integral type.",
+          "info": {
+            "what": "function",
+            "type": "Int -> [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "takeWhile",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "takeWhile, applied to a predicate `p` and a list `xs`, returns the\n longest prefix (possibly empty) of `xs` of elements that satisfy `p`:\n    takeWhile (< 3) [1,2,3,4,1,2,3,4] == [1,2]\n    takeWhile (< 9) [1,2,3] == [1,2,3]\n    takeWhile (< 0) [1,2,3] == []",
+          "info": {
+            "what": "function",
+            "type": "(a -> Bool) -> [a] -> [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "unzip",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "unzip transforms a list of pairs into a list of first components\n and a list of second components.",
+          "info": {
+            "what": "function",
+            "type": "[(a, b)] -> ([a], [b])"
+          }
+        },
+        {
+          "id": {
+            "name": "unzip3",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "The unzip3 function takes a list of triples and returns three\n lists, analogous to unzip.",
+          "info": {
+            "what": "function",
+            "type": "[(a, b, c)] -> ([a], [b], [c])"
+          }
+        },
+        {
+          "id": {
+            "name": "zip",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "zip takes two lists and returns a list of corresponding pairs.\n If one input list is short, excess elements of the longer list are\n discarded.\nzip is right-lazy:\n    zip [] _|_ = []",
+          "info": {
+            "what": "function",
+            "type": "[a] -> [b] -> [(a, b)]"
+          }
+        },
+        {
+          "id": {
+            "name": "zip3",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "zip3 takes three lists and returns a list of triples, analogous to\n zip.",
+          "info": {
+            "what": "function",
+            "type": "[a] -> [b] -> [c] -> [(a, b, c)]"
+          }
+        },
+        {
+          "id": {
+            "name": "zipWith",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "zipWith generalises zip by zipping with the function given\n as the first argument, instead of a tupling function.\n For example, `zipWith (+)` is applied to two lists to produce the\n list of corresponding sums.\nzipWith is right-lazy:\n    zipWith f [] _|_ = []",
+          "info": {
+            "what": "function",
+            "type": "(a -> b -> c) -> [a] -> [b] -> [c]"
+          }
+        },
+        {
+          "id": {
+            "name": "zipWith3",
+            "module": {
+              "location": {
+                "name": "GHC.List",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.List"
+            }
+          },
+          "docs": "The zipWith3 function takes a function which combines three\n elements, as well as three lists and returns a list of their point-wise\n combination, analogous to zipWith.",
+          "info": {
+            "what": "function",
+            "type": "(a -> b -> c -> d) -> [a] -> [b] -> [c] -> [d]"
+          }
+        },
+        {
+          "id": {
+            "name": "subtract",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "docs": "the same as `flip (-)`.\nBecause `-` is treated specially in the Haskell grammar,\n `(-` *e*`)` is not a section, but an application of prefix negation.\n However, `(subtract` *exp*`)` is equivalent to the disallowed section.",
+          "info": {
+            "what": "function",
+            "type": "Num a => a -> a -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "lex",
+            "module": {
+              "location": {
+                "name": "GHC.Read",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Read"
+            }
+          },
+          "docs": "The lex function reads a single lexeme from the input, discarding\n initial white space, and returning the characters that constitute the\n lexeme. If the input string contains only white space, lex returns a\n single successful `lexeme' consisting of the empty string. (Thus\n `lex \"\" = [(\"\",\"\")]`.) If there is no legal lexeme at the\n beginning of the input string, lex fails (i.e. returns `[]`).\nThis lexer is not completely faithful to the Haskell lexical syntax\n in the following respects:\n* Qualified names are not handled properly\n\n* Octal and hexadecimal numerics are not recognized as a single token\n\n* Comments are not treated properly",
+          "info": {
+            "what": "function",
+            "type": "String -> [(String, String)]"
+          }
+        },
+        {
+          "id": {
+            "name": "readParen",
+            "module": {
+              "location": {
+                "name": "GHC.Read",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Read"
+            }
+          },
+          "docs": "`readParen True p` parses what `p` parses, but surrounded with\n parentheses.\n`readParen False p` parses what `p` parses, but optionally\n surrounded with parentheses.",
+          "info": {
+            "what": "function",
+            "type": "Bool -> ReadS a -> ReadS a"
+          }
+        },
+        {
+          "id": {
+            "name": "^",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "raise a number to a non-negative integral power",
+          "info": {
+            "what": "function",
+            "type": "(Num a, Integral b) => a -> b -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "^^",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "raise a number to an integral power",
+          "info": {
+            "what": "function",
+            "type": "(Fractional a, Integral b) => a -> b -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "even",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "info": {
+            "what": "function",
+            "type": "Integral a => a -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "fromIntegral",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "general coercion from integral types",
+          "info": {
+            "what": "function",
+            "type": "(Integral a, Num b) => a -> b"
+          }
+        },
+        {
+          "id": {
+            "name": "gcd",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "`gcd x y` is the non-negative factor of both `x` and `y` of which\n every common factor of `x` and `y` is also a factor; for example\n `gcd 4 2 = 2`, `gcd (-4) 6 = 2`, `gcd 0 4` = `4`. `gcd 0 0` = `0`.\n (That is, the common divisor that is \"greatest\" in the divisibility\n preordering.)\nNote: Since for signed fixed-width integer types, `abs minBound < 0`,\n the result may be negative if one of the arguments is `minBound` (and\n necessarily is if the other is `0` or `minBound`) for such types.",
+          "info": {
+            "what": "function",
+            "type": "Integral a => a -> a -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "lcm",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "`lcm x y` is the smallest positive integer that both `x` and `y` divide.",
+          "info": {
+            "what": "function",
+            "type": "Integral a => a -> a -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "odd",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "info": {
+            "what": "function",
+            "type": "Integral a => a -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "realToFrac",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "general coercion to fractional types",
+          "info": {
+            "what": "function",
+            "type": "(Real a, Fractional b) => a -> b"
+          }
+        },
+        {
+          "id": {
+            "name": "showChar",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "utility function converting a Char to a show function that\n simply prepends the character unchanged.",
+          "info": {
+            "what": "function",
+            "type": "Char -> ShowS"
+          }
+        },
+        {
+          "id": {
+            "name": "showParen",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "utility function that surrounds the inner show function with\n parentheses when the Bool parameter is True.",
+          "info": {
+            "what": "function",
+            "type": "Bool -> ShowS -> ShowS"
+          }
+        },
+        {
+          "id": {
+            "name": "showString",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "utility function converting a String to a show function that\n simply prepends the string unchanged.",
+          "info": {
+            "what": "function",
+            "type": "String -> ShowS"
+          }
+        },
+        {
+          "id": {
+            "name": "shows",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "equivalent to showsPrec with a precedence of 0.",
+          "info": {
+            "what": "function",
+            "type": "Show a => a -> ShowS"
+          }
+        },
+        {
+          "id": {
+            "name": "appendFile",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The computation appendFile `file str` function appends the string `str`,\n to the file `file`.\nNote that writeFile and appendFile write a literal string\n to a file. To write a value of any printable type, as with print,\n use the show function to convert the value to a string first.\n    main = appendFile \"squares\" (show [(x,x*x) | x <- [0,0.1..2]])",
+          "info": {
+            "what": "function",
+            "type": "FilePath -> String -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "getChar",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "Read a character from the standard input device\n (same as hGetChar stdin).",
+          "info": {
+            "what": "function",
+            "type": "IO Char"
+          }
+        },
+        {
+          "id": {
+            "name": "getContents",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The getContents operation returns all user input as a single string,\n which is read lazily as it is needed\n (same as hGetContents stdin).",
+          "info": {
+            "what": "function",
+            "type": "IO String"
+          }
+        },
+        {
+          "id": {
+            "name": "getLine",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "Read a line from the standard input device\n (same as hGetLine stdin).",
+          "info": {
+            "what": "function",
+            "type": "IO String"
+          }
+        },
+        {
+          "id": {
+            "name": "interact",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The interact function takes a function of type `String->String`\n as its argument. The entire input from the standard input device is\n passed to this function as its argument, and the resulting string is\n output on the standard output device.",
+          "info": {
+            "what": "function",
+            "type": "(String -> String) -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "print",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The print function outputs a value of any printable type to the\n standard output device.\n Printable types are those that are instances of class Show; print\n converts values to strings for output using the show operation and\n adds a newline.\nFor example, a program to print the first 20 integers and their\n powers of 2 could be written as:\n    main = print ([(n, 2^n) | n <- [0..19]])",
+          "info": {
+            "what": "function",
+            "type": "Show a => a -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "putChar",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "Write a character to the standard output device\n (same as hPutChar stdout).",
+          "info": {
+            "what": "function",
+            "type": "Char -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "putStr",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "Write a string to the standard output device\n (same as hPutStr stdout).",
+          "info": {
+            "what": "function",
+            "type": "String -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "putStrLn",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The same as putStr, but adds a newline character.",
+          "info": {
+            "what": "function",
+            "type": "String -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "readFile",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The readFile function reads a file and\n returns the contents of the file as a string.\n The file is read lazily, on demand, as with getContents.",
+          "info": {
+            "what": "function",
+            "type": "FilePath -> IO String"
+          }
+        },
+        {
+          "id": {
+            "name": "readIO",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The readIO function is similar to read except that it signals\n parse failure to the IO monad instead of terminating the program.",
+          "info": {
+            "what": "function",
+            "type": "Read a => String -> IO a"
+          }
+        },
+        {
+          "id": {
+            "name": "readLn",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The readLn function combines getLine and readIO.",
+          "info": {
+            "what": "function",
+            "type": "Read a => IO a"
+          }
+        },
+        {
+          "id": {
+            "name": "writeFile",
+            "module": {
+              "location": {
+                "name": "System.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "System.IO"
+            }
+          },
+          "docs": "The computation writeFile `file str` function writes the string `str`,\n to the file `file`.",
+          "info": {
+            "what": "function",
+            "type": "FilePath -> String -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "read",
+            "module": {
+              "location": {
+                "name": "Text.Read",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Text.Read"
+            }
+          },
+          "docs": "The read function reads input from a string, which must be\n completely consumed by the input process.",
+          "info": {
+            "what": "function",
+            "type": "Read a => String -> a"
+          }
+        },
+        {
+          "id": {
+            "name": "reads",
+            "module": {
+              "location": {
+                "name": "Text.Read",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Text.Read"
+            }
+          },
+          "docs": "equivalent to readsPrec with a precedence of 0.",
+          "info": {
+            "what": "function",
+            "type": "Read a => String -> [(a, String)]"
+          }
+        },
+        {
+          "id": {
+            "name": "&&",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "docs": "Boolean \"and\"",
+          "info": {
+            "what": "function",
+            "type": "Bool -> Bool -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "not",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "docs": "Boolean \"not\"",
+          "info": {
+            "what": "function",
+            "type": "Bool -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "||",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "docs": "Boolean \"or\"",
+          "info": {
+            "what": "function",
+            "type": "Bool -> Bool -> Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "$",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Application operator. This operator is redundant, since ordinary\n application `(f x)` means the same as `(f $ x)`. However, $ has\n low, right-associative binding precedence, so it sometimes allows\n parentheses to be omitted; for example:\n     f $ g $ h x = f (g (h x))\n\nIt is also useful in higher-order situations, such as `map ($ 0) xs`,\n or `Data.List.zipWith ($) fs xs`.",
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "seq",
+            "module": {
+              "location": {
+                "name": "GHC.Prim",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Prim"
+            }
+          },
+          "docs": "The value of `seq a b` is bottom if `a` is bottom, and\n otherwise equal to `b`. `seq` is usually introduced to\n improve performance by avoiding unneeded laziness.\nA note on evaluation order: the expression `seq a b` does\n *not* guarantee that `a` will be evaluated before `b`.\n The only guarantee given by `seq` is that the both `a`\n and `b` will be evaluated before `seq` returns a value.\n In particular, this means that `b` may be evaluated before\n `a`. If you need to guarantee a specific order of evaluation,\n you must use the function `pseq` from the \"parallel\" package.",
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Either",
+            "module": {
+              "location": {
+                "name": "Data.Either",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Either"
+            }
+          },
+          "docs": "The Either type represents values with two possibilities: a value of\ntype `Either a b` is either `Left a` or `Right b`.\nThe Either type is sometimes used to represent a value which is\neither correct or an error; by convention, the Left constructor is\nused to hold an error value and the Right constructor is used to\nhold a correct value (mnemonic: \"right\" also means \"correct\").\n*Examples*The type `Either String Int` is the type of values which can be either\na String or an Int. The Left constructor can be used only on\nStrings, and the Right constructor can be used only on Ints:\n>>> let s = Left \"foo\" :: Either String Int\n\n>>> s\nLeft \"foo\"\n\n>>> let n = Right 3 :: Either String Int\n\n>>> n\nRight 3\n\n>>> :type s\ns :: Either String Int\n\n>>> :type n\nn :: Either String Int\n\nThe fmap from our Functor instance will ignore Left values, but\nwill apply the supplied function to values contained in a Right:\n>>> let s = Left \"foo\" :: Either String Int\n\n>>> let n = Right 3 :: Either String Int\n\n>>> fmap (*2) s\nLeft \"foo\"\n\n>>> fmap (*2) n\nRight 6\n\nThe Monad instance for Either allows us to chain together multiple\nactions which may fail, and fail overall if any of the individual\nsteps failed. First we'll write a function that can either parse an\nInt from a Char, or fail.\n>>> import Data.Char ( digitToInt, isDigit )\n\n>>> :{\n    let parseEither :: Char -> Either String Int\n        parseEither c\n          | isDigit c = Right (digitToInt c)\n          | otherwise = Left \"parse error\"\n\n>>> :}\n\nThe following should work, since both `'1'` and `'2'` can be\nparsed as Ints.\n>>> :{\n    let parseMultiple :: Either String Int\n        parseMultiple = do\n          x <- parseEither '1'\n          y <- parseEither '2'\n          return (x + y)\n\n>>> :}\n\n>>> parseMultiple\nRight 3\n\nBut the following should fail overall, since the first operation where\nwe attempt to parse `'m'` as an Int will fail:\n>>> :{\n    let parseMultiple :: Either String Int\n        parseMultiple = do\n          x <- parseEither 'm'\n          y <- parseEither '2'\n          return (x + y)\n\n>>> :}\n\n>>> parseMultiple\nLeft \"parse error\"",
+          "info": {
+            "args": [
+              "a",
+              "b"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "Left",
+            "module": {
+              "location": {
+                "name": "Data.Either",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Either"
+            }
+          },
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "ctor",
+            "type": "Either"
+          }
+        },
+        {
+          "id": {
+            "name": "Right",
+            "module": {
+              "location": {
+                "name": "Data.Either",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Either"
+            }
+          },
+          "info": {
+            "args": [
+              "b"
+            ],
+            "what": "ctor",
+            "type": "Either"
+          }
+        },
+        {
+          "id": {
+            "name": "Foldable",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Data structures that can be folded.\nFor example, given a data type\n    data Tree a = Empty | Leaf a | Node (Tree a) a (Tree a)\n\na suitable instance would be\n    instance Foldable Tree where\n     foldMap f Empty = mempty\n     foldMap f (Leaf x) = f x\n     foldMap f (Node l k r) = foldMap f l `mappend` f k `mappend` foldMap f r\n\nThis is suitable even for abstract types, as the monoid is assumed\n to satisfy the monoid laws. Alternatively, one could define `foldr`:\n    instance Foldable Tree where\n     foldr f z Empty = z\n     foldr f z (Leaf x) = f x z\n     foldr f z (Node l k r) = foldr f (f k (foldr f z r)) l\n\n`Foldable` instances are expected to satisfy the following laws:\n    foldr f z t = appEndo (foldMap (Endo . f) t ) z\n\n    foldl f z t = appEndo (getDual (foldMap (Dual . Endo . flip f) t)) z\n\n    fold = foldMap id\n\n`sum`, `product`, `maximum`, and `minimum` should all be essentially\n equivalent to `foldMap` forms, such as\n    sum = getSum . foldMap Sum\n\nbut may be less defined.\nIf the type is also a Functor instance, it should satisfy\n    foldMap f = fold . fmap f\n\nwhich implies that\n    foldMap f . fmap g = foldMap (f . g)",
+          "info": {
+            "args": [
+              "t"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "elem",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Does the element occur in the structure?",
+          "info": {
+            "what": "method",
+            "type": "(Foldable t, Eq a) => a -> t a -> Bool",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "foldMap",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Map each element of the structure to a monoid,\n and combine the results.",
+          "info": {
+            "what": "method",
+            "type": "(Foldable t, Monoid m) => (a -> m) -> t a -> m",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "foldl",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Left-associative fold of a structure.\nIn the case of lists, foldl, when applied to a binary\n operator, a starting value (typically the left-identity of the operator),\n and a list, reduces the list using the binary operator, from left to\n right:\n    foldl f z [x1, x2, ..., xn] == (...((z `f` x1) `f` x2) `f`...) `f` xn\n\nNote that to produce the outermost application of the operator the\n entire input list must be traversed. This means that foldl' will\n diverge if given an infinite list.\nAlso note that if you want an efficient left-fold, you probably want to\n use foldl' instead of foldl. The reason for this is that latter does\n not force the \"inner\" results (e.g. `z `f` x1` in the above example)\n before applying them to the operator (e.g. to `(`f` x2)`). This results\n in a thunk chain `O(n)` elements long, which then must be evaluated from\n the outside-in.\nFor a general Foldable structure this should be semantically identical\n to,\n    foldl f z = foldl f z . toList",
+          "info": {
+            "what": "method",
+            "type": "Foldable t => (b -> a -> b) -> b -> t a -> b",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "foldl1",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "A variant of foldl that has no base case,\n and thus may only be applied to non-empty structures.\n    foldl1 f = foldl1 f . toList",
+          "info": {
+            "what": "method",
+            "type": "Foldable t => (a -> a -> a) -> t a -> a",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "foldr",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Right-associative fold of a structure.\nIn the case of lists, foldr, when applied to a binary operator, a\n starting value (typically the right-identity of the operator), and a\n list, reduces the list using the binary operator, from right to left:\n    foldr f z [x1, x2, ..., xn] == x1 `f` (x2 `f` ... (xn `f` z)...)\n\nNote that, since the head of the resulting expression is produced by\n an application of the operator to the first element of the list,\n foldr can produce a terminating expression from an infinite list.\nFor a general Foldable structure this should be semantically identical\n to,\n    foldr f z = foldr f z . toList",
+          "info": {
+            "what": "method",
+            "type": "Foldable t => (a -> b -> b) -> b -> t a -> b",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "foldr1",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "A variant of foldr that has no base case,\n and thus may only be applied to non-empty structures.\n    foldr1 f = foldr1 f . toList",
+          "info": {
+            "what": "method",
+            "type": "Foldable t => (a -> a -> a) -> t a -> a",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "length",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Returns the size/length of a finite structure as an Int. The\n default implementation is optimized for structures that are similar to\n cons-lists, because there is no general way to do better.",
+          "info": {
+            "what": "method",
+            "type": "Foldable t => t a -> Int",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "maximum",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "The largest element of a non-empty structure.",
+          "info": {
+            "what": "method",
+            "type": "(Foldable t, Ord a) => t a -> a",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "minimum",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "The least element of a non-empty structure.",
+          "info": {
+            "what": "method",
+            "type": "(Foldable t, Ord a) => t a -> a",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "null",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "Test whether the structure is empty. The default implementation is\n optimized for structures that are similar to cons-lists, because there\n is no general way to do better.",
+          "info": {
+            "what": "method",
+            "type": "Foldable t => t a -> Bool",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "product",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "The product function computes the product of the numbers of a\n structure.",
+          "info": {
+            "what": "method",
+            "type": "(Foldable t, Num a) => t a -> a",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "sum",
+            "module": {
+              "location": {
+                "name": "Data.Foldable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Foldable"
+            }
+          },
+          "docs": "The sum function computes the sum of the numbers of a structure.",
+          "info": {
+            "what": "method",
+            "type": "(Foldable t, Num a) => t a -> a",
+            "class": "Foldable"
+          }
+        },
+        {
+          "id": {
+            "name": "Traversable",
+            "module": {
+              "location": {
+                "name": "Data.Traversable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Traversable"
+            }
+          },
+          "docs": "Functors representing data structures that can be traversed from\n left to right.\nA definition of traverse must satisfy the following laws:\n*naturality*. `t . traverse f = traverse (t . f)`\n for every applicative transformation `t`\n*identity*. `traverse Identity = Identity`\n*composition*. `traverse (Compose . fmap g . f) = Compose . fmap (traverse g) . traverse f`\nA definition of sequenceA must satisfy the following laws:\n*naturality*. `t . sequenceA = sequenceA . fmap t`\n for every applicative transformation `t`\n*identity*. `sequenceA . fmap Identity = Identity`\n*composition*. `sequenceA . fmap Compose = Compose . fmap sequenceA . sequenceA`\nwhere an *applicative transformation* is a function\n    t :: (Applicative f, Applicative g) => f a -> g a\n\npreserving the Applicative operations, i.e.\n*     t (pure x) = pure x\n\n\n*     t (x <*> y) = t x <*> t y\n\n\nand the identity functor `Identity` and composition of functors `Compose`\n are defined as\n     newtype Identity a = Identity a\n    \n     instance Functor Identity where\n     fmap f (Identity x) = Identity (f x)\n    \n     instance Applicative Identity where\n     pure x = Identity x\n     Identity f <*> Identity x = Identity (f x)\n    \n     newtype Compose f g a = Compose (f (g a))\n    \n     instance (Functor f, Functor g) => Functor (Compose f g) where\n     fmap f (Compose x) = Compose (fmap (fmap f) x)\n    \n     instance (Applicative f, Applicative g) => Applicative (Compose f g) where\n     pure x = Compose (pure (pure x))\n     Compose f <*> Compose x = Compose ((<*>) <$> f <*> x)\n\n(The naturality law is implied by parametricity.)\nInstances are similar to Functor, e.g. given a data type\n    data Tree a = Empty | Leaf a | Node (Tree a) a (Tree a)\n\na suitable instance would be\n    instance Traversable Tree where\n     traverse f Empty = pure Empty\n     traverse f (Leaf x) = Leaf <$> f x\n     traverse f (Node l k r) = Node <$> traverse f l <*> f k <*> traverse f r\n\nThis is suitable even for abstract types, as the laws for <*>\n imply a form of associativity.\nThe superclass instances should satisfy the following:\n* In the Functor instance, fmap should be equivalent to traversal\n with the identity applicative functor (fmapDefault).\n\n* In the Foldable instance, Data.Foldable.foldMap should be\n equivalent to traversal with a constant applicative functor\n (foldMapDefault).",
+          "info": {
+            "args": [
+              "t"
+            ],
+            "what": "data",
+            "ctx": [
+              "Functor t",
+              "Foldable t"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "mapM",
+            "module": {
+              "location": {
+                "name": "Data.Traversable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Traversable"
+            }
+          },
+          "docs": "Map each element of a structure to a monadic action, evaluate\n these actions from left to right, and collect the results. For\n a version that ignores the results see Data.Foldable.mapM_.",
+          "info": {
+            "what": "method",
+            "type": "(Traversable t, Monad m) => (a -> m b) -> t a -> m (t b)",
+            "class": "Traversable"
+          }
+        },
+        {
+          "id": {
+            "name": "sequence",
+            "module": {
+              "location": {
+                "name": "Data.Traversable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Traversable"
+            }
+          },
+          "docs": "Evaluate each monadic action in the structure from left to\n right, and collect the results. For a version that ignores the\n results see Data.Foldable.sequence_.",
+          "info": {
+            "what": "method",
+            "type": "(Traversable t, Monad m) => t (m a) -> m (t a)",
+            "class": "Traversable"
+          }
+        },
+        {
+          "id": {
+            "name": "sequenceA",
+            "module": {
+              "location": {
+                "name": "Data.Traversable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Traversable"
+            }
+          },
+          "docs": "Evaluate each action in the structure from left to right, and\n and collect the results. For a version that ignores the results\n see Data.Foldable.sequenceA_.",
+          "info": {
+            "what": "method",
+            "type": "(Traversable t, Applicative f) => t (f a) -> f (t a)",
+            "class": "Traversable"
+          }
+        },
+        {
+          "id": {
+            "name": "traverse",
+            "module": {
+              "location": {
+                "name": "Data.Traversable",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Data.Traversable"
+            }
+          },
+          "docs": "Map each element of a structure to an action, evaluate these actions\n from left to right, and collect the results. For a version that ignores\n the results see Data.Foldable.traverse_.",
+          "info": {
+            "what": "method",
+            "type": "(Traversable t, Applicative f) => (a -> f b) -> t a -> f (t b)",
+            "class": "Traversable"
+          }
+        },
+        {
+          "id": {
+            "name": "Applicative",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "A functor with application, providing operations to\n* embed pure expressions (pure), and\n\n* sequence computations and combine their results (<*>).\n\nA minimal complete definition must include implementations of these\n functions satisfying the following laws:\n*identity*.     pure id <*> v = v\n\n\n*composition*.     pure (.) <*> u <*> v <*> w = u <*> (v <*> w)\n\n\n*homomorphism*.     pure f <*> pure x = pure (f x)\n\n\n*interchange*.     u <*> pure y = pure ($ y) <*> u\n\n\nThe other methods have the following default definitions, which may\n be overridden with equivalent specialized implementations:\n*     u *> v = pure (const id) <*> u <*> v\n\n\n*     u <* v = pure const <*> u <*> v\n\n\nAs a consequence of these laws, the Functor instance for `f` will satisfy\n*     fmap f x = pure f <*> x\n\n\nIf `f` is also a Monad, it should satisfy\n*     pure = return\n\n\n*     (<*>) = ap\n\n\n(which implies that pure and <*> satisfy the applicative functor laws).",
+          "info": {
+            "args": [
+              "f"
+            ],
+            "what": "data",
+            "ctx": [
+              "Functor f"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "*>",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Sequence actions, discarding the value of the first argument.",
+          "info": {
+            "what": "method",
+            "type": "Applicative f => f a -> f b -> f b",
+            "class": "Applicative"
+          }
+        },
+        {
+          "id": {
+            "name": "<*",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Sequence actions, discarding the value of the second argument.",
+          "info": {
+            "what": "method",
+            "type": "Applicative f => f a -> f b -> f a",
+            "class": "Applicative"
+          }
+        },
+        {
+          "id": {
+            "name": "<*>",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Sequential application.",
+          "info": {
+            "what": "method",
+            "type": "Applicative f => f (a -> b) -> f a -> f b",
+            "class": "Applicative"
+          }
+        },
+        {
+          "id": {
+            "name": "pure",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Lift a value.",
+          "info": {
+            "what": "method",
+            "type": "Applicative f => a -> f a",
+            "class": "Applicative"
+          }
+        },
+        {
+          "id": {
+            "name": "Functor",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "The Functor class is used for types that can be mapped over.\nInstances of Functor should satisfy the following laws:\n    fmap id == id\n    fmap (f . g) == fmap f . fmap g\n\nThe instances of Functor for lists, Data.Maybe.Maybe and System.IO.IO\nsatisfy these laws.",
+          "info": {
+            "args": [
+              "f"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "<$",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Replace all locations in the input with the same value.\n The default definition is `fmap . const`, but this may be\n overridden with a more efficient version.",
+          "info": {
+            "what": "method",
+            "type": "Functor f => a -> f b -> f a",
+            "class": "Functor"
+          }
+        },
+        {
+          "id": {
+            "name": "fmap",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Functor f => (a -> b) -> f a -> f b",
+            "class": "Functor"
+          }
+        },
+        {
+          "id": {
+            "name": "Monad",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "The Monad class defines the basic operations over a *monad*,\na concept from a branch of mathematics known as *category theory*.\nFrom the perspective of a Haskell programmer, however, it is best to\nthink of a monad as an *abstract datatype* of actions.\nHaskell's `do` expressions provide a convenient syntax for writing\nmonadic expressions.\nInstances of Monad should satisfy the following laws:\n*     return a >>= k = k a\n\n\n*     m >>= return = m\n\n\n*     m >>= (x -> k x >>= h) = (m >>= k) >>= h\n\n\nFurthermore, the Monad and Applicative operations should relate as follows:\n*     pure = return\n\n\n*     (<*>) = ap\n\n\nThe above laws imply:\n*     fmap f xs = xs >>= return . f\n\n\n*     (>>) = (*>)\n\n\nand that pure and (<*>) satisfy the applicative functor laws.\nThe instances of Monad for lists, Data.Maybe.Maybe and System.IO.IO\ndefined in the Prelude satisfy these laws.",
+          "info": {
+            "args": [
+              "m"
+            ],
+            "what": "data",
+            "ctx": [
+              "Applicative m"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": ">>",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Sequentially compose two actions, discarding any value produced\n by the first, like sequencing operators (such as the semicolon)\n in imperative languages.",
+          "info": {
+            "what": "method",
+            "type": "Monad m => m a -> m b -> m b",
+            "class": "Monad"
+          }
+        },
+        {
+          "id": {
+            "name": ">>=",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Sequentially compose two actions, passing any value produced\n by the first as an argument to the second.",
+          "info": {
+            "what": "method",
+            "type": "Monad m => m a -> (a -> m b) -> m b",
+            "class": "Monad"
+          }
+        },
+        {
+          "id": {
+            "name": "fail",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Fail with a message. This operation is not part of the\n mathematical definition of a monad, but is invoked on pattern-match\n failure in a `do` expression.\nAs part of the MonadFail proposal (MFP), this function is moved\n to its own class `MonadFail` (see Control.Monad.Fail for more\n details). The definition here will be removed in a future\n release.",
+          "info": {
+            "what": "method",
+            "type": "Monad m => String -> m a",
+            "class": "Monad"
+          }
+        },
+        {
+          "id": {
+            "name": "return",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Inject a value into the monadic type.",
+          "info": {
+            "what": "method",
+            "type": "Monad m => a -> m a",
+            "class": "Monad"
+          }
+        },
+        {
+          "id": {
+            "name": "Monoid",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "The class of monoids (types with an associative binary operation that\n has an identity). Instances should satisfy the following laws:\n*     mappend mempty x = x\n\n\n*     mappend x mempty = x\n\n\n*     mappend x (mappend y z) = mappend (mappend x y) z\n\n\n*     mconcat = foldr mappend mempty\n\n\nThe method names refer to the monoid of lists under concatenation,\n but there are many other instances.\nSome types can be viewed as a monoid in more than one way,\n e.g. both addition and multiplication on numbers.\n In such cases we often define `newtype`s and make those instances\n of Monoid, e.g. `Sum` and `Product`.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "mappend",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "An associative operation",
+          "info": {
+            "what": "method",
+            "type": "Monoid a => a -> a -> a",
+            "class": "Monoid"
+          }
+        },
+        {
+          "id": {
+            "name": "mconcat",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Fold a list using the monoid.\n For most types, the default definition for mconcat will be\n used, but the function is included in the class definition so\n that an optimized version can be provided for specific types.",
+          "info": {
+            "what": "method",
+            "type": "Monoid a => [a] -> a",
+            "class": "Monoid"
+          }
+        },
+        {
+          "id": {
+            "name": "mempty",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "Identity of mappend",
+          "info": {
+            "what": "method",
+            "type": "Monoid a => a",
+            "class": "Monoid"
+          }
+        },
+        {
+          "id": {
+            "name": "String",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "A String is a list of characters. String constants in Haskell are values\n of type String.",
+          "info": {
+            "args": [],
+            "what": "type",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "Bounded",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "The Bounded class is used to name the upper and lower limits of a\n type. Ord is not a superclass of Bounded since types that are not\n totally ordered may also have upper and lower bounds.\nThe Bounded class may be derived for any enumeration type;\n minBound is the first constructor listed in the `data` declaration\n and maxBound is the last.\n Bounded may also be derived for single-constructor datatypes whose\n constituent types are in Bounded.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "maxBound",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Bounded a => a",
+            "class": "Bounded"
+          }
+        },
+        {
+          "id": {
+            "name": "minBound",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Bounded a => a",
+            "class": "Bounded"
+          }
+        },
+        {
+          "id": {
+            "name": "Enum",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "Class Enum defines operations on sequentially ordered types.\nThe `enumFrom`... methods are used in Haskell's translation of\n arithmetic sequences.\nInstances of Enum may be derived for any enumeration type (types\n whose constructors have no fields). The nullary constructors are\n assumed to be numbered left-to-right by fromEnum from `0` through `n-1`.\n See Chapter 10 of the *Haskell Report* for more details.\nFor any type that is an instance of class Bounded as well as Enum,\n the following should hold:\n* The calls `succ maxBound` and `pred minBound` should result in\n a runtime error.\n\n* fromEnum and toEnum should give a runtime error if the\n result value is not representable in the result type.\n For example, `toEnum 7 :: Bool` is an error.\n\n* enumFrom and enumFromThen should be defined with an implicit bound,\n thus:\n\n     enumFrom x = enumFromTo x maxBound\n     enumFromThen x y = enumFromThenTo x y bound\n     where\n     bound | fromEnum y >= fromEnum x = maxBound\n     | otherwise = minBound",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "enumFrom",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "Used in Haskell's translation of `[n..]`.",
+          "info": {
+            "what": "method",
+            "type": "Enum a => a -> [a]",
+            "class": "Enum"
+          }
+        },
+        {
+          "id": {
+            "name": "enumFromThen",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "Used in Haskell's translation of `[n,n'..]`.",
+          "info": {
+            "what": "method",
+            "type": "Enum a => a -> a -> [a]",
+            "class": "Enum"
+          }
+        },
+        {
+          "id": {
+            "name": "enumFromThenTo",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "Used in Haskell's translation of `[n,n'..m]`.",
+          "info": {
+            "what": "method",
+            "type": "Enum a => a -> a -> a -> [a]",
+            "class": "Enum"
+          }
+        },
+        {
+          "id": {
+            "name": "enumFromTo",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "Used in Haskell's translation of `[n..m]`.",
+          "info": {
+            "what": "method",
+            "type": "Enum a => a -> a -> [a]",
+            "class": "Enum"
+          }
+        },
+        {
+          "id": {
+            "name": "fromEnum",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "Convert to an Int.\n It is implementation-dependent what fromEnum returns when\n applied to a value that is too large to fit in an Int.",
+          "info": {
+            "what": "method",
+            "type": "Enum a => a -> Int",
+            "class": "Enum"
+          }
+        },
+        {
+          "id": {
+            "name": "pred",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "the predecessor of a value. For numeric types, pred subtracts 1.",
+          "info": {
+            "what": "method",
+            "type": "Enum a => a -> a",
+            "class": "Enum"
+          }
+        },
+        {
+          "id": {
+            "name": "succ",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "the successor of a value. For numeric types, succ adds 1.",
+          "info": {
+            "what": "method",
+            "type": "Enum a => a -> a",
+            "class": "Enum"
+          }
+        },
+        {
+          "id": {
+            "name": "toEnum",
+            "module": {
+              "location": {
+                "name": "GHC.Enum",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Enum"
+            }
+          },
+          "docs": "Convert from an Int.",
+          "info": {
+            "what": "method",
+            "type": "Enum a => Int -> a",
+            "class": "Enum"
+          }
+        },
+        {
+          "id": {
+            "name": "Floating",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "Trigonometric and hyperbolic functions and related functions.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": [
+              "Fractional a"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "**",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "acos",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "acosh",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "asin",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "asinh",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "atan",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "atanh",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "cos",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "cosh",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "exp",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "log",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "logBase",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "pi",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "sin",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "sinh",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "sqrt",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "tan",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "tanh",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Floating a => a -> a",
+            "class": "Floating"
+          }
+        },
+        {
+          "id": {
+            "name": "RealFloat",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "Efficient, machine-independent access to the components of a\n floating-point number.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": [
+              "RealFrac a",
+              "Floating a"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "atan2",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "a version of arctangent taking two real floating-point arguments.\n For real floating `x` and `y`, `atan2 y x` computes the angle\n (from the positive x-axis) of the vector from the origin to the\n point `(x,y)`. `atan2 y x` returns a value in the range [`-pi`,\n `pi`]. It follows the Common Lisp semantics for the origin when\n signed zeroes are supported. `atan2 y 1`, with `y` in a type\n that is RealFloat, should return the same value as `atan y`.\n A default definition of atan2 is provided, but implementors\n can provide a more accurate implementation.",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> a -> a",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "decodeFloat",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "The function decodeFloat applied to a real floating-point\n number returns the significand expressed as an Integer and an\n appropriately scaled exponent (an Int). If `decodeFloat x`\n yields `(m,n)`, then `x` is equal in value to `m*b^^n`, where `b`\n is the floating-point radix, and furthermore, either `m` and `n`\n are both zero or else `b^(d-1) <= abs m < b^d`, where `d` is\n the value of `floatDigits x`.\n In particular, `decodeFloat 0 = (0,0)`. If the type\n contains a negative zero, also `decodeFloat (-0.0) = (0,0)`.\n *The result of* `decodeFloat x` *is unspecified if either of*\n `isNaN x` *or* `isInfinite x` *is* True.",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> (Integer, Int)",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "encodeFloat",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "encodeFloat performs the inverse of decodeFloat in the\n sense that for finite `x` with the exception of `-0.0`,\n ``uncurry` encodeFloat (decodeFloat x) = x`.\n `encodeFloat m n` is one of the two closest representable\n floating-point numbers to `m*b^^n` (or `±Infinity` if overflow\n occurs); usually the closer, but if `m` contains too many bits,\n the result may be rounded in the wrong direction.",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => Integer -> Int -> a",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "exponent",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "exponent corresponds to the second component of decodeFloat.\n `exponent 0 = 0` and for finite nonzero `x`,\n `exponent x = snd (decodeFloat x) + floatDigits x`.\n If `x` is a finite floating-point number, it is equal in value to\n `significand x * b ^^ exponent x`, where `b` is the\n floating-point radix.\n The behaviour is unspecified on infinite or `NaN` values.",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> Int",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "floatDigits",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "a constant function, returning the number of digits of\n floatRadix in the significand",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> Int",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "floatRadix",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "a constant function, returning the radix of the representation\n (often `2`)",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> Integer",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "floatRange",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "a constant function, returning the lowest and highest values\n the exponent may assume",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> (Int, Int)",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "isDenormalized",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "True if the argument is too small to be represented in\n normalized format",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> Bool",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "isIEEE",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "True if the argument is an IEEE floating point number",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> Bool",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "isInfinite",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "True if the argument is an IEEE infinity or negative infinity",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> Bool",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "isNaN",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "True if the argument is an IEEE \"not-a-number\" (NaN) value",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> Bool",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "isNegativeZero",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "True if the argument is an IEEE negative zero",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> Bool",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "scaleFloat",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "multiplies a floating-point number by an integer power of the radix",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => Int -> a -> a",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "significand",
+            "module": {
+              "location": {
+                "name": "GHC.Float",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Float"
+            }
+          },
+          "docs": "The first component of decodeFloat, scaled to lie in the open\n interval (`-1`,`1`), either `0.0` or of absolute value `>= 1/b`,\n where `b` is the floating-point radix.\n The behaviour is unspecified on infinite or `NaN` values.",
+          "info": {
+            "what": "method",
+            "type": "RealFloat a => a -> a",
+            "class": "RealFloat"
+          }
+        },
+        {
+          "id": {
+            "name": "FilePath",
+            "module": {
+              "location": {
+                "name": "GHC.IO",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.IO"
+            }
+          },
+          "docs": "File and directory names are values of type String, whose precise\n meaning is operating system dependent. Files can be opened, yielding a\n handle which can then be used to operate on the contents of that file.",
+          "info": {
+            "args": [],
+            "what": "type",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "IOError",
+            "module": {
+              "location": {
+                "name": "GHC.IO.Exception",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.IO.Exception"
+            }
+          },
+          "docs": "The Haskell 2010 type for exceptions in the IO monad.\n Any I/O operation may raise an IOError instead of returning a result.\n For a more general type of exception, including also those that arise\n in pure code, see Control.Exception.Exception.\nIn Haskell 2010, this is an opaque type.",
+          "info": {
+            "args": [],
+            "what": "type",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "Num",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "docs": "Basic numeric class.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "*",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Num a => a -> a -> a",
+            "class": "Num"
+          }
+        },
+        {
+          "id": {
+            "name": "+",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Num a => a -> a -> a",
+            "class": "Num"
+          }
+        },
+        {
+          "id": {
+            "name": "-",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Num a => a -> a -> a",
+            "class": "Num"
+          }
+        },
+        {
+          "id": {
+            "name": "abs",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "docs": "Absolute value.",
+          "info": {
+            "what": "method",
+            "type": "Num a => a -> a",
+            "class": "Num"
+          }
+        },
+        {
+          "id": {
+            "name": "fromInteger",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "docs": "Conversion from an Integer.\n An integer literal represents the application of the function\n fromInteger to the appropriate value of type Integer,\n so such literals have type `(Num a) => a`.",
+          "info": {
+            "what": "method",
+            "type": "Num a => Integer -> a",
+            "class": "Num"
+          }
+        },
+        {
+          "id": {
+            "name": "negate",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "docs": "Unary negation.",
+          "info": {
+            "what": "method",
+            "type": "Num a => a -> a",
+            "class": "Num"
+          }
+        },
+        {
+          "id": {
+            "name": "signum",
+            "module": {
+              "location": {
+                "name": "GHC.Num",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Num"
+            }
+          },
+          "docs": "Sign of a number.\n The functions abs and signum should satisfy the law:\n    abs x * signum x == x\n\nFor real numbers, the signum is either `-1` (negative), `0` (zero)\n or `1` (positive).",
+          "info": {
+            "what": "method",
+            "type": "Num a => a -> a",
+            "class": "Num"
+          }
+        },
+        {
+          "id": {
+            "name": "Read",
+            "module": {
+              "location": {
+                "name": "GHC.Read",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Read"
+            }
+          },
+          "docs": "Parsing of Strings, producing values.\nDerived instances of Read make the following assumptions, which\n derived instances of Text.Show.Show obey:\n* If the constructor is defined to be an infix operator, then the\n derived Read instance will parse only infix applications of\n the constructor (not the prefix form).\n\n* Associativity is not used to reduce the occurrence of parentheses,\n although precedence may be.\n\n* If the constructor is defined using record syntax, the derived Read\n will parse only the record-syntax form, and furthermore, the fields\n must be given in the same order as the original declaration.\n\n* The derived Read instance allows arbitrary Haskell whitespace\n between tokens of the input string. Extra parentheses are also\n allowed.\n\nFor example, given the declarations\n    infixr 5 :^:\n    data Tree a = Leaf a | Tree a :^: Tree a\n\nthe derived instance of Read in Haskell 2010 is equivalent to\n    instance (Read a) => Read (Tree a) where\n    \n     readsPrec d r = readParen (d > app_prec)\n     (\\r -> [(Leaf m,t) |\n     (\"Leaf\",s) <- lex r,\n     (m,t) <- readsPrec (app_prec+1) s]) r\n    \n     ++ readParen (d > up_prec)\n     (\\r -> [(u:^:v,w) |\n     (u,s) <- readsPrec (up_prec+1) r,\n     (\":^:\",t) <- lex s,\n     (v,w) <- readsPrec (up_prec+1) t]) r\n    \n     where app_prec = 10\n     up_prec = 5\n\nNote that right-associativity of `:^:` is unused.\nThe derived instance in GHC is equivalent to\n    instance (Read a) => Read (Tree a) where\n    \n     readPrec = parens $ (prec app_prec $ do\n     Ident \"Leaf\" <- lexP\n     m <- step readPrec\n     return (Leaf m))\n    \n     +++ (prec up_prec $ do\n     u <- step readPrec\n     Symbol \":^:\" <- lexP\n     v <- step readPrec\n     return (u :^: v))\n    \n     where app_prec = 10\n     up_prec = 5\n    \n     readListPrec = readListPrecDefault",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "readList",
+            "module": {
+              "location": {
+                "name": "GHC.Read",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Read"
+            }
+          },
+          "docs": "The method readList is provided to allow the programmer to\n give a specialised way of parsing lists of values.\n For example, this is used by the predefined Read instance of\n the Char type, where values of type String should be are\n expected to use double quotes, rather than square brackets.",
+          "info": {
+            "what": "method",
+            "type": "Read a => String -> [([a], String)]",
+            "class": "Read"
+          }
+        },
+        {
+          "id": {
+            "name": "readsPrec",
+            "module": {
+              "location": {
+                "name": "GHC.Read",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Read"
+            }
+          },
+          "docs": "attempts to parse a value from the front of the string, returning\n a list of (parsed value, remaining string) pairs. If there is no\n successful parse, the returned list is empty.\nDerived instances of Read and Text.Show.Show satisfy the following:\n* `(x,\"\")` is an element of\n `(readsPrec d (Text.Show.showsPrec d x \"\"))`.\n\nThat is, readsPrec parses the string produced by\n Text.Show.showsPrec, and delivers the value that\n Text.Show.showsPrec started with.",
+          "info": {
+            "what": "method",
+            "type": "Read a => Int -> ReadS a",
+            "class": "Read"
+          }
+        },
+        {
+          "id": {
+            "name": "Fractional",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "Fractional numbers, supporting real division.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": [
+              "Num a"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "/",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "fractional division",
+          "info": {
+            "what": "method",
+            "type": "Fractional a => a -> a -> a",
+            "class": "Fractional"
+          }
+        },
+        {
+          "id": {
+            "name": "fromRational",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "Conversion from a Rational (that is `Ratio Integer`).\n A floating literal stands for an application of fromRational\n to a value of type Rational, so such literals have type\n `(Fractional a) => a`.",
+          "info": {
+            "what": "method",
+            "type": "Fractional a => Rational -> a",
+            "class": "Fractional"
+          }
+        },
+        {
+          "id": {
+            "name": "recip",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "reciprocal fraction",
+          "info": {
+            "what": "method",
+            "type": "Fractional a => a -> a",
+            "class": "Fractional"
+          }
+        },
+        {
+          "id": {
+            "name": "Integral",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "Integral numbers, supporting integer division.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": [
+              "Real a",
+              "Enum a"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "div",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "integer division truncated toward negative infinity",
+          "info": {
+            "what": "method",
+            "type": "Integral a => a -> a -> a",
+            "class": "Integral"
+          }
+        },
+        {
+          "id": {
+            "name": "divMod",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "simultaneous div and mod",
+          "info": {
+            "what": "method",
+            "type": "Integral a => a -> a -> (a, a)",
+            "class": "Integral"
+          }
+        },
+        {
+          "id": {
+            "name": "mod",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "integer modulus, satisfying\n    (x `div` y)*y + (x `mod` y) == x",
+          "info": {
+            "what": "method",
+            "type": "Integral a => a -> a -> a",
+            "class": "Integral"
+          }
+        },
+        {
+          "id": {
+            "name": "quot",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "integer division truncated toward zero",
+          "info": {
+            "what": "method",
+            "type": "Integral a => a -> a -> a",
+            "class": "Integral"
+          }
+        },
+        {
+          "id": {
+            "name": "quotRem",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "simultaneous quot and rem",
+          "info": {
+            "what": "method",
+            "type": "Integral a => a -> a -> (a, a)",
+            "class": "Integral"
+          }
+        },
+        {
+          "id": {
+            "name": "rem",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "integer remainder, satisfying\n    (x `quot` y)*y + (x `rem` y) == x",
+          "info": {
+            "what": "method",
+            "type": "Integral a => a -> a -> a",
+            "class": "Integral"
+          }
+        },
+        {
+          "id": {
+            "name": "toInteger",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "conversion to Integer",
+          "info": {
+            "what": "method",
+            "type": "Integral a => a -> Integer",
+            "class": "Integral"
+          }
+        },
+        {
+          "id": {
+            "name": "Rational",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "Arbitrary-precision rational numbers, represented as a ratio of\n two Integer values. A rational number may be constructed using\n the % operator.",
+          "info": {
+            "args": [],
+            "what": "type",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "Real",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": [
+              "Num a",
+              "Ord a"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "toRational",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "the rational equivalent of its real argument with full precision",
+          "info": {
+            "what": "method",
+            "type": "Real a => a -> Rational",
+            "class": "Real"
+          }
+        },
+        {
+          "id": {
+            "name": "RealFrac",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "Extracting components of fractions.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": [
+              "Real a",
+              "Fractional a"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "ceiling",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "`ceiling x` returns the least integer not less than `x`",
+          "info": {
+            "what": "method",
+            "type": "(RealFrac a, Integral b) => a -> b",
+            "class": "RealFrac"
+          }
+        },
+        {
+          "id": {
+            "name": "floor",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "`floor x` returns the greatest integer not greater than `x`",
+          "info": {
+            "what": "method",
+            "type": "(RealFrac a, Integral b) => a -> b",
+            "class": "RealFrac"
+          }
+        },
+        {
+          "id": {
+            "name": "properFraction",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "The function properFraction takes a real fractional number `x`\n and returns a pair `(n,f)` such that `x = n+f`, and:\n* `n` is an integral number with the same sign as `x`; and\n\n* `f` is a fraction with the same type and sign as `x`,\n and with absolute value less than `1`.\n\nThe default definitions of the ceiling, floor, truncate\n and round functions are in terms of properFraction.",
+          "info": {
+            "what": "method",
+            "type": "(RealFrac a, Integral b) => a -> (b, a)",
+            "class": "RealFrac"
+          }
+        },
+        {
+          "id": {
+            "name": "round",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "`round x` returns the nearest integer to `x`;\n the even integer if `x` is equidistant between two integers",
+          "info": {
+            "what": "method",
+            "type": "(RealFrac a, Integral b) => a -> b",
+            "class": "RealFrac"
+          }
+        },
+        {
+          "id": {
+            "name": "truncate",
+            "module": {
+              "location": {
+                "name": "GHC.Real",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Real"
+            }
+          },
+          "docs": "`truncate x` returns the integer nearest `x` between zero and `x`",
+          "info": {
+            "what": "method",
+            "type": "(RealFrac a, Integral b) => a -> b",
+            "class": "RealFrac"
+          }
+        },
+        {
+          "id": {
+            "name": "Show",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "Conversion of values to readable Strings.\nDerived instances of Show have the following properties, which\n are compatible with derived instances of Text.Read.Read:\n* The result of show is a syntactically correct Haskell\n expression containing only constants, given the fixity\n declarations in force at the point where the type is declared.\n It contains only the constructor names defined in the data type,\n parentheses, and spaces. When labelled constructor fields are\n used, braces, commas, field names, and equal signs are also used.\n\n* If the constructor is defined to be an infix operator, then\n showsPrec will produce infix applications of the constructor.\n\n* the representation will be enclosed in parentheses if the\n precedence of the top-level constructor in `x` is less than `d`\n (associativity is ignored). Thus, if `d` is `0` then the result\n is never surrounded in parentheses; if `d` is `11` it is always\n surrounded in parentheses, unless it is an atomic expression.\n\n* If the constructor is defined using record syntax, then show\n will produce the record-syntax form, with the fields given in the\n same order as the original declaration.\n\nFor example, given the declarations\n    infixr 5 :^:\n    data Tree a = Leaf a | Tree a :^: Tree a\n\nthe derived instance of Show is equivalent to\n    instance (Show a) => Show (Tree a) where\n    \n     showsPrec d (Leaf m) = showParen (d > app_prec) $\n     showString \"Leaf \" . showsPrec (app_prec+1) m\n     where app_prec = 10\n    \n     showsPrec d (u :^: v) = showParen (d > up_prec) $\n     showsPrec (up_prec+1) u .\n     showString \" :^: \" .\n     showsPrec (up_prec+1) v\n     where up_prec = 5\n\nNote that right-associativity of `:^:` is ignored. For example,\n* `show (Leaf 1 :^: Leaf 2 :^: Leaf 3)` produces the string\n `\"Leaf 1 :^: (Leaf 2 :^: Leaf 3)\"`.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "show",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "A specialised variant of showsPrec, using precedence context\n zero, and returning an ordinary String.",
+          "info": {
+            "what": "method",
+            "type": "Show a => a -> String",
+            "class": "Show"
+          }
+        },
+        {
+          "id": {
+            "name": "showList",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "The method showList is provided to allow the programmer to\n give a specialised way of showing lists of values.\n For example, this is used by the predefined Show instance of\n the Char type, where values of type String should be shown\n in double quotes, rather than between square brackets.",
+          "info": {
+            "what": "method",
+            "type": "Show a => [a] -> ShowS",
+            "class": "Show"
+          }
+        },
+        {
+          "id": {
+            "name": "showsPrec",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "Convert a value to a readable String.\nshowsPrec should satisfy the law\n    showsPrec d x r ++ s == showsPrec d x (r ++ s)\n\nDerived instances of Text.Read.Read and Show satisfy the following:\n* `(x,\"\")` is an element of\n `(Text.Read.readsPrec d (showsPrec d x \"\"))`.\n\nThat is, Text.Read.readsPrec parses the string produced by\n showsPrec, and delivers the value that showsPrec started with.",
+          "info": {
+            "what": "method",
+            "type": "Show a => Int -> a -> ShowS",
+            "class": "Show"
+          }
+        },
+        {
+          "id": {
+            "name": "ShowS",
+            "module": {
+              "location": {
+                "name": "GHC.Show",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Show"
+            }
+          },
+          "docs": "The `shows` functions return a function that prepends the\n output String to an existing String. This allows constant-time\n concatenation of results using function composition.",
+          "info": {
+            "args": [],
+            "what": "type",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "ReadS",
+            "module": {
+              "location": {
+                "name": "Text.ParserCombinators.ReadP",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Text.ParserCombinators.ReadP"
+            }
+          },
+          "docs": "A parser for a type `a`, represented as a function that takes a\n String and returns a list of possible parses as `(a,String)` pairs.\nNote that this kind of backtracking parser is very inefficient;\n reading a large structure may be quite slow (cf ReadP).",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "type",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "Eq",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "docs": "The Eq class defines equality (==) and inequality (/=).\n All the basic datatypes exported by the Prelude are instances of Eq,\n and Eq may be derived for any datatype whose constituents are also\n instances of Eq.\nMinimal complete definition: either == or /=.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "/=",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Eq a => a -> a -> Bool",
+            "class": "Eq"
+          }
+        },
+        {
+          "id": {
+            "name": "==",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Eq a => a -> a -> Bool",
+            "class": "Eq"
+          }
+        },
+        {
+          "id": {
+            "name": "Ord",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "docs": "The Ord class is used for totally ordered datatypes.\nInstances of Ord can be derived for any user-defined\n datatype whose constituent types are in Ord. The declared order\n of the constructors in the data declaration determines the ordering\n in derived Ord instances. The Ordering datatype allows a single\n comparison to determine the precise ordering of two objects.\nMinimal complete definition: either compare or <=.\n Using compare can be more efficient for complex types.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": [
+              "Eq a"
+            ]
+          }
+        },
+        {
+          "id": {
+            "name": "<",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Ord a => a -> a -> Bool",
+            "class": "Ord"
+          }
+        },
+        {
+          "id": {
+            "name": "<=",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Ord a => a -> a -> Bool",
+            "class": "Ord"
+          }
+        },
+        {
+          "id": {
+            "name": ">",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Ord a => a -> a -> Bool",
+            "class": "Ord"
+          }
+        },
+        {
+          "id": {
+            "name": ">=",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Ord a => a -> a -> Bool",
+            "class": "Ord"
+          }
+        },
+        {
+          "id": {
+            "name": "compare",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Ord a => a -> a -> Ordering",
+            "class": "Ord"
+          }
+        },
+        {
+          "id": {
+            "name": "max",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Ord a => a -> a -> a",
+            "class": "Ord"
+          }
+        },
+        {
+          "id": {
+            "name": "min",
+            "module": {
+              "location": {
+                "name": "GHC.Classes",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Classes"
+            }
+          },
+          "info": {
+            "what": "method",
+            "type": "Ord a => a -> a -> a",
+            "class": "Ord"
+          }
+        },
+        {
+          "id": {
+            "name": "IO",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "docs": "A value of type `IO a` is a computation which, when performed,\ndoes some I/O before returning a value of type `a`.\nThere is really only one way to \"perform\" an I/O action: bind it to\n`Main.main` in your program. When your program is run, the I/O will\nbe performed. It isn't possible to perform I/O from an arbitrary\nfunction, unless that function is itself in the IO monad and called\nat some point, directly or indirectly, from `Main.main`.\nIO is a monad, so IO actions can be combined using either the do-notation\nor the `>>` and `>>=` operations from the `Monad` class.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "newtype",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "Ordering",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "info": {
+            "args": [],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "EQ",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "info": {
+            "args": [],
+            "what": "ctor",
+            "type": "Ordering"
+          }
+        },
+        {
+          "id": {
+            "name": "GT",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "info": {
+            "args": [],
+            "what": "ctor",
+            "type": "Ordering"
+          }
+        },
+        {
+          "id": {
+            "name": "LT",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "info": {
+            "args": [],
+            "what": "ctor",
+            "type": "Ordering"
+          }
+        },
+        {
+          "id": {
+            "name": "Integer",
+            "module": {
+              "location": {
+                "name": "GHC.Integer.Type",
+                "package": "integer-gmp-1.0.0.1",
+                "db": "global-db"
+              },
+              "name": "GHC.Integer.Type"
+            }
+          },
+          "docs": "Invariant: Jn# and Jp# are used iff value doesn't fit in S#\nUseful properties resulting from the invariants:\n*     abs (S# _) <= abs (Jp# _)\n\n\n*     abs (S# _) < abs (Jn# _)",
+          "info": {
+            "args": [],
+            "what": "data",
+            "ctx": []
+          }
+        },
+        {
+          "id": {
+            "name": "Maybe",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "docs": "The Maybe type encapsulates an optional value. A value of type\n `Maybe a` either contains a value of type `a` (represented as `Just a`),\n or it is empty (represented as Nothing). Using Maybe is a good way to\n deal with errors or exceptional cases without resorting to drastic\n measures such as error.\nThe Maybe type is also a monad. It is a simple kind of error\n monad, where all errors are represented by Nothing. A richer\n error monad can be built using the Data.Either.Either type.",
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Just",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Nothing",
+            "module": {
+              "location": {
+                "name": "GHC.Base",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Base"
+            }
+          },
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Bool",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "False",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "True",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Char",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "docs": "The character type Char is an enumeration whose values represent\nUnicode (or equivalently ISO/IEC 10646) characters (see\nhttp://www.unicode.org/ for details). This set extends the ISO 8859-1\n(Latin-1) character set (the first 256 characters), which is itself an extension\nof the ASCII character set (the first 128 characters). A character literal in\nHaskell has type Char.\nTo convert a Char to or from the corresponding Int value defined\nby Unicode, use Prelude.toEnum and Prelude.fromEnum from the\nPrelude.Enum class respectively (or equivalently `ord` and `chr`).",
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Double",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "docs": "Double-precision floating point numbers.\n It is desirable that this type be at least equal in range and precision\n to the IEEE double-precision type.",
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Float",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "docs": "Single-precision floating point numbers.\n It is desirable that this type be at least equal in range and precision\n to the IEEE single-precision type.",
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Int",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "docs": "A fixed-precision integer type with at least the range `[-2^29 .. 2^29-1]`.\n The exact range for a given implementation can be determined by using\n Prelude.minBound and Prelude.maxBound from the Prelude.Bounded class.",
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        },
+        {
+          "id": {
+            "name": "Word",
+            "module": {
+              "location": {
+                "name": "GHC.Types",
+                "package": "ghc-prim-0.5.0.0",
+                "db": "global-db"
+              },
+              "name": "GHC.Types"
+            }
+          },
+          "docs": "A Word is an unsigned integral type, with the same size as Int.",
+          "info": {
+            "what": "function",
+            "type": null
+          }
+        }
+      ],
+      "id": {
+        "location": {
+          "name": "Prelude",
+          "package": "base-4.9.0.0",
+          "db": "global-db"
+        },
+        "name": "Prelude"
+      }
+    },
+    "tags": []
+  },
+  {
+    "location": {
+      "name": "Control.Concurrent.Chan",
+      "package": "base-4.9.0.0",
+      "db": "global-db"
+    },
+    "inspection": {
+      "flags": [],
+      "mtime": 0
+    },
+    "result": {
+      "exports": [
+        {
+          "id": {
+            "name": "dupChan",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Duplicate a Chan: the duplicate channel begins empty, but data written to\n either channel from then on will be available from both. Hence this creates\n a kind of broadcast channel, where data written by anyone is seen by\n everyone else.\n(Note that a duplicated channel is not equal to its original.\n So: `fmap (c /=) $ dupChan c` returns `True` for all `c`.)",
+          "info": {
+            "what": "function",
+            "type": "Chan a -> IO (Chan a)"
+          }
+        },
+        {
+          "id": {
+            "name": "getChanContents",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Return a lazy list representing the contents of the supplied\n Chan, much like System.IO.hGetContents.",
+          "info": {
+            "what": "function",
+            "type": "Chan a -> IO [a]"
+          }
+        },
+        {
+          "id": {
+            "name": "isEmptyChan",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Returns True if the supplied Chan is empty.",
+          "info": {
+            "what": "function",
+            "type": "Chan a -> IO Bool"
+          }
+        },
+        {
+          "id": {
+            "name": "newChan",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Build and returns a new instance of Chan.",
+          "info": {
+            "what": "function",
+            "type": "IO (Chan a)"
+          }
+        },
+        {
+          "id": {
+            "name": "readChan",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Read the next value from the Chan.",
+          "info": {
+            "what": "function",
+            "type": "Chan a -> IO a"
+          }
+        },
+        {
+          "id": {
+            "name": "unGetChan",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Put a data item back onto a channel, where it will be the next item read.",
+          "info": {
+            "what": "function",
+            "type": "Chan a -> a -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "writeChan",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Write a value to a Chan.",
+          "info": {
+            "what": "function",
+            "type": "Chan a -> a -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "writeList2Chan",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Write an entire list of items to a Chan.",
+          "info": {
+            "what": "function",
+            "type": "Chan a -> [a] -> IO ()"
+          }
+        },
+        {
+          "id": {
+            "name": "Chan",
+            "module": {
+              "location": {
+                "name": "Control.Concurrent.Chan",
+                "package": "base-4.9.0.0",
+                "db": "global-db"
+              },
+              "name": "Control.Concurrent.Chan"
+            }
+          },
+          "docs": "Chan is an abstract type representing an unbounded FIFO channel.",
+          "info": {
+            "args": [
+              "a"
+            ],
+            "what": "data",
+            "ctx": []
+          }
+        }
+      ],
+      "id": {
+        "location": {
+          "name": "Control.Concurrent.Chan",
+          "package": "base-4.9.0.0",
+          "db": "global-db"
+        },
+        "name": "Control.Concurrent.Chan"
+      }
+    },
+    "tags": []
+  }
+]

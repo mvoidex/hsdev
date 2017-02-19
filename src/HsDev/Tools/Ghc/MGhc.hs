@@ -28,7 +28,6 @@ import GHC
 import GhcMonad
 import HscTypes
 import Outputable
-import Packages
 import SysTools
 
 data SessionState s = SessionState {
