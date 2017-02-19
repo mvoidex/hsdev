@@ -53,7 +53,6 @@ import HsDev.Version
 
 #if mingw32_HOST_OS
 import Data.Aeson.Types hiding (Result, Error)
-import Data.Char
 import Data.List
 import System.Environment
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
@@ -124,15 +123,11 @@ runServerCommand (Start sopts) = do
 			~~ ("process" ~% escape quote myExe)
 			~~ ("args" ~% intercalate ", " (map biescape args))
 			~~ ("dir" ~% escape quote curDir)
-	r <- runTool_ "powershell" [
+	_ <- runTool_ "powershell" [
+		"-NoProfile",
 		"-Command",
 		script]
-	if all isSpace r
-		then putStrLn $ "Server started at port {}" ~~ serverPort sopts
-		else mapM_ putStrLn [
-			"Failed to start server",
-			"\tCommand: {}" ~~ script,
-			"\tResult: {}" ~~ r]
+	putStrLn $ "Server started at port {}" ~~ serverPort sopts
 #else
 	let
 		forkError :: SomeException -> IO ()
