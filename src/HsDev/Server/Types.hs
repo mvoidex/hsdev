@@ -63,7 +63,7 @@ data SessionLog = SessionLog {
 data Session = Session {
 	sessionDatabase :: DB.Async Database,
 	sessionWriteCache :: Database -> ServerM IO (),
-	sessionReadCache :: (FilePath -> ExceptT String IO Structured) -> ServerM IO (Maybe Database),
+	sessionReadCache :: (FilePath -> ExceptT String IO Database) -> ServerM IO (Maybe Database),
 	sessionLog :: SessionLog,
 	sessionWatcher :: Watcher,
 #if mingw32_HOST_OS
@@ -183,7 +183,7 @@ serverWriteCache db = do
 	liftIO $ withSession s $ write' db
 
 -- | Server read cache
-serverReadCache :: SessionMonad m => (FilePath -> ExceptT String IO Structured) -> m (Maybe Database)
+serverReadCache :: SessionMonad m => (FilePath -> ExceptT String IO Database) -> m (Maybe Database)
 serverReadCache act = do
 	s <- getSession
 	read' <- askSession sessionReadCache
@@ -433,7 +433,6 @@ data TargetFilter =
 	TargetProject String |
 	TargetFile FilePath |
 	TargetModule String |
-	TargetDepsOf String |
 	TargetPackageDb PackageDb |
 	TargetCabal |
 	TargetSandbox FilePath |
@@ -551,7 +550,6 @@ instance FromCmd TargetFilter where
 		TargetProject <$> projectArg,
 		TargetFile <$> fileArg,
 		TargetModule <$> moduleArg,
-		TargetDepsOf <$> depsArg,
 		TargetPackageDb <$> packageDbArg,
 		flag' TargetCabal (long "cabal"),
 		TargetSandbox <$> sandboxArg,
@@ -572,7 +570,6 @@ readJSON = str >>= maybe (readerError "Can't parse JSON argument") return . deco
 
 cabalFlag :: Parser Bool
 ctx :: Parser FilePath
-depsArg :: Parser String
 docsFlag :: Parser Bool
 fileArg :: Parser FilePath
 ghcOpts :: Parser [String]
@@ -595,7 +592,6 @@ wideFlag :: Parser Bool
 
 cabalFlag = switch (long "cabal")
 ctx = fileArg
-depsArg = strOption (long "deps" <> metavar "object" <> help "filter to such that in dependency of specified object (file or project)")
 docsFlag = switch (long "docs" <> help "scan source file docs")
 fileArg = strOption (long "file" <> metavar "path" <> short 'f')
 ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "options to pass to GHC"))
@@ -729,7 +725,6 @@ instance ToJSON TargetFilter where
 	toJSON (TargetProject pname) = object ["project" .= pname]
 	toJSON (TargetFile fpath) = object ["file" .= fpath]
 	toJSON (TargetModule mname) = object ["module" .= mname]
-	toJSON (TargetDepsOf dep) = object ["deps" .= dep]
 	toJSON (TargetPackageDb pdb) = object ["db" .= pdb]
 	toJSON TargetCabal = toJSON ("cabal" :: String)
 	toJSON (TargetSandbox sbox) = object ["sandbox" .= sbox]
@@ -743,7 +738,6 @@ instance FromJSON TargetFilter where
 			TargetProject <$> v .:: "project",
 			TargetFile <$> v .:: "file",
 			TargetModule <$> v .:: "module",
-			TargetDepsOf <$> v .:: "deps",
 			TargetPackageDb <$> v .:: "db",
 			TargetSandbox <$> v .:: "sandbox",
 			TargetPackage <$> v .:: "package"]

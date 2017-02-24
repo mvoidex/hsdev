@@ -9,7 +9,7 @@ module HsDev.Symbols.Location (
 
 	packageName, packageVersion,
 	package, packageModules, packageExposed,
-	moduleFile, moduleProject, modulePackageDb, modulePackage, cabalModuleName, otherLocationName,
+	moduleFile, moduleProject, moduleInstallDirs, modulePackage, installedModuleName, otherLocationName,
 	positionLine, positionColumn,
 	regionFrom, regionTo,
 	locationModule, locationPosition,
@@ -20,7 +20,7 @@ module HsDev.Symbols.Location (
 	packageOpt,
 	RecalcTabs(..),
 
-	module HsDev.PackageDb
+	module HsDev.PackageDb.Types
 	) where
 
 import Control.Applicative
@@ -37,7 +37,7 @@ import System.FilePath
 import Text.Read (readMaybe)
 
 import System.Directory.Paths
-import HsDev.PackageDb
+import HsDev.PackageDb.Types
 import HsDev.Project.Types
 import HsDev.Util ((.::), (.::?!), objectUnion, ordNub)
 
@@ -103,7 +103,7 @@ instance FromJSON PackageConfig where
 -- | Location of module
 data ModuleLocation =
 	FileModule { _moduleFile :: FilePath, _moduleProject :: Maybe Project } |
-	InstalledModule { _modulePackageDb :: PackageDb, _modulePackage :: Maybe ModulePackage, _cabalModuleName :: String } |
+	InstalledModule { _moduleInstallDirs :: [FilePath], _modulePackage :: Maybe ModulePackage, _installedModuleName :: String } |
 	OtherLocation { _otherLocationName :: String } |
 	NoLocation
 		deriving (Eq, Ord)
@@ -115,7 +115,7 @@ moduleStandalone = (== Just Nothing) . preview moduleProject
 
 locationId :: ModuleLocation -> String
 locationId (FileModule fpath _) = fpath
-locationId (InstalledModule cabal mpack nm) = intercalate ":" [show cabal, maybe "" show mpack, nm]
+locationId (InstalledModule dirs mpack nm) = intercalate ":" (take 1 dirs ++ [maybe "" show mpack, nm])
 locationId (OtherLocation src) = src
 locationId NoLocation = "<no-location>"
 
@@ -130,20 +130,20 @@ instance Show ModuleLocation where
 
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap (view projectCabal) p]
-	toJSON (InstalledModule c p n) = object ["db" .= c, "package" .= fmap show p, "name" .= n]
+	toJSON (InstalledModule c p n) = object ["dirs" .= c, "package" .= fmap show p, "name" .= n]
 	toJSON (OtherLocation s) = object ["source" .= s]
 	toJSON NoLocation = object []
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .:: "project"))) <|>
-		(InstalledModule <$> v .:: "db" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
+		(InstalledModule <$> v .::?! "dirs" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
 		(OtherLocation <$> v .:: "source") <|>
 		(pure NoLocation)
 
 instance Paths ModuleLocation where
 	paths f (FileModule fpath p) = FileModule <$> f fpath <*> traverse (paths f) p
-	paths f (InstalledModule c p n) = InstalledModule <$> paths f c <*> pure p <*> pure n
+	paths f (InstalledModule c p n) = InstalledModule <$> traverse f c <*> pure p <*> pure n
 	paths _ (OtherLocation s) = pure $ OtherLocation s
 	paths _ NoLocation = pure NoLocation
 

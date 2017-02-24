@@ -10,7 +10,7 @@ module HsDev.Symbols.Types (
 	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
 	briefSymbol,
 
-	module HsDev.PackageDb,
+	module HsDev.PackageDb.Types,
 	module HsDev.Project,
 	module HsDev.Symbols.Name,
 	module HsDev.Symbols.Class,
@@ -41,7 +41,7 @@ import qualified Language.Haskell.Exts as Exts (Name(..))
 import Text.Format
 
 import Control.Apply.Util (chain)
-import HsDev.PackageDb
+import HsDev.PackageDb.Types
 import HsDev.Project
 import HsDev.Symbols.Name
 import HsDev.Symbols.Class

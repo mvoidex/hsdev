@@ -36,7 +36,6 @@ library
     Data.Maybe.JustIf
     HsDev
     HsDev.Cache
-    HsDev.Cache.Structured
     HsDev.Client.Commands
     HsDev.Commands
     HsDev.Database
@@ -48,6 +47,7 @@ library
     HsDev.Inspect
     HsDev.Inspect.Order
     HsDev.PackageDb
+    HsDev.PackageDb.Types
     HsDev.Project
     HsDev.Project.Types
     HsDev.Scan
@@ -201,6 +201,7 @@ executable hsinspect
     data-default >= 0.5.0,
     directory >= 1.2.0,
     filepath >= 1.4.0,
+    lens >= 4.8,
     mtl >= 2.2.0,
     optparse-applicative >= 0.11,
     text >= 1.2.0,

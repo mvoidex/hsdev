@@ -38,6 +38,7 @@ import Data.Aeson.Types
 import Data.Foldable (toList)
 import Data.List (find, intercalate, (\\))
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.Maybe
 import qualified Data.Text as T (unpack)
 import qualified Language.Haskell.Exts as H
@@ -47,12 +48,12 @@ import System.FilePath
 import qualified System.Log.Simple as Log
 
 import HsDev.Error
-import qualified HsDev.Cache.Structured as Cache
 import HsDev.Database
 import HsDev.Database.Async hiding (Event)
 import HsDev.Display
 import HsDev.Inspect
 import HsDev.Inspect.Order
+import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Stack
@@ -87,17 +88,7 @@ runUpdate uopts act = Log.scope "update" $ do
 	db <- askSession sessionDatabase
 	wait db
 	dbval <- liftIO $ readAsync db
-	let
-		dbs = ordNub $ mapMaybe (preview modulePackageDb) updatedMods
-		projs = ordNub $ mapMaybe (preview $ moduleProject . _Just) updatedMods
-		stand = any moduleStandalone updatedMods
-
-		modifiedDb = mconcat $ concat [
-			[dbval ^. packageDbSlice pdb | pdb <- dbs],
-			[dbval ^. projectSlice proj | proj <- projs],
-			[dbval ^. standaloneSlice | stand]]
-
-	serverWriteCache modifiedDb
+	-- TODO: serverWriteCache modifiedDb
 	return r
 	where
 		act' = do
@@ -106,7 +97,13 @@ runUpdate uopts act = Log.scope "update" $ do
 			wait db
 			dbval <- liftIO $ readAsync db
 			let
-				dbs = ordNub $ mlocs' ^.. each . modulePackageDb
+				invertedIndex = M.unionsWith S.union $ do
+					(pdb, pkgs) <- M.toList $ view databasePackageDbs dbval
+					pkg <- S.toList pkgs
+					mlocs <- dbval ^.. databasePackages . ix pkg
+					mloc <- S.toList mlocs
+					return $ M.singleton mloc (S.singleton pdb)
+				dbs = S.toList $ S.unions $ mapMaybe (`M.lookup` invertedIndex) mlocs'
 				-- If some sourced files depends on currently scanned package-dbs
 				-- We must resolve them and even rescan if there was errors scanning without
 				-- dependencies provided (lack of fixities can cause errors inspecting files)
@@ -144,7 +141,7 @@ runUpdate uopts act = Log.scope "update" $ do
 			return r
 		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
 		scanDocs_ im = do
-			im' <- (S.scanModify (\opts _ -> liftIO . inspectDocs opts) im) <|> return im
+			im' <- (S.scanModify (\opts -> liftIO . inspectDocs opts) im) <|> return im
 			updater $ fromModule im'
 		inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
 		inferModTypes_ im = do
@@ -152,8 +149,8 @@ runUpdate uopts act = Log.scope "update" $ do
 			s <- getSession
 			im' <- (S.scanModify (infer' s) im) <|> return im
 			updater $ fromModule im'
-		infer' :: UpdateMonad m => Session -> [String] -> PackageDbStack -> Module -> m Module
-		infer' s opts _ m = case preview (moduleId . moduleLocation . moduleFile) m of
+		infer' :: UpdateMonad m => Session -> [String] -> Module -> m Module
+		infer' s opts m = case preview (moduleId . moduleLocation . moduleFile) m of
 			Nothing -> return m
 			Just _ -> liftIO $ inWorker (sessionGhc s) $ do
 				targetSession opts m
@@ -185,13 +182,13 @@ cleaner act = do
 	clear db $ return $!! db'
 
 -- | Get data from cache without updating DB
-loadCache :: UpdateMonad m => (FilePath -> ExceptT String IO Structured) -> m Database
+loadCache :: UpdateMonad m => (FilePath -> ExceptT String IO Database) -> m Database
 loadCache act = do
 	mdat <- serverReadCache act
 	return $ fromMaybe mempty mdat
 
 -- | Load data from cache if not loaded yet and wait
-getCache :: UpdateMonad m => (FilePath -> ExceptT String IO Structured) -> (Database -> Database) -> m Database
+getCache :: UpdateMonad m => (FilePath -> ExceptT String IO Database) -> (Database -> Database) -> m Database
 getCache act check = do
 	dbval <- liftM check readDB
 	if nullDatabase dbval
@@ -329,14 +326,7 @@ scanFileContents opts fpath mcts = runTask "scanning" fpath $ Log.scope "file" $
 
 -- | Scan cabal modules, doesn't rescan if already scanned
 scanCabal :: UpdateMonad m => [String] -> m ()
-scanCabal opts = Log.scope "cabal" $ do
-	dbval <- readDB
-	let
-		scannedDbs = databasePackageDbs dbval
-		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks userDb
-	if null unscannedDbs
-		then Log.log Log.Trace $ "cabal (global-db and user-db) already scanned"
-		else runTasks_ $ map (scanPackageDb opts) unscannedDbs
+scanCabal opts = Log.scope "cabal" $ scanPackageDbStack opts userDb
 
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
 prepareSandbox :: UpdateMonad m => Sandbox -> m ()
@@ -353,22 +343,42 @@ scanSandbox opts sbox = Log.scope "sandbox" $ do
 	dbval <- readDB
 	prepareSandbox sbox
 	pdbs <- sandboxPackageDbStack sbox
-	let
-		scannedDbs = databasePackageDbs dbval
-		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks pdbs
-	if null unscannedDbs
-		then Log.log Log.Trace $ "sandbox already scanned"
-		else runTasks_ $ map (scanPackageDb opts) unscannedDbs
+	scanPackageDbStack opts pdbs
 
 -- | Scan top of package-db stack, usable for rescan
 scanPackageDb :: UpdateMonad m => [String] -> PackageDbStack -> m ()
 scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "package-db" $ do
+	pdbState <- liftIO $ readPackageDb (topPackageDb pdbs)
+	let
+		packageDbMods = S.fromList $ concat $ M.elems pdbState
 	watch (\w -> watchPackageDb w pdbs opts)
+	dbval <- readDB
+	ghcw <- askSession sessionGhc
 	mlocs <- liftM
-		(filter (\mloc -> preview modulePackageDb mloc == Just (topPackageDb pdbs))) $
-		listModules opts pdbs
-	scan (Cache.loadPackageDb (topPackageDb pdbs)) (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- browseModules opts pdbs (mlocs' ^.. each . _1)
+		(filter (`S.member` packageDbMods)) $
+		(liftIO $ inWorker ghcw $ listModules opts pdbs)
+	scan (const $ return mempty) (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+		ms <- liftIO $ inWorker ghcw $ browseModules opts pdbs (mlocs' ^.. each . _1)
+		docs <- liftIO $ hsdevLiftWith (ToolError "hdocs") $ hdocsCabal pdbs opts
+		updater $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
+	where
+		setDocs' :: Map String (Map String String) -> Module -> Module
+		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view (moduleId . moduleName) m) docs
+
+-- | Scan top of package-db stack, usable for rescan
+scanPackageDbStack :: UpdateMonad m => [String] -> PackageDbStack -> m ()
+scanPackageDbStack opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "package-db" $ do
+	pdbStates <- liftIO $ mapM readPackageDb (packageDbs pdbs)
+	let
+		packageDbMods = S.fromList $ concat $ concatMap M.elems pdbStates
+	watch (\w -> watchPackageDbStack w pdbs opts)
+	dbval <- readDB
+	ghcw <- askSession sessionGhc
+	mlocs <- liftM
+		(filter (`S.member` packageDbMods)) $
+		(liftIO $ inWorker ghcw $ listModules opts pdbs)
+	scan (const $ return mempty) (packageDbStackSlice pdbs) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+		ms <- liftIO $ inWorker ghcw $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		docs <- liftIO $ hsdevLiftWith (ToolError "hdocs") $ hdocsCabal pdbs opts
 		updater $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
 	where
@@ -420,7 +430,7 @@ scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan (Cache.loadFiles (dir `isParent`)) (standaloneSlice . slice inDir) standSrcs opts $ scanModules opts
+	scan (const $ return mempty) (standaloneSlice . slice inDir) standSrcs opts $ scanModules opts
 	where
 		inDir = maybe False (dir `isParent`) . preview (sourcedModule . moduleLocation . moduleFile)
 
@@ -429,7 +439,7 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	dbval <- readDB
 	let
 		projs = dbval ^.. databaseProjects . each . projectCabal
-		pdbs = databasePackageDbs dbval
+		pdbs = M.keys (dbval ^. databasePackageDbs)
 		files = dbval ^.. standaloneSlice . modules . moduleId . moduleLocation . moduleFile
 		srcs = standSrcs ^.. each . _1 . moduleFile
 		inSrcs src = src `elem` srcs && src `notElem` files
@@ -437,7 +447,7 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	runTasks_ [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan (Cache.loadFiles inSrcs) (standaloneSlice . slice inFiles) standSrcs opts $ scanModules opts
+	scan (const $ return mempty) (standaloneSlice . slice inFiles) standSrcs opts $ scanModules opts
 
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [InspectedModule] -> m ()
@@ -456,7 +466,7 @@ scanDocs ims = do
 					length (im' ^.. inspectionResult . _Right . moduleSymbols . symbolDocs . _Just)
 				updater $ fromModule im'
 			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedKey im
-		doScan _ _ m = do
+		doScan _ m = do
 			w <- askSession sessionGhc
 			liftIO $ inWorker w $ do
 				opts' <- getModuleOpts [] m
@@ -470,7 +480,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 			w <- askSession sessionGhc
 			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedKey im
 			im' <- (liftM (setTag InferredTypesTag) $
-				S.scanModify (\opts _ m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts m Nothing))) im)
+				S.scanModify (\opts m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts m Nothing))) im)
 				<|> return im
 			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedKey im
 			updater $ fromModule im'
@@ -478,7 +488,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
 scan :: UpdateMonad m
-	=> (FilePath -> ExceptT String IO Structured)
+	=> (FilePath -> ExceptT String IO Database)
 	-- ^ Read data from cache
 	-> Slice
 	-- ^ Get data from database

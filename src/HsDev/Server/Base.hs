@@ -10,15 +10,12 @@ module HsDev.Server.Base (
 	module HsDev.Server.Message
 	) where
 
-import Control.Applicative
 import Control.Concurrent
 import Control.Exception
-import Control.Lens
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 import Data.Default
-import qualified Data.Map as M
 import Data.Maybe
 import Data.String
 import Data.Text (Text)
@@ -36,7 +33,6 @@ import qualified System.Directory.Watcher as Watcher
 import Text.Format ((~~), FormatBuild(..), (~%))
 
 import qualified HsDev.Cache as Cache
-import qualified HsDev.Cache.Structured as SC
 import qualified HsDev.Client.Commands as Client
 import HsDev.Database
 import HsDev.Error
@@ -99,10 +95,10 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scop
 		Cache.writeVersion $ cdir </> Cache.versionCache
 	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
 		outputStr Log.Info $ "Loading cache from {}" ~~ cdir
-		dbCache <- liftA merge <$> SC.load cdir
-		case dbCache of
-			Left err -> outputStr Log.Error $ "Failed to load cache: {}" ~~ err
-			Right dbCache' -> DB.update db (return dbCache')
+		-- dbCache <- liftA merge <$> SC.load cdir
+		-- case dbCache of
+		-- 	Left err -> outputStr Log.Error $ "Failed to load cache: {}" ~~ err
+		-- 	Right dbCache' -> DB.update db (return dbCache')
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> createPool "hsdev"
 #endif
@@ -167,20 +163,11 @@ withCache sopts v onCache = case serverCache sopts of
 	Just cdir -> onCache cdir
 
 writeCache :: SessionMonad m => ServerOpts -> Database -> m ()
-writeCache sopts db = withCache sopts () $ \cdir -> do
+writeCache sopts _ = withCache sopts () $ \cdir -> do
 	Log.log Log.Info $ "writing cache to {}" ~~ cdir
-	logIO "cache writing exception: " (Log.log Log.Error . fromString) $ do
-		let
-			sd = structurize db
-		liftIO $ SC.dump cdir sd
-		forM_ (M.keys (structuredPackageDbs sd)) $ \c -> Log.log Log.Debug ("cache write: cabal {}" ~~ show c)
-		forM_ (M.keys (structuredProjects sd)) $ \p -> Log.log Log.Debug ("cache write: project {}" ~~ p)
-		case (structuredFiles sd) ^.. databaseModules . each of
-			[] -> return ()
-			ms -> Log.log Log.Debug $ "cache write: {} files" ~~ length ms
-	Log.log Log.Info $ "cache saved to {}" ~~ cdir
+	Log.log Log.Warning $ "not implemented {}" ~~ cdir
 
-readCache :: SessionMonad m => ServerOpts -> (FilePath -> ExceptT String IO Structured) -> m (Maybe Database)
+readCache :: SessionMonad m => ServerOpts -> (FilePath -> ExceptT String IO Database) -> m (Maybe Database)
 readCache sopts act = do
 	s <- getSession
 	liftIO $ withSession s $ withCache sopts Nothing $ \fpath -> do
@@ -188,10 +175,4 @@ readCache sopts act = do
 		either cacheErr cacheOk res
 	where
 		cacheErr e = Log.log Log.Error ("Error reading cache: {}" ~~ e) >> return Nothing
-		cacheOk s = do
-			forM_ (M.keys (structuredPackageDbs s)) $ \c -> Log.log Log.Debug ("cache read: cabal {}" ~~ show c)
-			forM_ (M.keys (structuredProjects s)) $ \p -> Log.log Log.Debug ("cache read: project {}" ~~ p)
-			case (structuredFiles s) ^.. databaseModules . each of
-				[] -> return ()
-				ms -> Log.log Log.Debug $ "cache read: {} files" ~~ length ms
-			return $ Just $ merge s
+		cacheOk = return . Just

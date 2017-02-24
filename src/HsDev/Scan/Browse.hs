@@ -2,7 +2,7 @@ module HsDev.Scan.Browse (
 	-- * List all packages
 	browsePackages, browsePackagesDeps,
 	-- * Scan cabal modules
-	listModules, browseModules, browse, browseDb,
+	listModules, browseModules,
 	-- * Helpers
 	withPackages, withPackages_,
 	readPackage, readPackageConfig, ghcPackageDb, ghcModuleLocation,
@@ -13,7 +13,6 @@ module HsDev.Scan.Browse (
 	) where
 
 import Control.Arrow
-import Control.Lens (preview)
 import Control.Monad.Catch (MonadCatch, catch, SomeException)
 import Control.Monad.Except
 import Data.List (isPrefixOf)
@@ -68,32 +67,23 @@ browsePackagesDeps opts dbs = withPackages (packageDbStackOpts dbs ++ opts) $ \d
 	where
 		toPkg df' = readPackageConfig . getPackageDetails df'
 
-listModules :: MonadLog m => [String] -> PackageDbStack -> m [ModuleLocation]
-listModules opts dbs = withPackages_ (packageDbStackOpts dbs ++ opts) $ do
+listModules :: [String] -> PackageDbStack -> GhcM [ModuleLocation]
+listModules opts dbs = do
+	workerSession $ SessionGhc (packageDbStackOpts dbs ++ opts)
 	ms <- packageDbModules
-	pdbs <- mapM (liftIO . ghcPackageDb . fst) ms
-	return [ghcModuleLocation pdb p m | (pdb, (p, m)) <- zip pdbs ms]
+	return [ghcModuleLocation p m | (p, m) <- ms]
 
-browseModules :: MonadLog m => [String] -> PackageDbStack -> [ModuleLocation] -> m [InspectedModule]
-browseModules opts dbs mlocs = withPackages_ (packageDbStackOpts dbs ++ opts) $ do
+browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
+browseModules opts dbs mlocs = do
+	workerSession $ SessionGhc (packageDbStackOpts dbs ++ opts)
 	ms <- packageDbModules
-	pdbs <- mapM (liftIO . ghcPackageDb . fst) ms
-	liftM catMaybes $ sequence [browseModule' pdb p m | (pdb, (p, m)) <- zip pdbs ms, ghcModuleLocation pdb p m `elem` mlocs]
+	liftM catMaybes $ sequence [browseModule' p m | (p, m) <- ms, ghcModuleLocation p m `elem` mlocs]
 	where
-		browseModule' :: PackageDb -> GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
-		browseModule' pdb p m = tryT $ inspect (ghcModuleLocation pdb p m) (return $ InspectionAt 0 opts) (browseModule pdb p m)
+		browseModule' :: GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
+		browseModule' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 opts) (browseModule p m)
 
--- | Browse modules, if third argument is True - browse only modules in top of package-db stack
-browse :: MonadLog m => [String] -> PackageDbStack -> m [InspectedModule]
-browse opts dbs = listModules opts dbs >>= browseModules opts dbs
-
--- | Browse modules in top of package-db stack
-browseDb :: MonadLog m => [String] -> PackageDbStack -> m [InspectedModule]
-browseDb opts dbs = listModules opts dbs >>= browseModules opts dbs . filter inTop where
-	inTop = (== Just (topPackageDb dbs)) . preview modulePackageDb
-
-browseModule :: PackageDb -> GHC.PackageConfig -> GHC.Module -> GhcM Module
-browseModule pdb package' m = do
+browseModule :: GHC.PackageConfig -> GHC.Module -> GhcM Module
+browseModule package' m = do
 	df <- GHC.getSessionDynFlags
 	mi <- GHC.getModuleInfo m >>= maybe (hsdevError $ BrowseNoModuleInfo thisModule) return
 	ds <- mapM (toDecl df mi) (GHC.modInfoExports mi)
@@ -112,7 +102,7 @@ browseModule pdb package' m = do
 	where
 		thisModule = GHC.moduleNameString (GHC.moduleName m)
 		mloc df m' = ModuleId (fromString mname') $
-			ghcModuleLocation pdb (fromMaybe package' $ GHC.lookupPackage df (moduleUnitId m')) m'
+			ghcModuleLocation (fromMaybe package' $ GHC.lookupPackage df (moduleUnitId m')) m'
 			where
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl df minfo n = do
@@ -212,8 +202,8 @@ readPackageConfig pc = PackageConfig
 	(map (fromString . GHC.moduleNameString . GHC.exposedName) $ GHC.exposedModules pc)
 	(GHC.exposed pc)
 
-ghcModuleLocation :: PackageDb -> GHC.PackageConfig -> GHC.Module -> ModuleLocation
-ghcModuleLocation pdb p m = InstalledModule pdb (Just $ readPackage p) (GHC.moduleNameString $ GHC.moduleName m)
+ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> ModuleLocation
+ghcModuleLocation p m = InstalledModule (GHC.libraryDirs p) (Just $ readPackage p) (GHC.moduleNameString $ GHC.moduleName m)
 
 ghcPackageDb :: GHC.PackageConfig -> IO PackageDb
 ghcPackageDb = maybe (return GlobalDb) packageDbCandidate_ . listToMaybe . GHC.libraryDirs

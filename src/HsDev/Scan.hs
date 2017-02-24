@@ -8,7 +8,7 @@ module HsDev.Scan (
 
 	-- * Scan
 	scanProjectFile,
-	scanModule, scanModify, upToDate, rescanModule, changedModule, changedModules,
+	scanModify, upToDate, changedModule, changedModules,
 
 	-- * Reexportss
 	module HsDev.Database,
@@ -20,13 +20,13 @@ import Control.DeepSeq
 import Control.Lens hiding ((%=))
 import Control.Monad.Except
 import Data.Async
-import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 import Data.List (intercalate)
 import System.Directory
 import Text.Format
 
 import HsDev.Error
-import HsDev.Scan.Browse (browsePackages, browseModules)
+import HsDev.Scan.Browse (browsePackages)
 import HsDev.Server.Types (FileSource(..), Session(..), askSession, CommandMonad(..))
 import HsDev.Sandbox
 import HsDev.Symbols
@@ -178,32 +178,10 @@ scanProjectFile _ f = hsdevLiftIO $ do
 	proj <- (liftIO $ locateProject f) >>= maybe (hsdevError $ FileNotFound f) return
 	liftIO $ loadProject proj
 
--- | Scan module
-scanModule :: CommandMonad m => [(String, String)] -> [String] -> ModuleLocation -> Maybe String -> m InspectedModule
-scanModule defines opts (FileModule f p) mcts = hsdevLiftIO $ liftM setProj $ liftIO $ inspectFile defines opts f p mcts where
-	setProj =
-		set (inspectedKey . moduleProject) p .
-		set (inspectionResult . _Right . moduleId . moduleLocation . moduleProject) p
-scanModule _ opts mloc@(InstalledModule c _ n) _ = hsdevLiftIO $ do
-	pdbs <- getDbs c
-	ims <- browseModules opts pdbs [mloc]
-	maybe (hsdevError $ BrowseNoModuleInfo n) return $ listToMaybe ims
-	where
-		getDbs :: CommandMonad m => PackageDb -> m PackageDbStack
-		getDbs = maybe (return userDb) searchPackageDbStack . preview packageDb
-scanModule _ _ (OtherLocation _) _ = hsdevError $ InspectError "Can inspect only installed or source modules"
-scanModule _ _ NoLocation _ = hsdevError $ InspectError "Can inspect only installed or source modules"
-
 -- | Scan additional info and modify scanned module
-scanModify :: CommandMonad m => ([String] -> PackageDbStack -> Module -> m Module) -> InspectedModule -> m InspectedModule
+scanModify :: CommandMonad m => ([String] -> Module -> m Module) -> InspectedModule -> m InspectedModule
 scanModify f im = traverse f' im where
-	f' m = do
-		pdbs <- case view (moduleId . moduleLocation) m of
-			-- TODO: Get actual sandbox stack
-			FileModule fpath _ -> searchPackageDbStack fpath
-			InstalledModule pdb _ _ -> maybe (return userDb) searchPackageDbStack $ preview packageDb pdb
-			_ -> return userDb
-		f (fromMaybe [] $ preview (inspection . inspectionOpts) im) pdbs m
+	f' m = f (fromMaybe [] $ preview (inspection . inspectionOpts) im) m
 
 -- | Is inspected module up to date?
 upToDate :: [String] -> InspectedModule -> IO Bool
@@ -211,14 +189,6 @@ upToDate opts im = case view inspectedKey im of
 	FileModule f _ -> liftM (== view inspection im) $ fileInspection f opts
 	InstalledModule _ _ _ -> return $ view inspection im == InspectionAt 0 opts
 	_ -> return False
-
--- | Rescan inspected module
-rescanModule :: CommandMonad m => [(String, String)] -> [String] -> InspectedModule -> m (Maybe InspectedModule)
-rescanModule defines opts im = do
-	up <- liftIO $ upToDate opts im
-	if up
-		then return Nothing
-		else fmap Just $ scanModule defines opts (view inspectedKey im) Nothing
 
 -- | Is module new or recently changed
 changedModule :: Database -> [String] -> ModuleLocation -> IO Bool

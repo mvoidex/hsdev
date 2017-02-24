@@ -123,7 +123,7 @@ searchPackageDbStack p = do
 restorePackageDbStack :: MonadLog m => PackageDb -> m PackageDbStack
 restorePackageDbStack GlobalDb = return globalDb
 restorePackageDbStack UserDb = return userDb
-restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDb p) $ runMaybeT $ do
+restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDbs [p]) $ runMaybeT $ do
 	sbox <- MaybeT $ liftIO $ searchSandbox p
 	lift $ sandboxPackageDbStack sbox
 
@@ -150,7 +150,7 @@ getModuleOpts :: MonadLog m => [String] -> Module -> m [String]
 getModuleOpts opts m = do
 	pdbs <- case view (moduleId . moduleLocation) m of
 		FileModule fpath _ -> searchPackageDbStack fpath
-		InstalledModule pdb _ _ -> restorePackageDbStack pdb
+		InstalledModule _ _ _ -> return userDb
 		_ -> return userDb
 	pkgs <- browsePackages opts pdbs
 	return $ concat [

@@ -2,9 +2,9 @@
 
 module HsDev.Database (
 	Database(..), databaseModules, databaseProjects,
-	databaseIntersection, nullDatabase, databasePackageDbs, databaseSandboxes,
+	databaseIntersection, nullDatabase, databasePackageDbs, databasePackages, databaseSandboxes,
 	modules, symbols, packages,
-	fromModule, fromProject,
+	fromModule, fromProject, fromPackageDb, fromPackage,
 	Slice, slice', pslice, slice, unionSlice, slices, inversedSlice,
 	targetSlice, projectSlice, packageSlice, newestPackagesSlice, sandboxSlice,
 	targetDepsSlice, projectDepsSlice, packageDbSlice, packageDbStackSlice, standaloneSlice, fileDepsSlice,
@@ -12,81 +12,87 @@ module HsDev.Database (
 	
 	append, remove,
 
-	Structured(..),
-	structured, structurize, merge,
-
 	Map
 	) where
 
 import Control.Lens hiding ((.=), (%=))
-import Control.Monad (msum, join)
+import Control.Monad (msum)
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Function (on)
 import Data.Group (Group(..))
-import Data.List (find)
 import Data.Map (Map)
 import qualified Data.Map as M
-import Data.Maybe (mapMaybe)
+import Data.Set (Set)
+import qualified Data.Set as S
+import Data.Maybe (mapMaybe, catMaybes)
 
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Util
-import HsDev.Util ((.::), ordNub)
+import HsDev.Util ((.::))
 
 -- | HsDev database
 data Database = Database {
 	_databaseModules :: Map ModuleLocation InspectedModule,
-	_databaseProjects :: Map FilePath Project }
+	_databaseProjects :: Map FilePath Project,
+	_databasePackageDbs :: Map PackageDb (Set ModulePackage),
+	_databasePackages :: Map ModulePackage (Set ModuleLocation) }
 		deriving (Eq, Ord)
 
 makeLenses ''Database
 
 instance NFData Database where
-	rnf (Database ms ps) = rnf ms `seq` rnf ps
+	rnf (Database ms ps ds as) = rnf ms `seq` rnf ps `seq` rnf ds `seq` rnf as
 
 instance Group Database where
 	add old new = Database {
 		_databaseModules = M.union (_databaseModules new) (_databaseModules old),
-		_databaseProjects = M.unionWith mergeProject (_databaseProjects new) (_databaseProjects old) }
+		_databaseProjects = M.unionWith mergeProject (_databaseProjects new) (_databaseProjects old),
+		_databasePackageDbs = M.unionWith S.union (_databasePackageDbs new) (_databasePackageDbs old),
+		_databasePackages = M.unionWith S.union (_databasePackages new) (_databasePackages old) }
 		where
 			mergeProject pl pr = set projectDescription (msum [view projectDescription pl, view projectDescription pr]) pl
 	sub old new = Database {
 		_databaseModules = M.difference (_databaseModules old) (_databaseModules new),
-		_databaseProjects = M.difference (_databaseProjects old) (_databaseProjects new) }
-	zero = Database mempty mempty
+		_databaseProjects = M.difference (_databaseProjects old) (_databaseProjects new),
+		_databasePackageDbs = M.difference (_databasePackageDbs old) (_databasePackageDbs new),
+		_databasePackages = M.difference (_databasePackages old) (_databasePackages new) }
+	zero = Database mempty mempty mempty mempty
 
 instance Monoid Database where
 	mempty = zero
 	mappend = add
 
 instance ToJSON Database where
-	toJSON (Database ms ps) = object [
+	toJSON (Database ms ps ds as) = object [
 		"modules" .= M.toList ms,
-		"projects" .= M.toList ps]
+		"projects" .= M.toList ps,
+		"package-dbs" .= M.toList ds,
+		"packages" .= M.toList as]
 
 instance FromJSON Database where
 	parseJSON = withObject "database" $ \v -> Database <$>
 		(M.fromList <$> v .:: "modules") <*>
-		(M.fromList <$> v .:: "projects")
+		(M.fromList <$> v .:: "projects") <*>
+		(M.fromList <$> v .:: "package-dbs") <*>
+		(M.fromList <$> v .:: "packages")
 
 -- | Database intersection, prefers first database data
 databaseIntersection :: Database -> Database -> Database
 databaseIntersection l r = Database {
 	_databaseModules = M.intersection (_databaseModules l) (_databaseModules r),
-	_databaseProjects = M.intersection (_databaseProjects l) (_databaseProjects r) }
+	_databaseProjects = M.intersection (_databaseProjects l) (_databaseProjects r),
+	_databasePackageDbs = M.intersection (_databasePackageDbs l) (_databasePackageDbs r),
+	_databasePackages = M.intersection (_databasePackages l) (_databasePackages r) }
 
 -- | Check if database is empty
 nullDatabase :: Database -> Bool
-nullDatabase db = M.null (_databaseModules db) && M.null (_databaseProjects db)
-
--- | All scanned sandboxes
-databasePackageDbs :: Database -> [PackageDb]
-databasePackageDbs db = ordNub $ M.keys (_databaseModules db) ^.. each . modulePackageDb
+nullDatabase db = db == mempty
 
 -- | Scanned sandboxes
 databaseSandboxes :: Database -> [Sandbox]
-databaseSandboxes = mapMaybe packageDbSandbox . databasePackageDbs
+databaseSandboxes = mapMaybe packageDbSandbox . M.keys . _databasePackageDbs
 
 -- | All modules
 modules :: Traversal' Database Module
@@ -109,6 +115,14 @@ fromModule m = mempty {
 fromProject :: Project -> Database
 fromProject p = mempty {
 	_databaseProjects = M.singleton (view projectCabal p) p }
+
+fromPackageDb :: PackageDb -> [ModulePackage] -> Database
+fromPackageDb pdb pkgs = mempty {
+	_databasePackageDbs = M.singleton pdb (S.fromList pkgs) }
+
+fromPackage :: ModulePackage -> [ModuleLocation] -> Database
+fromPackage pkg mlocs = mempty {
+	_databasePackages = M.singleton pkg (S.fromList mlocs) }
 
 type SliceF f = (Database -> f Database) -> (Database -> f Database)
 type SliceC = SliceF (Const Database)
@@ -161,11 +175,12 @@ newestPackagesSlice = slice' g' where
 
 -- | Restrict only sandbox for path
 sandboxSlice :: FilePath -> Slice
-sandboxSlice fpath = slice' g' where
-	g' db = db {
-		_databaseModules = M.filter (maybe True ((== mbox) . packageDbSandbox) . preview (inspected . moduleId . moduleLocation . modulePackageDb)) (_databaseModules db) }
-		where
-			mbox = find (pathInSandbox fpath) $ databaseSandboxes db
+sandboxSlice = const id
+-- sandboxSlice fpath = slice' g' where
+-- 	g' db = db {
+-- 		_databaseModules = M.filter (maybe True ((== mbox) . packageDbSandbox) . preview (inspected . moduleId . moduleLocation . modulePackageDb)) (_databaseModules db) }
+-- 		where
+-- 			mbox = find (pathInSandbox fpath) $ databaseSandboxes db
 
 -- | Dependencies of target
 targetDepsSlice :: Project -> Info -> Slice
@@ -177,11 +192,21 @@ projectDepsSlice proj = sandboxSlice (view projectPath proj) . slice (inDepsOfPr
 
 -- | Package-db database
 packageDbSlice :: PackageDb -> Slice
-packageDbSlice pdb = slice (inPackageDb pdb)
+packageDbSlice pdb = slice' inPackageDb' where
+	inPackageDb' db = db {
+		_databaseModules = M.filter (maybe False (`S.member` mlocs) . preview (inspected . moduleId . moduleLocation)) (_databaseModules db) }
+		where
+			pkgs = maybe [] S.toList $ M.lookup pdb $ _databasePackageDbs db
+			mlocs = S.unions $ catMaybes [M.lookup pkg (_databasePackages db) | pkg <- pkgs]
 
 -- | Package-db stack database
 packageDbStackSlice :: PackageDbStack -> Slice
-packageDbStackSlice pdbs = slice (inPackageDbStack pdbs)
+packageDbStackSlice pdbs = slice' inPackageDb' where
+	inPackageDb' db = db {
+		_databaseModules = M.filter (maybe False (`S.member` mlocs) . preview (inspected . moduleId . moduleLocation)) (_databaseModules db) }
+		where
+			pkgs = S.toList $ S.unions $ catMaybes [M.lookup pdb (_databasePackageDbs db) | pdb <- packageDbs pdbs]
+			mlocs = S.unions $ catMaybes [M.lookup pkg (_databasePackages db) | pkg <- pkgs]
 
 -- | Standalone database
 standaloneSlice :: Slice
@@ -208,72 +233,3 @@ append = add
 -- | Remove database
 remove :: Database -> Database -> Database
 remove = sub
-
--- | Structured database
-data Structured = Structured {
-	structuredPackageDbs :: Map PackageDb Database,
-	structuredProjects :: Map FilePath Database,
-	structuredFiles :: Database }
-		deriving (Eq, Ord)
-
-instance NFData Structured where
-	rnf (Structured cs ps fs) = rnf cs `seq` rnf ps `seq` rnf fs
-
-instance Group Structured where
-	add old new = Structured {
-		structuredPackageDbs = structuredPackageDbs new `M.union` structuredPackageDbs old,
-		structuredProjects = structuredProjects new `M.union` structuredProjects old,
-		structuredFiles = structuredFiles old `add` structuredFiles new }
-	sub old new = Structured {
-		structuredPackageDbs = structuredPackageDbs old `M.difference` structuredPackageDbs new,
-		structuredProjects = structuredProjects old `M.difference` structuredProjects new,
-		structuredFiles = structuredFiles old `sub` structuredFiles new }
-	zero = Structured zero zero zero
-
-instance Monoid Structured where
-	mempty = zero
-	mappend = add
-
-instance ToJSON Structured where
-	toJSON (Structured cs ps fs) = object [
-		"cabals" .= M.elems cs,
-		"projects" .= M.elems ps,
-		"files" .= fs]
-
-instance FromJSON Structured where
-	parseJSON = withObject "structured" $ \v -> join $
-		either fail return <$> (structured <$>
-			(v .:: "cabals") <*>
-			(v .:: "projects") <*>
-			(v .:: "files"))
-
-structured :: [Database] -> [Database] -> Database -> Either String Structured
-structured cs ps fs = Structured <$> mkMap keyCabal cs <*> mkMap keyProj ps <*> pure fs where
-	mkMap :: Ord a => (Database -> Either String a) -> [Database] -> Either String (Map a Database)
-	mkMap key dbs = do
-		keys <- mapM key dbs
-		return $ M.fromList $ zip keys dbs
-	keyCabal :: Database -> Either String PackageDb
-	keyCabal db = unique
-		"No cabal"
-		"Different module cabals"
-		(ordNub (M.keys (_databaseModules db) ^.. each . modulePackageDb))
-	keyProj :: Database -> Either String FilePath
-	keyProj db = unique
-		"No project"
-		"Different module projects"
-		(M.keys $ _databaseProjects db)
-	-- Check that list results in one element
-	unique :: String -> String -> [a] -> Either String a
-	unique _ _ [x] = Right x
-	unique no _ [] = Left no
-	unique _ much _ = Left much
-
-structurize :: Database -> Structured
-structurize db = Structured cs ps fs where
-	cs = M.fromList [(c, db ^. packageDbSlice c) | c <- ordNub (M.keys (_databaseModules db) ^.. each . modulePackageDb)]
-	ps = M.fromList [(pname, db ^. projectSlice (project pname)) | pname <- M.keys (_databaseProjects db)]
-	fs = db ^. standaloneSlice
-
-merge :: Structured -> Database
-merge (Structured cs ps fs) = mconcat $ M.elems cs ++ M.elems ps ++ [fs]

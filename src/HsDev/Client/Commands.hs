@@ -19,6 +19,7 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.List
 import Data.Maybe
 import qualified Data.Map as M
+import qualified Data.Set as S
 import Data.String (fromString)
 import Data.Text (unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
@@ -132,7 +133,7 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 	forM_ projects $ \proj -> do
 		DB.clear db (return $ dbval ^. projectSlice proj)
 		liftIO $ unwatchProject w proj
-	dbPDbs <- mapM restorePackageDbStack $ databasePackageDbs dbval
+	dbPDbs <- mapM restorePackageDbStack $ M.keys $ view databasePackageDbs dbval
 	flip State.evalStateT dbPDbs $ do
 		when cabal $ removePackageDbStack userDb
 		forM_ sboxes' $ \sbox -> do
@@ -172,7 +173,7 @@ runCommand InfoPackages = toValue $ do
 	dbval <- getDb
 	return $ ordNub (dbval ^.. packages)
 runCommand InfoProjects = toValue $ (toListOf $ databaseProjects . each) <$> getDb
-runCommand InfoSandboxes = toValue $ databasePackageDbs <$> getDb
+runCommand InfoSandboxes = toValue $ (M.keys . view databasePackageDbs) <$> getDb
 runCommand (InfoSymbol sq fs _) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
@@ -294,10 +295,25 @@ targetFilter f = liftM (. view sourcedModule) $ case f of
 	TargetProject proj -> liftM inProject $ findProject proj
 	TargetFile file -> liftM inFile $ refineSourceFile file
 	TargetModule mname -> return $ inModule mname
-	TargetDepsOf dep -> liftM inDeps $ findDep dep
-	TargetPackageDb pdb -> return $ inPackageDb pdb
-	TargetCabal -> return $ inPackageDbStack userDb
-	TargetSandbox sbox -> liftM inPackageDbStack $ findSandbox sbox >>= sandboxPackageDbStack
+	TargetPackageDb pdb -> do
+		dbval <- getDb
+		let
+			pkgs = maybe [] S.toList (dbval ^? databasePackageDbs . ix pdb)
+			mlocs = S.unions $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
+		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
+	TargetCabal -> do
+		dbval <- getDb
+		let
+			pkgs = S.unions $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs userDb]
+			mlocs = S.unions $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- S.toList pkgs]
+		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
+	TargetSandbox sbox -> do
+		dbval <- getDb
+		pdbs <- findSandbox sbox >>= sandboxPackageDbStack
+		let
+			pkgs = S.unions $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs pdbs]
+			mlocs = S.unions $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- S.toList pkgs]
+		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
 	TargetPackage pack -> liftM (inPackage . mkPackage) $ refinePackage pack
 	TargetSourced -> return byFile
 	TargetStandalone -> return standalone
@@ -368,31 +384,6 @@ findProject proj = do
 		addCabal p
 			| takeExtension p == ".cabal" = p
 			| otherwise = p </> (takeBaseName p <.> "cabal")
-
--- | Find dependency: it may be source, project file or project name, also returns sandbox found
-findDep :: CommandMonad m => String -> m (Project, Maybe FilePath, PackageDbStack)
-findDep depName = do
-	depPath <- findPath depName
-	proj <- msum [
-		do
-			p <- liftIO (locateProject depPath)
-			p' <- maybe (hsdevError $ ProjectNotFound depName) return p
-			liftIO $ loadProject p',
-		findProject depName]
-	let
-		src
-			| takeExtension depPath == ".hs" = Just depPath
-			| otherwise = Nothing
-	pdbs <- searchPackageDbStack $ view projectPath proj
-	return (proj, src, pdbs)
-
--- FIXME: Doesn't work for file without project
--- | Check if project or source depends from this module
-inDeps :: (Project, Maybe FilePath, PackageDbStack) -> ModuleId -> Bool
-inDeps (proj, src, pdbs) = liftM2 (&&) (inPackageDbStack pdbs) deps' where
-	deps' = case src of
-		Nothing -> inDepsOfProject proj
-		Just src' -> inDepsOfFile proj src'
 
 -- | Get actual DB state
 getDb :: SessionMonad m => m Database

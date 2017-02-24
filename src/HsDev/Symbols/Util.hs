@@ -1,13 +1,12 @@
 module HsDev.Symbols.Util (
-	withName, inProject, inTarget, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inPackageDb, inPackageDbStack, inSandbox,
+	withName, inProject, inTarget, inDepsOfTarget, inDepsOfFile, inDepsOfProject,
 	inPackage, inFile, inOtherLocation, inModule,
 	byFile, installed, standalone,
 	latestPackages, newestPackage,
 	allOf, anyOf
 	) where
 
-import Control.Lens (preview, view, _Just, (^..), (^.), (^?), each)
-import Control.Monad (join)
+import Control.Lens (preview, view, _Just, (^..), (^.), each)
 import Data.Function (on)
 import Data.Maybe
 import Data.List (maximumBy, groupBy, sortBy)
@@ -16,7 +15,6 @@ import Data.String (fromString)
 import Data.Text (Text)
 import System.FilePath (normalise)
 
-import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Util (ordNub)
 
@@ -48,21 +46,6 @@ inDepsOfProject p = anyPackage $ ordNub (p ^.. projectDescription . _Just . info
 	anyPackage :: Sourced s => [String] -> s -> Bool
 	anyPackage = fmap or . mapM (inPackage . mkPackage) . filter (/= (p ^. projectName))
 
--- | Check if module in package-db
-inPackageDb :: Sourced s => PackageDb -> s -> Bool
-inPackageDb c m = preview (sourcedModule . moduleLocation . modulePackageDb) m == Just c
-
--- | Check if module in one of sandboxes
-inPackageDbStack :: Sourced s => PackageDbStack -> s -> Bool
-inPackageDbStack dbs m = maybe False (`elem` packageDbs dbs) $
-	preview (sourcedModule . moduleLocation . modulePackageDb) m
-
--- | Check if module in sandbox, works both for installed and sourced modules
-inSandbox :: Sourced s => Sandbox -> s -> Bool
-inSandbox sbox m
-	| join (fmap packageDbSandbox (m ^? sourcedModule . moduleLocation . modulePackageDb)) == Just sbox = True
-	| otherwise = maybe False (`pathInSandbox` sbox) (m ^? sourcedModule . moduleLocation . moduleFile)
-
 -- | Check if module in package
 inPackage :: Sourced s => ModulePackage -> s -> Bool
 inPackage p m = maybe False (equalTo p) $ preview (sourcedModule . moduleLocation . modulePackage . _Just) m where
@@ -87,7 +70,7 @@ byFile = isJust . preview (sourcedModule . moduleLocation . moduleFile)
 
 -- | Check if module got from cabal database
 installed :: Sourced s => s -> Bool
-installed = isJust . preview (sourcedModule . moduleLocation . cabalModuleName)
+installed = isJust . preview (sourcedModule . moduleLocation . installedModuleName)
 
 -- | Check if module is standalone
 standalone :: Sourced s => s -> Bool

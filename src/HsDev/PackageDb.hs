@@ -1,115 +1,61 @@
 {-# LANGUAGE TemplateHaskell, OverloadedStrings #-}
 
 module HsDev.PackageDb (
-	PackageDb(..), packageDb,
-	PackageDbStack(..), packageDbStack, globalDb, userDb, fromPackageDb, fromPackageDbs,
-	topPackageDb, packageDbs, packageDbStacks,
-	isSubStack,
+	module HsDev.PackageDb.Types,
 
-	packageDbOpt, packageDbStackOpts
+	packageDbPath, readPackageDb
 	) where
 
-import Control.Applicative
-import Control.Monad (guard)
-import Control.Lens (makeLenses, each)
-import Control.DeepSeq (NFData(..))
-import Data.Aeson
-import Data.List (tails, isSuffixOf)
+import Control.Lens
+import Data.Map (Map)
+import qualified Data.Map as M
+import Data.Maybe (listToMaybe)
+import Data.Traversable
+import Distribution.InstalledPackageInfo
+import Distribution.Package
+import Distribution.Text (disp)
+import System.FilePath
 
-import System.Directory.Paths
-import HsDev.Util ((.::))
+import HsDev.PackageDb.Types
+import HsDev.Error
+import HsDev.Symbols.Location
+import HsDev.Tools.Base
+import HsDev.Util (directoryContents, readFileUtf8)
 
-data PackageDb = GlobalDb | UserDb | PackageDb { _packageDb :: FilePath } deriving (Eq, Ord)
+-- | Get path to package-db
+packageDbPath :: PackageDb -> IO FilePath
+packageDbPath GlobalDb = do
+	out <- fmap lines $ runTool_ "ghc-pkg" ["list", "--global"]
+	case out of
+		(fpath:_) -> return $ normalise fpath
+		[] -> hsdevError $ ToolError "ghc-pkg" "empty output, expecting path to global package-db"
+packageDbPath UserDb = do
+	out <- fmap lines $ runTool_ "ghc-pkg" ["list", "--user"]
+	case out of
+		(fpath:_) -> return $ normalise fpath
+		[] -> hsdevError $ ToolError "ghc-pkg" "empty output, expecting path to user package db"
+packageDbPath (PackageDb fpath) = return fpath
 
-makeLenses ''PackageDb
-
-instance NFData PackageDb where
-	rnf GlobalDb = ()
-	rnf UserDb = ()
-	rnf (PackageDb p) = rnf p
-
-instance Show PackageDb where
-	show GlobalDb = "global-db"
-	show UserDb = "user-db"
-	show (PackageDb p) = "package-db:" ++ p
-
-instance ToJSON PackageDb where
-	toJSON GlobalDb = "global-db"
-	toJSON UserDb = "user-db"
-	toJSON (PackageDb p) = object ["package-db" .= p]
-
-instance FromJSON PackageDb where
-	parseJSON v = globalP v <|> userP v <|> dbP v where
-		globalP = withText "global-db" (\s -> guard (s == "global-db") >> return GlobalDb)
-		userP = withText "user-db" (\s -> guard (s == "user-db") >> return UserDb)
-		dbP = withObject "package-db" pathP where
-			pathP obj = PackageDb <$> obj .:: "package-db"
-
-instance Paths PackageDb where
-	paths _ GlobalDb = pure GlobalDb
-	paths _ UserDb = pure UserDb
-	paths f (PackageDb p) = PackageDb <$> f p
-
--- | Stack of PackageDb in reverse order
-newtype PackageDbStack = PackageDbStack { _packageDbStack :: [PackageDb] } deriving (Eq, Ord, Show)
-
-makeLenses ''PackageDbStack
-
-instance NFData PackageDbStack where
-	rnf (PackageDbStack ps) = rnf ps
-
-instance ToJSON PackageDbStack where
-	toJSON (PackageDbStack ps) = toJSON ps
-
-instance FromJSON PackageDbStack where
-	parseJSON = fmap PackageDbStack . parseJSON
-
-instance Paths PackageDbStack where
-	paths f (PackageDbStack ps) = PackageDbStack <$> (each . paths) f ps
-
--- | Global db stack
-globalDb :: PackageDbStack
-globalDb = PackageDbStack []
-
--- | User db stack
-userDb :: PackageDbStack
-userDb = PackageDbStack [UserDb]
-
--- | Make package-db from one package-db
-fromPackageDb :: FilePath -> PackageDbStack
-fromPackageDb = PackageDbStack . return . PackageDb
-
--- | Make package-db stack from paths
-fromPackageDbs :: [FilePath] -> PackageDbStack
-fromPackageDbs = PackageDbStack . map PackageDb . reverse
-
--- | Get top package-db for package-db stack
-topPackageDb :: PackageDbStack -> PackageDb
-topPackageDb (PackageDbStack []) = GlobalDb
-topPackageDb (PackageDbStack (d:_)) = d
-
--- | Get list of package-db in stack, adds additional global-db at bottom
-packageDbs :: PackageDbStack -> [PackageDb]
-packageDbs = (GlobalDb :) . reverse . _packageDbStack
-
--- | Get stacks for each package-db in stack
-packageDbStacks :: PackageDbStack -> [PackageDbStack]
-packageDbStacks = map PackageDbStack . tails . _packageDbStack
-
--- | Is one package-db stack substack of another
-isSubStack :: PackageDbStack -> PackageDbStack -> Bool
-isSubStack (PackageDbStack l) (PackageDbStack r) = l `isSuffixOf` r
-
--- | Get ghc options for package-db
-packageDbOpt :: PackageDb -> String
-packageDbOpt GlobalDb = "-global-package-db"
-packageDbOpt UserDb = "-user-package-db"
-packageDbOpt (PackageDb p) = "-package-db " ++ p
-
--- | Get ghc options for package-db stack
-packageDbStackOpts :: PackageDbStack -> [String]
-packageDbStackOpts (PackageDbStack ps)
-	| "-user-package-db" `elem` opts' = opts'
-	| otherwise = "-no-user-package-db" : opts'
+-- | Read package-db conf files
+readPackageDb :: PackageDb -> IO (Map ModulePackage [ModuleLocation])
+readPackageDb pdb = do
+	path <- packageDbPath pdb
+	mlibdir <- fmap (listToMaybe . lines) $ runTool_ "ghc" ["--print-libdir"]
+	confs <- fmap (filter isConf) $ directoryContents path
+	fmap M.unions $ forM confs $ \conf -> do
+		cts <- readFileUtf8 conf
+		case parseInstalledPackageInfo cts of
+			ParseFailed _ -> return M.empty  -- FIXME: Should log as warning
+			ParseOk _ res -> return $ over (each . each . moduleInstallDirs . each) (subst mlibdir) $ listMods res
 	where
-		opts' = map packageDbOpt (reverse ps)
+		isConf f = takeExtension f == ".conf"
+		listMods pinfo = M.singleton pname pmods where
+			pname = ModulePackage
+				(show . disp . pkgName $ sourcePackageId pinfo)
+				(show . disp . pkgVersion $ sourcePackageId pinfo)
+			pmods = map (InstalledModule (libraryDirs pinfo) (Just pname)) names
+			names = map (show . disp) (exposedModules pinfo) ++ map (show . disp) (hiddenModules pinfo)
+		subst Nothing f = f
+		subst (Just libdir) f = case splitDirectories f of
+			("$topdir":rest) -> joinPath (libdir : rest)
+			_ -> f
