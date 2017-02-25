@@ -100,7 +100,7 @@ preload name defines opts mloc (Just cts) = do
 	cts' <- preprocess_ defines exts fpath $ map untab cts
 	pragmas <- parseOk $ H.getTopPragmas cts'
 	let
-		fileExts = [H.parseExtension (T.unpack $ fromName_ $ fvoid lang) | H.LanguagePragma _ langs <- pragmas, lang <- langs]
+		fileExts = [H.parseExtension (T.unpack $ fromName_ $ void lang) | H.LanguagePragma _ langs <- pragmas, lang <- langs]
 		pmode = H.ParseMode {
 			H.parseFilename = fpath,
 			H.baseLanguage = H.Haskell2010,
@@ -155,14 +155,14 @@ analyzeResolve (AnalyzeEnv env _ rtable) m = case m ^. moduleSource of
 	Nothing -> m
 	Just msrc -> over moduleSymbols (refineSymbol stbl) $ m {
 		_moduleExports = map HN.fromSymbol $ N.exportedSymbols tbl msrc,
-		_moduleFixities = [Fixity (fvoid assoc) (fromMaybe 0 pr) (fixName opName)
+		_moduleFixities = [Fixity (void assoc) (fromMaybe 0 pr) (fixName opName)
 			| H.InfixDecl _ assoc pr ops <- decls', opName <- map getOpName ops],
 		_moduleScope = M.map (map HN.fromSymbol) tbl,
 		_moduleSource = Just annotated }
 		where
 			getOpName (H.VarOp _ nm) = nm
 			getOpName (H.ConOp _ nm) = nm
-			fixName o = H.Qual () (H.ModuleName () (T.unpack $ m ^. moduleId . moduleName)) (fvoid o)
+			fixName o = H.Qual () (H.ModuleName () (T.unpack $ m ^. moduleId . moduleName)) (void o)
 			itbl = N.importTable env msrc
 			tbl = N.moduleTable itbl msrc
 			syms = set (each . symbolId . symbolModule) (m ^. moduleId) $
@@ -287,7 +287,7 @@ prp = fromString . H.prettyPrint
 
 
 mkSymbol :: H.Name Ann -> SymbolInfo -> Symbol
-mkSymbol nm = Symbol (SymbolId (prp nm) (ModuleId (fromString "") noLocation)) Nothing (nm ^? binders . defPos)
+mkSymbol nm = Symbol (SymbolId (fromName_ $ void nm) (ModuleId (fromString "") noLocation)) Nothing (nm ^? binders . defPos)
 
 
 -- | Print something in one line
@@ -417,9 +417,6 @@ preprocess_ defines exts fpath cts
 	where
 		exts' = map H.parseExtension exts ++ maybe [] snd (H.readExtensions cts)
 		hasCPP = H.EnableExtension H.CPP `elem` exts'
-
-fvoid :: Functor f => f a -> f ()
-fvoid = fmap (const ())
 
 dropScope :: Functor f => f (N.Scoped l) -> f l
 dropScope = fmap (\(N.Scoped _ a) -> a)

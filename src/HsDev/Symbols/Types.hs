@@ -20,13 +20,14 @@ module HsDev.Symbols.Types (
 
 import Control.Arrow
 import Control.Applicative
-import Control.Lens (makeLenses, set, view, Lens', lens, Traversal, Traversal', _Right, _Just)
+import Control.Lens hiding ((.=))
 import Control.Monad
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Aeson.Types (Pair, Parser)
 import Data.List (intercalate)
 import Data.Maybe (catMaybes)
+import Data.Monoid (Any(..))
 import Data.Function
 import Data.Ord
 import Data.Map.Strict (Map)
@@ -84,10 +85,15 @@ data Module = Module {
 	_moduleScope :: Map Name [Symbol], -- symbols in scope, only for source modules
 	_moduleSource :: Maybe Parsed } -- source of module
 
+-- | Make each symbol appear only once
 moduleSymbols :: Traversal' Module Symbol
-moduleSymbols f m = (\e s -> m { _moduleExports = e, _moduleScope = s }) <$>
-	traverse f (_moduleExports m) <*>
-	traverse (traverse f) (_moduleScope m)
+moduleSymbols f m = getBack <$> (each . _1) f revList where
+	revList = M.toList $ M.unionsWith mappend $ concat [
+		[M.singleton sym ([], Any True) | sym <- _moduleExports m],
+		[M.singleton sym ([nm], Any False) | (nm, syms) <- M.toList (_moduleScope m), sym <- syms]]
+	getBack syms = m {
+		_moduleExports = [sym' | (sym', (_, Any True)) <- syms],
+		_moduleScope = M.unionsWith (++) [M.singleton n [sym'] | (sym', (ns, _)) <- syms, n <- ns] }
 
 exportedSymbols :: Traversal' Module Symbol
 exportedSymbols f m = (\e -> m { _moduleExports = e }) <$> traverse f (_moduleExports m)

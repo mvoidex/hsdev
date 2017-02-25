@@ -2,8 +2,8 @@
 
 module HsDev.Symbols.Parsed (
 	Ann, Parsed,
-	names, binders, locals, globals, references, unresolveds,
-	usages,
+	qnames, names, binders, locals, globals, references, unresolveds,
+	usages, imports, moduleNames,
 
 	annL, file, pos, defPos, resolvedName,
 	isBinder, isLocal, isGlobal, isReference, isUnresolved,
@@ -28,33 +28,45 @@ type Ann = Scoped SrcSpanInfo
 -- | Parsed and resolved module
 type Parsed = Module Ann
 
+-- | Get all qualified names
+qnames :: Data (ast Ann) => Traversal' (ast Ann) (QName Ann)
+qnames = biplate
+
 -- | Get all names
 names :: Data (ast Ann) => Traversal' (ast Ann) (E.Name Ann)
 names = biplate
 
 -- | Get all binders
-binders :: Data (ast Ann) => Traversal' (ast Ann) (E.Name Ann)
-binders = names . filtered isBinder
+binders :: Annotated ast => Traversal' (ast Ann) (ast Ann)
+binders = filtered isBinder
 
 -- | Get all names locally defined
-locals :: Data (ast Ann) => Traversal' (ast Ann) (E.Name Ann)
-locals = names . filtered isLocal
+locals :: Annotated ast => Traversal' (ast Ann) (ast Ann)
+locals = filtered isLocal
 
 -- | Get all names, references global symbol
-globals :: Data (ast Ann) => Traversal' (ast Ann) (E.Name Ann)
-globals = names . filtered isGlobal
+globals :: Annotated ast => Traversal' (ast Ann) (ast Ann)
+globals = filtered isGlobal
 
 -- | Get all resolved references
-references :: Data (ast Ann) => Traversal' (ast Ann) (E.Name Ann)
-references = names . filtered isReference
+references :: Annotated ast => Traversal' (ast Ann) (ast Ann)
+references = filtered isReference
 
 -- | Get all names with not in scope error
-unresolveds :: Data (ast Ann) => Traversal' (ast Ann) (E.Name Ann)
-unresolveds = names . filtered isUnresolved
+unresolveds :: Annotated ast => Traversal' (ast Ann) (ast Ann)
+unresolveds = filtered isUnresolved
 
 -- | Get all usages of symbol
-usages :: Data (ast Ann) => Name -> Traversal' (ast Ann) (E.Name Ann)
-usages n = globals . filtered (refsTo n)
+usages :: Annotated ast => Name -> Traversal' (ast Ann) (ast Ann)
+usages n = filtered (refsTo n)
+
+-- | Get imports
+imports :: Data (ast Ann) => Traversal' (ast Ann) (ImportDecl Ann)
+imports = biplate
+
+-- | Get module names
+moduleNames :: Data (ast Ann) => Traversal' (ast Ann) (ModuleName Ann)
+moduleNames = biplate
 
 -- | Get annotation
 annL :: Annotated ast => Lens' (ast a) a

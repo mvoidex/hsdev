@@ -84,7 +84,7 @@ scopeModules db file = do
 scope :: Database -> FilePath -> ExceptT String IO [Symbol]
 scope db file = do
 	mthis <- fileModule db file
-	return $ mthis ^.. moduleScope . each . each
+	return $ ordNub $ mthis ^.. moduleScope . each . each
 
 -- | Completions
 completions :: Database -> FilePath -> String -> ExceptT String IO [Symbol]

@@ -38,6 +38,7 @@ import qualified Language.Haskell.Exts as H
 
 import HsDev.Symbols.Types
 import HsDev.Symbols.Class
+import HsDev.Symbols.Parsed (imports, moduleNames)
 import HsDev.Symbols.Documented (Documented(..))
 import HsDev.Symbols.HaskellNames
 import HsDev.Util (searchPath, uniqueBy, directoryContents)
@@ -79,11 +80,11 @@ locateSourceDir f = runMaybeT $ do
 -- | Make `Info` for standalone `Module`
 standaloneInfo :: [PackageConfig] -> Module -> Info
 standaloneInfo pkgs m = mempty { _infoDepends = pkgDeps ^.. each . package . packageName } where
-	pkgDeps = catMaybes [M.lookup mdep pkgMap >>= listToMaybe | mdep <- "Prelude" : imports]
+	pkgDeps = catMaybes [M.lookup mdep pkgMap >>= listToMaybe | mdep <- "Prelude" : imps]
 	pkgMap = M.unionsWith mergePkgs [M.singleton m' [p] | p <- pkgs, m' <- view packageModules p]
 	mergePkgs ls rs = if null es then hs else es where
 		(es, hs) = partition (view packageExposed) $ uniqueBy (view package) (ls ++ rs)
-	imports = delete (view (moduleId . moduleName) m) $ nub [fromString m' | H.Qual _ (H.ModuleName _ m') _ <- M.keys (view moduleScope m)]
+	imps = delete (view (moduleId . moduleName) m) $ nub [fromString m' | H.ModuleName _ m' <- map void (m ^.. moduleSource . _Just . imports . moduleNames)]
 
 -- | Options for GHC of module and project
 moduleOpts :: [PackageConfig] -> Module -> [String]
