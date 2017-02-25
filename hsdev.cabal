@@ -232,46 +232,6 @@ executable hsclearimports
     transformers >= 0.4.0,
     unordered-containers >= 0.2.0
 
-executable hscabal
-  main-is: hscabal.hs
-  hs-source-dirs: tools
-  ghc-options: -Wall -fno-warn-tabs
-  other-modules:
-    Tool
-  build-depends:
-    base >= 4.7 && < 5,
-    hsdev,
-    aeson >= 0.7.0,
-    aeson-pretty >= 0.7.0,
-    bytestring >= 0.10.0,
-    containers >= 0.5,
-    data-default >= 0.5.0,
-    mtl >= 2.2.0,
-    optparse-applicative >= 0.11,
-    text >= 1.2.0,
-    transformers >= 0.4.0,
-    unordered-containers >= 0.2.0
-
-executable hshayoo
-  main-is: hshayoo.hs
-  hs-source-dirs: tools
-  ghc-options: -Wall -fno-warn-tabs
-  other-modules:
-    Tool
-  build-depends:
-    base >= 4.7 && < 5,
-    hsdev,
-    aeson >= 0.7.0,
-    aeson-pretty >= 0.7.0,
-    bytestring >= 0.10.0,
-    containers >= 0.5,
-    data-default >= 0.5.0,
-    mtl >= 2.2.0,
-    optparse-applicative >= 0.11,
-    text >= 1.2.0,
-    transformers >= 0.4.0,
-    unordered-containers >= 0.2.0
-
 executable hsautofix
   main-is: hsautofix.hs
   hs-source-dirs: tools

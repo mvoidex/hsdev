@@ -238,6 +238,8 @@ readDB = askSession sessionDatabase >>= liftIO . readAsync
 scanModules :: UpdateMonad m => [String] -> [S.ModuleToScan] -> m ()
 scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 	scanModules' mproj ms' = do
+		pdbs <- maybe (return userDb) (inSessionGhc . getProjectPackageDbStack) mproj
+		waiter $ updater $ fromProjectInfo mproj pdbs (ms' ^.. each . _1)
 		dbval <- readDB
 		defines <- askSession sessionDefines
 		-- Make table of already scanned and up to date modules

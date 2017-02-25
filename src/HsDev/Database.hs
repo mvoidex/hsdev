@@ -4,7 +4,7 @@ module HsDev.Database (
 	Database(..), databaseModules, databaseProjects,
 	databaseIntersection, nullDatabase, databasePackageDbs, databasePackages, databaseSandboxes,
 	modules, symbols, packages,
-	fromModule, fromProject, fromPackageDb, fromPackage, fromPackageDbState,
+	fromModule, fromProject, fromProjectInfo, fromPackageDb, fromPackage, fromPackageDbState,
 	Slice, slice', pslice, slice, unionSlice, slices, inversedSlice,
 	packageDbStackSlice, packageDbSlice, projectSlice, projectDepsSlice, targetSlice,
 	newestPackagesSlice, standaloneSlice, filesSlice, sourcesSlice, freshSlice,
@@ -122,6 +122,10 @@ fromModule m = mempty {
 fromProject :: Project -> Database
 fromProject p = mempty {
 	_databaseProjects = M.singleton (view projectCabal p) p }
+
+fromProjectInfo :: Maybe Project -> PackageDbStack -> [ModuleLocation] -> Database
+fromProjectInfo mproj pdbs mlocs = maybe mempty fromProject mproj `mappend` mempty {
+	_databaseProjectsInfos = M.singleton mproj (pdbs, mlocs) }
 
 fromPackageDb :: PackageDb -> [ModulePackage] -> Database
 fromPackageDb pdb pkgs = mempty {
