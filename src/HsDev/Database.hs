@@ -7,7 +7,7 @@ module HsDev.Database (
 	fromModule, fromProject, fromPackageDb, fromPackage, fromPackageDbState,
 	Slice, slice', pslice, slice, unionSlice, slices, inversedSlice,
 	packageDbStackSlice, packageDbSlice, projectSlice, projectDepsSlice, targetSlice,
-	newestPackagesSlice, standaloneSlice, filesSlice,
+	newestPackagesSlice, standaloneSlice, filesSlice, sourcesSlice, freshSlice,
 
 	refineProject,
 	append, remove,
@@ -274,6 +274,21 @@ filesSlice fs = slice' fn where
 		where
 			mlocs = catMaybes [db ^? databaseModules . ix (FileModule f Nothing) . inspected . moduleId . moduleLocation | f <- fs]
 			projs = mlocs ^.. each . moduleProject
+
+-- | Only source-code modules, no installed
+sourcesSlice :: Slice
+sourcesSlice = slice' fn where
+	fn db = db {
+		_databaseModules = restrictKeys (_databaseModules db) (S.fromList mlocs),
+		_databasePackageDbs = mempty,
+		_databasePackages = mempty }
+		where
+			projs = db ^.. databaseProjects . each
+			mlocs = ordNub $ concat [db ^.. databaseProjectsInfos . ix proj . _2 . each | proj <- Nothing : map Just projs]
+
+-- | Latest installed modules and source modules
+freshSlice :: Slice
+freshSlice = slices [newestPackagesSlice, sourcesSlice]
 
 -- | Refine project
 refineProject :: Database -> Project -> Maybe Project

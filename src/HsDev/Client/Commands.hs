@@ -177,12 +177,12 @@ runCommand InfoSandboxes = toValue $ (M.keys . view databasePackageDbs) <$> getD
 runCommand (InfoSymbol sq fs _) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
-	return (dbval ^.. newestPackagesSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq))
+	return (dbval ^.. freshSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq))
 runCommand (InfoModule sq fs h i) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
 	let
-		ms = dbval ^.. newestPackagesSlice . modules . filtered filter' . filtered (matchQuery sq)
+		ms = dbval ^.. freshSlice . modules . filtered filter' . filtered (matchQuery sq)
 		mlocs = map (view (moduleId . moduleLocation)) ms
 		ims = map (\mloc -> dbval ^?! databaseModules . ix mloc) mlocs
 		converted
