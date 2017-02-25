@@ -106,7 +106,25 @@ data ModuleLocation =
 	InstalledModule { _moduleInstallDirs :: [FilePath], _modulePackage :: Maybe ModulePackage, _installedModuleName :: String } |
 	OtherLocation { _otherLocationName :: String } |
 	NoLocation
-		deriving (Eq, Ord)
+
+instance Eq ModuleLocation where
+	FileModule lfile _ == FileModule rfile _ = lfile == rfile
+	InstalledModule ldirs _ _ == InstalledModule rdirs _ _ = ldirs == rdirs
+	OtherLocation l == OtherLocation r = l == r
+	NoLocation == NoLocation = True
+	_ == _ = False
+
+instance Ord ModuleLocation where
+	compare l r = compare (locType l, locNames l) (locType r, locNames r) where
+		locType :: ModuleLocation -> Int
+		locType (FileModule _ _) = 0
+		locType (InstalledModule _ _ _) = 1
+		locType (OtherLocation _) = 2
+		locType NoLocation = 3
+		locNames (FileModule f _) = [f]
+		locNames (InstalledModule dirs _ nm) = nm : dirs
+		locNames (OtherLocation n) = [n]
+		locNames NoLocation = []
 
 makeLenses ''ModuleLocation
 

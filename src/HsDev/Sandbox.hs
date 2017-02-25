@@ -9,11 +9,15 @@ module HsDev.Sandbox (
 	cabalSandboxLib, cabalSandboxPackageDb,
 
 	getModuleOpts,
-	pathInSandbox
+	pathInSandbox,
+
+	getProjectSandbox,
+	getProjectPackageDbStack
 	) where
 
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
+import Control.Monad
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Control.Lens (view, makeLenses)
@@ -30,13 +34,16 @@ import System.Log.Simple (MonadLog(..))
 
 import System.Directory.Paths
 import HsDev.PackageDb
-import HsDev.Scan.Browse (withPackages, browsePackages)
+import HsDev.Project.Types
+import HsDev.Scan.Browse (browsePackages)
 import HsDev.Stack
 import HsDev.Symbols (moduleOpts)
 import HsDev.Symbols.Types (moduleId, Module(..), ModuleLocation(..), moduleLocation)
+import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (searchPath, isParent, directoryContents)
 
+import qualified GHC
 import qualified Packages as GHC
 
 data SandboxType = CabalSandbox | StackWork deriving (Eq, Ord, Read, Show, Enum, Bounded)
@@ -98,7 +105,7 @@ searchSandbox :: FilePath -> IO (Maybe Sandbox)
 searchSandbox p = runMaybeT $ searchPath p (MaybeT . findSandbox)
 
 -- | Get package-db stack for sandbox
-sandboxPackageDbStack :: MonadLog m => Sandbox -> m PackageDbStack
+sandboxPackageDbStack :: Sandbox -> GhcM PackageDbStack
 sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
 	dir <- cabalSandboxPackageDb
 	return $ PackageDbStack [PackageDb $ fpath </> dir]
@@ -112,7 +119,7 @@ packageDbSandbox (PackageDb fpath) = msum [sandboxFromPath p | p <- parents] whe
 	parents = map joinPath . tail . inits . splitDirectories $ fpath
 
 -- | Search package-db stack with user-db as default
-searchPackageDbStack :: MonadLog m => FilePath -> m PackageDbStack
+searchPackageDbStack :: FilePath -> GhcM PackageDbStack
 searchPackageDbStack p = do
 	mbox <- liftIO $ searchSandbox p
 	case mbox of
@@ -120,7 +127,7 @@ searchPackageDbStack p = do
 		Just sbox -> sandboxPackageDbStack sbox
 
 -- | Restore package-db stack by package-db
-restorePackageDbStack :: MonadLog m => PackageDb -> m PackageDbStack
+restorePackageDbStack :: PackageDb -> GhcM PackageDbStack
 restorePackageDbStack GlobalDb = return globalDb
 restorePackageDbStack UserDb = return userDb
 restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDbs [p]) $ runMaybeT $ do
@@ -128,25 +135,25 @@ restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDbs [p]) $ r
 	lift $ sandboxPackageDbStack sbox
 
 -- | Get actual sandbox build path: <arch>-<platform>-<compiler>-<version>
-cabalSandboxLib :: MonadLog m => m FilePath
+cabalSandboxLib :: GhcM FilePath
 cabalSandboxLib = do
-	res <- withPackages ["-no-user-package-db"] $
-		return .
-		map (GHC.packageNameString &&& GHC.packageVersion) .
-		fromMaybe [] .
-		Compat.pkgDatabase
+	tmpSession ["-no-user-package-db"]
+	df <- GHC.getSessionDynFlags
 	let
+		res =
+			map (GHC.packageNameString &&& GHC.packageVersion) .
+			fromMaybe [] . Compat.pkgDatabase $ df
 		compiler = T.display buildCompilerFlavor
 		CompilerId _ version = buildCompilerId
 		ver = maybe (T.display version) T.display $ lookup compiler res
 	return $ T.display buildPlatform ++ "-" ++ compiler ++ "-" ++ ver
 
 -- | Get sandbox package-db: <arch>-<platform>-<compiler>-<version>-packages.conf.d
-cabalSandboxPackageDb :: MonadLog m => m FilePath
+cabalSandboxPackageDb :: GhcM FilePath
 cabalSandboxPackageDb = liftM (++ "-packages.conf.d") cabalSandboxLib
 
 -- | Options for GHC for module and project
-getModuleOpts :: MonadLog m => [String] -> Module -> m [String]
+getModuleOpts :: [String] -> Module -> GhcM [String]
 getModuleOpts opts m = do
 	pdbs <- case view (moduleId . moduleLocation) m of
 		FileModule fpath _ -> searchPackageDbStack fpath
@@ -161,3 +168,11 @@ getModuleOpts opts m = do
 -- | Is file in within sandbox, i.e. sandboxes parent is parent for file
 pathInSandbox :: FilePath -> Sandbox -> Bool
 pathInSandbox fpath (Sandbox _ spath) = takeDirectory spath `isParent` fpath
+
+-- | Get sandbox of project (if any)
+getProjectSandbox :: MonadLog m => Project -> m (Maybe Sandbox)
+getProjectSandbox = liftIO . searchSandbox . view projectPath
+
+-- | Get project package-db stack
+getProjectPackageDbStack :: Project -> GhcM PackageDbStack
+getProjectPackageDbStack = getProjectSandbox >=> maybe (return userDb) sandboxPackageDbStack

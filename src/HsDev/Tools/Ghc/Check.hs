@@ -18,7 +18,7 @@ import Control.Monad.Except
 import Data.Maybe (fromMaybe)
 import System.FilePath (makeRelative)
 import System.Directory (doesDirectoryExist)
-import System.Log.Simple (MonadLog(..), scope)
+import System.Log.Simple (MonadLog(..), scope, sendLog, Level(..))
 
 import GHC hiding (Warning, Module, moduleName)
 

@@ -11,7 +11,7 @@ module HsDev.Util (
 	-- * String utils
 	tab, tabs, trim, split,
 	-- * Other utils
-	ordNub, uniqueBy, mapBy,
+	ordNub, ordUnion, uniqueBy, mapBy,
 	-- * Helper
 	(.::), (.::?), (.::?!), objectUnion, jsonUnion, noNulls,
 	-- * Exceptions
@@ -46,7 +46,7 @@ import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
 import Data.List (isPrefixOf, unfoldr, intercalate)
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Monoid ((<>))
 import qualified Data.Set as Set
@@ -145,6 +145,9 @@ ordNub = go Set.empty where
 	go s (x:xs)
 		| x `Set.member` s = go s xs
 		| otherwise = x : go (Set.insert x s) xs
+
+ordUnion :: Ord a => [a] -> [a] -> [a]
+ordUnion l r = ordNub $ l ++ r
 
 uniqueBy :: Ord b => (a -> b) -> [a] -> [a]
 uniqueBy f = M.elems . mapBy f

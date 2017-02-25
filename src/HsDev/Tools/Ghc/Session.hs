@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Session (
-	ghcSession, ghciSession, haddockSession, targetSession, interpretModule,
+	targetSession, interpretModule,
 
 	module HsDev.Tools.Ghc.Worker
 	) where
@@ -16,18 +16,6 @@ import HsDev.Sandbox (getModuleOpts)
 import HsDev.Tools.Ghc.Worker
 
 import qualified GHC
-
--- | Get ghc session
-ghcSession :: [String] -> GhcM ()
-ghcSession = workerSession . SessionGhc
-
--- | Get ghci session
-ghciSession :: GhcM ()
-ghciSession = workerSession SessionGhci
-
--- | Get haddock session with flags
-haddockSession :: [String] -> GhcM ()
-haddockSession opts = ghcSession ("-haddock" : opts)
 
 -- | Session for module
 targetSession :: [String] -> Module -> GhcM ()

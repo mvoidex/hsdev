@@ -6,8 +6,8 @@ module HsDev.Project.Types (
 	Target(..),
 	Library(..), libraryModules, libraryBuildInfo,
 	Executable(..), executableName, executablePath, executableBuildInfo,
-	Test(..), testName, testEnabled, testBuildInfo,
-	Info(..), infoDepends, infoLanguage, infoExtensions, infoGHCOptions, infoSourceDirs,
+	Test(..), testName, testEnabled, testBuildInfo, testMain,
+	Info(..), infoDepends, infoLanguage, infoExtensions, infoGHCOptions, infoSourceDirs, infoOtherModules,
 	Extensions(..), extensions, ghcOptions, entity,
 	) where
 
@@ -130,6 +130,7 @@ instance Paths ProjectDescription where
 class Target a where
 	targetName :: Traversal' a String
 	buildInfo :: Lens' a Info
+	targetModules :: a -> [FilePath]
 
 -- | Library in project
 data Library = Library {
@@ -187,28 +188,32 @@ instance Paths Executable where
 data Test = Test {
 	_testName :: String,
 	_testEnabled :: Bool,
+	_testMain :: Maybe FilePath,
 	_testBuildInfo :: Info }
 		deriving (Eq, Read)
 
 instance Show Test where
 	show t = unlines $
 		["test " ++ _testName t, "\tenabled: " ++ show (_testEnabled t)] ++
+		maybe [] (\f -> ["\tmain-is: " ++ f]) (_testMain t) ++
 		(map (tab 1) . lines . show $ _testBuildInfo t)
 
 instance ToJSON Test where
 	toJSON t = object [
 		"name" .= _testName t,
 		"enabled" .= _testEnabled t,
+		"main" .= _testMain t,
 		"info" .= _testBuildInfo t]
 
 instance FromJSON Test where
 	parseJSON = withObject "test" $ \v -> Test <$>
 		v .:: "name" <*>
 		v .:: "enabled" <*>
+		v .::? "main" <*>
 		v .:: "info"
 
 instance Paths Test where
-	paths f (Test n e info) = Test n e <$> paths f info
+	paths f (Test n e m info) = Test n e <$> traverse f m <*> paths f info
 
 -- | Build info
 data Info = Info {
@@ -216,23 +221,25 @@ data Info = Info {
 	_infoLanguage :: Maybe Language,
 	_infoExtensions :: [Extension],
 	_infoGHCOptions :: [String],
-	_infoSourceDirs :: [FilePath] }
+	_infoSourceDirs :: [FilePath],
+	_infoOtherModules :: [[String]] }
 		deriving (Eq, Read)
 
 instance Monoid Info where
-	mempty = Info [] Nothing [] [] []
+	mempty = Info [] Nothing [] [] [] []
 	mappend l r = Info
 		(ordNub $ _infoDepends l ++ _infoDepends r)
 		(getFirst $ First (_infoLanguage l) `mappend` First (_infoLanguage r))
 		(_infoExtensions l ++ _infoExtensions r)
 		(_infoGHCOptions l ++ _infoGHCOptions r)
 		(ordNub $ _infoSourceDirs l ++ _infoSourceDirs r)
+		(ordNub $ _infoOtherModules l ++ _infoOtherModules r)
 
 instance Ord Info where
 	compare l r = compare (_infoSourceDirs l, _infoDepends l, _infoGHCOptions l) (_infoSourceDirs r, _infoDepends r, _infoGHCOptions r)
 
 instance Show Info where
-	show i = unlines $ lang ++ exts ++ opts ++ sources where
+	show i = unlines $ lang ++ exts ++ opts ++ sources ++ otherMods where
 		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ _infoLanguage i
 		exts
 			| null (_infoExtensions i) = []
@@ -241,6 +248,7 @@ instance Show Info where
 			| null (_infoGHCOptions i) = []
 			| otherwise = "ghc-options:" : map (tab 1) (_infoGHCOptions i)
 		sources = "source-dirs:" : (map (tab 1) $ _infoSourceDirs i)
+		otherMods = "other-modules:" : (map (tab 1) . fmap (intercalate ".") $ _infoOtherModules i)
 
 instance ToJSON Info where
 	toJSON i = object [
@@ -248,7 +256,8 @@ instance ToJSON Info where
 		"language" .= fmap display (_infoLanguage i),
 		"extensions" .= map display (_infoExtensions i),
 		"ghc-options" .= _infoGHCOptions i,
-		"source-dirs" .= _infoSourceDirs i]
+		"source-dirs" .= _infoSourceDirs i,
+		"other-modules" .= _infoOtherModules i]
 
 instance FromJSON Info where
 	parseJSON = withObject "info" $ \v -> Info <$>
@@ -256,14 +265,15 @@ instance FromJSON Info where
 		((v .:: "language") >>= traverse (parseDT "Language")) <*>
 		((v .:: "extensions") >>= traverse (parseDT "Extension")) <*>
 		v .:: "ghc-options" <*>
-		v .:: "source-dirs"
+		v .:: "source-dirs" <*>
+		v .:: "other-modules"
 		where
 			parseDT :: Distribution.Text.Text a => String -> String -> Parser a
 			parseDT typeName v = maybe err return (simpleParse v) where
 				err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
 
 instance Paths Info where
-	paths f (Info deps lang exts opts dirs) = Info deps lang exts opts <$> traverse f dirs
+	paths f (Info deps lang exts opts dirs omods) = Info deps lang exts opts <$> traverse f dirs <*> pure omods
 
 -- | Entity with project extensions
 data Extensions a = Extensions {
@@ -299,11 +309,18 @@ makeLenses ''Extensions
 instance Target Library where
 	targetName _ = pure
 	buildInfo = libraryBuildInfo
+	targetModules lib' = map toFile (lib' ^.. libraryModules . each) where
+		toFile ps = joinPath ps <.> "hs"
 
 instance Target Executable where
 	targetName = executableName
 	buildInfo = executableBuildInfo
+	targetModules exe' = [exe' ^. executablePath]
 
 instance Target Test where
 	targetName = testName
 	buildInfo = testBuildInfo
+	targetModules test' = map toFile (test' ^.. testMain . _Just) where
+		toFile f
+			| haskellSource f = f
+			| otherwise = f <.> "hs"

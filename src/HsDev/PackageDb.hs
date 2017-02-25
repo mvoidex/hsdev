@@ -7,8 +7,8 @@ module HsDev.PackageDb (
 	) where
 
 import Control.Lens
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Maybe (listToMaybe)
 import Data.Traversable
 import Distribution.InstalledPackageInfo

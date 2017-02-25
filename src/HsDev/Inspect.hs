@@ -3,7 +3,7 @@
 module HsDev.Inspect (
 	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded, preloadedImports, preload,
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
-	analyzeResolve, analyzePreloaded, inspectPreloaded, inspectDocsChunk, inspectDocs, inspectDocsGhc,
+	analyzeResolve, analyzePreloaded, inspectPreloaded, inspectDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, sourceInspection, fileInspection, fileContentsInspection,
 	projectDirs, projectSources,
@@ -23,13 +23,13 @@ import Control.Monad.Except
 import Data.Data (Data)
 import Data.Function (on)
 import Data.List
-import Data.Map (Map)
+import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
 import Data.Ord (comparing)
 import Data.String (IsString, fromString)
 import qualified Data.Text as T (unpack, Text)
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, getPOSIXTime)
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Language.Haskell.Exts as H
 import Language.Haskell.Exts.Fixity
 import qualified Language.Haskell.Names as N
@@ -53,8 +53,8 @@ import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable, symbolUniq
 import HsDev.Symbols.Parsed hiding (file)
 import qualified HsDev.Symbols.HaskellNames as HN
 import HsDev.Tools.Base
-import HsDev.Tools.Ghc.Worker ()
-import HsDev.Tools.HDocs (hdocsy, hdocs, hdocsProcess)
+import HsDev.Tools.Ghc.Worker (GhcM)
+import HsDev.Tools.HDocs (hdocs, hdocsProcess)
 import HsDev.Util
 
 -- | Preloaded module with contents and extensions
@@ -303,19 +303,13 @@ addDoc docsMap sym' = set symbolDocs (preview (ix (view (symbolId . symbolName) 
 addDocs :: Map String String -> Module -> Module
 addDocs docsMap = over moduleSymbols (addDoc docsMap)
 
--- | Extract files docs and set them to declarations
-inspectDocsChunk :: [String] -> [Module] -> IO [Module]
-inspectDocsChunk opts ms = hsdevLiftIOWith (ToolError "hdocs") $ do
-	docsMaps <- hdocsy (map (view (moduleId . moduleLocation)) ms) opts
-	return $ zipWith addDocs docsMaps ms
-
 -- | Extract file docs and set them to module declarations
-inspectDocs :: [String] -> Module -> IO Module
+inspectDocs :: [String] -> Module -> GhcM Module
 inspectDocs opts m = do
 	let
 		hdocsWorkaround = False
 	docsMap <- if hdocsWorkaround
-		then hdocsProcess (fromMaybe (T.unpack $ view (moduleId . moduleName) m) (preview (moduleId . moduleLocation . moduleFile) m)) opts
+		then liftIO $ hdocsProcess (fromMaybe (T.unpack $ view (moduleId . moduleName) m) (preview (moduleId . moduleLocation . moduleFile) m)) opts
 		else liftM Just $ hdocs (view (moduleId . moduleLocation) m) opts
 	return $ maybe id addDocs docsMap m
 

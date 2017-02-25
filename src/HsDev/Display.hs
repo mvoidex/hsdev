@@ -6,6 +6,7 @@ module HsDev.Display (
 	) where
 
 import Control.Lens (view)
+import Data.List (intercalate)
 
 import Text.Format
 
@@ -23,6 +24,10 @@ instance Display PackageDb where
 	display UserDb = "user-db"
 	display (PackageDb p) = "package-db " ++ p
 	displayType _ = "package-db"
+
+instance Display PackageDbStack where
+	display = intercalate "/" . map display . packageDbs
+	displayType _ = "package-db-stack"
 
 instance Display ModuleLocation where
 	display (FileModule f _) = f
@@ -45,6 +50,9 @@ instance Display FilePath where
 	displayType _ = "path"
 
 instance FormatBuild PackageDb where
+	formatBuild = formatBuild . display
+
+instance FormatBuild PackageDbStack where
 	formatBuild = formatBuild . display
 
 instance FormatBuild ModuleLocation where

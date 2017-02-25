@@ -27,7 +27,7 @@ import Text.Format
 
 import HsDev.Error
 import HsDev.Scan.Browse (browsePackages)
-import HsDev.Server.Types (FileSource(..), Session(..), askSession, CommandMonad(..))
+import HsDev.Server.Types (FileSource(..), Session(..), askSession, CommandMonad(..), inSessionGhc)
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
@@ -125,16 +125,18 @@ enumDependent :: CommandMonad m => FilePath -> m ScanContents
 enumDependent fpath = do
 	dbval <- askSession sessionDatabase >>= liftIO . readAsync
 	let
-		rdeps = sourceRDeps (dbval ^. fileDepsSlice fpath)
-		dependent = fromMaybe [] $ rdeps ^? ix fpath
+		mproj = dbval ^? databaseModules . ix (FileModule fpath Nothing) . inspected . moduleId . moduleLocation . moduleProject . _Just
+		dbslice = dbval ^. maybe standaloneSlice projectSlice mproj
+		rdeps = sourceRDeps dbslice
+		dependent = rdeps ^. ix fpath
 	liftM mconcat $ mapM enumRescan dependent
 
 -- | Enum project sources
 enumProject :: CommandMonad m => Project -> m ScanContents
 enumProject p = hsdevLiftIO $ do
 	p' <- liftIO $ loadProject p
-	pdbs <- searchPackageDbStack (view projectPath p')
-	pkgs <- liftM (map $ view (package . packageName)) $ browsePackages [] pdbs
+	pdbs <- inSessionGhc $ searchPackageDbStack (view projectPath p')
+	pkgs <- inSessionGhc $ liftM (map $ view (package . packageName)) $ browsePackages [] pdbs
 	let
 		projOpts :: FilePath -> [String]
 		projOpts f = concatMap makeOpts $ fileTargets p' f where
@@ -151,7 +153,7 @@ enumProject p = hsdevLiftIO $ do
 
 -- | Enum sandbox
 enumSandbox :: CommandMonad m => Sandbox -> m ScanContents
-enumSandbox = sandboxPackageDbStack >=> enumContents
+enumSandbox = (inSessionGhc . sandboxPackageDbStack) >=> enumContents
 
 -- | Enum directory modules
 enumDirectory :: CommandMonad m => FilePath -> m ScanContents

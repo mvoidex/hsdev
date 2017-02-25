@@ -4,10 +4,10 @@
 module HsDev.Tools.Ghc.MGhc (
 	SessionState(..), sessionActive, sessionMap,
 	MGhcT(..), runMGhcT, liftGhc,
-	hasSession, findSession, findSessionBy, saveSession,
+	currentSession, hasSession, findSession, findSessionBy, saveSession,
 	initSession, newSession,
 	switchSession, switchSession_,
-	deleteSession, restoreSession, usingSession
+	deleteSession, restoreSession, usingSession, tempSession
 	) where
 
 import Control.Lens
@@ -17,13 +17,13 @@ import Control.Monad.State
 import Data.Default
 import Data.IORef
 import Data.List (find)
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe, isJust)
 import System.Log.Simple
 
 import DynFlags
-import Exception hiding (catch, mask, uninterruptibleMask, bracket)
+import Exception hiding (catch, mask, uninterruptibleMask, bracket, finally)
 import GHC
 import GhcMonad
 import HscTypes
@@ -109,6 +109,9 @@ runMGhcT lib act = do
 liftGhc :: MonadIO m => Ghc a -> MGhcT s m a
 liftGhc (Ghc act) = MGhcT $ GhcT $ liftIO . act
 
+currentSession :: MonadIO m => MGhcT s m (Maybe s)
+currentSession = gets (view sessionActive)
+
 -- | Does session exist
 hasSession :: (MonadIO m, Ord s) => s -> MGhcT s m Bool
 hasSession key = do
@@ -130,7 +133,7 @@ findSessionBy p = do
 -- | Save current session
 saveSession :: (MonadIO m, ExceptionMonad m, Ord s) => MGhcT s m (Maybe s)
 saveSession = do
-	key <- gets (view sessionActive)
+	key <- currentSession
 	case key of
 		Just key' -> do
 			sess <- getSession
@@ -193,6 +196,12 @@ usingSession :: (MonadIO m, MonadMask m, ExceptionMonad m, Ord s) => s -> MGhcT 
 usingSession key act = restoreSession $ do
 	void $ switchSession key
 	act
+
+-- | Run with temporary session, like @usingSession@, but deletes self session
+tempSession :: (MonadIO m, MonadMask m, ExceptionMonad m, Ord s) => s -> MGhcT s m a -> MGhcT s m a
+tempSession key act = do
+	exist' <- hasSession key
+	usingSession key act `finally` when (not exist') (deleteSession key)
 
 -- | Cleanup session
 cleanupSession :: HscEnv -> IO ()

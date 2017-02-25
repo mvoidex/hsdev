@@ -31,7 +31,7 @@ import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Error
 import HsDev.Tools.Base (inspect)
-import HsDev.Tools.Ghc.Worker (GhcM, runGhcM, SessionTarget(..), workerSession)
+import HsDev.Tools.Ghc.Worker (GhcM, runGhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
 
 import qualified ConLike as GHC
@@ -54,13 +54,16 @@ import qualified Var as GHC
 import qualified Pretty
 
 -- | Browse packages
-browsePackages :: MonadLog m => [String] -> PackageDbStack -> m [PackageConfig]
-browsePackages opts dbs = withPackages_ (packageDbStackOpts dbs ++ opts) $
+browsePackages :: [String] -> PackageDbStack -> GhcM [PackageConfig]
+browsePackages opts dbs = do
+	tmpSession (packageDbStackOpts dbs ++ opts)
 	liftM (map readPackageConfig) packageConfigs
 
 -- | Get packages with deps
-browsePackagesDeps :: MonadLog m => [String] -> PackageDbStack -> m (Deps PackageConfig)
-browsePackagesDeps opts dbs = withPackages (packageDbStackOpts dbs ++ opts) $ \df -> do
+browsePackagesDeps :: [String] -> PackageDbStack -> GhcM (Deps PackageConfig)
+browsePackagesDeps opts dbs = do
+	tmpSession (packageDbStackOpts dbs ++ opts)
+	df <- GHC.getSessionDynFlags
 	cfgs <- packageConfigs
 	return $ mapDeps (toPkg df) $ mconcat $ map (uncurry deps) $
 		map (Compat.unitId &&& Compat.depends df) cfgs
@@ -69,13 +72,13 @@ browsePackagesDeps opts dbs = withPackages (packageDbStackOpts dbs ++ opts) $ \d
 
 listModules :: [String] -> PackageDbStack -> GhcM [ModuleLocation]
 listModules opts dbs = do
-	workerSession $ SessionGhc (packageDbStackOpts dbs ++ opts)
+	tmpSession (packageDbStackOpts dbs ++ opts)
 	ms <- packageDbModules
 	return [ghcModuleLocation p m | (p, m) <- ms]
 
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
-	workerSession $ SessionGhc (packageDbStackOpts dbs ++ opts)
+	tmpSession (packageDbStackOpts dbs ++ opts)
 	ms <- packageDbModules
 	liftM catMaybes $ sequence [browseModule' p m | (p, m) <- ms, ghcModuleLocation p m `elem` mlocs]
 	where
@@ -150,7 +153,7 @@ browseModule package' m = do
 
 withInitializedPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
 withInitializedPackages ghcOpts cont = runGhcM (Just GHC.libdir) $ do
-	workerSession $ SessionGhc ghcOpts
+	tmpSession ghcOpts
 	fs <- GHC.getSessionDynFlags
 	cleanupHandler fs $ do
 		(fs', _, _) <- GHC.parseDynamicFlags fs (map GHC.noLoc ghcOpts)

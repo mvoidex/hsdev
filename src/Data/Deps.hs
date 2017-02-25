@@ -14,8 +14,8 @@ import Control.Lens
 import Control.Monad.State
 import Control.Monad.Except
 import Data.List (nub, intercalate)
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe)
 
 -- | Dependency map

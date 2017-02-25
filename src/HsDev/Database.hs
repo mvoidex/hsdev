@@ -4,70 +4,75 @@ module HsDev.Database (
 	Database(..), databaseModules, databaseProjects,
 	databaseIntersection, nullDatabase, databasePackageDbs, databasePackages, databaseSandboxes,
 	modules, symbols, packages,
-	fromModule, fromProject, fromPackageDb, fromPackage,
+	fromModule, fromProject, fromPackageDb, fromPackage, fromPackageDbState,
 	Slice, slice', pslice, slice, unionSlice, slices, inversedSlice,
-	targetSlice, projectSlice, packageSlice, newestPackagesSlice, sandboxSlice,
-	targetDepsSlice, projectDepsSlice, packageDbSlice, packageDbStackSlice, standaloneSlice, fileDepsSlice,
+	packageDbStackSlice, packageDbSlice, projectSlice, projectDepsSlice, targetSlice,
+	newestPackagesSlice, standaloneSlice, filesSlice,
+
 	refineProject,
-	
 	append, remove,
 
 	Map
 	) where
 
 import Control.Lens hiding ((.=), (%=))
-import Control.Monad (msum)
+import Control.Monad (msum, liftM2)
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
-import Data.Function (on)
 import Data.Group (Group(..))
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Set (Set)
 import qualified Data.Set as S
-import Data.Maybe (mapMaybe, catMaybes)
+import Data.Maybe (mapMaybe, catMaybes, fromMaybe)
+import System.FilePath
 
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Util
-import HsDev.Util ((.::))
+import HsDev.Util ((.::), ordNub, ordUnion)
 
 -- | HsDev database
 data Database = Database {
 	_databaseModules :: Map ModuleLocation InspectedModule,
 	_databaseProjects :: Map FilePath Project,
-	_databasePackageDbs :: Map PackageDb (Set ModulePackage),
-	_databasePackages :: Map ModulePackage (Set ModuleLocation) }
+	_databaseProjectsInfos :: Map (Maybe Project) (PackageDbStack, [ModuleLocation]),
+	_databasePackageDbs :: Map PackageDb [ModulePackage],
+	_databasePackages :: Map ModulePackage [ModuleLocation] }
 		deriving (Eq, Ord)
 
 makeLenses ''Database
 
 instance NFData Database where
-	rnf (Database ms ps ds as) = rnf ms `seq` rnf ps `seq` rnf ds `seq` rnf as
+	rnf (Database ms ps pms ds as) = rnf ms `seq` rnf ps `seq` rnf pms `seq` rnf ds `seq` rnf as
 
 instance Group Database where
 	add old new = Database {
 		_databaseModules = M.union (_databaseModules new) (_databaseModules old),
 		_databaseProjects = M.unionWith mergeProject (_databaseProjects new) (_databaseProjects old),
-		_databasePackageDbs = M.unionWith S.union (_databasePackageDbs new) (_databasePackageDbs old),
-		_databasePackages = M.unionWith S.union (_databasePackages new) (_databasePackages old) }
+		_databaseProjectsInfos = M.unionWith mergeInfos (_databaseProjectsInfos new) (_databaseProjectsInfos old),
+		_databasePackageDbs = M.unionWith ordUnion (_databasePackageDbs new) (_databasePackageDbs old),
+		_databasePackages = M.unionWith ordUnion (_databasePackages new) (_databasePackages old) }
 		where
 			mergeProject pl pr = set projectDescription (msum [view projectDescription pl, view projectDescription pr]) pl
+			mergeInfos (lpdb, lms) (_, rms) = (lpdb, ordUnion lms rms)
 	sub old new = Database {
 		_databaseModules = M.difference (_databaseModules old) (_databaseModules new),
 		_databaseProjects = M.difference (_databaseProjects old) (_databaseProjects new),
+		_databaseProjectsInfos = M.difference (_databaseProjectsInfos old) (_databaseProjectsInfos new),
 		_databasePackageDbs = M.difference (_databasePackageDbs old) (_databasePackageDbs new),
 		_databasePackages = M.difference (_databasePackages old) (_databasePackages new) }
-	zero = Database mempty mempty mempty mempty
+	zero = Database mempty mempty mempty mempty mempty
 
 instance Monoid Database where
 	mempty = zero
 	mappend = add
 
 instance ToJSON Database where
-	toJSON (Database ms ps ds as) = object [
+	toJSON (Database ms ps pms ds as) = object [
 		"modules" .= M.toList ms,
 		"projects" .= M.toList ps,
+		"projects-modules" .= M.toList pms,
 		"package-dbs" .= M.toList ds,
 		"packages" .= M.toList as]
 
@@ -75,6 +80,7 @@ instance FromJSON Database where
 	parseJSON = withObject "database" $ \v -> Database <$>
 		(M.fromList <$> v .:: "modules") <*>
 		(M.fromList <$> v .:: "projects") <*>
+		(M.fromList <$> v .:: "projects-modules") <*>
 		(M.fromList <$> v .:: "package-dbs") <*>
 		(M.fromList <$> v .:: "packages")
 
@@ -83,6 +89,7 @@ databaseIntersection :: Database -> Database -> Database
 databaseIntersection l r = Database {
 	_databaseModules = M.intersection (_databaseModules l) (_databaseModules r),
 	_databaseProjects = M.intersection (_databaseProjects l) (_databaseProjects r),
+	_databaseProjectsInfos = M.intersection (_databaseProjectsInfos l) (_databaseProjectsInfos r),
 	_databasePackageDbs = M.intersection (_databasePackageDbs l) (_databasePackageDbs r),
 	_databasePackages = M.intersection (_databasePackages l) (_databasePackages r) }
 
@@ -104,7 +111,7 @@ symbols = modules . moduleExports . each
 
 -- | All packages
 packages :: Traversal' Database ModulePackage
-packages = modules . moduleId . moduleLocation . modulePackage . _Just
+packages = databasePackageDbs . each . each
 
 -- | Make database from module
 fromModule :: InspectedModule -> Database
@@ -118,11 +125,16 @@ fromProject p = mempty {
 
 fromPackageDb :: PackageDb -> [ModulePackage] -> Database
 fromPackageDb pdb pkgs = mempty {
-	_databasePackageDbs = M.singleton pdb (S.fromList pkgs) }
+	_databasePackageDbs = M.singleton pdb pkgs }
 
 fromPackage :: ModulePackage -> [ModuleLocation] -> Database
 fromPackage pkg mlocs = mempty {
-	_databasePackages = M.singleton pkg (S.fromList mlocs) }
+	_databasePackages = M.singleton pkg mlocs }
+
+fromPackageDbState :: PackageDb -> Map ModulePackage [ModuleLocation] -> Database
+fromPackageDbState pdb st = mempty {
+	_databasePackageDbs = M.singleton pdb (M.keys st),
+	_databasePackages = st }
 
 type SliceF f = (Database -> f Database) -> (Database -> f Database)
 type SliceC = SliceF (Const Database)
@@ -157,70 +169,111 @@ inversedSlice :: Slice -> Slice
 inversedSlice s = slice' g' where
 	g' db = db `sub` view s db
 
-targetSlice :: Info -> Slice
-targetSlice info = slice (inTarget info)
+packageDbListSlice :: [PackageDb] -> Slice
+packageDbListSlice pdbs = slice' fn where
+	fn db = db {
+		_databaseModules = restrictKeys (_databaseModules db) (S.fromList mods'),
+		_databaseProjects = mempty,
+		_databaseProjectsInfos = mempty,
+		_databasePackageDbs = restrictKeys (_databasePackageDbs db) (S.fromList pdbs),
+		_databasePackages = restrictKeys (_databasePackages db) (S.fromList packages') }
+		where
+			packages' = ordNub $ concat $ catMaybes [M.lookup pdb (_databasePackageDbs db) | pdb <- pdbs]
+			mods' = ordNub $ concat $ catMaybes [M.lookup pkg (_databasePackages db) | pkg <- packages']
 
+-- | Leave only modules within specified @PackageDbStack@
+packageDbStackSlice :: PackageDbStack -> Slice
+packageDbStackSlice = packageDbListSlice . packageDbs
+
+packageDbSlice :: PackageDb -> Slice
+packageDbSlice = packageDbListSlice . return
+
+-- | Leave only source modules within project
 projectSlice :: Project -> Slice
-projectSlice proj = slice (inProject proj) `unionSlice` pslice (((==) `on` view projectCabal) proj)
+projectSlice proj = slice' fn where
+	fn db = db {
+		_databaseModules = restrictKeys (_databaseModules db) (S.fromList [FileModule m' (Just proj) | m' <- modFiles']),
+		_databaseProjects = restrictKeys (_databaseProjects db) (S.singleton (proj ^. projectCabal)),
+		_databaseProjectsInfos = restrictKeys (_databaseProjectsInfos db) (S.singleton (Just proj)),
+		_databasePackageDbs = mempty,
+		_databasePackages = mempty }
+		where
+			modFiles' = concat [
+				concatMap targets (proj ^.. projectDescription . _Just . projectLibrary . _Just),
+				concatMap targets (proj ^.. projectDescription . _Just . projectExecutables . each),
+				concatMap targets (proj ^.. projectDescription . _Just . projectTests . each)]
 
-packageSlice :: ModulePackage -> Slice
-packageSlice pkg = slice (inPackage pkg)
+			targets :: Target t => t -> [FilePath]
+			targets target' = liftM2 (</>) (target' ^. buildInfo . infoSourceDirsDef) (targetFiles target')
 
+-- | Leave installed module project depends on
+projectDepsSlice :: Project -> Slice
+projectDepsSlice proj = slice' fn where
+	fn db = view (packageDbStackSlice pdbs) db {
+		_databaseModules = restrictKeys (_databaseModules db) (S.fromList mlocs),
+		_databaseProjects = mempty,
+		_databaseProjectsInfos = mempty,
+		_databasePackages = restrictKeys (_databasePackages db) (S.fromList pkgs) }
+		where
+			pdbs = fromMaybe userDb (db ^? databaseProjectsInfos . ix (Just proj) . _1)
+			deps = S.fromList $ concat [
+				concatMap depends (proj ^.. projectDescription . _Just . projectLibrary . _Just),
+				concatMap depends (proj ^.. projectDescription . _Just . projectExecutables . each),
+				concatMap depends (proj ^.. projectDescription . _Just . projectTests . each)]
+			pkgs = filter ((`S.member` deps) . view packageName) $ concat $ M.elems (_databasePackageDbs db)
+			mlocs = ordNub $ concat $ catMaybes [M.lookup pkg (_databasePackages db) | pkg <- pkgs]
+
+			depends :: Target t => t -> [String]
+			depends target' = target' ^. buildInfo . infoDepends
+
+-- | Leave source modules within project's target
+targetSlice :: Target a => Project -> a -> Slice
+targetSlice proj t = slice' fn where
+	fn db = db {
+		_databaseModules = restrictKeys (_databaseModules db) (S.fromList [FileModule m' (Just proj) | m' <- modFiles']),
+		_databaseProjects = restrictKeys (_databaseProjects db) (S.singleton (proj ^. projectCabal)),
+		_databaseProjectsInfos = restrictKeys (_databaseProjectsInfos db) (S.singleton (Just proj)),
+		_databasePackageDbs = mempty,
+		_databasePackages = mempty }
+		where
+			modFiles' = liftM2 (</>) (t ^. buildInfo . infoSourceDirsDef) (targetFiles t)
+
+-- | Remove old packages
 newestPackagesSlice :: Slice
 newestPackagesSlice = slice' g' where
 	g' db = db {
-		_databaseModules = M.filter (maybe True (`elem` pkgs) . preview (inspected . moduleId . moduleLocation . modulePackage . _Just)) (_databaseModules db) }
+		_databaseModules = restrictKeys (_databaseModules db) (S.fromList mlocs),
+		_databaseProjects = mempty,
+		_databaseProjectsInfos = mempty,
+		_databasePackageDbs = M.filter (not . null) (M.map latestPackages (_databasePackageDbs db)),
+		_databasePackages = restrictKeys (_databasePackages db) (S.fromList pkgs) }
 		where
-			pkgs = latestPackages (db ^.. modules . moduleId . moduleLocation . modulePackage . _Just)
-
--- | Restrict only sandbox for path
-sandboxSlice :: FilePath -> Slice
-sandboxSlice = const id
--- sandboxSlice fpath = slice' g' where
--- 	g' db = db {
--- 		_databaseModules = M.filter (maybe True ((== mbox) . packageDbSandbox) . preview (inspected . moduleId . moduleLocation . modulePackageDb)) (_databaseModules db) }
--- 		where
--- 			mbox = find (pathInSandbox fpath) $ databaseSandboxes db
-
--- | Dependencies of target
-targetDepsSlice :: Project -> Info -> Slice
-targetDepsSlice proj target = sandboxSlice (view projectPath proj) . slice (inDepsOfTarget proj target)
-
--- | Dependencies of project
-projectDepsSlice :: Project -> Slice
-projectDepsSlice proj = sandboxSlice (view projectPath proj) . slice (inDepsOfProject proj)
-
--- | Package-db database
-packageDbSlice :: PackageDb -> Slice
-packageDbSlice pdb = slice' inPackageDb' where
-	inPackageDb' db = db {
-		_databaseModules = M.filter (maybe False (`S.member` mlocs) . preview (inspected . moduleId . moduleLocation)) (_databaseModules db) }
-		where
-			pkgs = maybe [] S.toList $ M.lookup pdb $ _databasePackageDbs db
-			mlocs = S.unions $ catMaybes [M.lookup pkg (_databasePackages db) | pkg <- pkgs]
-
--- | Package-db stack database
-packageDbStackSlice :: PackageDbStack -> Slice
-packageDbStackSlice pdbs = slice' inPackageDb' where
-	inPackageDb' db = db {
-		_databaseModules = M.filter (maybe False (`S.member` mlocs) . preview (inspected . moduleId . moduleLocation)) (_databaseModules db) }
-		where
-			pkgs = S.toList $ S.unions $ catMaybes [M.lookup pdb (_databasePackageDbs db) | pdb <- packageDbs pdbs]
-			mlocs = S.unions $ catMaybes [M.lookup pkg (_databasePackages db) | pkg <- pkgs]
+			pkgs = latestPackages $ ordNub $ db ^.. databasePackageDbs . each . each
+			mlocs = ordNub $ concat [db ^.. databasePackages . ix pkg . each | pkg <- pkgs]
 
 -- | Standalone database
 standaloneSlice :: Slice
-standaloneSlice = slice check' where
-	check' m = standalone m && byFile m
-
-fileDepsSlice :: FilePath -> Slice
-fileDepsSlice fpath = sandboxSlice fpath . slice' g' where
-	g' db = case mproj of
-		Nothing -> db ^. slices [standaloneSlice, slice installed]
-		Just proj -> db ^. slices (projectSlice proj : map (targetDepsSlice proj) targets') where
-			targets' = fileTargets proj fpath
+standaloneSlice = slice' fn where
+	fn db = db {
+		_databaseModules = restrictKeys (_databaseModules db) (S.fromList mlocs),
+		_databaseProjects = mempty,
+		_databaseProjectsInfos = restrictKeys (_databaseProjectsInfos db) (S.singleton Nothing),
+		_databasePackageDbs = mempty,
+		_databasePackages = mempty }
 		where
-			mproj = db ^? modules . filtered (inFile fpath) . moduleId . moduleLocation . moduleProject . _Just
+			mlocs = db ^.. databaseProjectsInfos . ix Nothing . _2 . each
+
+filesSlice :: [FilePath] -> Slice
+filesSlice fs = slice' fn where
+	fn db = db {
+		_databaseModules = restrictKeys (_databaseModules db) (S.fromList mlocs),
+		_databaseProjects = restrictKeys (_databaseProjects db) (S.fromList $ projs ^.. each . _Just . projectName),
+		_databaseProjectsInfos = restrictKeys (_databaseProjectsInfos db) (S.fromList projs),
+		_databasePackageDbs = mempty,
+		_databasePackages = mempty }
+		where
+			mlocs = catMaybes [db ^? databaseModules . ix (FileModule f Nothing) . inspected . moduleId . moduleLocation | f <- fs]
+			projs = mlocs ^.. each . moduleProject
 
 -- | Refine project
 refineProject :: Database -> Project -> Maybe Project
@@ -233,3 +286,6 @@ append = add
 -- | Remove database
 remove :: Database -> Database -> Database
 remove = sub
+
+restrictKeys :: Ord k => Map k a -> Set k -> Map k a
+restrictKeys m s = M.intersection m (M.fromList [(k, ()) | k <- S.toList s])

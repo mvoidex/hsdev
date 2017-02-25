@@ -3,10 +3,10 @@
 
 module HsDev.Tools.Ghc.Worker (
 	-- * Workers
-	SessionTarget(..),
+	SessionType(..), SessionConfig(..),
 	GhcM, GhcWorker, MGhcT(..), runGhcM,
 	ghcWorker,
-	workerSession,
+	workerSession, ghcSession, ghciSession, haddockSession, tmpSession,
 
 	-- * Initializers and actions
 	ghcRun,
@@ -32,7 +32,6 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Catch
 import Data.Dynamic
-import Data.List (intercalate)
 import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
 import Data.Version (showVersion)
@@ -46,6 +45,7 @@ import Text.Format
 import Exception (ExceptionMonad(..))
 import GHC hiding (Warning, Module, moduleName, pkgDatabase)
 import GHC.Paths
+import GhcMonad (reflectGhc)
 import Outputable
 import FastString (unpackFS)
 import Packages
@@ -59,29 +59,23 @@ import HsDev.Tools.Types
 import HsDev.Tools.Ghc.Compat
 import HsDev.Tools.Ghc.MGhc
 
-data SessionTarget =
-	SessionGhci |
-	SessionGhc [String]
+data SessionType = SessionGhci | SessionGhc | SessionHaddock | SessionTmp deriving (Eq, Ord)
+data SessionConfig = SessionConfig SessionType [String] deriving (Eq, Ord)
 
-instance Show SessionTarget where
+instance Show SessionType where
 	show SessionGhci = "ghci"
-	show (SessionGhc opts) = "ghc " ++ intercalate ", " opts
+	show SessionGhc = "ghc"
+	show SessionHaddock = "haddock"
+	show SessionTmp = "tmp"
 
-instance FormatBuild SessionTarget
+instance Show SessionConfig where
+	show (SessionConfig t opts) = unwords (show t : opts)
 
-instance Eq SessionTarget where
-	SessionGhci == SessionGhci = True
-	SessionGhc lopts == SessionGhc ropts = lopts == ropts
-	_ == _ = False
+instance FormatBuild SessionConfig
 
-instance Ord SessionTarget where
-	compare l r = compare (isGhci l) (isGhci r) where
-		isGhci SessionGhci = True
-		isGhci _ = False
+type GhcM a = MGhcT SessionConfig (LogT IO) a
 
-type GhcM a = MGhcT SessionTarget (LogT IO) a
-
-type GhcWorker = Worker (MGhcT SessionTarget (LogT IO))
+type GhcWorker = Worker (MGhcT SessionConfig (LogT IO))
 
 instance (Monad m, GhcMonad m) => GhcMonad (ReaderT r m) where
 	getSession = lift getSession
@@ -107,20 +101,39 @@ ghcWorker = do
 	liftIO $ startWorker (withLog l . runGhcM (Just libdir)) id (Log.scope "ghc")
 
 -- | Create session with options
-workerSession :: SessionTarget -> GhcM ()
-workerSession SessionGhci = do
-	Log.log Log.Trace $ "session: {}" ~~ SessionGhci
-	switchSession_ SessionGhci $ Just $ ghcRun [] (importModules preludeModules)
-workerSession s@(SessionGhc opts) = do
-	ms <- findSessionBy isGhcSession
-	forM_ ms $ \s'@(SessionGhc opts') -> when (opts /= opts') $ do
+workerSession :: SessionType -> [String] -> GhcM ()
+workerSession ty opts = do
+	ms <- findSessionBy toKill
+	forM_ ms $ \s' -> do
 		Log.log Log.Trace $ "killing session: {}" ~~ s'
 		deleteSession s'
-	Log.log Log.Trace $ "session: {}" ~~ s
-	switchSession_ s $ Just $ ghcRun opts (return ())
+	Log.log Log.Trace $ "session: {}" ~~ SessionConfig ty opts
+	switchSession_ (SessionConfig ty opts) $ Just $ initialize
 	where
-		isGhcSession (SessionGhc _) = True
-		isGhcSession _ = False
+		toKill (SessionConfig ty' opts') = or [
+			(ty == ty' && opts /= opts'),
+			(ty /= ty' && ty' `elem` [SessionTmp, SessionHaddock])]
+		initialize = case ty of
+			SessionGhci -> ghcRun opts (importModules preludeModules)
+			SessionGhc -> ghcRun opts (return ())
+			SessionTmp -> ghcRun opts (return ())
+			SessionHaddock -> ghcRun ("-haddock" : opts) (return ())
+
+-- | Get ghc session
+ghcSession :: [String] -> GhcM ()
+ghcSession = workerSession SessionGhc
+
+-- | Get ghci session
+ghciSession :: GhcM ()
+ghciSession = workerSession SessionGhci []
+
+-- | Get haddock session with flags
+haddockSession :: [String] -> GhcM ()
+haddockSession opts = workerSession SessionHaddock opts
+
+-- | Get haddock session with flags
+tmpSession :: [String] -> GhcM ()
+tmpSession opts = workerSession SessionTmp opts
 
 -- | Run ghc
 ghcRun :: GhcMonad m => [String] -> m a -> m a

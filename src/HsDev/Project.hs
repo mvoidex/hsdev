@@ -1,7 +1,7 @@
 module HsDev.Project (
 	module HsDev.Project.Types,
 
-	infoSourceDirsDef,
+	infoSourceDirsDef, targetFiles,
 	readProject, loadProject,
 	withExtensions,
 	fileInTarget, fileTarget, fileTargets, findSourceDir, sourceDirs,
@@ -13,7 +13,7 @@ module HsDev.Project (
 	) where
 
 import Control.Arrow
-import Control.Lens (Lens', view, lens, _Just, toListOf, (^..))
+import Control.Lens (Lens', view, lens, _Just, toListOf, (^..), each)
 import Control.Monad.Except
 import Data.List
 import Data.Maybe
@@ -21,6 +21,7 @@ import Data.Version (showVersion)
 import Distribution.Compiler (CompilerFlavor(GHC))
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
+import qualified Distribution.ModuleName as PD (toFilePath)
 import Distribution.PackageDescription.Parse
 import Distribution.ModuleName (components)
 import Distribution.Text (display)
@@ -40,6 +41,11 @@ infoSourceDirsDef = lens get' set' where
 	set' i ["."] = i { _infoSourceDirs = [] }
 	set' i dirs = i { _infoSourceDirs = dirs }
 
+-- | Get all source file names of target without prepending them with source-dirs
+targetFiles :: Target t => t -> [FilePath]
+targetFiles target' = targetModules target' ++ map toFile (target' ^.. buildInfo . infoOtherModules . each) where
+	toFile ps = joinPath ps <.> "hs"
+
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
 analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source of
@@ -52,13 +58,18 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 	where
 		toLibrary (PD.Library exposeds _ _ _ _ info) = Library (map components exposeds) (toInfo info)
 		toExecutable (PD.Executable name path info) = Executable name path (toInfo info)
-		toTest (PD.TestSuite name _ info enabled) = Test name enabled (toInfo info)
+		toTest (PD.TestSuite name testInterface info enabled) = Test name enabled mainFile (toInfo info) where
+			mainFile = case testInterface of
+				PD.TestSuiteExeV10 _ fpath -> Just fpath
+				PD.TestSuiteLibV09 _ mname -> Just $ PD.toFilePath mname
+				_ -> Nothing
 		toInfo info = Info {
 			_infoDepends = map pkgName (PD.targetBuildDepends info),
 			_infoLanguage = PD.defaultLanguage info,
 			_infoExtensions = PD.defaultExtensions info,
 			_infoGHCOptions = fromMaybe [] $ lookup GHC (PD.options info),
-			_infoSourceDirs = PD.hsSourceDirs info }
+			_infoSourceDirs = PD.hsSourceDirs info,
+			_infoOtherModules = map components (PD.otherModules info) }
 
 		pkgName :: P.Dependency -> String
 		pkgName (P.Dependency (P.PackageName s) _) = s

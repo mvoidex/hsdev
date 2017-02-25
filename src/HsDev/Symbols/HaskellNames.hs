@@ -7,7 +7,7 @@ module HsDev.Symbols.HaskellNames (
 
 import Control.Lens (view)
 import Data.String
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.Text as T (unpack)
 import qualified Language.Haskell.Exts as H
 import qualified Language.Haskell.Names as N

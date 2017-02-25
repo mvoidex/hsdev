@@ -48,13 +48,18 @@ findModule db mname = return (db ^.. modules . filtered ((== fromString mname) .
 fileModule :: Database -> FilePath -> ExceptT String IO Module
 fileModule db src = do
 	src' <- liftE $ canonicalizePath src
-	maybe (throwError $ "File '" ++ src' ++ "' not found") return $ db ^? modules . filtered (inFile src')
+	maybe (throwError $ "File '" ++ src' ++ "' not found") return $ db ^? databaseModules . ix (FileModule src' Nothing) . inspected
 
 -- | Lookup visible within project/cabal symbol
 lookupSymbol :: Database -> FilePath -> String -> ExceptT String IO [Symbol]
 lookupSymbol db file ident = do
-	void $ fileModule db file
-	liftM newestPackage $ findSymbol (db ^. fileDepsSlice file) ident
+	m <- fileModule db file
+	let
+		mproj = m ^? moduleId . moduleLocation . moduleProject . _Just
+		dbslice = case mproj of
+			Nothing -> db ^. slices [packageDbStackSlice userDb, standaloneSlice]
+			Just proj -> db ^. slices [projectDepsSlice proj, projectSlice proj]
+	liftM newestPackage $ findSymbol dbslice ident
 
 -- | Whois symbol in scope
 whois :: Database -> FilePath -> String -> ExceptT String IO [Symbol]
@@ -67,8 +72,13 @@ whois db file ident = do
 -- | Accessible modules
 scopeModules :: Database -> FilePath -> ExceptT String IO [Module]
 scopeModules db file = do
-	void $ fileModule db file
-	return $ newestPackage (db ^.. fileDepsSlice file . modules)
+	m <- fileModule db file
+	let
+		mproj = m ^? moduleId . moduleLocation . moduleProject . _Just
+		dbslice = case mproj of
+			Nothing -> db ^. slices [packageDbStackSlice userDb, standaloneSlice]
+			Just proj -> db ^. slices [projectDepsSlice proj, projectSlice proj]
+	return $ newestPackage (dbslice ^.. modules)
 
 -- | Symbols in scope
 scope :: Database -> FilePath -> ExceptT String IO [Symbol]

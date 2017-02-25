@@ -15,8 +15,8 @@ import Control.Arrow
 import Control.Concurrent.MVar
 import Control.Concurrent.Chan
 import Control.Monad
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Maybe (isJust)
 import Data.String (fromString)
 import Data.Time.Clock.POSIX

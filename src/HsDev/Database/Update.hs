@@ -37,7 +37,7 @@ import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
 import Data.List (find, intercalate, (\\))
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
 import qualified Data.Text as T (unpack)
@@ -62,12 +62,13 @@ import HsDev.Symbols.Resolve
 import HsDev.Symbols.Util
 import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
 import HsDev.Tools.Ghc.Types (inferTypes)
+import HsDev.Tools.Ghc.Worker (liftGhc)
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (isParent, ordNub)
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, serverWriteCache, serverReadCache)
+import HsDev.Server.Types (commandNotify, serverWriteCache, serverReadCache, inSessionGhc)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -85,6 +86,7 @@ isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
 runUpdate :: ServerMonadBase m => UpdateOptions -> UpdateM m a -> ClientM m a
 runUpdate uopts act = Log.scope "update" $ do
 	(r, updatedMods) <- runWriterT (runUpdateM act' `runReaderT` uopts)
+	Log.log Log.Debug $ "updated {} modules" ~~ length updatedMods
 	db <- askSession sessionDatabase
 	wait db
 	dbval <- liftIO $ readAsync db
@@ -97,13 +99,13 @@ runUpdate uopts act = Log.scope "update" $ do
 			wait db
 			dbval <- liftIO $ readAsync db
 			let
-				invertedIndex = M.unionsWith S.union $ do
+				invertedIndex = M.map S.toList $ M.unionsWith S.union $ do
 					(pdb, pkgs) <- M.toList $ view databasePackageDbs dbval
-					pkg <- S.toList pkgs
+					pkg <- pkgs
 					mlocs <- dbval ^.. databasePackages . ix pkg
-					mloc <- S.toList mlocs
+					mloc <- mlocs
 					return $ M.singleton mloc (S.singleton pdb)
-				dbs = S.toList $ S.unions $ mapMaybe (`M.lookup` invertedIndex) mlocs'
+				dbs = ordNub $ concat $ mapMaybe (`M.lookup` invertedIndex) mlocs'
 				-- If some sourced files depends on currently scanned package-dbs
 				-- We must resolve them and even rescan if there was errors scanning without
 				-- dependencies provided (lack of fixities can cause errors inspecting files)
@@ -141,7 +143,7 @@ runUpdate uopts act = Log.scope "update" $ do
 			return r
 		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
 		scanDocs_ im = do
-			im' <- (S.scanModify (\opts -> liftIO . inspectDocs opts) im) <|> return im
+			im' <- (S.scanModify (\opts -> inSessionGhc . liftGhc . inspectDocsGhc opts) im) <|> return im
 			updater $ fromModule im'
 		inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
 		inferModTypes_ im = do
@@ -152,7 +154,7 @@ runUpdate uopts act = Log.scope "update" $ do
 		infer' :: UpdateMonad m => Session -> [String] -> Module -> m Module
 		infer' s opts m = case preview (moduleId . moduleLocation . moduleFile) m of
 			Nothing -> return m
-			Just _ -> liftIO $ inWorker (sessionGhc s) $ do
+			Just _ -> inSessionGhc $ do
 				targetSession opts m
 				inferTypes opts m Nothing
 
@@ -272,13 +274,14 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 		updater db'
 		let
 			pmods = map fst ploaded
-			dbval' = dbval ^. maybe (slice installed) projectSlice mproj
+			dbval' = dbval ^. maybe standaloneSlice projectSlice mproj
 			deps' = sourceDeps dbval'
 			dependencies = ordNub (concat [fromMaybe [] (deps' ^? ix f) | f <- ms ^.. each . _1 . moduleFile]) \\ (ms ^.. each . _1 . moduleFile)
-			mods' = dbval ^.. unionSlice globalDeps localDeps . modules where
-				globalDeps = maybe (slice installed) projectDepsSlice mproj
-				localDeps = slice (\m -> or [inFile d m | d <- dependencies])
+			mods' = dbval ^.. slices [globalDeps, localDeps] . modules where
+				globalDeps = maybe (packageDbStackSlice userDb) projectDepsSlice mproj
+				localDeps = filesSlice dependencies
 			aenv' = mconcat (map moduleAnalyzeEnv mods')
+		Log.log Log.Trace $ "resolving environment: {} modules" ~~ length mods'
 		case order pmods of
 			Left err -> Log.log Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
@@ -322,6 +325,7 @@ scanFileContents opts fpath mcts = runTask "scanning" fpath $ Log.scope "file" $
 			return $ FileModule fpath' mproj
 	watch $ flip watchModule mloc
 	S.ScanContents dmods _ _ <- S.enumDependent fpath'
+	Log.log Log.Trace $ "dependent modules: {}" ~~ length dmods
 	scanModules [] ((mloc, opts, mcts) : dmods)
 
 -- | Scan cabal modules, doesn't rescan if already scanned
@@ -331,8 +335,8 @@ scanCabal opts = Log.scope "cabal" $ scanPackageDbStack opts userDb
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
 prepareSandbox :: UpdateMonad m => Sandbox -> m ()
 prepareSandbox sbox@(Sandbox StackWork fpath) = Log.scope "prepare" $ runTasks_ [
-	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ buildDeps Nothing,
-	runTask "configuring" sbox $ void $ Util.withCurrentDirectory dir $ configure Nothing]
+	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ buildDeps Nothing,
+	runTask "configuring" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ configure Nothing]
 	where
 		dir = takeDirectory fpath
 prepareSandbox _ = return ()
@@ -342,7 +346,7 @@ scanSandbox :: UpdateMonad m => [String] -> Sandbox -> m ()
 scanSandbox opts sbox = Log.scope "sandbox" $ do
 	dbval <- readDB
 	prepareSandbox sbox
-	pdbs <- sandboxPackageDbStack sbox
+	pdbs <- inSessionGhc $ sandboxPackageDbStack sbox
 	scanPackageDbStack opts pdbs
 
 -- | Scan top of package-db stack, usable for rescan
@@ -351,36 +355,42 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 	pdbState <- liftIO $ readPackageDb (topPackageDb pdbs)
 	let
 		packageDbMods = S.fromList $ concat $ M.elems pdbState
+	Log.log Log.Trace $ "package-db state: {} modules" ~~ length packageDbMods
 	watch (\w -> watchPackageDb w pdbs opts)
 	dbval <- readDB
-	ghcw <- askSession sessionGhc
 	mlocs <- liftM
 		(filter (`S.member` packageDbMods)) $
-		(liftIO $ inWorker ghcw $ listModules opts pdbs)
+		(inSessionGhc $ listModules opts pdbs)
+	Log.log Log.Trace $ "{} modules found" ~~ length mlocs
 	scan (const $ return mempty) (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- liftIO $ inWorker ghcw $ browseModules opts pdbs (mlocs' ^.. each . _1)
-		docs <- liftIO $ hsdevLiftWith (ToolError "hdocs") $ hdocsCabal pdbs opts
-		updater $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
+		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
+		docs <- inSessionGhc $ hdocsCabal pdbs opts
+		updater $ mconcat [
+			mconcat $ map (fromModule . fmap (setDocs' docs)) ms,
+			fromPackageDbState (topPackageDb pdbs) pdbState]
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
 		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view (moduleId . moduleName) m) docs
 
 -- | Scan top of package-db stack, usable for rescan
 scanPackageDbStack :: UpdateMonad m => [String] -> PackageDbStack -> m ()
-scanPackageDbStack opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "package-db" $ do
+scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-stack" $ do
 	pdbStates <- liftIO $ mapM readPackageDb (packageDbs pdbs)
 	let
 		packageDbMods = S.fromList $ concat $ concatMap M.elems pdbStates
+	Log.log Log.Trace $ "package-db-stack state: {} modules" ~~ length packageDbMods
 	watch (\w -> watchPackageDbStack w pdbs opts)
 	dbval <- readDB
-	ghcw <- askSession sessionGhc
 	mlocs <- liftM
 		(filter (`S.member` packageDbMods)) $
-		(liftIO $ inWorker ghcw $ listModules opts pdbs)
+		(inSessionGhc $ listModules opts pdbs)
+	Log.log Log.Trace $ "{} modules found" ~~ length mlocs
 	scan (const $ return mempty) (packageDbStackSlice pdbs) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- liftIO $ inWorker ghcw $ browseModules opts pdbs (mlocs' ^.. each . _1)
-		docs <- liftIO $ hsdevLiftWith (ToolError "hdocs") $ hdocsCabal pdbs opts
-		updater $ mconcat $ map (fromModule . fmap (setDocs' docs)) ms
+		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
+		docs <- inSessionGhc $ hdocsCabal pdbs opts
+		updater $ mconcat [
+			mconcat $ map (fromModule . fmap (setDocs' docs)) ms,
+			mconcat [fromPackageDbState pdb pdbState | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]]
 	where
 		setDocs' :: Map String (Map String String) -> Module -> Module
 		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view (moduleId . moduleName) m) docs
@@ -466,21 +476,18 @@ scanDocs ims = do
 					length (im' ^.. inspectionResult . _Right . moduleSymbols . symbolDocs . _Just)
 				updater $ fromModule im'
 			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedKey im
-		doScan _ m = do
-			w <- askSession sessionGhc
-			liftIO $ inWorker w $ do
-				opts' <- getModuleOpts [] m
-				haddockSession opts'
-				liftGhc $ inspectDocsGhc opts' m
+		doScan _ m = inSessionGhc $ do
+			opts' <- getModuleOpts [] m
+			haddockSession opts'
+			liftGhc $ inspectDocsGhc opts' m
 
 inferModTypes :: UpdateMonad m => [InspectedModule] -> m ()
 inferModTypes = runTasks_ . map inferModTypes' where
 	inferModTypes' im
 		| not $ hasTag InferredTypesTag im = runTask "inferring types" (view inspectedKey im) $ Log.scope "docs" $ do
-			w <- askSession sessionGhc
 			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedKey im
 			im' <- (liftM (setTag InferredTypesTag) $
-				S.scanModify (\opts m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts m Nothing))) im)
+				S.scanModify (\opts m -> inSessionGhc (targetSession opts m >> inferTypes opts m Nothing)) im)
 				<|> return im
 			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedKey im
 			updater $ fromModule im'

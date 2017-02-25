@@ -18,7 +18,7 @@ import qualified Data.Aeson as A
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.List
 import Data.Maybe
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.String (fromString)
 import Data.Text (unpack)
@@ -133,11 +133,11 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 	forM_ projects $ \proj -> do
 		DB.clear db (return $ dbval ^. projectSlice proj)
 		liftIO $ unwatchProject w proj
-	dbPDbs <- mapM restorePackageDbStack $ M.keys $ view databasePackageDbs dbval
+	dbPDbs <- inSessionGhc $ mapM restorePackageDbStack $ M.keys $ view databasePackageDbs dbval
 	flip State.evalStateT dbPDbs $ do
 		when cabal $ removePackageDbStack userDb
 		forM_ sboxes' $ \sbox -> do
-			pdbs <- lift $ sandboxPackageDbStack sbox
+			pdbs <- lift $ inSessionGhc $ sandboxPackageDbStack sbox
 			removePackageDbStack pdbs
 	forM_ files $ \file -> do
 		DB.clear db (return $ dbval ^. slice (inFile file))
@@ -223,14 +223,16 @@ runCommand (CabalList packages') = toValue $ liftIO $ hsdevLift $ Cabal.cabalLis
 runCommand (Lint fs) = toValue $ do
 	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
 runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do
-	ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
+	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
+			Log.log Log.Trace $ "setting file source session for {}" ~~ file
 			m <- setFileSourceSession ghcs' file
+			Log.log Log.Trace $ "file source session set"
 			inSessionGhc $ fn m
 	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check ghcs' m c)) fs
 runCommand (CheckLint fs ghcs') = toValue $ do
-	ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
+	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			m <- setFileSourceSession ghcs' file
@@ -239,7 +241,7 @@ runCommand (CheckLint fs ghcs') = toValue $ do
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs') = toValue $ do
-	ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
+	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	liftM concat $ forM fs $ \(FileSource file msrc) -> do
 		m <- setFileSourceSession ghcs' file
 		inSessionGhc $ Types.fileTypes ghcs' m msrc
@@ -298,21 +300,21 @@ targetFilter f = liftM (. view sourcedModule) $ case f of
 	TargetPackageDb pdb -> do
 		dbval <- getDb
 		let
-			pkgs = maybe [] S.toList (dbval ^? databasePackageDbs . ix pdb)
-			mlocs = S.unions $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
+			pkgs = dbval ^. databasePackageDbs . ix pdb
+			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
 	TargetCabal -> do
 		dbval <- getDb
 		let
-			pkgs = S.unions $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs userDb]
-			mlocs = S.unions $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- S.toList pkgs]
+			pkgs = concat $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs userDb]
+			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
 	TargetSandbox sbox -> do
 		dbval <- getDb
-		pdbs <- findSandbox sbox >>= sandboxPackageDbStack
+		pdbs <- findSandbox sbox >>= inSessionGhc . sandboxPackageDbStack
 		let
-			pkgs = S.unions $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs pdbs]
-			mlocs = S.unions $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- S.toList pkgs]
+			pkgs = concat [dbval ^. databasePackageDbs . ix pdb | pdb <- packageDbs pdbs]
+			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
 	TargetPackage pack -> liftM (inPackage . mkPackage) $ refinePackage pack
 	TargetSourced -> return byFile

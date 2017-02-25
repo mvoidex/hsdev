@@ -46,7 +46,7 @@ main = toolMain "hsinspect" "haskell inspect" opts (runToolClient . inspect') wh
 		ghc <- ghcWorker
 		let
 			scanAdditional =
-				scanModify' (\opts' -> liftIO . inspectDocs opts') >=>
+				scanModify' (\opts' -> liftIO . inWorker ghc . inspectDocs opts') >=>
 				scanModify' (\opts' m -> liftIO (inWorker ghc (ghcSession opts' >> inferTypes opts' m Nothing)))
 		toJSON <$> scanAdditional im
 	inspect' (Opts (Just fcabal@(takeExtension -> ".cabal")) _) = do

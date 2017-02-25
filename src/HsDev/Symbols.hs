@@ -28,7 +28,7 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Data.List
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 import Data.Ord (comparing)
 import qualified Data.Set as S
 import Data.String (fromString)
