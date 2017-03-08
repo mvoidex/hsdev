@@ -174,10 +174,15 @@ runCommand InfoPackages = toValue $ do
 	return $ ordNub (dbval ^.. packages)
 runCommand InfoProjects = toValue $ (toListOf $ databaseProjects . each) <$> getDb
 runCommand InfoSandboxes = toValue $ (M.keys . view databasePackageDbs) <$> getDb
-runCommand (InfoSymbol sq fs _) = toValue $ do
+runCommand (InfoSymbol sq fs h _) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
-	return (dbval ^.. freshSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq))
+	let
+		syms = dbval ^.. freshSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq)
+		formatted
+			| h = toJSON $ map (view symbolId) syms
+			| otherwise = toJSON syms
+	return formatted
 runCommand (InfoModule sq fs h i) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
@@ -205,11 +210,11 @@ runCommand (Whois nm fpath) = toValue $ do
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
 	dbval <- getDb
 	ms <- liftIO $ hsdevLift $ scopeModules dbval fpath
-	return (ms ^.. each . filtered (matchQuery sq))
+	return (ms ^.. each . moduleId . filtered (matchQuery sq))
 runCommand (ResolveScope sq fpath) = toValue $ do
 	dbval <- getDb
 	ss <- liftIO $ hsdevLift $ scope dbval fpath
-	return (ss ^.. each . filtered (matchQuery sq))
+	return (ss ^.. each . symbolId . filtered (matchQuery sq))
 runCommand (Complete input True fpath) = toValue $ do
 	dbval <- getDb
 	liftIO $ hsdevLift $ wideCompletions dbval fpath input
@@ -263,7 +268,7 @@ runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 				return corrs'
 	liftM concat $ mapM runFix files
 runCommand (GhcEval exprs mfile) = toValue $ do
-	ensureUpToDate (Update.UpdateOptions [] [] False False) (maybeToList mfile)
+	-- ensureUpToDate (Update.UpdateOptions [] [] False False) (maybeToList mfile)
 	ghcw <- askSession sessionGhc
 	case mfile of
 		Nothing -> inSessionGhc ghciSession

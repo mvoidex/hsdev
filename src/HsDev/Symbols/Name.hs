@@ -1,7 +1,7 @@
 {-# LANGUAGE PatternSynonyms, ViewPatterns, OverloadedStrings #-}
 
 module HsDev.Symbols.Name (
-	Name, nameModule, nameIdent, pattern Name, namePrefix, fromName_, toName_, fromName, toName,
+	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, namePrefix, fromName_, toName_, fromName, toName,
 	) where
 
 import Control.Arrow
@@ -13,6 +13,12 @@ import qualified Language.Haskell.Exts as Exts (Name(..))
 
 -- | Qualified name
 type Name = QName ()
+
+qualName :: String -> String -> Name
+qualName m = Qual () (ModuleName () m) . toName_ . fromString
+
+unqualName :: String -> Name
+unqualName = UnQual () . toName_ . fromString
 
 nameModule :: Name -> Maybe Text
 nameModule (Qual _ (ModuleName _ m) _) = Just $ fromString m

@@ -390,7 +390,7 @@ data Command =
 	InfoPackages |
 	InfoProjects |
 	InfoSandboxes |
-	InfoSymbol SearchQuery [TargetFilter] Bool |
+	InfoSymbol SearchQuery [TargetFilter] Bool Bool |
 	InfoModule SearchQuery [TargetFilter] Bool Bool |
 	InfoProject (Either String FilePath) |
 	InfoSandbox FilePath |
@@ -457,7 +457,7 @@ instance Paths Command where
 	paths f (InferTypes projs fs ms) = InferTypes <$> each f projs <*> each f fs <*> pure ms
 	paths f (Remove projs c cs fs) = Remove <$> each f projs <*> pure c <*> (each . paths) f cs <*> each f fs
 	paths _ RemoveAll = pure RemoveAll
-	paths f (InfoSymbol q t l) = InfoSymbol <$> pure q <*> paths f t <*> pure l
+	paths f (InfoSymbol q t h l) = InfoSymbol <$> pure q <*> paths f t <*> pure h <*> pure l
 	paths f (InfoModule q t h i) = InfoModule <$> pure q <*> paths f t <*> pure h <*> pure i
 	paths f (InfoProject (Right proj)) = InfoProject <$> (Right <$> f proj)
 	paths f (InfoSandbox fpath) = InfoSandbox <$> f fpath
@@ -511,7 +511,7 @@ instance FromCmd Command where
 		cmd "packages" "list packages" (pure InfoPackages),
 		cmd "projects" "list projects" (pure InfoProjects),
 		cmd "sandboxes" "list sandboxes" (pure InfoSandboxes),
-		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> many cmdP <*> localsFlag),
+		cmd "symbol" "get symbol info" (InfoSymbol <$> cmdP <*> many cmdP <*> headerFlag <*> localsFlag),
 		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP <*> headerFlag <*> inspectionFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> pathArg (help "locate sandbox in parent of this path")),
@@ -636,7 +636,7 @@ instance ToJSON Command where
 	toJSON InfoPackages = cmdJson "packages" []
 	toJSON InfoProjects = cmdJson "projects" []
 	toJSON InfoSandboxes = cmdJson "sandboxes" []
-	toJSON (InfoSymbol q tf l) = cmdJson "symbol" ["query" .= q, "filters" .= tf, "locals" .= l]
+	toJSON (InfoSymbol q tf h l) = cmdJson "symbol" ["query" .= q, "filters" .= tf, "header" .= h, "locals" .= l]
 	toJSON (InfoModule q tf h i) = cmdJson "module" ["query" .= q, "filters" .= tf, "header" .= h, "inspection" .= i]
 	toJSON (InfoProject p) = cmdJson "project" $ either (\pname -> ["name" .= pname]) (\ppath -> ["path" .= ppath]) p
 	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
@@ -684,7 +684,7 @@ instance FromJSON Command where
 		guardCmd "packages" v *> pure InfoPackages,
 		guardCmd "projects" v *> pure InfoProjects,
 		guardCmd "sandboxes" v *> pure InfoSandboxes,
-		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .::?! "filters" <*> (v .:: "locals" <|> pure False)),
+		guardCmd "symbol" v *> (InfoSymbol <$> v .:: "query" <*> v .::?! "filters" <*> v .:: "header" <*> (v .:: "locals" <|> pure False)),
 		guardCmd "module" v *> (InfoModule <$> v .:: "query" <*> v .::?! "filters" <*> v .:: "header" <*> v .:: "inspection"),
 		guardCmd "project" v *> (InfoProject <$> asum [Left <$> v .:: "name", Right <$> v .:: "path"]),
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
