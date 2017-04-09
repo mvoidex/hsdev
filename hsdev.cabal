@@ -209,6 +209,7 @@ executable hsclearimports
   hs-source-dirs: tools
   ghc-options: -Wall -fno-warn-tabs
   other-modules:
+    Tool
   build-depends:
     base >= 4.7 && < 5,
     hsdev,
