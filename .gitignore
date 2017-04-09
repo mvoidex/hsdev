@@ -3,4 +3,4 @@
 dist
 *.log
 *.*~
-.stack-work
+.stack-work/
