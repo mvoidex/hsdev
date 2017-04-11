@@ -19,11 +19,12 @@ import Data.Foldable (toList)
 import Data.Maybe
 import qualified Data.Map as M
 import Data.String (fromString)
-import Data.Text (unpack)
+import Data.Text (pack, unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
 import System.Directory
 import System.FilePath
 import qualified System.Log.Simple as Log
+import qualified System.Log.Simple.Base as Log
 import Text.Regex.PCRE ((=~))
 
 import qualified System.Directory.Watcher as W
@@ -67,13 +68,17 @@ toValue = liftM toJSON
 
 runCommand :: ServerMonadBase m => Command -> ClientM m Value
 runCommand Ping = toValue $ return $ object ["message" .= ("pong" :: String)]
-runCommand (Listen (Just r)) = bracket (serverSetLogRules ["/: {}" ~~ r]) serverSetLogRules $ \_ -> runCommand (Listen Nothing)
+runCommand (Listen (Just l)) = case Log.level (pack l) of
+	Nothing -> hsdevError $ OtherError $ "invalid log level: {}" ~~ l
+	Just lev -> bracket (serverSetLogLevel lev) serverSetLogLevel $ \_ -> runCommand (Listen Nothing)
 runCommand (Listen Nothing) = toValue $ do
 	serverListen >>= mapM_ (\msg -> commandNotify (Notification $ object ["message" .= msg]))
-runCommand (SetLogConfig rs) = toValue $ do
-	rules' <- serverSetLogRules rs
-	Log.log Log.Debug $ "log rules switched from '{}' to '{}'" ~~ intercalate ", " rules' ~~ intercalate ", " rs
-	Log.log Log.Info $ "log rules updated to: {}" ~~ intercalate ", " rs
+runCommand (SetLogLevel l) = case Log.level (pack l) of
+	Nothing -> hsdevError $ OtherError $ "invalid log level: {}" ~~ l
+	Just lev -> toValue $ do
+		lev' <- serverSetLogLevel lev
+		Log.sendLog Log.Debug $ "log level changed from '{}' to '{}'" ~~ show lev' ~~ show lev
+		Log.sendLog Log.Info $ "log level updated to: {}" ~~ show lev
 runCommand (AddData cts) = toValue $ mapM_ updateData cts where
 	updateData (AddedDatabase db) = toValue $ serverUpdateDB db
 	updateData (AddedModule m) = toValue $ serverUpdateDB $ fromModule m
@@ -279,7 +284,7 @@ targetFilter f = case f of
 	TargetPackageDb pdb -> return $ inPackageDb pdb
 	TargetCabal -> return $ inPackageDbStack userDb
 	TargetSandbox sbox -> liftM inPackageDbStack $ findSandbox sbox >>= sandboxPackageDbStack
-	TargetPackage pack -> liftM inPackage $ refinePackage pack
+	TargetPackage pkg -> liftM inPackage $ refinePackage pkg
 	TargetSourced -> return byFile
 	TargetStandalone -> return standalone
 
@@ -325,11 +330,11 @@ setFileSourceSession opts fpath = do
 
 -- | Ensure package exists
 refinePackage :: CommandMonad m => String -> m String
-refinePackage pack = do
+refinePackage pkg = do
 	db' <- getDb
-	if pack `elem` (allPackages db' ^.. each . packageName)
-		then return pack
-		else hsdevError (PackageNotFound pack)
+	if pkg `elem` (allPackages db' ^.. each . packageName)
+		then return pkg
+		else hsdevError (PackageNotFound pkg)
 
 -- | Get list of enumerated sandboxes
 getSandboxes :: CommandMonad m => [FilePath] -> m [Sandbox]
@@ -395,11 +400,11 @@ getSDb fpath = do
 updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()
 updateProcess uopts acts = Update.runUpdate uopts $ mapM_ runAct acts where
 	runAct act = catch act onError
-	onError e = Log.log Log.Error $ "{}" ~~ (e :: HsDevError)
+	onError e = Log.sendLog Log.Error $ "{}" ~~ (e :: HsDevError)
 
 -- | Ensure file is up to date
-ensureUpToDate :: ServerMonadBase m => Update.UpdateOptions -> [FileSource] -> ClientM m ()
-ensureUpToDate uopts fs = updateProcess uopts [Update.scanFileContents (view Update.updateGhcOpts uopts) f mcts | FileSource f mcts <- fs]
+-- ensureUpToDate :: ServerMonadBase m => Update.UpdateOptions -> [FileSource] -> ClientM m ()
+-- ensureUpToDate uopts fs = updateProcess uopts [Update.scanFileContents (view Update.updateGhcOpts uopts) f mcts | FileSource f mcts <- fs]
 
 -- | Filter declarations with prefix and infix
 filterMatch :: Symbol a => SearchQuery -> [a] -> [a]

@@ -18,8 +18,6 @@ import Control.Monad.Except
 import Control.Lens (view, makeLenses)
 import Data.Aeson
 import Data.Maybe (isJust, fromMaybe)
-import Data.List ((\\))
-import Data.String (fromString)
 import qualified Data.Text as T (unpack)
 import Distribution.Compiler
 import Distribution.System
@@ -27,7 +25,6 @@ import qualified Distribution.Text as T (display)
 import System.FilePath
 import System.Directory
 import System.Log.Simple (MonadLog(..))
-import qualified System.Log.Simple as Log
 
 import System.Directory.Paths
 import HsDev.PackageDb
@@ -143,7 +140,7 @@ cabalSandboxPackageDb = liftM (++ "-packages.conf.d") cabalSandboxLib
 getModuleOpts :: MonadLog m => [String] -> Module -> m [String]
 getModuleOpts opts m = do
 	pdbs <- case view moduleLocation m of
-		FileModule fpath p -> searchPackageDbStack fpath
+		FileModule fpath _ -> searchPackageDbStack fpath
 		InstalledModule pdb _ _ -> restorePackageDbStack pdb
 		ModuleSource _ -> return userDb
 	pkgs <- browsePackages opts pdbs

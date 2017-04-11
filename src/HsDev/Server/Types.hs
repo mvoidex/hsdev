@@ -5,7 +5,7 @@ module HsDev.Server.Types (
 	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogRules, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..), AddedContents(..),
@@ -15,9 +15,8 @@ module HsDev.Server.Types (
 	) where
 
 import Control.Applicative
-import Control.Concurrent.MVar (MVar, swapMVar)
 import Control.Concurrent.Worker
-import Control.Lens (each)
+import Control.Lens (each, view, set)
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Except
@@ -27,10 +26,11 @@ import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Default
+import Data.Maybe (fromMaybe)
 import Data.Monoid
 import Data.Foldable (asum)
 import Options.Applicative
-import System.Log.Simple hiding (Command)
+import System.Log.Simple
 
 import System.Directory.Paths
 import Text.Format (FormatBuild(..))
@@ -56,7 +56,6 @@ type ServerMonadBase m = (MonadIO m, MonadMask m, MonadBaseControl IO m, Alterna
 
 data SessionLog = SessionLog {
 	sessionLogger :: Log,
-	sessionLogRules :: MVar [String],
 	sessionListenLog :: IO [String],
 	sessionLogWait :: IO () }
 
@@ -85,6 +84,8 @@ newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a }
 
 instance (MonadIO m, MonadMask m) => MonadLog (ServerM m) where
 	askLog = ServerM $ asks (sessionLogger . sessionLog)
+	localLog fn = ServerM . local setLog' . runServerM where
+		setLog' sess = sess { sessionLog = (sessionLog sess) { sessionLogger = fn (sessionLogger (sessionLog sess)) } }
 
 instance ServerMonadBase m => SessionMonad (ServerM m) where
 	getSession = ask
@@ -120,6 +121,7 @@ instance MonadTrans ClientM where
 
 instance (MonadIO m, MonadMask m) => MonadLog (ClientM m) where
 	askLog = ClientM askLog
+	localLog fn = ClientM . localLog fn . runClientM
 
 instance ServerMonadBase m => SessionMonad (ClientM m) where
 	getSession = ClientM getSession
@@ -144,10 +146,11 @@ serverListen :: SessionMonad m => m [String]
 serverListen = join . liftM liftIO $ askSession (sessionListenLog . sessionLog)
 
 -- | Set server's log config
-serverSetLogRules :: SessionMonad m => [String] -> m [String]
-serverSetLogRules rs = do
-	rvar <- askSession (sessionLogRules . sessionLog)
-	liftIO $ swapMVar rvar rs
+serverSetLogLevel :: SessionMonad m => Level -> m Level
+serverSetLogLevel lev = do
+	l <- askSession (sessionLogger . sessionLog)
+	cfg <- updateLogConfig l (set (componentCfg "hsdev") (Just lev))
+	return $ fromMaybe def $ view (componentCfg "hsdev") cfg
 
 -- | Wait for server
 serverWait :: SessionMonad m => m ()
@@ -219,7 +222,7 @@ data ServerOpts = ServerOpts {
 	serverPort :: ConnectionPort,
 	serverTimeout :: Int,
 	serverLog :: Maybe FilePath,
-	serverLogConfig :: String,
+	serverLogLevel :: String,
 	serverCache :: Maybe FilePath,
 	serverLoad :: Bool,
 	serverSilent :: Bool }
@@ -259,7 +262,7 @@ instance FromCmd ServerOpts where
 		(connectionArg <|> pure (serverPort def)) <*>
 		(timeoutArg <|> pure (serverTimeout def)) <*>
 		optional logArg <*>
-		(logConfigArg <|> pure (serverLogConfig def)) <*>
+		(logLevelArg <|> pure (serverLogLevel def)) <*>
 		optional cacheArg <*>
 		loadFlag <*>
 		serverSilentFlag
@@ -276,7 +279,7 @@ portArg :: Parser ConnectionPort
 connectionArg :: Parser ConnectionPort
 timeoutArg :: Parser Int
 logArg :: Parser FilePath
-logConfigArg :: Parser String
+logLevelArg :: Parser String
 cacheArg :: Parser FilePath
 noFileFlag :: Parser Bool
 loadFlag :: Parser Bool
@@ -295,7 +298,7 @@ connectionArg = portArg <|> unixArg
 #endif
 timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
 logArg = strOption (long "log" <> short 'l' <> metavar "file" <> help "log file")
-logConfigArg = strOption (long "log-config" <> metavar "rule" <> help "log config: low [low], high [high], set [low] [high], use [default/debug/trace/silent/supress]")
+logLevelArg = strOption (long "log-level" <> metavar "level" <> help "log level: trace/debug/info/warning/error/fatal")
 cacheArg = strOption (long "cache" <> metavar "path" <> help "cache directory")
 noFileFlag = switch (long "no-file" <> help "don't use mmap files")
 loadFlag = switch (long "load" <> help "force load all data from cache on startup")
@@ -309,7 +312,7 @@ serverOptsArgs sopts = concat [
 	portArgs (serverPort sopts),
 	["--timeout", show $ serverTimeout sopts],
 	marg "--log" (serverLog sopts),
-	["--log-config", serverLogConfig sopts],
+	["--log-level", serverLogLevel sopts],
 	marg "--cache" (serverCache sopts),
 	["--load" | serverLoad sopts],
 	["--silent" | serverSilent sopts]]
@@ -344,7 +347,7 @@ instance FromJSON Request where
 data Command =
 	Ping |
 	Listen (Maybe String) |
-	SetLogConfig [String] |
+	SetLogLevel String |
 	AddData { addedContents :: [AddedContents] } |
 	Scan {
 		scanProjects :: [FilePath],
@@ -483,8 +486,8 @@ instance Paths [TargetFilter] where
 instance FromCmd Command where
 	cmdP = subparser $ mconcat [
 		cmd "ping" "ping server" (pure Ping),
-		cmd "listen" "listen server log" (Listen <$> optional ruleArg),
-		cmd "set-log" "set log config rules" (SetLogConfig <$> many (strArgument idm)),
+		cmd "listen" "listen server log" (Listen <$> optional logLevelArg),
+		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
 		cmd "add" "add info to database" (AddData <$> option readJSON idm),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
@@ -585,7 +588,6 @@ packageArg :: Parser String
 pathArg :: Mod OptionFields String -> Parser FilePath
 projectArg :: Parser String
 pureFlag :: Parser Bool
-ruleArg :: Parser String
 sandboxArg :: Parser FilePath
 wideFlag :: Parser Bool
 
@@ -611,14 +613,13 @@ packageDbArg =
 pathArg f = strOption (long "path" <> metavar "path" <> short 'p' <> f)
 projectArg = strOption (long "project" <> long "proj" <> metavar "project")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
-ruleArg = strOption (long "config" <> metavar "rule" <> help "set new log rules while in listen command")
 sandboxArg = strOption (long "sandbox" <> metavar "path" <> help "path to cabal sandbox")
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
 
 instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
 	toJSON (Listen r) = cmdJson "listen" ["rule" .= r]
-	toJSON (SetLogConfig rs) = cmdJson "set-log" ["rules" .= rs]
+	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
 	toJSON (AddData cts) = cmdJson "add" ["data" .= cts]
 	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
@@ -664,7 +665,7 @@ instance FromJSON Command where
 	parseJSON = withObject "command" $ \v -> asum [
 		guardCmd "ping" v *> pure Ping,
 		guardCmd "listen" v *> (Listen <$> v .::? "rule"),
-		guardCmd "set-log" v *> (SetLogConfig <$> v .:: "rules"),
+		guardCmd "set-log" v *> (SetLogLevel <$> v .:: "level"),
 		guardCmd "add" v *> (AddData <$> v .:: "data"),
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>
