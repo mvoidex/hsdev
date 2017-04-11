@@ -190,7 +190,8 @@ runServerCommand (Run sopts) = runServer sopts $ do
 
 	Log.sendLog Log.Trace "waiting for starting accept thread..."
 	liftIO $ waitQSem q
-	Log.sendLog Log.Info $ "Server started at port {}" ~~ serverPort sopts
+	liftIO $ putStrLn $ "Server started at port {}" ~~ serverPort sopts
+	Log.sendLog Log.Info $ "server started at port {}" ~~ serverPort sopts
 	Log.sendLog Log.Trace "waiting for accept thread..."
 	serverWait
 	Log.sendLog Log.Trace "accept thread stopped"

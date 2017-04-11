@@ -149,8 +149,8 @@ serverListen = join . liftM liftIO $ askSession (sessionListenLog . sessionLog)
 serverSetLogLevel :: SessionMonad m => Level -> m Level
 serverSetLogLevel lev = do
 	l <- askSession (sessionLogger . sessionLog)
-	cfg <- updateLogConfig l (set (componentCfg "hsdev") (Just lev))
-	return $ fromMaybe def $ view (componentCfg "hsdev") cfg
+	cfg <- updateLogConfig l (set (componentCfg "") (Just lev))
+	return $ fromMaybe def $ view (componentCfg "") cfg
 
 -- | Wait for server
 serverWait :: SessionMonad m => m ()
@@ -229,7 +229,7 @@ data ServerOpts = ServerOpts {
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts def 0 Nothing "use default" Nothing False False
+	def = ServerOpts def 0 Nothing "info" Nothing False False
 
 -- | Silent server with no connection, useful for ghci
 silentOpts :: ServerOpts
@@ -618,7 +618,7 @@ wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if 
 
 instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
-	toJSON (Listen r) = cmdJson "listen" ["rule" .= r]
+	toJSON (Listen lev) = cmdJson "listen" ["level" .= lev]
 	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
 	toJSON (AddData cts) = cmdJson "add" ["data" .= cts]
 	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
@@ -664,7 +664,7 @@ instance ToJSON Command where
 instance FromJSON Command where
 	parseJSON = withObject "command" $ \v -> asum [
 		guardCmd "ping" v *> pure Ping,
-		guardCmd "listen" v *> (Listen <$> v .::? "rule"),
+		guardCmd "listen" v *> (Listen <$> v .::? "level"),
 		guardCmd "set-log" v *> (SetLogLevel <$> v .:: "level"),
 		guardCmd "add" v *> (AddData <$> v .:: "data"),
 		guardCmd "scan" v *> (Scan <$>
