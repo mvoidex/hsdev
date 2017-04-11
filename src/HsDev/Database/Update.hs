@@ -305,7 +305,7 @@ scanProjectStack :: UpdateMonad m => [String] -> FilePath -> m ()
 scanProjectStack opts cabal = do
 	proj <- scanProjectFile opts cabal
 	scanProject opts cabal
-	sbox <- liftIO $ searchSandbox (view projectPath proj)
+	sbox <- liftIO $ projectSandbox (view projectPath proj)
 	maybe (scanCabal opts) (scanSandbox opts) sbox
 
 -- | Scan project
