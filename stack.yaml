@@ -5,3 +5,5 @@ extra-deps:
 - aeson-lens-0.5.0.0
 - haddock-api-2.17.3.1
 - hdocs-0.5.2.0
+- hformat-0.2.0.0
+- simple-log-0.8.3
