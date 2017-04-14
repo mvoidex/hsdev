@@ -43,7 +43,6 @@ import qualified GHC.PackageDb as GHC
 import qualified GhcMonad as GHC (liftIO)
 import GhcMonad (GhcMonad)
 import qualified GHC.Paths as GHC
-import qualified BasicTypes as GHC
 import qualified Name as GHC
 import qualified IdInfo as GHC
 import qualified Outputable as GHC
@@ -106,7 +105,7 @@ browseModule pdb package' m = do
 		_moduleId = mloc df m,
 		_moduleDocs = Nothing,
 		_moduleExports = ds,
-		_moduleFixities = [Fixity (dirAssoc dir) pr (fixName oname) | (oname, GHC.Fixity _ pr dir) <- maybe [] GHC.mi_fixities (GHC.modInfoIface mi)],
+		_moduleFixities = [Fixity (dirAssoc dir) pr (fixName oname) | (oname, (pr, dir)) <- map (second Compat.getFixity) (maybe [] GHC.mi_fixities (GHC.modInfoIface mi))],
 		_moduleScope = mempty,
 		_moduleSource = Nothing }
 	where
@@ -127,12 +126,8 @@ browseModule pdb package' m = do
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe SymbolInfo
 		showResult dflags (GHC.AnId i) = case GHC.idDetails i of
 			GHC.RecSelId p _ -> Just $ Selector (Just $ formatType dflags $ GHC.varType i) parent ctors where
-				parent = fromString $ case p of
-					GHC.RecSelData p' -> GHC.getOccString p'
-					GHC.RecSelPatSyn p' -> GHC.getOccString p'
-				ctors = map fromString $ case p of
-					GHC.RecSelData p' -> map GHC.getOccString (GHC.tyConDataCons p')
-					GHC.RecSelPatSyn p' -> [GHC.getOccString p']
+				parent = fromString $ Compat.recSelParent p
+				ctors = map fromString $ Compat.recSelCtors p
 			GHC.ClassOpId cls -> Just $ Method (Just $ formatType dflags $ GHC.varType i) (fromString $ GHC.getOccString cls)
 			_ -> Just $ Function (Just $ formatType dflags $GHC.varType i)
 		showResult dflags (GHC.AConLike c) = case c of

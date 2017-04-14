@@ -16,7 +16,6 @@ module HsDev.Inspect (
 import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Lens hiding ((%=), (.=), universe)
-import Control.Lens.At (ix)
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Except

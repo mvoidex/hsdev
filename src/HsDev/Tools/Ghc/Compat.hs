@@ -4,16 +4,24 @@
 module HsDev.Tools.Ghc.Compat (
 	pkgDatabase, UnitId, unitId, moduleUnitId, depends, getPackageDetails, patSynType, cleanupHandler, renderStyle,
 	LogAction, setLogAction,
-	languages, flags
+	languages, flags,
+	recSelParent, recSelCtors,
+	getFixity
 	) where
 
+import qualified BasicTypes
 import qualified DynFlags as GHC
 import qualified ErrUtils
 import qualified GHC
 import qualified Module
+import qualified Name
 import qualified Packages as GHC
 import qualified PatSyn as GHC
 import qualified Pretty
+
+#if __GLASGOW_HASKELL__ == 800
+import qualified IdInfo
+#endif
 
 #if __GLASGOW_HASKELL__ == 710
 import Exception (ExceptionMonad)
@@ -107,6 +115,31 @@ flags = concat [
 	[option | (option, _, _) <- GHC.fFlags],
 	[option | (option, _, _) <- GHC.fWarningFlags],
 	[option | (option, _, _) <- GHC.fLangFlags]]
+#endif
+
+#if __GLASGOW_HASKELL__ >= 800
+recSelParent :: IdInfo.RecSelParent -> String
+recSelParent (IdInfo.RecSelData p) = Name.getOccString p
+recSelParent (IdInfo.RecSelPatSyn p) = Name.getOccString p
+#else
+recSelParent :: GHC.TyCon -> String
+recSelParent = Name.getOccString
+#endif
+
+#if __GLASGOW_HASKELL__ >= 800
+recSelCtors :: IdInfo.RecSelParent -> [String]
+recSelCtors (IdInfo.RecSelData p) = map Name.getOccString (GHC.tyConDataCons p)
+recSelCtors (IdInfo.RecSelPatSyn p) = [Name.getOccString p]
+#else
+recSelCtors :: GHC.TyCon -> [String]
+recSelCtors = return . Name.getOccString
+#endif
+
+getFixity :: BasicTypes.Fixity -> (Int, BasicTypes.FixityDirection)
+#if __GLASGOW_HASKELL__ >= 800
+getFixity (BasicTypes.Fixity _ i d) = (i, d)
+#else
+getFixity (BasicTypes.Fixity i d) = (i, d)
 #endif
 
 languages :: [String]

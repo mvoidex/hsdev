@@ -162,13 +162,13 @@ runServerCommand (Run sopts) = runServer sopts $ do
 				addr' <- inet_addr "127.0.0.1"
 				bind s (sockAddr (serverPort sopts) addr')
 				listen s maxListenQueue
-			forever $ logAsync (Log.log Log.Fatal . fromString) $ logIO "exception: " (Log.log Log.Error . fromString) $ do
-				Log.log Log.Trace "accepting connection..."
+			forever $ logAsync (Log.sendLog Log.Fatal . fromString) $ logIO "exception: " (Log.sendLog Log.Error . fromString) $ do
+				Log.sendLog Log.Trace "accepting connection..."
 				liftIO $ signalQSem q
 				(s', addr') <- liftIO $ accept s
-				Log.log Log.Trace $ "accepted {}" ~~ show addr'
+				Log.sendLog Log.Trace $ "accepted {}" ~~ show addr'
 				void $ liftIO $ forkIO $ withSession session $ Log.scope (T.pack $ show addr') $
-					logAsync (Log.log Log.Fatal . fromString) $ logIO "exception: " (Log.log Log.Error . fromString) $
+					logAsync (Log.sendLog Log.Fatal . fromString) $ logIO "exception: " (Log.sendLog Log.Error . fromString) $
 						flip finally (liftIO $ close s') $
 							bracket (liftIO newEmptyMVar) (liftIO . (`putMVar` ())) $ \done -> do
 								me <- liftIO myThreadId
@@ -176,7 +176,7 @@ runServerCommand (Run sopts) = runServer sopts $ do
 									timeoutWait = withSession session $ do
 										notDone <- liftIO $ isEmptyMVar done
 										when notDone $ do
-											Log.log Log.Trace $ "waiting for {} to complete" ~~ show addr'
+											Log.sendLog Log.Trace $ "waiting for {} to complete" ~~ show addr'
 											waitAsync <- liftIO $ async $ do
 												threadDelay 1000000
 												killThread me
@@ -184,17 +184,18 @@ runServerCommand (Run sopts) = runServer sopts $ do
 								liftIO $ F.putChan clientChan timeoutWait
 								processClientSocket (show addr') s'
 
-	Log.log Log.Trace "waiting for starting accept thread..."
+	Log.sendLog Log.Trace "waiting for starting accept thread..."
 	liftIO $ waitQSem q
-	Log.log Log.Info $ "Server started at port {}" ~~ serverPort sopts
-	Log.log Log.Trace "waiting for accept thread..."
+	liftIO $ putStrLn $ "Server started at port {}" ~~ serverPort sopts
+	Log.sendLog Log.Info $ "Server started at port {}" ~~ serverPort sopts
+	Log.sendLog Log.Trace "waiting for accept thread..."
 	serverWait
-	Log.log Log.Trace "accept thread stopped"
+	Log.sendLog Log.Trace "accept thread stopped"
 	liftIO $ unlink (serverPort sopts)
 	askSession sessionDatabase >>= liftIO . DB.readAsync >>= writeCache sopts
-	Log.log Log.Trace "waiting for clients..."
+	Log.sendLog Log.Trace "waiting for clients..."
 	liftIO (F.stopChan clientChan) >>= sequence_
-	Log.log Log.Info "server stopped"
+	Log.sendLog Log.Info "server stopped"
 runServerCommand (Stop copts) = runServerCommand (Remote copts False Exit)
 runServerCommand (Connect copts) = do
 	curDir <- getCurrentDirectory
@@ -301,7 +302,7 @@ processRequest copts c = do
 -- | Process client, listen for requests and process them
 processClient :: SessionMonad m => String -> F.Chan ByteString -> (ByteString -> IO ()) -> m ()
 processClient name rchan send' = do
-	Log.log Log.Info "connected"
+	Log.sendLog Log.Info "connected"
 	respChan <- liftIO newChan
 	liftIO $ void $ forkIO $ getChanContents respChan >>= mapM_ (send' . encodeMessage)
 	linkVar <- liftIO $ newMVar $ return ()
@@ -311,7 +312,7 @@ processClient name rchan send' = do
 		answer :: SessionMonad m => Msg (Message Response) -> m ()
 		answer m = do
 			unless (isNotification $ view (msg . message) m) $
-				Log.log Log.Trace $ "responsed << {}" ~~ ellipsis (fromUtf8 (encode $ view (msg . message) m))
+				Log.sendLog Log.Trace $ "responsed << {}" ~~ ellipsis (fromUtf8 (encode $ view (msg . message) m))
 			liftIO $ writeChan respChan m
 			where
 				ellipsis :: String -> String
@@ -322,10 +323,10 @@ processClient name rchan send' = do
 	reqs <- liftIO $ F.readChan rchan
 	flip finally (disconnected linkVar) $
 		forM_ reqs $ \req' -> do
-			Log.log Log.Trace $ "received >> {}" ~~ fromUtf8 req'
+			Log.sendLog Log.Trace $ "received >> {}" ~~ fromUtf8 req'
 			case decodeMessage req' of
 				Left em -> do
-					Log.log Log.Warning $ "Invalid request {}" ~~ fromUtf8 req'
+					Log.sendLog Log.Warning $ "Invalid request {}" ~~ fromUtf8 req'
 					answer $ set msg (Message Nothing $ responseError $ RequestError "invalid request" $ fromUtf8 req') em
 				Right m -> void $ liftIO $ forkIO $ withSession s $ Log.scope (T.pack name) $ Log.scope "req" $
 					Log.scope (T.pack $ fromMaybe "_" (view (msg . messageId) m)) $ do
@@ -334,7 +335,7 @@ processClient name rchan send' = do
 								onNotify n
 									| silent = return ()
 									| otherwise = traverseOf (msg . message) (const $ mmap' noFile (Response $ Left n)) m >>= answer
-							Log.log Log.Trace $ "requested >> {}" ~~ fromUtf8 (encode c)
+							Log.sendLog Log.Trace $ "requested >> {}" ~~ fromUtf8 (encode c)
 							resp <- liftIO $ fmap (Response . Right) $ handleTimeout tm $ hsdevLiftIO $ withSession s $
 								processRequest
 									CommandOptions {
@@ -363,7 +364,7 @@ processClient name rchan send' = do
 		-- Call on disconnected, either no action or exit command
 		disconnected :: SessionMonad m => MVar (IO ()) -> m ()
 		disconnected var = do
-			Log.log Log.Info "disconnected"
+			Log.sendLog Log.Info "disconnected"
 			liftIO $ join $ takeMVar var
 
 -- | Process client by socket

@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, TemplateHaskell, CPP #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Util (
@@ -36,6 +36,7 @@ module HsDev.Util (
 	MonadIO(..)
 	) where
 
+import Control.Applicative
 import Control.Arrow (second, left, (&&&))
 import Control.Exception
 import Control.Concurrent.Async
@@ -63,6 +64,15 @@ import System.FilePath
 import System.IO
 import Text.Read (readMaybe)
 
+#if !MIN_VERSION_directory(1,2,6)
+#if mingw32_HOST_OS
+import qualified System.Win32 as Win32
+import Data.Bits ((.&.))
+#else
+import qualified System.Posix as Posix
+#endif
+#endif
+
 import HsDev.Version
 
 -- | Run action with current directory set
@@ -70,12 +80,28 @@ withCurrentDirectory :: (MonadIO m, C.MonadMask m) => FilePath -> m a -> m a
 withCurrentDirectory cur act = C.bracket (liftIO Dir.getCurrentDirectory) (liftIO . Dir.setCurrentDirectory) $
 	const (liftIO (Dir.setCurrentDirectory cur) >> act)
 
+-- | Is directory symbolic link
+dirIsSymLink :: FilePath -> IO Bool
+#if MIN_VERSION_directory(1,2,6)
+dirIsSymLink = Dir.isSymbolicLink
+#else
+dirIsSymLink path = do
+#if mingw32_HOST_OS
+	isReparsePoint <$> Win32.getFileAttributes path
+	where
+		fILE_ATTRIBUTE_REPARSE_POINT = 0x400
+		isReparsePoint attr = attr .&. fILE_ATTRIBUTE_REPARSE_POINT /= 0
+#else
+	Posix.isSymbolicLink <$> Posix.getSymbolicLinkStatus path
+#endif
+#endif
+
 -- | Get directory contents safely: no fail, ignoring symbolic links, also prepends paths with dir name
 directoryContents :: FilePath -> IO [FilePath]
 directoryContents p = handle ignore $ do
 	b <- Dir.doesDirectoryExist p
-	link' <- Dir.isSymbolicLink p
-	if b && (not link')
+	isLink <- dirIsSymLink p
+	if b && (not isLink)
 		then liftM (map (p </>) . filter (`notElem` [".", ".."])) (Dir.getDirectoryContents p)
 		else return []
 	where
@@ -252,8 +278,10 @@ logAsync out = flip C.catch (onAsync out) where
 	onAsync :: (MonadIO m, C.MonadThrow m) => (String -> m ()) -> AsyncException -> m ()
 	onAsync out' e = out' (displayException e) >> C.throwM e
 
-ignoreIO :: IO () -> IO ()
-ignoreIO = handle (const (return ()) :: IOException -> IO ())
+ignoreIO :: C.MonadCatch m => m () -> m ()
+ignoreIO = C.handle ignore' where
+	ignore' :: Monad m => IOException -> m ()
+	ignore' _ = return ()
 
 liftAsync :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Async a) -> ExceptT String m a
 liftAsync = liftExceptionM . ExceptT . liftIO . liftM (left displayException) . join . liftM waitCatch

@@ -3,3 +3,5 @@
 dist
 *.log
 *.*~
+.stack-work/
+cabal.sandbox.config

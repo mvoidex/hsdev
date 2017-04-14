@@ -2,6 +2,7 @@ module HsDev.Project (
 	module HsDev.Project.Types,
 
 	infoSourceDirsDef,
+	analyzeCabal,
 	readProject, loadProject,
 	withExtensions,
 	fileInTarget, fileTarget, fileTargets, findSourceDir, sourceDirs,
@@ -56,7 +57,7 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 		toInfo info = Info {
 			_infoDepends = map pkgName (PD.targetBuildDepends info),
 			_infoLanguage = PD.defaultLanguage info,
-			_infoExtensions = PD.defaultExtensions info,
+			_infoExtensions = PD.defaultExtensions info ++ PD.otherExtensions info ++ PD.oldExtensions info,
 			_infoGHCOptions = fromMaybe [] $ lookup GHC (PD.options info),
 			_infoSourceDirs = PD.hsSourceDirs info }
 

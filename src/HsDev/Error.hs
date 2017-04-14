@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module HsDev.Error (
 	hsdevError, hsdevOtherError, hsdevLift, hsdevLiftWith, hsdevCatch, hsdevExcept, hsdevLiftIO, hsdevLiftIOWith, hsdevIgnore,
 	hsdevHandle, hsdevLog, hsdevOnError,
@@ -11,7 +13,7 @@ import Control.Exception (IOException)
 import Control.Monad.Catch
 import Control.Monad.Except
 import Data.String (fromString)
-import System.Log.Simple (MonadLog(..), log, Level)
+import System.Log.Simple (MonadLog, sendLog, Level)
 
 import HsDev.Types
 
@@ -58,7 +60,7 @@ hsdevHandle h act = hsdevCatch act >>= either h return
 -- | Log hsdev exception and rethrow
 hsdevLog :: MonadLog m => Level -> m a -> m a
 hsdevLog lev act = hsdevCatch act >>= either logError return where
-	logError e = log lev (fromString $ show e) >> hsdevError e
+	logError e = sendLog lev (fromString $ show e) >> hsdevError e
 
 -- | Act on exception and throw again
 hsdevOnError :: MonadCatch m => (HsDevError -> m b) -> m a -> m a

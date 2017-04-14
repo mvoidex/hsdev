@@ -24,8 +24,8 @@ import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T (pack, unpack)
 import Options.Applicative (info, progDesc)
-import System.Log.Simple hiding (Level(..), Message(..), Command(..), (%=))
-import qualified System.Log.Simple.Base as Log
+import System.Log.Simple hiding (Level(..), Message)
+import qualified System.Log.Simple.Base as Log (level_)
 import qualified System.Log.Simple as Log
 import System.Directory (removeDirectoryRecursive, createDirectoryIfMissing)
 import System.FilePath
@@ -56,58 +56,46 @@ import System.Win32.FileMapping.NamePool
 initLog :: ServerOpts -> IO SessionLog
 initLog sopts = do
 	msgs <- F.newChan
-	rulesVar <- newMVar [ruleStr]
-	let
-		getRules = do
-			rs <- readMVar rulesVar
-			return $ map (parseRule_ . fromString) rs
-	l <- newLog (return getRules) $ concat [
-		[logger text console | not $ serverSilent sopts],
-		[logger text (chaner msgs)],
-		maybeToList $ (logger text . file) <$> serverLog sopts]
-	Log.writeLog l Log.Info ("Log politics: low = {}, high = {}" ~~ logLow ~~ logHigh)
+	l <- newLog (logCfg [("", Log.level_ . T.pack . serverLogLevel $ sopts)]) $ concat [
+		[handler text console | not $ serverSilent sopts],
+		[handler text (chaner msgs)],
+		[handler text (file f) | f <- maybeToList (serverLog sopts)]]
 	let
 		listenLog = F.dupChan msgs >>= F.readChan
-	return $ SessionLog l rulesVar listenLog (stopLog l)
-	where
-		ruleStr :: String
-		ruleStr = "/: {}" ~~ serverLogConfig sopts
-		(Log.Politics logLow logHigh) = Log.rulePolitics (parseRule_ (fromString ruleStr)) Log.defaultPolitics
+	return $ SessionLog l listenLog (stopLog l)
 
 instance FormatBuild Log.Level where
 
 -- | Run server
 runServer :: ServerOpts -> ServerM IO () -> IO ()
-runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scopeLog (sessionLogger slog) (T.pack "hsdev") $ Watcher.withWatcher $ \watcher -> do
-	waitSem <- newQSem 0
-	db <- DB.newAsync
-	let
-		outputStr = Log.writeLog (sessionLogger slog)
+runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.withWatcher $ \watcher -> withLog (sessionLogger slog) $ do
+	waitSem <- liftIO $ newQSem 0
+	db <- liftIO $ DB.newAsync
 	withCache sopts () $ \cdir -> do
-		outputStr Log.Trace $ "Checking cache version in {}" ~~ cdir 
-		ver <- Cache.readVersion $ cdir </> Cache.versionCache
-		outputStr Log.Debug $ "Cache version: {}" ~~ strVersion ver
+		Log.sendLog Log.Trace $ "Checking cache version in {}" ~~ cdir 
+		ver <- liftIO $ Cache.readVersion $ cdir </> Cache.versionCache
+		Log.sendLog Log.Debug $ "Cache version: {}" ~~ strVersion ver
 		unless (sameVersion (cutVersion version) (cutVersion ver)) $ ignoreIO $ do
-			outputStr Log.Info $ "Cache version ({cache}) is incompatible with hsdev version ({hsdev}), removing cache ({dir})" ~~
+			Log.sendLog Log.Info $ "Cache version ({cache}) is incompatible with hsdev version ({hsdev}), removing cache ({dir})" ~~
 				("cache" ~% strVersion ver) ~~
 				("hsdev" ~% strVersion version) ~~
 				("dir" ~% cdir)
 			-- drop cache
-			removeDirectoryRecursive cdir
-		outputStr Log.Debug $ "Writing new cache version: {}" ~~ strVersion version
-		createDirectoryIfMissing True cdir
-		Cache.writeVersion $ cdir </> Cache.versionCache
+			liftIO $ removeDirectoryRecursive cdir
+		Log.sendLog Log.Debug $ "Writing new cache version: {}" ~~ strVersion version
+		liftIO $ createDirectoryIfMissing True cdir
+		liftIO $ Cache.writeVersion $ cdir </> Cache.versionCache
 	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
-		outputStr Log.Info $ "Loading cache from {}" ~~ cdir
-		dbCache <- liftA merge <$> SC.load cdir
+		Log.sendLog Log.Info $ "Loading cache from {}" ~~ cdir
+		dbCache <- liftA merge <$> liftIO (SC.load cdir)
 		case dbCache of
-			Left err -> outputStr Log.Error $ "Failed to load cache: {}" ~~ err
+			Left err -> Log.sendLog Log.Error $ "Failed to load cache: {}" ~~ err
 			Right dbCache' -> DB.update db (return dbCache')
 #if mingw32_HOST_OS
-	mmapPool <- Just <$> createPool "hsdev"
+	mmapPool <- Just <$> liftIO (createPool "hsdev")
 #endif
-	ghcw <- withLog (sessionLogger slog) $ ghcWorker
-	defs <- getDefines
+	ghcw <- ghcWorker
+	defs <- liftIO getDefines
 	let
 		session = Session
 			db
@@ -120,13 +108,13 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Log.scop
 #endif
 			ghcw
 			(do
-				outputStr Log.Trace "stopping server"
+				withLog (sessionLogger slog) $ Log.sendLog Log.Trace "stopping server"
 				signalQSem waitSem)
 			(waitQSem waitSem)
 			defs
-	_ <- forkIO $ Update.onEvent watcher $ \w e -> withSession session $
+	_ <- liftIO $ forkIO $ Update.onEvent watcher $ \w e -> withSession session $
 		void $ Client.runClient def $ Update.processEvent def w e
-	runReaderT (runServerM act) session
+	liftIO $ runReaderT (runServerM act) session
 
 type Server = Worker (ServerM IO)
 
@@ -157,8 +145,7 @@ sendServer_ :: Server -> [String] -> IO Result
 sendServer_ srv = sendServer srv def
 
 chaner :: F.Chan String -> Consumer Text
-chaner ch = Consumer withChan where
-	withChan f = f (F.putChan ch . T.unpack)
+chaner ch = return $ F.putChan ch . T.unpack
 
 -- | Perform action on cache
 withCache :: Monad m => ServerOpts -> a -> (FilePath -> m a) -> m a
@@ -168,17 +155,17 @@ withCache sopts v onCache = case serverCache sopts of
 
 writeCache :: SessionMonad m => ServerOpts -> Database -> m ()
 writeCache sopts db = withCache sopts () $ \cdir -> do
-	Log.log Log.Info $ "writing cache to {}" ~~ cdir
-	logIO "cache writing exception: " (Log.log Log.Error . fromString) $ do
+	Log.sendLog Log.Info $ "writing cache to {}" ~~ cdir
+	logIO "cache writing exception: " (Log.sendLog Log.Error . fromString) $ do
 		let
 			sd = structurize db
 		liftIO $ SC.dump cdir sd
-		forM_ (M.keys (structuredPackageDbs sd)) $ \c -> Log.log Log.Debug ("cache write: cabal {}" ~~ show c)
-		forM_ (M.keys (structuredProjects sd)) $ \p -> Log.log Log.Debug ("cache write: project {}" ~~ p)
+		forM_ (M.keys (structuredPackageDbs sd)) $ \c -> Log.sendLog Log.Debug ("cache write: cabal {}" ~~ show c)
+		forM_ (M.keys (structuredProjects sd)) $ \p -> Log.sendLog Log.Debug ("cache write: project {}" ~~ p)
 		case (structuredFiles sd) ^.. databaseModules . each of
 			[] -> return ()
-			ms -> Log.log Log.Debug $ "cache write: {} files" ~~ length ms
-	Log.log Log.Info $ "cache saved to {}" ~~ cdir
+			ms -> Log.sendLog Log.Debug $ "cache write: {} files" ~~ length ms
+	Log.sendLog Log.Info $ "cache saved to {}" ~~ cdir
 
 readCache :: SessionMonad m => ServerOpts -> (FilePath -> ExceptT String IO Structured) -> m (Maybe Database)
 readCache sopts act = do
@@ -187,11 +174,11 @@ readCache sopts act = do
 		res <- liftIO $ runExceptT $ act fpath
 		either cacheErr cacheOk res
 	where
-		cacheErr e = Log.log Log.Error ("Error reading cache: {}" ~~ e) >> return Nothing
+		cacheErr e = Log.sendLog Log.Error ("Error reading cache: {}" ~~ e) >> return Nothing
 		cacheOk s = do
-			forM_ (M.keys (structuredPackageDbs s)) $ \c -> Log.log Log.Debug ("cache read: cabal {}" ~~ show c)
-			forM_ (M.keys (structuredProjects s)) $ \p -> Log.log Log.Debug ("cache read: project {}" ~~ p)
+			forM_ (M.keys (structuredPackageDbs s)) $ \c -> Log.sendLog Log.Debug ("cache read: cabal {}" ~~ show c)
+			forM_ (M.keys (structuredProjects s)) $ \p -> Log.sendLog Log.Debug ("cache read: project {}" ~~ p)
 			case (structuredFiles s) ^.. databaseModules . each of
 				[] -> return ()
-				ms -> Log.log Log.Debug $ "cache read: {} files" ~~ length ms
+				ms -> Log.sendLog Log.Debug $ "cache read: {} files" ~~ length ms
 			return $ Just $ merge s
