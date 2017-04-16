@@ -1,0 +1,11 @@
+flags: {}
+extra-package-dbs: []
+packages:
+- '.'
+- tests/test-package/
+extra-deps:
+- haskell-src-exts-1.19.1
+- hlint-1.9.41
+- hsdev-0.2.2.2
+- simple-log-0.5.1
+resolver: lts-6.30

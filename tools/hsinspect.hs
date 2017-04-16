@@ -8,7 +8,6 @@ import Control.Lens (view)
 import Control.Monad (liftM, (>=>))
 import Control.Monad.IO.Class
 import Data.List (intercalate)
-import Data.Maybe (maybeToList)
 import System.Directory (canonicalizePath)
 import System.FilePath (takeExtension)
 
@@ -18,10 +17,9 @@ import HsDev.PackageDb
 import HsDev.Project (readProject)
 import HsDev.Scan (scanModify)
 import HsDev.Scan.Browse (listModules, browseModules)
-import HsDev.Symbols.Location (ModuleLocation(..), installedModuleName)
+import HsDev.Symbols.Location (installedModuleName)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.Ghc.Worker
-import HsDev.Tools.Ghc.Session (ghcSession)
 
 import Tool
 

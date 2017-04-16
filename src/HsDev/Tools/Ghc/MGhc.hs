@@ -11,6 +11,7 @@ module HsDev.Tools.Ghc.MGhc (
 	) where
 
 import Control.Lens
+import Control.Monad.Morph
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.State
@@ -20,7 +21,7 @@ import Data.List (find)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe, isJust)
-import System.Log.Simple
+import System.Log.Simple.Monad (MonadLog(..))
 
 import DynFlags
 import Exception hiding (catch, mask, uninterruptibleMask, bracket, finally)
@@ -66,6 +67,9 @@ newtype MGhcT s m a = MGhcT { unMGhcT :: GhcT (ReaderT (Maybe FilePath) (StateT 
 instance MonadTrans GhcT where
 	lift = liftGhcT
 
+instance MFunctor GhcT where
+	hoist fn = GhcT . (fn .) . unGhcT
+
 instance MonadState st m => MonadState st (GhcT m) where
 	get = lift get
 	put = lift . put
@@ -86,9 +90,6 @@ instance MonadMask m => MonadMask (GhcT m) where
 		q g' act = GhcT $ g' . unGhcT act
 	uninterruptibleMask f = GhcT $ \s -> uninterruptibleMask $ \g -> unGhcT (f $ q g) s where
 		q g' act = GhcT $ g' . unGhcT act
-
-instance MonadLog m => MonadLog (GhcT m) where
-	askLog = lift askLog
 
 -- | Run multi-session ghc
 runMGhcT :: (MonadIO m, ExceptionMonad m, Ord s) => Maybe FilePath -> MGhcT s m a -> m a

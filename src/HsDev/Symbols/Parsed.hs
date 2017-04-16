@@ -3,7 +3,7 @@
 module HsDev.Symbols.Parsed (
 	Ann, Parsed,
 	qnames, names, binders, locals, globals, references, unresolveds,
-	usages, imports, decls, moduleNames,
+	usages, imports, declarations, moduleNames,
 
 	annL, file, pos, defPos, resolvedName,
 	isBinder, isLocal, isGlobal, isReference, isUnresolved,
@@ -65,8 +65,8 @@ imports :: Data (ast Ann) => Traversal' (ast Ann) (ImportDecl Ann)
 imports = biplate
 
 -- | Get declarations
-decls :: Data (ast Ann) => Traversal' (ast Ann) (Decl Ann)
-decls = biplate
+declarations :: Data (ast Ann) => Traversal' (ast Ann) (Decl Ann)
+declarations = biplate
 
 -- | Get module names
 moduleNames :: Data (ast Ann) => Traversal' (ast Ann) (ModuleName Ann)

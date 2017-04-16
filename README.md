@@ -42,7 +42,7 @@ readAsync :: Async a -> IO a
 
 ## Stack support
 
-`hsdev` uses `stack` to build dependencies and to get corresponding package-dbs. As long as `hsdev` uses `ghc` as library, it passes `--compiler` and `--arch` options (since `0.1.7.2`) to `stack` in order to get compatble package-dbs built with same compiler.
+`hsdev` uses `stack` to build dependencies and to get corresponding package-dbs. As long as `hsdev` uses `ghc` as library, it passes `--compiler` and `--arch` options (since `0.1.7.2`) to `stack` in order to get compatible package-dbs built with same compiler.
 
 ### Commands
 

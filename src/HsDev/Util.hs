@@ -281,8 +281,10 @@ logAsync out = flip C.catch (onAsync out) where
 	onAsync :: (MonadIO m, C.MonadThrow m) => (String -> m ()) -> AsyncException -> m ()
 	onAsync out' e = out' (displayException e) >> C.throwM e
 
-ignoreIO :: IO () -> IO ()
-ignoreIO = handle (const (return ()) :: IOException -> IO ())
+ignoreIO :: C.MonadCatch m => m () -> m ()
+ignoreIO = C.handle ignore' where
+	ignore' :: Monad m => IOException -> m ()
+	ignore' _ = return ()
 
 liftAsync :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Async a) -> ExceptT String m a
 liftAsync = liftExceptionM . ExceptT . liftIO . liftM (left displayException) . join . liftM waitCatch

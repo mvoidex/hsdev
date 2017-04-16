@@ -34,6 +34,9 @@ For example:
 List of commands with additional fiels:
  * `ping` — ping server
  * `listen` — listen to server's log
+     - `level` — optional log level to listen with
+ * `set-log` — set log level
+     - `level` — log level to set
  * `add` — add data to database
      - `data` — list of objects:
          + `{"database":<db>}`
@@ -45,11 +48,12 @@ List of commands with additional fiels:
      - `sandboxes` — list of `sandbox path`s, where path may contain or be one of:
          + `<path>/.cabal-sandbox` — cabal sandbox
          + `<path>/.stack-work` — stack sandbox
-     - `files` — list of source files
-     - `paths` — list of directories to scan
-     - `contents` — list of `content` objects to scan
+     - `files` — list of `source-file` objects to scan
          + `{"file":<file>,"contents":<contents>}`
+     - `paths` — list of directories to scan
      - `ghc-opts` — additional ghc options
+     - `docs` — also get docs for sources (may be slow, you can do this by separate command)
+     - `infer` — infer types for sources (slow, prefer separate command)
  * `docs`/`infer` — scan docs or infer types for sources
      - `projects` — list of project paths or names
      - `files` — list of sources

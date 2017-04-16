@@ -12,6 +12,7 @@ import Control.Lens (makeLenses)
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Except
+import Control.Monad.Morph
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Trans.Control
@@ -96,6 +97,7 @@ instance MonadTrans UpdateM where
 
 instance (MonadIO m, MonadMask m) => Log.MonadLog (UpdateM m) where
 	askLog = UpdateM $ lift $ lift Log.askLog
+	localLog fn = UpdateM . hoist (hoist (Log.localLog fn)) . runUpdateM
 
 instance ServerMonadBase m => SessionMonad (UpdateM m) where
 	getSession = UpdateM $ lift $ lift getSession

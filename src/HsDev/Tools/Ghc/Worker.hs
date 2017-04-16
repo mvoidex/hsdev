@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards, OverloadedStrings #-}
+{-# LANGUAGE PatternGuards, OverloadedStrings, FlexibleContexts #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Worker (
@@ -90,13 +90,13 @@ instance MonadThrow Ghc where
 
 runGhcM :: MonadLog m => Maybe FilePath -> GhcM a -> m a
 runGhcM dir act = do
-	l <- askLog
+	l <- Log.askLog
 	liftIO $ withLog l $ runMGhcT dir act
 
 -- | Multi-session ghc worker
 ghcWorker :: MonadLog m => m GhcWorker
 ghcWorker = do
-	l <- askLog
+	l <- Log.askLog
 	liftIO $ startWorker (withLog l . runGhcM (Just libdir)) id (Log.scope "ghc")
 
 -- | Create session with options
@@ -104,9 +104,9 @@ workerSession :: SessionType -> [String] -> GhcM ()
 workerSession ty opts = do
 	ms <- findSessionBy toKill
 	forM_ ms $ \s' -> do
-		Log.log Log.Trace $ "killing session: {}" ~~ s'
+		Log.sendLog Log.Trace $ "killing session: {}" ~~ s'
 		deleteSession s'
-	Log.log Log.Trace $ "session: {}" ~~ SessionConfig ty opts
+	Log.sendLog Log.Trace $ "session: {}" ~~ SessionConfig ty opts
 	switchSession_ (SessionConfig ty opts) $ Just $ initialize
 	where
 		toKill (SessionConfig ty' opts') = or [
@@ -167,7 +167,7 @@ modifyFlags f = do
 -- | Add options without reinit session
 addCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
 addCmdOpts opts = do
-	Log.log Log.Trace $ "setting ghc options: {}" ~~ unwords opts
+	Log.sendLog Log.Trace $ "setting ghc options: {}" ~~ unwords opts
 	fs <- getSessionDynFlags
 	(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
 	let fs'' = fs' {
@@ -181,7 +181,7 @@ addCmdOpts opts = do
 -- | Set options after session reinit
 setCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
 setCmdOpts opts = do
-	Log.log Log.Trace $ "restarting ghc session with: {}" ~~ unwords opts
+	Log.sendLog Log.Trace $ "restarting ghc session with: {}" ~~ unwords opts
 	initGhcMonad (Just libdir)
 	addCmdOpts opts
 	modifyFlags $ setLogAction logToNull

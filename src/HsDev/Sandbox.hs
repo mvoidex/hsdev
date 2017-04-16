@@ -3,7 +3,7 @@
 module HsDev.Sandbox (
 	SandboxType(..), Sandbox(..), sandboxType, sandbox,
 	isSandbox, guessSandboxType, sandboxFromPath,
-	findSandbox, searchSandbox, sandboxPackageDbStack, packageDbSandbox, searchPackageDbStack, restorePackageDbStack,
+	findSandbox, searchSandbox, projectSandbox, sandboxPackageDbStack, packageDbSandbox, searchPackageDbStack, restorePackageDbStack,
 
 	-- * cabal-sandbox util
 	cabalSandboxLib, cabalSandboxPackageDb,
@@ -15,6 +15,7 @@ module HsDev.Sandbox (
 	getProjectPackageDbStack
 	) where
 
+import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
 import Control.Monad
@@ -22,6 +23,7 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Control.Lens (view, makeLenses)
 import Data.Aeson
+import Data.List (find)
 import Data.Maybe (isJust, fromMaybe)
 import Data.List (inits)
 import qualified Data.Text as T (unpack)
@@ -41,7 +43,7 @@ import HsDev.Symbols (moduleOpts)
 import HsDev.Symbols.Types (moduleId, Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
-import HsDev.Util (searchPath, isParent, directoryContents)
+import HsDev.Util (searchPath, isParent, directoryContents, cabalFile)
 
 import qualified GHC
 import qualified Packages as GHC
@@ -104,6 +106,15 @@ findSandbox fpath = do
 searchSandbox :: FilePath -> IO (Maybe Sandbox)
 searchSandbox p = runMaybeT $ searchPath p (MaybeT . findSandbox)
 
+-- | Get project sandbox: search up for .cabal, then search for stack.yaml in current directory and cabal sandbox in current + parents
+projectSandbox :: FilePath -> IO (Maybe Sandbox)
+projectSandbox fpath = runMaybeT $ do
+	p <- searchPath fpath (MaybeT . getCabalFile)
+	MaybeT (findSandbox p) <|> searchPath p (MaybeT . findSbox')
+	where
+		getCabalFile = directoryContents >=> return . find cabalFile
+		findSbox' = directoryContents >=> return . msum . map sandboxFromPath
+
 -- | Get package-db stack for sandbox
 sandboxPackageDbStack :: Sandbox -> GhcM PackageDbStack
 sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
@@ -121,7 +132,7 @@ packageDbSandbox (PackageDb fpath) = msum [sandboxFromPath p | p <- parents] whe
 -- | Search package-db stack with user-db as default
 searchPackageDbStack :: FilePath -> GhcM PackageDbStack
 searchPackageDbStack p = do
-	mbox <- liftIO $ searchSandbox p
+	mbox <- liftIO $ projectSandbox p
 	case mbox of
 		Nothing -> return userDb
 		Just sbox -> sandboxPackageDbStack sbox

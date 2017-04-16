@@ -7,7 +7,6 @@ module HsDev.Tools.HDocs (
 	module Control.Monad.Except
 	) where
 
-import Control.Applicative
 import Control.DeepSeq
 import Control.Lens (set, view, over, each)
 import Control.Monad ()
@@ -22,7 +21,6 @@ import Data.String (fromString)
 import qualified HDocs.Module as HDocs
 import qualified HDocs.Haddock as HDocs (readSourceGhc, readSourcesGhc)
 
-import GhcMonad (reflectGhc)
 import qualified GHC
 
 import HsDev.Error
@@ -43,14 +41,14 @@ hdocsy mlocs opts = (map $ force . HDocs.formatDocs) <$> docs' mlocs where
 hdocs :: ModuleLocation -> [String] -> GhcM (Map String String)
 hdocs mloc opts = (force . HDocs.formatDocs) <$> docs' mloc where
 	docs' :: ModuleLocation -> GhcM HDocs.ModuleDocMap
-	docs' mloc = do
+	docs' mloc' = do
 		haddockSession opts
-		liftGhc $ case mloc of
+		liftGhc $ case mloc' of
 			(FileModule fpath _) -> hsdevLiftWith (ToolError "hdocs") $ liftM snd $ HDocs.readSourceGhc opts fpath
 			(InstalledModule _ _ mname) -> do
 				df <- GHC.getSessionDynFlags
 				liftIO $ hsdevLiftWith (ToolError "hdocs") $ HDocs.moduleDocsF df mname
-			_ -> hsdevError $ ToolError "hdocs" $ "Can't get docs for: " ++ show mloc
+			_ -> hsdevError $ ToolError "hdocs" $ "Can't get docs for: " ++ show mloc'
 
 -- | Get all docs
 hdocsCabal :: PackageDbStack -> [String] -> GhcM (Map String (Map String String))
