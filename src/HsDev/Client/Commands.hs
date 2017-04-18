@@ -229,19 +229,16 @@ runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections n
 runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
 	let
-		doFix :: FilePath -> String -> ([Tools.Note AutoFix.Correction], String)
-		doFix file cts = AutoFix.edit cts fUpCorrs $ do
-			AutoFix.autoFix fCorrs
-			State.gets (view AutoFix.regions)
-			where
-				findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
-				findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
-				fCorrs = map (view Tools.note) $ findCorrs file ns
-				fUpCorrs = findCorrs file rest
+		doFix :: FilePath -> Maybe String -> ([Tools.Note AutoFix.Correction], Maybe String)
+		doFix file mcts = AutoFix.autoFix fCorrs (fUpCorrs, mcts) where
+			findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
+			findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
+			fCorrs = findCorrs file ns
+			fUpCorrs = findCorrs file rest
 		runFix file
-			| isPure = return $ fst $ doFix file ""
+			| isPure = return $ fst $ doFix file Nothing
 			| otherwise = do
-				(corrs', cts') <- liftM (doFix file) $ liftIO $ readFileUtf8 file
+				(corrs', Just cts') <- liftM (doFix file) $ liftIO $ Just <$> readFileUtf8 file
 				liftIO $ writeFileUtf8 file cts'
 				return corrs'
 	liftM concat $ mapM runFix files
