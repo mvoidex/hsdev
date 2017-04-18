@@ -15,6 +15,7 @@ import qualified Control.Monad.State as State
 import Control.Monad.Catch (try, catch, bracket, SomeException(..))
 import Data.Aeson hiding (Result, Error)
 import qualified Data.Aeson as A
+import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.List
 import Data.Maybe
@@ -97,10 +98,21 @@ runCommand (AddData fs) = toValue $ do
 						fmap fromModule $ fromJSON' v,
 						fmap (mconcat . map fromModule) $ fromJSON' v,
 						fmap fromProject $ fromJSON' v,
-						fmap (mconcat . map fromProject) $ fromJSON' v]
+						fmap (mconcat . map fromProject) $ fromJSON' v,
+						do
+							vs <- fromJSON' v
+							pkgsDbs <- mapM (AT.parseMaybe parsePackageDbInfo) vs
+							return . mconcat . map fromPackageDbInfo $ pkgsDbs]
 				case parsed of
 					Nothing -> hsdevError $ OtherError "unknown format"
 					Just db -> serverUpdateDB db
+	where
+		-- Temporary for test: get package-db info as list of {'package-db': <...>, 'packages': [<...>]}
+		parsePackageDbInfo :: A.Value -> AT.Parser (PackageDb, [ModulePackage])
+		parsePackageDbInfo = A.withObject "package-db-info" $ \v -> (,) <$>
+			(v .:: "package-db") <*>
+			(v .:: "packages")
+		fromPackageDbInfo = uncurry fromPackageDb
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [

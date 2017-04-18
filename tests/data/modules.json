@@ -2,8 +2,7 @@
   {
     "location": {
       "name": "Prelude",
-      "package": "base-4.9.0.0",
-      "db": "global-db"
+      "package": "base-4.9.0.0"
     },
     "inspection": {
       "flags": [],
@@ -17,8 +16,7 @@
             "module": {
               "location": {
                 "name": "Data.Either",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Either"
             }
@@ -35,8 +33,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -53,8 +50,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -71,8 +67,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -89,8 +84,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -107,8 +101,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -125,8 +118,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -143,8 +135,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -161,8 +152,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -179,8 +169,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -197,8 +186,7 @@
             "module": {
               "location": {
                 "name": "Data.Functor",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Functor"
             }
@@ -215,8 +203,7 @@
             "module": {
               "location": {
                 "name": "Data.Maybe",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Maybe"
             }
@@ -233,8 +220,7 @@
             "module": {
               "location": {
                 "name": "Data.OldList",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.OldList"
             }
@@ -251,8 +237,7 @@
             "module": {
               "location": {
                 "name": "Data.OldList",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.OldList"
             }
@@ -269,8 +254,7 @@
             "module": {
               "location": {
                 "name": "Data.OldList",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.OldList"
             }
@@ -287,8 +271,7 @@
             "module": {
               "location": {
                 "name": "Data.OldList",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.OldList"
             }
@@ -305,8 +288,7 @@
             "module": {
               "location": {
                 "name": "Data.Tuple",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Tuple"
             }
@@ -323,8 +305,7 @@
             "module": {
               "location": {
                 "name": "Data.Tuple",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Tuple"
             }
@@ -341,8 +322,7 @@
             "module": {
               "location": {
                 "name": "Data.Tuple",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Tuple"
             }
@@ -359,8 +339,7 @@
             "module": {
               "location": {
                 "name": "Data.Tuple",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Tuple"
             }
@@ -377,8 +356,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -395,8 +373,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -413,8 +390,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -431,8 +407,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -449,8 +424,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -467,8 +441,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -485,8 +458,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -503,8 +475,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -521,8 +492,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -539,8 +509,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -557,8 +526,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -575,8 +543,7 @@
             "module": {
               "location": {
                 "name": "GHC.Err",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Err"
             }
@@ -593,8 +560,7 @@
             "module": {
               "location": {
                 "name": "GHC.Err",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Err"
             }
@@ -611,8 +577,7 @@
             "module": {
               "location": {
                 "name": "GHC.Err",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Err"
             }
@@ -629,8 +594,7 @@
             "module": {
               "location": {
                 "name": "GHC.IO.Exception",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.IO.Exception"
             }
@@ -647,8 +611,7 @@
             "module": {
               "location": {
                 "name": "GHC.IO.Exception",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.IO.Exception"
             }
@@ -665,8 +628,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -683,8 +645,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -701,8 +662,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -719,8 +679,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -737,8 +696,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -755,8 +713,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -773,8 +730,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -791,8 +747,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -809,8 +764,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -827,8 +781,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -845,8 +798,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -863,8 +815,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -881,8 +832,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -899,8 +849,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -917,8 +866,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -935,8 +883,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -953,8 +900,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -971,8 +917,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -989,8 +934,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1007,8 +951,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1025,8 +968,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1043,8 +985,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1061,8 +1002,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1079,8 +1019,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1097,8 +1036,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1115,8 +1053,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1133,8 +1070,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1151,8 +1087,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1169,8 +1104,7 @@
             "module": {
               "location": {
                 "name": "GHC.List",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.List"
             }
@@ -1187,8 +1121,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -1205,8 +1138,7 @@
             "module": {
               "location": {
                 "name": "GHC.Read",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Read"
             }
@@ -1223,8 +1155,7 @@
             "module": {
               "location": {
                 "name": "GHC.Read",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Read"
             }
@@ -1241,8 +1172,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -1259,8 +1189,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -1277,8 +1206,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -1294,8 +1222,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -1312,8 +1239,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -1330,8 +1256,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -1348,8 +1273,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -1365,8 +1289,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -1383,8 +1306,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -1401,8 +1323,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -1419,8 +1340,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -1437,8 +1357,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -1455,8 +1374,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1473,8 +1391,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1491,8 +1408,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1509,8 +1425,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1527,8 +1442,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1545,8 +1459,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1563,8 +1476,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1581,8 +1493,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1599,8 +1510,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1617,8 +1527,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1635,8 +1544,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1653,8 +1561,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1671,8 +1578,7 @@
             "module": {
               "location": {
                 "name": "System.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "System.IO"
             }
@@ -1689,8 +1595,7 @@
             "module": {
               "location": {
                 "name": "Text.Read",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Text.Read"
             }
@@ -1707,8 +1612,7 @@
             "module": {
               "location": {
                 "name": "Text.Read",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Text.Read"
             }
@@ -1725,8 +1629,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -1743,8 +1646,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -1761,8 +1663,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -1779,8 +1680,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -1797,8 +1697,7 @@
             "module": {
               "location": {
                 "name": "GHC.Prim",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Prim"
             }
@@ -1815,8 +1714,7 @@
             "module": {
               "location": {
                 "name": "Data.Either",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Either"
             }
@@ -1837,8 +1735,7 @@
             "module": {
               "location": {
                 "name": "Data.Either",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Either"
             }
@@ -1857,8 +1754,7 @@
             "module": {
               "location": {
                 "name": "Data.Either",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Either"
             }
@@ -1877,8 +1773,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -1898,8 +1793,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -1917,8 +1811,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -1936,8 +1829,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -1955,8 +1847,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -1974,8 +1865,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -1993,8 +1883,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -2012,8 +1901,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -2031,8 +1919,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -2050,8 +1937,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -2069,8 +1955,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -2088,8 +1973,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -2107,8 +1991,7 @@
             "module": {
               "location": {
                 "name": "Data.Foldable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Foldable"
             }
@@ -2126,8 +2009,7 @@
             "module": {
               "location": {
                 "name": "Data.Traversable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Traversable"
             }
@@ -2150,8 +2032,7 @@
             "module": {
               "location": {
                 "name": "Data.Traversable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Traversable"
             }
@@ -2169,8 +2050,7 @@
             "module": {
               "location": {
                 "name": "Data.Traversable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Traversable"
             }
@@ -2188,8 +2068,7 @@
             "module": {
               "location": {
                 "name": "Data.Traversable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Traversable"
             }
@@ -2207,8 +2086,7 @@
             "module": {
               "location": {
                 "name": "Data.Traversable",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Data.Traversable"
             }
@@ -2226,8 +2104,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2249,8 +2126,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2268,8 +2144,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2287,8 +2162,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2306,8 +2180,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2325,8 +2198,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2346,8 +2218,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2365,8 +2236,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2383,8 +2253,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2406,8 +2275,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2425,8 +2293,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2444,8 +2311,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2463,8 +2329,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2482,8 +2347,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2503,8 +2367,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2522,8 +2385,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2541,8 +2403,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2560,8 +2421,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -2579,8 +2439,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2600,8 +2459,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2618,8 +2476,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2636,8 +2493,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2657,8 +2513,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2676,8 +2531,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2695,8 +2549,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2714,8 +2567,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2733,8 +2585,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2752,8 +2603,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2771,8 +2621,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2790,8 +2639,7 @@
             "module": {
               "location": {
                 "name": "GHC.Enum",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Enum"
             }
@@ -2809,8 +2657,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2832,8 +2679,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2850,8 +2696,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2868,8 +2713,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2886,8 +2730,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2904,8 +2747,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2922,8 +2764,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2940,8 +2781,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2958,8 +2798,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2976,8 +2815,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -2994,8 +2832,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3012,8 +2849,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3030,8 +2866,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3048,8 +2883,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3066,8 +2900,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3084,8 +2917,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3102,8 +2934,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3120,8 +2951,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3138,8 +2968,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3156,8 +2985,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3180,8 +3008,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3199,8 +3026,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3218,8 +3044,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3237,8 +3062,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3256,8 +3080,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3275,8 +3098,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3294,8 +3116,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3313,8 +3134,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3332,8 +3152,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3351,8 +3170,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3370,8 +3188,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3389,8 +3206,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3408,8 +3224,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3427,8 +3242,7 @@
             "module": {
               "location": {
                 "name": "GHC.Float",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Float"
             }
@@ -3446,8 +3260,7 @@
             "module": {
               "location": {
                 "name": "GHC.IO",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.IO"
             }
@@ -3465,8 +3278,7 @@
             "module": {
               "location": {
                 "name": "GHC.IO.Exception",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.IO.Exception"
             }
@@ -3484,8 +3296,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -3505,8 +3316,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -3523,8 +3333,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -3541,8 +3350,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -3559,8 +3367,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -3578,8 +3385,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -3597,8 +3403,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -3616,8 +3421,7 @@
             "module": {
               "location": {
                 "name": "GHC.Num",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Num"
             }
@@ -3635,8 +3439,7 @@
             "module": {
               "location": {
                 "name": "GHC.Read",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Read"
             }
@@ -3656,8 +3459,7 @@
             "module": {
               "location": {
                 "name": "GHC.Read",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Read"
             }
@@ -3675,8 +3477,7 @@
             "module": {
               "location": {
                 "name": "GHC.Read",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Read"
             }
@@ -3694,8 +3495,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3717,8 +3517,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3736,8 +3535,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3755,8 +3553,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3774,8 +3571,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3798,8 +3594,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3817,8 +3612,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3836,8 +3630,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3855,8 +3648,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3874,8 +3666,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3893,8 +3684,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3912,8 +3702,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3931,8 +3720,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3950,8 +3738,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3973,8 +3760,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -3992,8 +3778,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -4016,8 +3801,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -4035,8 +3819,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -4054,8 +3837,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -4073,8 +3855,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -4092,8 +3873,7 @@
             "module": {
               "location": {
                 "name": "GHC.Real",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Real"
             }
@@ -4111,8 +3891,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -4132,8 +3911,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -4151,8 +3929,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -4170,8 +3947,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -4189,8 +3965,7 @@
             "module": {
               "location": {
                 "name": "GHC.Show",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Show"
             }
@@ -4208,8 +3983,7 @@
             "module": {
               "location": {
                 "name": "Text.ParserCombinators.ReadP",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Text.ParserCombinators.ReadP"
             }
@@ -4229,8 +4003,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4250,8 +4023,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4268,8 +4040,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4286,8 +4057,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4309,8 +4079,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4327,8 +4096,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4345,8 +4113,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4363,8 +4130,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4381,8 +4147,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4399,8 +4164,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4417,8 +4181,7 @@
             "module": {
               "location": {
                 "name": "GHC.Classes",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Classes"
             }
@@ -4435,8 +4198,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4456,8 +4218,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4474,8 +4235,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4492,8 +4252,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4510,8 +4269,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4528,8 +4286,7 @@
             "module": {
               "location": {
                 "name": "GHC.Integer.Type",
-                "package": "integer-gmp-1.0.0.1",
-                "db": "global-db"
+                "package": "integer-gmp-1.0.0.1"
               },
               "name": "GHC.Integer.Type"
             }
@@ -4547,8 +4304,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -4565,8 +4321,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -4582,8 +4337,7 @@
             "module": {
               "location": {
                 "name": "GHC.Base",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "GHC.Base"
             }
@@ -4599,8 +4353,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4616,8 +4369,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4633,8 +4385,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4650,8 +4401,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4668,8 +4418,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4686,8 +4435,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4704,8 +4452,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4722,8 +4469,7 @@
             "module": {
               "location": {
                 "name": "GHC.Types",
-                "package": "ghc-prim-0.5.0.0",
-                "db": "global-db"
+                "package": "ghc-prim-0.5.0.0"
               },
               "name": "GHC.Types"
             }
@@ -4738,8 +4484,7 @@
       "id": {
         "location": {
           "name": "Prelude",
-          "package": "base-4.9.0.0",
-          "db": "global-db"
+          "package": "base-4.9.0.0"
         },
         "name": "Prelude"
       }
@@ -4749,8 +4494,7 @@
   {
     "location": {
       "name": "Control.Concurrent.Chan",
-      "package": "base-4.9.0.0",
-      "db": "global-db"
+      "package": "base-4.9.0.0"
     },
     "inspection": {
       "flags": [],
@@ -4764,8 +4508,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4782,8 +4525,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4800,8 +4542,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4818,8 +4559,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4836,8 +4576,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4854,8 +4593,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4872,8 +4610,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4890,8 +4627,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4908,8 +4644,7 @@
             "module": {
               "location": {
                 "name": "Control.Concurrent.Chan",
-                "package": "base-4.9.0.0",
-                "db": "global-db"
+                "package": "base-4.9.0.0"
               },
               "name": "Control.Concurrent.Chan"
             }
@@ -4927,8 +4662,7 @@
       "id": {
         "location": {
           "name": "Control.Concurrent.Chan",
-          "package": "base-4.9.0.0",
-          "db": "global-db"
+          "package": "base-4.9.0.0"
         },
         "name": "Control.Concurrent.Chan"
       }

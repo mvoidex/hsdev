@@ -38,6 +38,7 @@ main = hspec $ do
 		s <- runIO $ startServer (def { serverSilent = True })
 		it "should load data" $ do
 			void $ send s ["add", "--file", dir </> "tests/data/modules.json"]
+			void $ send s ["add", "--file", dir </> "tests/data/package-dbs.json"]
 		it "should scan project" $ do
 			void $ send s ["scan", "--project", dir </> "tests/test-package"]
 		it "should resolve export list" $ do
