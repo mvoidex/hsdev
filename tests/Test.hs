@@ -41,22 +41,18 @@ main = hspec $ do
 			void $ send s ["scan", "--project", dir </> "tests/test-package"]
 		it "should resolve export list" $ do
 			one <- send s ["module", "ModuleOne", "--exact"]
-			when (mkSet ["test", "newChan", "untypedFoo"] /= exports one) $
-				expectationFailure "invalid exports of ModuleOne.hs"
+			exports one `shouldBe` mkSet ["test", "newChan", "untypedFoo"]
 			two <- send s ["module", "ModuleTwo", "--exact"]
-			when (mkSet ["untypedFoo", "twice", "overloadedStrings"] /= exports two) $
-				expectationFailure "invalid exports of ModuleTwo.hs"
+			exports two `shouldBe` mkSet ["untypedFoo", "twice", "overloadedStrings"]
 		it "should pass extensions when checkings" $ do
 			checks <- send s ["check", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
-			when (("error" :: String) `elem` (checks ^.. traverseArray . key "level" . _Just)) $
-				expectationFailure "there should be no errors, only warnings"
+			(checks ^.. traverseArray . key "level" . _Just) `shouldSatisfy` (("error" :: String) `notElem`)
 		it "should return types and docs" $ do
 			test' <- send s ["whois", "test", "--file", dir </> "tests/test-package/ModuleOne.hs"]
 			let
 				testType :: Maybe String
 				testType = test' ^. traverseArray . key "info" . key "type"
-			when (testType /= Just "IO ()") $
-				expectationFailure "function type empty"
+			testType `shouldBe` Just "IO ()"
 		it "should infer types" $ do
 			ts <- send s ["types", "--file", dir </> "tests/test-package/ModuleOne.hs"]
 			let
@@ -64,7 +60,6 @@ main = hspec $ do
 				exprs = do
 					note' <- ts ^.. traverseArray . key "note"
 					return (note' ^. key "expr" . _Just, note' ^. key "type" . _Just)
-			when (lookup "untypedFoo x y = x + y" exprs /= Just "a -> a -> a") $ -- FIXME: Where's Num constraint?
-				expectationFailure "invalid type of 'untypedFoo'"
+			lookup "untypedFoo x y = x + y" exprs `shouldBe` Just "a -> a -> a" -- FIXME: Where's Num constraint?
 		_ <- runIO $ send s ["exit"]
 		return ()
