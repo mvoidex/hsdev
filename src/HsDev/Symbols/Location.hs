@@ -26,7 +26,7 @@ module HsDev.Symbols.Location (
 import Control.Applicative
 import Control.DeepSeq (NFData(..))
 import Control.Lens (makeLenses, preview, view, (^..), (^.), each, _Just)
-import Control.Monad (join, msum, mplus)
+import Control.Monad (msum, mplus)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
 import Data.List (intercalate, findIndex, stripPrefix)
@@ -155,9 +155,11 @@ instance ToJSON ModuleLocation where
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .:: "project"))) <|>
-		(InstalledModule <$> v .::?! "dirs" <*> fmap (join . fmap readMaybe) (v .:: "package") <*> v .:: "name") <|>
+		(InstalledModule <$> v .::?! "dirs" <*> ((v .:: "package") >>= traverse readPackage) <*> v .:: "name") <|>
 		(OtherLocation <$> v .:: "source") <|>
 		(pure NoLocation)
+		where
+			readPackage s = maybe (fail $ "can't parse package: " ++ s) return . readMaybe $ s
 
 instance Paths ModuleLocation where
 	paths f (FileModule fpath p) = FileModule <$> f fpath <*> traverse (paths f) p
