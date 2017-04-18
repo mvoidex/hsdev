@@ -10,10 +10,11 @@ import Data.Aeson hiding (Error)
 import Data.Aeson.Lens
 import Data.Default
 import qualified Data.Set as S
-import HsDev
-import Test.Hspec
 import System.FilePath
 import System.Directory
+import Test.Hspec
+
+import HsDev
 
 send :: Server -> [String] -> IO (Maybe Value)
 send srv args = do

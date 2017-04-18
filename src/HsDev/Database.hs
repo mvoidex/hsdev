@@ -116,7 +116,15 @@ packages = databasePackageDbs . each . each
 -- | Make database from module
 fromModule :: InspectedModule -> Database
 fromModule m = mempty {
-	_databaseModules = M.singleton (view inspectedKey m) m }
+	_databaseModules = M.singleton (view inspectedKey m) m,
+	_databaseProjects = maybe mempty (\proj -> M.singleton (view projectCabal proj) proj) mproj,
+	_databaseProjectsInfos = mempty,
+	_databasePackageDbs = mempty,
+	_databasePackages = maybe mempty (\pkg -> M.singleton pkg [mloc]) mpkg }
+	where
+		mloc = view inspectedKey m
+		mproj = preview (moduleProject . _Just) mloc
+		mpkg = preview (modulePackage . _Just) mloc
 
 -- | Make database from project
 fromProject :: Project -> Database
@@ -252,7 +260,7 @@ newestPackagesSlice = slice' g' where
 		_databasePackageDbs = M.filter (not . null) (M.map latestPackages (_databasePackageDbs db)),
 		_databasePackages = restrictKeys (_databasePackages db) (S.fromList pkgs) }
 		where
-			pkgs = latestPackages $ ordNub $ db ^.. databasePackageDbs . each . each
+			pkgs = latestPackages $ ordNub $ (db ^.. databasePackageDbs . each . each) ++ (M.keys $ db ^. databasePackages)
 			mlocs = ordNub $ concat [db ^.. databasePackages . ix pkg . each | pkg <- pkgs]
 
 -- | Standalone database
