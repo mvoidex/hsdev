@@ -182,7 +182,7 @@ pathInSandbox fpath (Sandbox _ spath) = takeDirectory spath `isParent` fpath
 
 -- | Get sandbox of project (if any)
 getProjectSandbox :: MonadLog m => Project -> m (Maybe Sandbox)
-getProjectSandbox = liftIO . searchSandbox . view projectPath
+getProjectSandbox = liftIO . projectSandbox . view projectPath
 
 -- | Get project package-db stack
 getProjectPackageDbStack :: Project -> GhcM PackageDbStack
