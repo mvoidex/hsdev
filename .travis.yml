@@ -15,6 +15,13 @@ install:
  - cabal --version
  - echo "$(ghc --version)"
  - travis_retry cabal update
+ # install latest version of deps within sandbox
+ - git clone https://github.com/haskell-suite/haskell-src-exts ~/haskell-suite/haskell-src-exts
+ - git clone https://github.com/haskell-suite/haskell-names ~/haskell-suite/haskell-names
+ - cabal sandbox init
+ - cabal sandbox add-source ~/haskell-suite/haskell-src-exts
+ - cabal sandbox add-source ~/haskell-suite/haskell-names
+ # end
  - cabal install happy
  - cabal install --only-dependencies --enable-tests
 
