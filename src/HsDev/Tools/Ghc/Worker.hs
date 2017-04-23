@@ -40,7 +40,7 @@ import System.FilePath
 import qualified  System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Read (readMaybe)
-import Text.Format
+import Text.Format hiding (withFlags)
 
 import Exception (ExceptionMonad(..))
 import GHC hiding (Warning, Module, moduleName, pkgDatabase)
@@ -70,7 +70,7 @@ instance Show SessionType where
 instance Show SessionConfig where
 	show (SessionConfig t opts) = unwords (show t : opts)
 
-instance FormatBuild SessionConfig
+instance Formattable SessionConfig
 
 type GhcM a = MGhcT SessionConfig (LogT IO) a
 

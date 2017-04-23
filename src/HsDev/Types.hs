@@ -66,7 +66,7 @@ instance Show HsDevError where
 	show (ResponseError e r) = format "response error: {}, response: {}" ~~ e ~~ r
 	show (OtherError e) = e
 
-instance FormatBuild HsDevError where
+instance Formattable HsDevError where
 
 jsonErr :: String -> [Pair] -> Value
 jsonErr e = object . (("error" .= e) :)

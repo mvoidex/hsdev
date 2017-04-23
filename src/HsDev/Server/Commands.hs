@@ -40,6 +40,7 @@ import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
 import Text.Format ((~~), (~%))
+import Text.Format.Colored (colored)
 import System.Directory.Paths
 
 import qualified HsDev.Client.Commands as Client
@@ -228,7 +229,7 @@ runServerCommand (Remote copts noFile c@(Listen _)) = sendCommand copts noFile c
 	printLog :: Notification -> IO ()
 	printLog (Notification v) = case fromJSON v of
 		A.Error _ -> putStrLn "incorrect notification"
-		A.Success (LogMessage s) -> putStrLn s
+		A.Success m -> colored . Log.text $ m
 	noResult :: Result -> IO ()
 	noResult _ = return ()
 runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue >>= printResult where
@@ -239,14 +240,6 @@ runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue
 	printResult e = printValue e
 	encodeValue :: ToJSON a => a -> L.ByteString
 	encodeValue = if clientPretty copts then encodePretty else encode
-
-newtype LogMessage = LogMessage String
-
-instance ToJSON LogMessage where
-	toJSON (LogMessage s) = object ["message" .= s]
-
-instance FromJSON LogMessage where
-	parseJSON = withObject "log-message" $ \v -> LogMessage <$> (v .:: "message")
 
 findPath :: MonadIO m => CommandOptions -> FilePath -> m FilePath
 findPath copts f = liftIO $ canonicalizePath (normalise f') where

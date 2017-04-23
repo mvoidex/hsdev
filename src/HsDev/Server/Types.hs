@@ -31,10 +31,10 @@ import Data.Default
 import Data.Maybe (fromMaybe)
 import Data.Foldable (asum)
 import Options.Applicative
-import System.Log.Simple
+import System.Log.Simple as Log
 
 import System.Directory.Paths
-import Text.Format (FormatBuild(..))
+import Text.Format (Formattable(..))
 
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
@@ -56,7 +56,7 @@ type ServerMonadBase m = (MonadIO m, MonadMask m, MonadBaseControl IO m, Alterna
 
 data SessionLog = SessionLog {
 	sessionLogger :: Log,
-	sessionListenLog :: IO [String],
+	sessionListenLog :: IO [Log.Message],
 	sessionLogWait :: IO () }
 
 data Session = Session {
@@ -160,7 +160,7 @@ withSession :: Session -> ServerM m a -> m a
 withSession s act = runReaderT (runServerM act) s
 
 -- | Listen server's log
-serverListen :: SessionMonad m => m [String]
+serverListen :: SessionMonad m => m [Log.Message]
 serverListen = join . liftM liftIO $ askSession (sessionListenLog . sessionLog)
 
 -- | Set server's log config
@@ -233,7 +233,7 @@ instance Show ConnectionPort where
 	show (NetworkPort p) = show p
 	show (UnixPort s) = "unix " ++ s
 
-instance FormatBuild ConnectionPort
+instance Formattable ConnectionPort
 
 -- | Server options
 data ServerOpts = ServerOpts {

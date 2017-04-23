@@ -49,15 +49,15 @@ instance Display FilePath where
 	display = id
 	displayType _ = "path"
 
-instance FormatBuild PackageDb where
-	formatBuild = formatBuild . display
+instance Formattable PackageDb where
+	formattable = formattable . display
 
-instance FormatBuild PackageDbStack where
-	formatBuild = formatBuild . display
+instance Formattable PackageDbStack where
+	formattable = formattable . display
 
-instance FormatBuild ModuleLocation where
-	formatBuild = formatBuild . display
+instance Formattable ModuleLocation where
+	formattable = formattable . display
 
-instance FormatBuild Project where
-	formatBuild = formatBuild . display
+instance Formattable Project where
+	formattable = formattable . display
 

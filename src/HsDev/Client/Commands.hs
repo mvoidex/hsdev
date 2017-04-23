@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, FlexibleContexts #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module HsDev.Client.Commands (
 	runClient, runCommand
@@ -28,6 +29,7 @@ import System.Directory
 import System.FilePath
 import qualified System.Log.Simple as Log
 import qualified System.Log.Simple.Base as Log
+import Text.Read (readMaybe)
 import Text.Regex.PCRE ((=~))
 
 import qualified System.Directory.Watcher as W
@@ -341,6 +343,22 @@ targetFilter f = liftM (. view sourcedModule) $ case f of
 	TargetPackage pkg -> liftM (inPackage . mkPackage) $ refinePackage pkg
 	TargetSourced -> return byFile
 	TargetStandalone -> return standalone
+
+instance ToJSON Log.Message where
+	toJSON m = object [
+		"time" .= Log.messageTime m,
+		"level" .= show (Log.messageLevel m),
+		"component" .= show (Log.messageComponent m),
+		"scope" .= show (Log.messageScope m),
+		"text" .= Log.messageText m]
+
+instance FromJSON Log.Message where
+	parseJSON = withObject "log-message" $ \v -> Log.Message <$>
+		(v .:: "time") <*>
+		((v .:: "level") >>= maybe (fail "invalid level") return . readMaybe) <*>
+		(read <$> (v .:: "component")) <*>
+		(read <$> (v .:: "scope")) <*>
+		(v .:: "text")
 
 -- Helper functions
 

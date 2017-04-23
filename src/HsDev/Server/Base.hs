@@ -17,8 +17,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Data.Default
 import Data.Maybe
-import Data.Text (Text)
-import qualified Data.Text as T (pack, unpack)
+import qualified Data.Text as T (pack)
 import Options.Applicative (info, progDesc)
 import System.Log.Simple hiding (Level(..), Message)
 import qualified System.Log.Simple.Base as Log (level_)
@@ -29,7 +28,7 @@ import System.FilePath
 import qualified Control.Concurrent.FiniteChan as F
 import System.Directory.Paths (canonicalize)
 import qualified System.Directory.Watcher as Watcher
-import Text.Format ((~~), FormatBuild(..), (~%))
+import Text.Format ((~~), (~%))
 
 import qualified HsDev.Cache as Cache
 import qualified HsDev.Client.Commands as Client
@@ -52,14 +51,12 @@ initLog :: ServerOpts -> IO SessionLog
 initLog sopts = do
 	msgs <- F.newChan
 	l <- newLog (logCfg [("", Log.level_ . T.pack . serverLogLevel $ sopts)]) $ concat [
-		[handler text console | not $ serverSilent sopts],
-		[handler text (chaner msgs)],
+		[handler text coloredConsole | not $ serverSilent sopts],
+		[chaner msgs],
 		[handler text (file f) | f <- maybeToList (serverLog sopts)]]
 	let
 		listenLog = F.dupChan msgs >>= F.readChan
 	return $ SessionLog l listenLog (stopLog l)
-
-instance FormatBuild Log.Level where
 
 -- | Run server
 runServer :: ServerOpts -> ServerM IO () -> IO ()
@@ -139,8 +136,8 @@ sendServer srv copts args = do
 sendServer_ :: Server -> [String] -> IO Result
 sendServer_ srv = sendServer srv def
 
-chaner :: F.Chan String -> Consumer Text
-chaner ch = return $ F.putChan ch . T.unpack
+chaner :: F.Chan Log.Message -> Consumer Log.Message
+chaner ch = return $ F.putChan ch
 
 -- | Perform action on cache
 withCache :: Monad m => ServerOpts -> a -> (FilePath -> m a) -> m a
