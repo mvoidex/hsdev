@@ -40,7 +40,7 @@ import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.Lisp
 import Text.Format ((~~), (~%))
-import Text.Format.Colored (colored)
+import Text.Format.Colored (coloredLine)
 import System.Directory.Paths
 
 import qualified HsDev.Client.Commands as Client
@@ -229,7 +229,7 @@ runServerCommand (Remote copts noFile c@(Listen _)) = sendCommand copts noFile c
 	printLog :: Notification -> IO ()
 	printLog (Notification v) = case fromJSON v of
 		A.Error _ -> putStrLn "incorrect notification"
-		A.Success m -> colored . Log.text $ m
+		A.Success m -> coloredLine . Log.text $ m
 	noResult :: Result -> IO ()
 	noResult _ = return ()
 runServerCommand (Remote copts noFile c) = sendCommand copts noFile c printValue >>= printResult where
