@@ -67,7 +67,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (isParent, ordNub)
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc)
+import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..))
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -308,24 +308,30 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 
 -- | Scan source file, resolve dependent modules
 scanFile :: UpdateMonad m => [String] -> FilePath -> m ()
-scanFile opts fpath = scanFileContents opts fpath Nothing
+scanFile opts fpath = scanFiles opts [FileSource fpath Nothing]
 
--- | Scan source file with contents and resolve dependent modules
-scanFileContents :: UpdateMonad m => [String] -> FilePath -> Maybe String -> m ()
-scanFileContents opts fpath mcts = runTask "scanning" fpath $ Log.scope "file" $ hsdevLiftIO $ do
+-- | Scan source files, resolving dependent modules
+scanFiles :: UpdateMonad m => [String] -> [FileSource] -> m ()
+scanFiles opts fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ hsdevLiftIO $ do
+	Log.sendLog Log.Trace $ "scanning {} files" ~~ length fsrcs
 	dbval <- readDB
-	fpath' <- liftIO $ canonicalizePath fpath
-	ex <- liftIO $ doesFileExist fpath'
-	when (not ex) $ hsdevError $ FileNotFound fpath
-	mloc <- case dbval ^? databaseModules . atFile fpath' . inspected of
+	fpaths' <- traverse (liftIO . canonicalizePath) $ map fileSource fsrcs
+	forM_ fpaths' $ \fpath' -> do
+		ex <- liftIO $ doesFileExist fpath'
+		when (not ex) $ hsdevError $ FileNotFound fpath'
+	mlocs <- forM fpaths' $ \fpath' -> case dbval ^? databaseModules . atFile fpath' . inspected of
 		Just m -> return $ view (moduleId . moduleLocation) m
 		Nothing -> do
 			mproj <- locateProjectInfo fpath'
 			return $ FileModule fpath' mproj
-	watch $ flip watchModule mloc
-	S.ScanContents dmods _ _ <- S.enumDependent fpath'
+	mapM_ (watch . flip watchModule) mlocs
+	S.ScanContents dmods _ _ <- fmap mconcat $ mapM S.enumDependent fpaths'
 	Log.sendLog Log.Trace $ "dependent modules: {}" ~~ length dmods
-	scanModules [] ((mloc, opts, mcts) : dmods)
+	scanModules [] ([(mloc, opts, mcts) | (mloc, FileSource _ mcts) <- zip mlocs fsrcs] ++ dmods)
+
+-- | Scan source file with contents and resolve dependent modules
+scanFileContents :: UpdateMonad m => [String] -> FilePath -> Maybe String -> m ()
+scanFileContents opts fpath mcts = scanFiles opts [FileSource fpath mcts]
 
 -- | Scan cabal modules, doesn't rescan if already scanned
 scanCabal :: UpdateMonad m => [String] -> m ()
