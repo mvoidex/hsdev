@@ -545,7 +545,7 @@ updateEvent WatchedModule e
 			~~ ("file" ~% view eventPath e)
 		dbval <- readDB
 		let
-			opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each
+			opts = dbval ^.. databaseModules . atFile (view eventPath e) . inspection . inspectionOpts . each
 		scanFile opts $ view eventPath e
 	| otherwise = return ()
 
