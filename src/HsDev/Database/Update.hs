@@ -383,7 +383,9 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
 	scan (const $ return mempty) (packageDbStackSlice pdbs) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
+		Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 		docs <- inSessionGhc $ hdocsCabal pdbs opts
+		Log.sendLog Log.Trace "docs scanned"
 		updater $ mconcat [
 			mconcat $ map (fromModule . fmap (setDocs' docs)) ms,
 			mconcat [fromPackageDbState pdb pdbState | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]]

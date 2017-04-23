@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell, RankNTypes #-}
 
 module HsDev.Database (
-	Database(..), databaseModules, databaseProjects,
+	Database(..), databaseModules, databaseProjects, databaseProjectsInfos,
 	databaseIntersection, nullDatabase, databasePackageDbs, databasePackages, databaseSandboxes,
 	modules, symbols, packages,
 	fromModule, fromProject, fromProjectInfo, fromPackageDb, fromPackage, fromPackageDbState,

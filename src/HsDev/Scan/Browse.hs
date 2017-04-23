@@ -19,6 +19,7 @@ import Data.List (isPrefixOf)
 import Data.Maybe
 import Data.String (fromString)
 import Data.Text (Text)
+import qualified Data.Set as S
 import Data.Version
 import Language.Haskell.Exts.Fixity
 import Language.Haskell.Exts.Syntax (Assoc(..), QName(..), Name(Ident), ModuleName(..))
@@ -40,7 +41,6 @@ import qualified DynFlags as GHC
 import qualified GHC
 import qualified GHC.PackageDb as GHC
 import qualified GhcMonad as GHC (liftIO)
-import GhcMonad (GhcMonad)
 import qualified GHC.Paths as GHC
 import qualified Name as GHC
 import qualified IdInfo as GHC
@@ -79,10 +79,11 @@ browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [Inspect
 browseModules opts dbs mlocs = do
 	tmpSession (packageDbStackOpts dbs ++ opts)
 	ms <- packageDbModules
-	liftM catMaybes $ sequence [browseModule' p m | (p, m) <- ms, ghcModuleLocation p m `elem` mlocs]
+	liftM catMaybes $ sequence [browseModule' p m | (p, m) <- ms, ghcModuleLocation p m `S.member` mlocs']
 	where
 		browseModule' :: GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
 		browseModule' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 opts) (browseModule p m)
+		mlocs' = S.fromList mlocs
 
 browseModule :: GHC.PackageConfig -> GHC.Module -> GhcM Module
 browseModule package' m = do
@@ -109,7 +110,7 @@ browseModule package' m = do
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl df minfo n = do
 			tyInfo <- GHC.modInfoLookupName minfo n
-			tyResult <- maybe (inModuleSource n) (return . Just) tyInfo
+			tyResult <- maybe (GHC.lookupGlobalName n) (return . Just) tyInfo
 			dflag <- GHC.getSessionDynFlags
 			return $ Symbol {
 				_symbolId = SymbolId (fromString $ GHC.getOccString n) (mloc df (GHC.nameModule n)),
@@ -161,9 +162,6 @@ withPackages = withInitializedPackages
 
 withPackages_ :: MonadLog m => [String] -> GhcM a -> m a
 withPackages_ ghcOpts act = withPackages ghcOpts (const act)
-
-inModuleSource :: GhcMonad m => GHC.Name -> m (Maybe GHC.TyThing)
-inModuleSource nm = GHC.getModuleInfo (GHC.nameModule nm) >> GHC.lookupGlobalName nm
 
 formatType :: GHC.DynFlags -> GHC.Type -> Text
 formatType dflag t = fromString $ showOutputable dflag (removeForAlls t)
