@@ -40,7 +40,6 @@ checkFiles opts files _ = scope "check-files" $ do
 	withFlags $ do
 		modifyFlags $ setLogAction $ logToChan ch
 		addCmdOpts opts
-		clearTargets
 		mapM (`makeTarget` Nothing) files >>= loadTargets
 	notes <- liftIO $ stopChan ch
 	liftIO $ recalcNotesTabs notes
@@ -58,7 +57,6 @@ check opts m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
 		withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
 			addCmdOpts opts
 			modifyFlags $ setLogAction $ logToChan ch
-			clearTargets
 			target <- makeTarget (makeRelative dir file) msrc
 			loadTargets [target]
 		notes <- liftIO $ stopChan ch
