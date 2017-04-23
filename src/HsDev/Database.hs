@@ -218,7 +218,10 @@ projectSlice proj = slice' fn where
 				concatMap targets (proj ^.. projectDescription . _Just . projectTests . each)]
 
 			targets :: Target t => t -> [FilePath]
-			targets target' = liftM2 (</>) (target' ^. buildInfo . infoSourceDirsDef) (targetFiles target')
+			targets target' = map addRoot $ liftM2 (</>) (target' ^. buildInfo . infoSourceDirsDef) (targetFiles target') where
+				addRoot f
+					| isRelative f = normalise $ (proj ^. projectPath) </> f
+					| otherwise = f
 
 -- | Leave installed module project depends on
 projectDepsSlice :: Project -> Slice
@@ -250,7 +253,10 @@ targetSlice proj t = slice' fn where
 		_databasePackageDbs = mempty,
 		_databasePackages = mempty }
 		where
-			modFiles' = liftM2 (</>) (t ^. buildInfo . infoSourceDirsDef) (targetFiles t)
+			modFiles' = map addRoot $ liftM2 (</>) (t ^. buildInfo . infoSourceDirsDef) (targetFiles t) where
+				addRoot f
+					| isRelative f = normalise $ (proj ^. projectPath) </> f
+					| otherwise = f
 
 -- | Remove old packages
 newestPackagesSlice :: Slice
