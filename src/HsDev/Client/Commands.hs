@@ -161,7 +161,7 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 	forM_ files $ \file -> do
 		DB.clear db (return $ dbval ^. slice (inFile file))
 		let
-			mloc = fmap (view (moduleId . moduleLocation)) (dbval ^? modules . filtered (inFile file))
+			mloc = dbval ^? databaseModules . atFile file . inspected . moduleId . moduleLocation
 		maybe (return ()) (liftIO . unwatchModule w) mloc
 	where
 		-- We can safely remove package-db from db iff doesn't used by some of other package-dbs
@@ -383,7 +383,7 @@ refineSourceFile fpath = do
 	fpath' <- findPath fpath
 	db' <- getDb
 	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ do
-		m' <- db' ^? modules . filtered (inFile fpath')
+		m' <- db' ^? databaseModules . atFile fpath' . inspected
 		preview (moduleId . moduleLocation . moduleFile) m'
 
 -- | Get module by source
@@ -391,7 +391,7 @@ refineSourceModule :: CommandMonad m => FilePath -> m Module
 refineSourceModule fpath = do
 	fpath' <- findPath fpath
 	db' <- getDb
-	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return (db' ^? modules . filtered (inFile fpath'))
+	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return (db' ^? databaseModules . atFile fpath' . inspected)
 
 -- | Set session by source
 setFileSourceSession :: CommandMonad m => [String] -> FilePath -> m Module

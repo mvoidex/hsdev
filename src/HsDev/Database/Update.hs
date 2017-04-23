@@ -317,7 +317,7 @@ scanFileContents opts fpath mcts = runTask "scanning" fpath $ Log.scope "file" $
 	fpath' <- liftIO $ canonicalizePath fpath
 	ex <- liftIO $ doesFileExist fpath'
 	when (not ex) $ hsdevError $ FileNotFound fpath
-	mloc <- case dbval ^? modules . filtered (inFile fpath') of
+	mloc <- case dbval ^? databaseModules . atFile fpath' . inspected of
 		Just m -> return $ view (moduleId . moduleLocation) m
 		Nothing -> do
 			mproj <- locateProjectInfo fpath'

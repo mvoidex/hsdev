@@ -12,6 +12,8 @@ module HsDev.Database (
 	refineProject,
 	append, remove,
 
+	atFile,
+
 	Map
 	) where
 
@@ -313,6 +315,10 @@ append = add
 -- | Remove database
 remove :: Database -> Database -> Database
 remove = sub
+
+-- | Get module at file
+atFile :: Applicative f => FilePath -> (InspectedModule -> f InspectedModule) -> Map ModuleLocation InspectedModule -> f (Map ModuleLocation InspectedModule)
+atFile fpath = ix (FileModule fpath Nothing)
 
 restrictKeys :: Ord k => Map k a -> Set k -> Map k a
 restrictKeys m s = M.intersection m (M.fromList [(k, ()) | k <- S.toList s])

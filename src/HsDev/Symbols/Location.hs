@@ -109,7 +109,7 @@ data ModuleLocation =
 
 instance Eq ModuleLocation where
 	FileModule lfile _ == FileModule rfile _ = lfile == rfile
-	InstalledModule ldirs _ _ == InstalledModule rdirs _ _ = ldirs == rdirs
+	InstalledModule ldirs _ lname == InstalledModule rdirs _ rname = ldirs == rdirs && lname == rname
 	OtherLocation l == OtherLocation r = l == r
 	NoLocation == NoLocation = True
 	_ == _ = False

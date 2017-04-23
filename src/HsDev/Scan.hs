@@ -32,7 +32,6 @@ import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
 import HsDev.Symbols.Types
-import HsDev.Symbols.Util (inFile)
 import HsDev.Database
 import HsDev.Display
 import HsDev.Inspect
@@ -114,18 +113,17 @@ instance EnumContents FileSource where
 enumRescan :: CommandMonad m => FilePath -> m ScanContents
 enumRescan fpath = do
 	dbval <- askSession sessionDatabase >>= liftIO . readAsync
-	let
-		mloc = dbval ^? modules . filtered (inFile fpath) . moduleId . moduleLocation
 	return $ fromMaybe mempty $ do
-		loc <- mloc
-		return $ ScanContents [(loc, dbval ^.. databaseModules . ix loc . inspection . inspectionOpts . each, Nothing)] [] []
+		m <- dbval ^? databaseModules . atFile fpath
+		loc <- m ^? inspected . moduleId . moduleLocation
+		return $ ScanContents [(loc, m ^.. inspection . inspectionOpts . each, Nothing)] [] []
 
 -- | Enum file dependent
 enumDependent :: CommandMonad m => FilePath -> m ScanContents
 enumDependent fpath = do
 	dbval <- askSession sessionDatabase >>= liftIO . readAsync
 	let
-		mproj = dbval ^? databaseModules . ix (FileModule fpath Nothing) . inspected . moduleId . moduleLocation . moduleProject . _Just
+		mproj = dbval ^? databaseModules . atFile fpath . inspected . moduleId . moduleLocation . moduleProject . _Just
 		dbslice = dbval ^. maybe standaloneSlice projectSlice mproj
 		rdeps = sourceRDeps dbslice
 		dependent = rdeps ^. ix fpath
