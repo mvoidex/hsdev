@@ -411,6 +411,7 @@ data Command =
 	InfoSandbox FilePath |
 	Lookup String FilePath |
 	Whois String FilePath |
+	Whoat Int Int FilePath |
 	ResolveScopeModules SearchQuery FilePath |
 	ResolveScope SearchQuery FilePath |
 	FindUsages String |
@@ -481,6 +482,7 @@ instance Paths Command where
 	paths f (InfoSandbox fpath) = InfoSandbox <$> f fpath
 	paths f (Lookup n fpath) = Lookup <$> pure n <*> f fpath
 	paths f (Whois n fpath) = Whois <$> pure n <*> f fpath
+	paths f (Whoat l c fpath) = Whoat <$> pure l <*> pure c <*> f fpath
 	paths f (ResolveScopeModules q fpath) = ResolveScopeModules q <$> f fpath
 	paths f (ResolveScope q fpath) = ResolveScope q <$> f fpath
 	paths _ (FindUsages nm) = pure $ FindUsages nm
@@ -537,6 +539,7 @@ instance FromCmd Command where
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> pathArg (help "locate sandbox in parent of this path")),
 		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
 		cmd "whois" "get info for symbol" (Whois <$> strArgument idm <*> ctx),
+		cmd "whoat" "get info for symbol under cursor" (Whoat <$> argument auto (metavar "line") <*> argument auto (metavar "column") <*> ctx),
 		cmd "scope" "get declarations accessible from module or within a project" (
 			subparser (cmd "modules" "get modules accessible from module or within a project" (ResolveScopeModules <$> cmdP <*> ctx)) <|>
 			ResolveScope <$> cmdP <*> ctx),
@@ -662,6 +665,7 @@ instance ToJSON Command where
 	toJSON (InfoSandbox p) = cmdJson "sandbox" ["path" .= p]
 	toJSON (Lookup n f) = cmdJson "lookup" ["name" .= n, "file" .= f]
 	toJSON (Whois n f) = cmdJson "whois" ["name" .= n, "file" .= f]
+	toJSON (Whoat l c f) = cmdJson "whoat" ["line" .= l, "column" .= c, "file" .= f]
 	toJSON (ResolveScopeModules q f) = cmdJson "scope modules" ["query" .= q, "file" .= f]
 	toJSON (ResolveScope q f) = cmdJson "scope" ["query" .= q, "file" .= f]
 	toJSON (FindUsages nm) = cmdJson "usages" ["name" .= nm]
@@ -712,6 +716,7 @@ instance FromJSON Command where
 		guardCmd "sandbox" v *> (InfoSandbox <$> v .:: "path"),
 		guardCmd "lookup" v *> (Lookup <$> v .:: "name" <*> v .:: "file"),
 		guardCmd "whois" v *> (Whois <$> v .:: "name" <*> v .:: "file"),
+		guardCmd "whoat" v *> (Whoat <$> v .:: "line" <*> v .:: "column" <*> v .:: "file"),
 		guardCmd "scope modules" v *> (ResolveScopeModules <$> v .:: "query" <*> v .:: "file"),
 		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> v .:: "file"),
 		guardCmd "usages" v *> (FindUsages <$> v .:: "name"),

@@ -105,6 +105,10 @@ List of commands with additional fiels:
  * `whois` — get info about symbol in scope of file
      - `name` — name of symbol, can be qualified (`Data.List.foldr`), qualified with synonym (`T.pack`)
      - `file` — context file
+ * `whoat` — get info about symbol under cursor
+     - `line` — line number
+     - `column` — column number
+     - `file` — file name
  * `scope modules` — resolve modules in scope of file (which can be imported)
      - `query` — `query` object
      - `file` — context file

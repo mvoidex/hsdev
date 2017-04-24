@@ -80,12 +80,14 @@ Scans sources, projects, directories, sandboxes and installed modules. After sca
 PS> hsdev scan --cabal --path path/to/projects --project path/to/some/project --file File.hs
 </pre>
 
-#### Whois
+#### Whois/whoat
 
 Get information for symbol in context of source file. Understand qualified names and also names qualified with module shortcut (`import ... as`), note `M.` qualified for `map`:
 <pre>
-PS> hsdev whois M.map --file .\src\HsDev\Symbols\Resolve.hs | json | % { $_.declaration.decl.type }
-(a -> b) -> Map k a -> Map k b
+PS> dev whois M.lookup --file .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+lookup :: Ord k => k -> Map k a -> Maybe a
+PS> hsdev whoat 375 39 --file .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+catMaybes :: [Maybe a] -> [a]
 </pre>
 
 #### Usages

@@ -227,6 +227,16 @@ runCommand (Lookup nm fpath) = toValue $ do
 runCommand (Whois nm fpath) = toValue $ do
 	dbval <- serverDatabase
 	liftIO $ hsdevLift $ whois dbval fpath nm
+runCommand (Whoat l c fpath) = toValue $ do
+	dbval <- serverDatabase
+	m <- refineSourceModule fpath
+	p <- maybe (hsdevError $ InspectError $ "module doesn't have parsed info") return $ m ^. moduleSource
+	let
+		mname = p ^? P.qnames . filtered (inRegion' pos . view P.regionL) . P.resolvedName
+		pos = Position l c
+		inRegion' :: Position -> Region -> Bool
+		inRegion' p' (Region s e) = p' >= s && p' <= e
+	maybe (return []) (liftIO . hsdevLift . findSymbol dbval . unpack . Name.fromName) mname
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
 	dbval <- serverDatabase
 	ms <- liftIO $ hsdevLift $ scopeModules dbval fpath

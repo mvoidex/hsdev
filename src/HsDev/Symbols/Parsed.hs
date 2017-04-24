@@ -8,7 +8,7 @@ module HsDev.Symbols.Parsed (
 	annL, symbolL, file, pos, defPos, resolvedName,
 	isBinder, isLocal, isGlobal, isReference, isUnresolved,
 	refsTo, refsToName,
-	nameInfoL, positionL, fileL,
+	nameInfoL, positionL, regionL, fileL,
 	symbolNameL,
 
 	prettyPrint
@@ -23,7 +23,7 @@ import qualified Language.Haskell.Exts as E (Name(..))
 import Language.Haskell.Names
 
 import HsDev.Symbols.Name
-import HsDev.Symbols.Location (Position(..))
+import HsDev.Symbols.Location (Position(..), positionLine, positionColumn, Region(..), region)
 
 -- | Annotation of parsed and resolved nodes
 type Ann = Scoped SrcSpanInfo
@@ -161,6 +161,22 @@ positionL = lens g' s' where
 		upd (SrcLoc f' l' c')
 			| l' == sl = SrcLoc f' l (c' - sc + c)
 			| otherwise = SrcLoc f' (l' - sl + l) c'
+
+regionL :: Annotated ast => Lens' (ast Ann) Region
+regionL = lens g' s' where
+	g' i = case ann i of
+		Scoped _ sinfo -> pos (srcSpanStart span') `region` pos (srcSpanEnd span') where
+			span' = srcInfoSpan sinfo
+			pos = uncurry Position
+	s' i (Region s e) = amap (fmap upd) i where
+		upd :: SrcSpanInfo -> SrcSpanInfo
+		upd sinfo = sinfo {
+			srcInfoSpan = (srcInfoSpan sinfo) {
+				srcSpanStartLine = s ^. positionLine,
+				srcSpanStartColumn = s ^. positionColumn,
+				srcSpanEndLine = e ^. positionLine,
+				srcSpanEndColumn = e ^. positionColumn },
+			srcInfoPoints = [] }
 
 fileL :: (SrcInfo isrc, Data isrc) => Lens' isrc FilePath
 fileL = lens g' s' where
