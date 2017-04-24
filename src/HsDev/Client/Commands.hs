@@ -265,6 +265,22 @@ runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ 
 	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
 	liftIO $ hsdevLift $ Hayoo.hayoo hq (Just i)
 runCommand (CabalList packages') = toValue $ liftIO $ hsdevLift $ Cabal.cabalList packages'
+runCommand (UnresolvedSymbols fs) = toValue $ do
+	ms <- mapM refineSourceModule fs
+	let
+		unresolveds = do
+			m <- ms
+			p <- m ^.. moduleSource . _Just
+			usym <- p ^.. P.qnames . P.unresolveds
+			return $ symUsage (symByName $ Name.fromName $ void usym) (m ^. moduleId) (usym ^. P.pos)
+
+		symUsage sym mid pos = SymbolUsage {
+			_symbolUsed = sym,
+			_symbolUsedIn = mid,
+			_symbolUsedPosition = pos }
+
+		symByName nm = Symbol (SymbolId nm (ModuleId "" NoLocation)) Nothing Nothing (Function Nothing)
+	return unresolveds
 runCommand (Lint fs) = toValue $ do
 	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
 runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do

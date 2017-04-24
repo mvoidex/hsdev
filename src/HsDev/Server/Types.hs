@@ -420,6 +420,8 @@ data Command =
 		hayooPage :: Int,
 		hayooPages :: Int } |
 	CabalList { cabalListPackages :: [String] } |
+	UnresolvedSymbols {
+		unresolvedFiles :: [FilePath] } |
 	Lint {
 		lintFiles :: [FileSource] } |
 	Check {
@@ -483,6 +485,7 @@ instance Paths Command where
 	paths f (ResolveScope q fpath) = ResolveScope q <$> f fpath
 	paths _ (FindUsages nm) = pure $ FindUsages nm
 	paths f (Complete n g fpath) = Complete n g <$> f fpath
+	paths f (UnresolvedSymbols fs) = UnresolvedSymbols <$> (each . paths) f fs
 	paths f (Lint fs) = Lint <$> (each . paths) f fs
 	paths f (Check fs ghcs) = Check <$> (each . paths) f fs <*> pure ghcs
 	paths f (CheckLint fs ghcs) = CheckLint <$> (each . paths) f fs <*> pure ghcs
@@ -541,6 +544,7 @@ instance FromCmd Command where
 		cmd "complete" "show completions for input" (Complete <$> strArgument idm <*> wideFlag <*> ctx),
 		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
 		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (strArgument idm))),
+		cmd "unresolveds" "list unresolved symbols in source file" (UnresolvedSymbols <$> many fileArg),
 		cmd "lint" "lint source files or file contents" (Lint <$> many cmdP),
 		cmd "check" "check source files or file contents" (Check <$> many cmdP <*> ghcOpts),
 		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many cmdP <*> ghcOpts),
@@ -664,6 +668,7 @@ instance ToJSON Command where
 	toJSON (Complete q w f) = cmdJson "complete" ["prefix" .= q, "wide" .= w, "file" .= f]
 	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
 	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
+	toJSON (UnresolvedSymbols fs) = cmdJson "unresolveds" ["files" .= fs]
 	toJSON (Lint fs) = cmdJson "lint" ["files" .= fs]
 	toJSON (Check fs ghcs) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs]
 	toJSON (CheckLint fs ghcs) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs]
@@ -713,6 +718,7 @@ instance FromJSON Command where
 		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> (v .:: "wide" <|> pure False) <*> v .:: "file"),
 		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> (v .:: "page" <|> pure 0) <*> (v .:: "pages" <|> pure 1)),
 		guardCmd "cabal list" v *> (CabalList <$> v .::?! "packages"),
+		guardCmd "unresolveds" v *> (UnresolvedSymbols <$> v .::?! "files"),
 		guardCmd "lint" v *> (Lint <$> v .::?! "files"),
 		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "ghc-opts"),
 		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "ghc-opts"),

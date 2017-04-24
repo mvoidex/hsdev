@@ -122,8 +122,10 @@ List of commands with additional fiels:
      - `query` — hayoo query
      - `page` (default is `0`) — start page
      - `pages` (default is `1`) — number of pages
+ * `unresolveds` — list all unresolved symbols in source file
+     - `files` — list of files
  * `lint`/`check`/`check-lint`/`types` — lint/check source, infer types
-     -  `files` — list of fils
+     -  `files` — list of files
      -  `contents` — list of `content` objects
      -  `ghc-opts` — list of additional ghc options (not applied for `lint` command)
  * `autofix show` — show suggestions
