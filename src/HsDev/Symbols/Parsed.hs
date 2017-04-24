@@ -3,18 +3,21 @@
 module HsDev.Symbols.Parsed (
 	Ann, Parsed,
 	qnames, names, binders, locals, globals, references, unresolveds,
-	usages, imports, declarations, moduleNames,
+	usages, named, imports, declarations, moduleNames,
 
-	annL, file, pos, defPos, resolvedName,
+	annL, symbolL, file, pos, defPos, resolvedName,
 	isBinder, isLocal, isGlobal, isReference, isUnresolved,
-	refsTo,
+	refsTo, refsToName,
 	nameInfoL, positionL, fileL,
-	symbolNameL
+	symbolNameL,
+
+	prettyPrint
 	) where
 
 import Control.Lens
 import Data.Data
 import Data.Data.Lens
+import Data.Text (Text)
 import Language.Haskell.Exts hiding (Name(..))
 import qualified Language.Haskell.Exts as E (Name(..))
 import Language.Haskell.Names
@@ -58,7 +61,11 @@ unresolveds = filtered isUnresolved
 
 -- | Get all usages of symbol
 usages :: Annotated ast => Name -> Traversal' (ast Ann) (ast Ann)
-usages n = filtered (refsTo n)
+usages = filtered . refsTo
+
+-- | Get usages of symbols with unqualified name
+named :: Annotated ast => Text -> Traversal' (ast Ann) (ast Ann)
+named = filtered . refsToName
 
 -- | Get imports
 imports :: Data (ast Ann) => Traversal' (ast Ann) (ImportDecl Ann)
@@ -75,6 +82,10 @@ moduleNames = biplate
 -- | Get annotation
 annL :: Annotated ast => Lens' (ast a) a
 annL = lens ann (\v a' -> amap (const a') v)
+
+-- | Get haskell-names symbols
+symbolL :: Data a => Traversal' a Symbol
+symbolL = biplate
 
 -- | Get source file
 file :: Annotated ast => Lens' (ast Ann) FilePath
@@ -96,7 +107,7 @@ defPos = annL . defLoc' where
 
 -- | Resolved global name
 resolvedName :: Annotated ast => Traversal' (ast Ann) Name
-resolvedName = annL . nameInfoL . biplate . symbolNameL
+resolvedName = annL . nameInfoL . symbolL . symbolNameL
 
 -- | Does ast node binds something
 isBinder :: Annotated ast => ast Ann -> Bool
@@ -128,6 +139,10 @@ isUnresolved e = case e ^. annL . nameInfoL of
 -- | Node references to specified symbol
 refsTo :: Annotated ast => Name -> ast Ann -> Bool
 refsTo n a = Just n == a ^? resolvedName
+
+-- | Node references to specified unqualified name
+refsToName :: Annotated ast => Text -> ast Ann -> Bool
+refsToName n a = Just n == fmap nameIdent (a ^? resolvedName)
 
 nameInfoL :: Lens' (Scoped a) (NameInfo a)
 nameInfoL = lens g' s' where

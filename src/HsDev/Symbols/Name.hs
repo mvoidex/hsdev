@@ -42,7 +42,10 @@ fromName_ (Exts.Ident _ s') = fromString s'
 fromName_ (Exts.Symbol _ s') = fromString s'
 
 toName_ :: Text -> Exts.Name ()
-toName_ = Exts.Ident () . T.unpack
+toName_ txt
+	| T.null txt = error "name can't be empty"
+	| isAlpha (T.head txt) && (T.all isAlphaNum $ T.tail txt) = Exts.Ident () . T.unpack $ txt
+	| otherwise = Exts.Symbol () . T.unpack $ txt
 
 toName :: Text -> Name
 toName "()" = Special () (UnitCon ())
