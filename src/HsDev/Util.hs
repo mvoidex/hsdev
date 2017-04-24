@@ -208,7 +208,7 @@ jsonUnion x y = objectUnion (toJSON x) (toJSON y)
 noNulls :: [A.Pair] -> [A.Pair]
 noNulls = filter (not . isNull . snd) where
 	isNull Null = True
-	isNull v = v == A.emptyArray || v == A.emptyObject
+	isNull v = v == A.emptyArray || v == A.emptyObject || v == A.String ""
 
 -- | Lift IO exception to ExceptT
 liftException :: C.MonadCatch m => m a -> ExceptT String m a

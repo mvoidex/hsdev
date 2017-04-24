@@ -39,7 +39,7 @@ import Text.Read (readMaybe)
 import System.Directory.Paths
 import HsDev.PackageDb.Types
 import HsDev.Project.Types
-import HsDev.Util ((.::), (.::?!), objectUnion, ordNub)
+import HsDev.Util ((.::), (.::?), (.::?!), objectUnion, ordNub, noNulls)
 
 -- | Just package name and version without its location
 data ModulePackage = ModulePackage {
@@ -147,15 +147,15 @@ instance Show ModuleLocation where
 	show = locationId
 
 instance ToJSON ModuleLocation where
-	toJSON (FileModule f p) = object ["file" .= f, "project" .= fmap (view projectCabal) p]
-	toJSON (InstalledModule c p n) = object ["dirs" .= c, "package" .= fmap show p, "name" .= n]
+	toJSON (FileModule f p) = object $ noNulls ["file" .= f, "project" .= fmap (view projectCabal) p]
+	toJSON (InstalledModule c p n) = object $ noNulls ["dirs" .= c, "package" .= fmap show p, "name" .= n]
 	toJSON (OtherLocation s) = object ["source" .= s]
 	toJSON NoLocation = object []
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
-		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .:: "project"))) <|>
-		(InstalledModule <$> v .::?! "dirs" <*> ((v .:: "package") >>= traverse readPackage) <*> v .:: "name") <|>
+		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .::? "project"))) <|>
+		(InstalledModule <$> v .::?! "dirs" <*> ((v .::? "package") >>= traverse readPackage) <*> v .:: "name") <|>
 		(OtherLocation <$> v .:: "source") <|>
 		(pure NoLocation)
 		where
@@ -184,14 +184,14 @@ instance Show ModuleId where
 	show (ModuleId n l) = show l ++ ":" ++ T.unpack n
 
 instance ToJSON ModuleId where
-	toJSON m = object [
+	toJSON m = object $ noNulls [
 		"name" .= _moduleName m,
 		"location" .= _moduleLocation m]
 
 instance FromJSON ModuleId where
 	parseJSON = withObject "module-id" $ \v -> ModuleId <$>
-		v .:: "name" <*>
-		v .:: "location"
+		(fromMaybe "" <$> (v .::? "name")) <*>
+		(fromMaybe NoLocation <$> (v .::? "location"))
 
 -- | Symbol
 data SymbolId = SymbolId {
@@ -208,14 +208,14 @@ instance Show SymbolId where
 	show (SymbolId n m) = show m ++ ":" ++ T.unpack n
 
 instance ToJSON SymbolId where
-	toJSON s = object [
+	toJSON s = object $ noNulls [
 		"name" .= _symbolName s,
 		"module" .= _symbolModule s]
 
 instance FromJSON SymbolId where
 	parseJSON = withObject "symbol-id" $ \v -> SymbolId <$>
-		v .:: "name" <*>
-		v .:: "module"
+		(fromMaybe "" <$> (v .::? "name")) <*>
+		(fromMaybe (ModuleId "" NoLocation) <$> (v .::? "module"))
 
 data Position = Position {
 	_positionLine :: Int,
@@ -300,7 +300,7 @@ instance ToJSON Location where
 instance FromJSON Location where
 	parseJSON = withObject "location" $ \v -> Location <$>
 		v .:: "module" <*>
-		v .:: "pos"
+		v .::? "pos"
 
 -- | Get source module root directory, i.e. for "...\src\Foo\Bar.hs" with module 'Foo.Bar' will return "...\src"
 sourceModuleRoot :: Text -> FilePath -> FilePath
