@@ -32,13 +32,15 @@ import HsDev.Util (liftE, ordNub, uniqueBy)
 
 -- | Find declaration by name
 findSymbol :: Database -> String -> ExceptT String IO [Symbol]
-findSymbol db ident = return $ db ^.. symbols . filtered checkName where
-	checkName :: Symbol -> Bool
-	checkName m =
-		(view (symbolId . symbolName) m == nameIdent qname) &&
-		(maybe True (view sourcedModuleName m ==) $ nameModule qname)
-
-	qname = toName $ fromString ident
+findSymbol db ident = case nameModule qname of
+	Just mname -> do
+		ms <- findModule db (T.unpack mname)
+		return $ ms ^.. each . exportedSymbols . filtered checkName
+	Nothing -> return $ db ^.. symbols . filtered checkName
+	where
+		checkName :: Symbol -> Bool
+		checkName s = nameIdent qname == view (symbolId . symbolName) s
+		qname = toName $ fromString ident
 
 -- | Find module by name
 findModule :: Database -> String -> ExceptT String IO [Module]

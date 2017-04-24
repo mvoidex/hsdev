@@ -112,6 +112,8 @@ List of commands with additional fiels:
      - `query` — `query` object
      - `file` — context file
      - `global` — ignore imports
+ * `usages` — find usages of symbol
+     - `name` — qualified name
  * `complete` — get completions
      - `prefix` — input prefix
      - `wide` — wide completions, ignores imports

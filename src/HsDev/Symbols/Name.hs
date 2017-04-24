@@ -5,6 +5,7 @@ module HsDev.Symbols.Name (
 	) where
 
 import Control.Arrow
+import Data.Char (isAlpha, isAlphaNum)
 import Data.Text (Text)
 import Data.String (fromString)
 import qualified Data.Text as T
@@ -44,8 +45,10 @@ fromName_ (Exts.Symbol _ s') = fromString s'
 toName_ :: Text -> Exts.Name ()
 toName_ txt
 	| T.null txt = error "name can't be empty"
-	| isAlpha (T.head txt) && (T.all isAlphaNum $ T.tail txt) = Exts.Ident () . T.unpack $ txt
+	| isAlpha (T.head txt) && (T.all validChar $ T.tail txt) = Exts.Ident () . T.unpack $ txt
 	| otherwise = Exts.Symbol () . T.unpack $ txt
+	where
+		validChar ch = isAlphaNum ch || ch == '_'
 
 toName :: Text -> Name
 toName "()" = Special () (UnitCon ())
@@ -59,7 +62,7 @@ toName tup
 		noBraces = T.dropAround (`elem` ['(', ')']) tup
 toName n = case T.split (== '.') n of
 	[n'] -> UnQual () (Exts.Ident () $ T.unpack n')
-	ns -> Qual () (ModuleName () (T.unpack $ T.intercalate "." $ init ns)) (Exts.Ident () (T.unpack $ last ns))
+	ns -> Qual () (ModuleName () (T.unpack $ T.intercalate "." $ init ns)) (toName_ $ last ns)
 
 fromName :: Name -> Text
 fromName (Qual _ (ModuleName _ m) n) = T.concat [fromString m, ".", fromName_ n]

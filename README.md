@@ -61,6 +61,7 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `symbol`, `module`, `project` — find symbol, module or project
 * `lookup`, `whois` — find project-visible or imported symbol
 * `scope`, `scope modules` — get modules or declarations, accessible from file
+* `usages` — find usages of symbol
 * `complete` — get completions for file and input
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
@@ -79,28 +80,25 @@ Scans sources, projects, directories, sandboxes and installed modules. After sca
 PS> hsdev scan --cabal --path path/to/projects --project path/to/some/project --file File.hs
 </pre>
 
-#### Resolve
-
-Resolve source module scope, taking into account reexports and import/export lists. When flag `--exports` set, resolve only exported declarations.
-<pre>
-PS> hsdev resolve --file .\src\HsDev\Cabal.hs --exports | json | % { $_.declarations.name }
-Cabal
-Sandbox
-cabalOpt
-findPackageDb
-getSandbox
-isPackageDb
-locateSandbox
-sandbox
-searchSandbox
-</pre>
-
 #### Whois
 
 Get information for symbol in context of source file. Understand qualified names and also names qualified with module shortcut (`import ... as`), note `M.` qualified for `map`:
 <pre>
 PS> hsdev whois M.map --file .\src\HsDev\Symbols\Resolve.hs | json | % { $_.declaration.decl.type }
 (a -> b) -> Map k a -> Map k b
+</pre>
+
+#### Usages
+
+Returns all places where symbol is used
+<pre>
+PS> hsdev usages Data.Map.toList | json | % { $_.in.name + ':' + $_.at.line + ':' + $_.at.column }
+Data.Deps:33:90
+Data.Deps:57:62
+HsDev.Client.Commands:192:18
+HsDev.Database:75:16
+HsDev.Database:76:17
+...
 </pre>
 
 #### AutoFix

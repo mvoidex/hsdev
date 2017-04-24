@@ -409,6 +409,7 @@ data Command =
 	Whois String FilePath |
 	ResolveScopeModules SearchQuery FilePath |
 	ResolveScope SearchQuery FilePath |
+	FindUsages String |
 	Complete String Bool FilePath |
 	Hayoo {
 		hayooQuery :: String,
@@ -476,6 +477,7 @@ instance Paths Command where
 	paths f (Whois n fpath) = Whois <$> pure n <*> f fpath
 	paths f (ResolveScopeModules q fpath) = ResolveScopeModules q <$> f fpath
 	paths f (ResolveScope q fpath) = ResolveScope q <$> f fpath
+	paths _ (FindUsages nm) = pure $ FindUsages nm
 	paths f (Complete n g fpath) = Complete n g <$> f fpath
 	paths f (Lint fs) = Lint <$> (each . paths) f fs
 	paths f (Check fs ghcs) = Check <$> (each . paths) f fs <*> pure ghcs
@@ -531,6 +533,7 @@ instance FromCmd Command where
 		cmd "scope" "get declarations accessible from module or within a project" (
 			subparser (cmd "modules" "get modules accessible from module or within a project" (ResolveScopeModules <$> cmdP <*> ctx)) <|>
 			ResolveScope <$> cmdP <*> ctx),
+		cmd "usages" "find usages of fully qualified symbol (qualified with module its defined in)" (FindUsages <$> strArgument idm),
 		cmd "complete" "show completions for input" (Complete <$> strArgument idm <*> wideFlag <*> ctx),
 		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
 		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (strArgument idm))),
@@ -653,6 +656,7 @@ instance ToJSON Command where
 	toJSON (Whois n f) = cmdJson "whois" ["name" .= n, "file" .= f]
 	toJSON (ResolveScopeModules q f) = cmdJson "scope modules" ["query" .= q, "file" .= f]
 	toJSON (ResolveScope q f) = cmdJson "scope" ["query" .= q, "file" .= f]
+	toJSON (FindUsages nm) = cmdJson "usages" ["name" .= nm]
 	toJSON (Complete q w f) = cmdJson "complete" ["prefix" .= q, "wide" .= w, "file" .= f]
 	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
 	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
@@ -701,6 +705,7 @@ instance FromJSON Command where
 		guardCmd "whois" v *> (Whois <$> v .:: "name" <*> v .:: "file"),
 		guardCmd "scope modules" v *> (ResolveScopeModules <$> v .:: "query" <*> v .:: "file"),
 		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> v .:: "file"),
+		guardCmd "usages" v *> (FindUsages <$> v .:: "name"),
 		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> (v .:: "wide" <|> pure False) <*> v .:: "file"),
 		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> (v .:: "page" <|> pure 0) <*> (v .:: "pages" <|> pure 1)),
 		guardCmd "cabal list" v *> (CabalList <$> v .::?! "packages"),

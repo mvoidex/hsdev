@@ -5,6 +5,7 @@ module HsDev.Symbols.Types (
 	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
+	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
 	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
@@ -297,6 +298,25 @@ gwhat n v = do
 	s <- v .:: "what"
 	guard (s == n)
 
+-- | Symbol usage
+data SymbolUsage = SymbolUsage {
+	_symbolUsed :: Symbol,
+	_symbolUsedIn :: ModuleId,
+	_symbolUsedPosition :: Position }
+		deriving (Eq, Ord)
+
+instance Show SymbolUsage where
+	show (SymbolUsage s m pos) = show s ++ " at " ++ show m ++ ":" ++ show pos
+
+instance ToJSON SymbolUsage where
+	toJSON (SymbolUsage s m pos) = object ["symbol" .= s, "in" .= m, "at" .= pos]
+
+instance FromJSON SymbolUsage where
+	parseJSON = withObject "symbol-usage" $ \v -> SymbolUsage <$>
+		v .:: "symbol" <*>
+		v .:: "in" <*>
+		v .:: "at"
+
 -- | Inspection data
 data Inspection =
 	-- | No inspection
@@ -455,6 +475,7 @@ instance Documented Symbol where
 makeLenses ''Module
 makeLenses ''Symbol
 makeLenses ''SymbolInfo
+makeLenses ''SymbolUsage
 makeLenses ''Inspection
 makeLenses ''Inspected
 

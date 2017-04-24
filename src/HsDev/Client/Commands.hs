@@ -46,6 +46,8 @@ import HsDev.Sandbox hiding (findSandbox)
 import qualified HsDev.Sandbox as S (findSandbox)
 import HsDev.Symbols
 import HsDev.Symbols.Util
+import qualified HsDev.Symbols.Parsed as P
+import qualified HsDev.Symbols.Name as Name
 import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Session
@@ -234,6 +236,26 @@ runCommand (ResolveScope sq fpath) = toValue $ do
 	dbval <- getDb
 	ss <- liftIO $ hsdevLift $ scope dbval fpath
 	return (ss ^.. each . symbolId . filtered (matchQuery sq))
+runCommand (FindUsages nm) = toValue $ do
+	dbval <- getDb
+	syms <- liftIO $ hsdevLift $ findSymbol dbval nm
+	let
+		usages = do
+			m <- dbval ^.. sourcesSlice . modules
+			p <- m ^.. moduleSource . _Just
+			sym <- syms
+			let
+				symName = Name.qualName
+					(unpack $ sym ^. symbolId . symbolModule . moduleName)
+					(unpack $ sym ^. symbolId . symbolName)
+			usage' <- p ^.. P.qnames . P.usages symName
+			return $ symUsage sym (m ^. moduleId) (usage' ^. P.pos)
+
+		symUsage sym mid pos = SymbolUsage {
+			_symbolUsed = sym,
+			_symbolUsedIn = mid,
+			_symbolUsedPosition = pos }
+	return usages
 runCommand (Complete input True fpath) = toValue $ do
 	dbval <- getDb
 	liftIO $ hsdevLift $ wideCompletions dbval fpath input
