@@ -57,6 +57,5 @@ toSymbol s = case view symbolInfo s of
 	PatConstructor _ p -> N.PatternConstructor m n (fmap toName_ p)
 	PatSelector _ p c -> N.PatternSelector m n (fmap toName_ p) (toName_ c)
 	where
-		m = H.ModuleName () (T.unpack $ view sourcedModuleName s)
-		n = toHName $ view sourcedName s
-		toHName s' = H.Ident () (T.unpack s')
+		m = toModuleName_ $ view sourcedModuleName s
+		n = toName_ $ view sourcedName s

@@ -1,7 +1,7 @@
 {-# LANGUAGE PatternSynonyms, ViewPatterns, OverloadedStrings #-}
 
 module HsDev.Symbols.Name (
-	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, namePrefix, fromName_, toName_, fromName, toName,
+	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, namePrefix, fromName_, toName_, toModuleName_, fromName, toName,
 	) where
 
 import Control.Arrow
@@ -44,11 +44,14 @@ fromName_ (Exts.Symbol _ s') = fromString s'
 
 toName_ :: Text -> Exts.Name ()
 toName_ txt
-	| T.null txt = error "name can't be empty"
+	| T.null txt = Exts.Ident () ""
 	| isAlpha (T.head txt) && (T.all validChar $ T.tail txt) = Exts.Ident () . T.unpack $ txt
 	| otherwise = Exts.Symbol () . T.unpack $ txt
 	where
 		validChar ch = isAlphaNum ch || ch == '_'
+
+toModuleName_ :: Text -> ModuleName ()
+toModuleName_ = ModuleName () . T.unpack
 
 toName :: Text -> Name
 toName "()" = Special () (UnitCon ())

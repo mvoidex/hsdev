@@ -110,7 +110,7 @@ browseModule package' m = do
 				mname' = GHC.moduleNameString $ GHC.moduleName m'
 		toDecl df minfo n = do
 			tyInfo <- GHC.modInfoLookupName minfo n
-			tyResult <- maybe (GHC.lookupGlobalName n) (return . Just) tyInfo
+			tyResult <- maybe (GHC.lookupName n) (return . Just) tyInfo
 			dflag <- GHC.getSessionDynFlags
 			return $ Symbol {
 				_symbolId = SymbolId (fromString $ GHC.getOccString n) (mloc df (GHC.nameModule n)),
@@ -134,12 +134,13 @@ browseModule package' m = do
 			-- TODO: Deal with `patSynFieldLabels` and `patSynFieldType`
 		showResult dflags (GHC.ATyCon t)
 			| GHC.isTypeSynonymTyCon t = Just $ Type args ctx
+			| GHC.isPrimTyCon t = Just $ Type [] []
 			| GHC.isNewTyCon t = Just $ NewType args ctx
 			| GHC.isDataTyCon t = Just $ Data args ctx
 			| GHC.isClassTyCon t = Just $ Class args ctx
 			| GHC.isTypeFamilyTyCon t = Just $ TypeFam args ctx Nothing
 			| GHC.isDataFamilyTyCon t = Just $ DataFam args ctx Nothing
-			| otherwise = Nothing
+			| otherwise = Just $ Type [] []
 			where
 				args = map (formatType dflags . GHC.mkTyVarTy) $ GHC.tyConTyVars t
 				ctx = case GHC.tyConClass_maybe t of
