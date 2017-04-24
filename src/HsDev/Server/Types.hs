@@ -5,7 +5,7 @@ module HsDev.Server.Types (
 	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogLevel, serverWait, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -16,6 +16,7 @@ module HsDev.Server.Types (
 
 import Control.Applicative
 import Control.Concurrent.Worker
+import qualified Control.Concurrent.FiniteChan as F
 import Control.Lens (each, view, set)
 import Control.Monad.Base
 import Control.Monad.Catch
@@ -71,6 +72,7 @@ data Session = Session {
 	sessionGhc :: GhcWorker,
 	sessionExit :: IO (),
 	sessionWait :: IO (),
+	sessionClients :: F.Chan (IO ()),
 	sessionDefines :: [(String, String)] }
 
 class (ServerMonadBase m, MonadLog m) => SessionMonad m where
@@ -173,6 +175,12 @@ serverSetLogLevel lev = do
 -- | Wait for server
 serverWait :: SessionMonad m => m ()
 serverWait = join . liftM liftIO $ askSession sessionWait
+
+-- | Wait while clients disconnects
+serverWaitClients :: SessionMonad m => m ()
+serverWaitClients = do
+	clientChan <- askSession sessionClients
+	liftIO (F.stopChan clientChan) >>= sequence_ . map liftIO
 
 -- | Update database
 serverUpdateDB :: SessionMonad m => Database -> m ()

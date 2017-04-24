@@ -5,7 +5,10 @@ module HsDev.Server.Message (
 	messagesById,
 	Notification(..), Result(..), ResultPart(..),
 	Response(..), isNotification, notification, result, responseError, resultPart,
-	groupResponses, responsesById
+	groupResponses, responsesById,
+	decodeMessage, encodeMessage,
+
+	module HsDev.Server.Message.Lisp
 	) where
 
 import Control.Applicative
@@ -14,9 +17,11 @@ import Control.Monad (join)
 import Data.Aeson hiding (Error, Result)
 import Data.Either (lefts, isRight)
 import Data.List (unfoldr)
+import Data.ByteString.Lazy.Char8 (ByteString)
 
 import HsDev.Types
 import HsDev.Util ((.::), (.::?), objectUnion)
+import HsDev.Server.Message.Lisp
 
 -- | Message with id to link request and response
 data Message a = Message {
@@ -113,3 +118,10 @@ groupResponses = unfoldr break' where
 
 responsesById :: Maybe String -> [Message Response] -> [([Notification], Result)]
 responsesById i = groupResponses . messagesById i
+
+-- | Decode lisp or json request
+decodeMessage :: FromJSON a => ByteString -> Either (Msg String) (Msg (Message a))
+decodeMessage = decodeMsg
+
+encodeMessage :: ToJSON a => Msg (Message a) -> ByteString
+encodeMessage = encodeMsg

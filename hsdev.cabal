@@ -55,6 +55,7 @@ library
     HsDev.Server.Base
     HsDev.Server.Commands
     HsDev.Server.Message
+    HsDev.Server.Message.Lisp
     HsDev.Server.Types
     HsDev.Sandbox
     HsDev.Stack

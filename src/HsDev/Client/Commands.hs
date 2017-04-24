@@ -76,7 +76,7 @@ runCommand (Listen (Just l)) = case Log.level (pack l) of
 	Nothing -> hsdevError $ OtherError $ "invalid log level: {}" ~~ l
 	Just lev -> bracket (serverSetLogLevel lev) serverSetLogLevel $ \_ -> runCommand (Listen Nothing)
 runCommand (Listen Nothing) = toValue $ do
-	serverListen >>= mapM_ (\msg -> commandNotify (Notification $ toJSON msg))
+	serverListen >>= mapM_ (commandNotify . Notification . toJSON)
 runCommand (SetLogLevel l) = case Log.level (pack l) of
 	Nothing -> hsdevError $ OtherError $ "invalid log level: {}" ~~ l
 	Just lev -> toValue $ do
