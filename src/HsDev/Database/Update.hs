@@ -9,7 +9,6 @@ module HsDev.Database.Update (
 	runUpdate,
 
 	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks, runTasks_,
-	readDB,
 
 	scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
@@ -69,7 +68,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (isParent, ordNub)
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..))
+import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -191,7 +190,7 @@ loadCache act = do
 -- | Load data from cache if not loaded yet and wait
 getCache :: UpdateMonad m => (FilePath -> ExceptT String IO Database) -> (Database -> Database) -> m Database
 getCache act check = do
-	dbval <- liftM check readDB
+	dbval <- liftM check serverDatabase
 	if nullDatabase dbval
 		then do
 			db <- loadCache act
@@ -229,17 +228,13 @@ runTasks ts = liftM catMaybes $ zipWithM taskNum [1..] (map noErr ts) where
 runTasks_ :: UpdateMonad m => [m ()] -> m ()
 runTasks_ = void . runTasks
 
--- | Get database value
-readDB :: SessionMonad m => m Database
-readDB = askSession sessionDatabase >>= liftIO . readAsync
-
 -- | Scan modules
 scanModules :: UpdateMonad m => [String] -> [S.ModuleToScan] -> m ()
 scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 	scanModules' mproj ms' = do
 		pdbs <- maybe (return userDb) (inSessionGhc . getProjectPackageDbStack) mproj
 		waiter $ updater $ fromProjectInfo mproj pdbs (ms' ^.. each . _1)
-		dbval <- readDB
+		dbval <- serverDatabase
 		defines <- askSession sessionDefines
 		-- Make table of already scanned and up to date modules
 		let
@@ -316,7 +311,7 @@ scanFile opts fpath = scanFiles [(FileSource fpath Nothing, opts)]
 scanFiles :: UpdateMonad m => [(FileSource, [String])] -> m ()
 scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ hsdevLiftIO $ do
 	Log.sendLog Log.Trace $ "scanning {} files" ~~ length fsrcs
-	dbval <- readDB
+	dbval <- serverDatabase
 	fpaths' <- traverse (liftIO . canonicalizePath) $ map (fileSource . fst) fsrcs
 	forM_ fpaths' $ \fpath' -> do
 		ex <- liftIO $ doesFileExist fpath'
@@ -426,7 +421,7 @@ scanProjectFile opts cabal = runTask "scanning" cabal $ do
 -- | Refine project info and update if necessary
 refineProjectInfo :: UpdateMonad m => Project -> m Project
 refineProjectInfo proj = do
-	dbval <- readDB
+	dbval <- serverDatabase
 	case refineProject dbval proj of
 		Nothing -> runTask "scanning" (proj ^. projectCabal) $ do
 			proj' <- liftIO $ loadProject proj
@@ -467,7 +462,7 @@ scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 
 scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()
 scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
-	dbval <- readDB
+	dbval <- serverDatabase
 	let
 		projs = dbval ^.. databaseProjects . each . projectCabal
 		pdbs = M.keys (dbval ^. databasePackageDbs)
@@ -560,7 +555,7 @@ updateEvents updates = Log.scope "updater" $ do
 				Log.sendLog Log.Info $ "File '{file}' in project {proj} changed"
 					~~ ("file" ~% view eventPath e)
 					~~ ("proj" ~% view projectName proj)
-				dbval <- readDB
+				dbval <- serverDatabase
 				let
 					opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each
 				return [(FileSource (view eventPath e) Nothing, opts)]
@@ -581,7 +576,7 @@ updateEvents updates = Log.scope "updater" $ do
 			| isSource e -> do
 				Log.sendLog Log.Info $ "Module {file} changed"
 					~~ ("file" ~% view eventPath e)
-				dbval <- readDB
+				dbval <- serverDatabase
 				let
 					opts = dbval ^.. databaseModules . atFile (view eventPath e) . inspection . inspectionOpts . each
 				return [(FileSource (view eventPath e) Nothing, opts)]

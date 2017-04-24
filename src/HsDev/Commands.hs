@@ -9,6 +9,7 @@ module HsDev.Commands (
 	scopeModules, scope,
 	completions, wideCompletions,
 	moduleCompletions,
+	symbolExported,
 
 	-- * Reexports
 	module HsDev.Database,
@@ -114,3 +115,8 @@ moduleCompletions _ ms prefix = return $ map T.unpack $ ordNub $ completions' $ 
 		getNext m
 			| fromString prefix `T.isPrefixOf` m = listToMaybe $ map snd $ dropWhile (uncurry (==)) $ zip (T.split (== '.') $ fromString prefix) (T.split (== '.') m)
 			| otherwise = Nothing
+
+-- | Modules that exports this symbol
+-- FIXME: there's no index, we go through all symbols
+symbolExported :: Database -> Symbol -> ExceptT String IO [Module]
+symbolExported db sym = return $ db ^.. modules . filtered (\m -> not $ null $ m ^.. exportedSymbols . filtered (== sym))

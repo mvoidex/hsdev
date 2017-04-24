@@ -36,7 +36,6 @@ import qualified System.Directory.Watcher as W
 import qualified Data.Async as A
 import System.Directory.Paths
 import Text.Format
-import HsDev.Cache
 import HsDev.Commands
 import HsDev.Error
 import qualified HsDev.Database.Async as DB
@@ -127,7 +126,7 @@ runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 		map (Update.scanDirectory ghcs') paths']
 runCommand (RefineDocs projs fs ms) = toValue $ do
 	projects <- traverse findProject projs
-	dbval <- getDb
+	dbval <- serverDatabase
 	let
 		filters = anyOf $ concat [
 			map inProject projects,
@@ -137,7 +136,7 @@ runCommand (RefineDocs projs fs ms) = toValue $ do
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs mods]
 runCommand (InferTypes projs fs ms) = toValue $ do
 	projects <- traverse findProject projs
-	dbval <- getDb
+	dbval <- serverDatabase
 	let
 		filters = anyOf $ concat [
 			map inProject projects,
@@ -147,7 +146,7 @@ runCommand (InferTypes projs fs ms) = toValue $ do
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes mods]
 runCommand (Remove projs cabal sboxes files) = toValue $ do
 	db <- askSession sessionDatabase
-	dbval <- getDb
+	dbval <- serverDatabase
 	w <- askSession sessionWatcher
 	projects <- traverse findProject projs
 	sboxes' <- getSandboxes sboxes
@@ -175,7 +174,7 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 		-- Remove top of package-db stack if possible
 		removePackageDb pdbs = do
 			db <- lift $ askSession sessionDatabase
-			dbval <- lift getDb
+			dbval <- lift serverDatabase
 			w <- lift $ askSession sessionWatcher
 			can <- canRemove pdbs
 			when can $ do
@@ -191,12 +190,12 @@ runCommand RemoveAll = toValue $ do
 	wdirs <- liftIO $ readMVar (W.watcherDirs w)
 	liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir
 runCommand InfoPackages = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	return $ ordNub (dbval ^.. packages)
-runCommand InfoProjects = toValue $ (toListOf $ databaseProjects . each) <$> getDb
-runCommand InfoSandboxes = toValue $ (M.keys . view databasePackageDbs) <$> getDb
+runCommand InfoProjects = toValue $ (toListOf $ databaseProjects . each) <$> serverDatabase
+runCommand InfoSandboxes = toValue $ (M.keys . view databasePackageDbs) <$> serverDatabase
 runCommand (InfoSymbol sq fs h _) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	filter' <- targetFilters fs
 	let
 		syms = ordNub $ dbval ^.. freshSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq)
@@ -205,7 +204,7 @@ runCommand (InfoSymbol sq fs h _) = toValue $ do
 			| otherwise = toJSON syms
 	return formatted
 runCommand (InfoModule sq fs h i) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	filter' <- targetFilters fs
 	let
 		ms = dbval ^.. freshSlice . modules . filtered filter' . filtered (matchQuery sq)
@@ -223,21 +222,21 @@ runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	liftIO $ hsdevLift $ lookupSymbol dbval fpath nm
 runCommand (Whois nm fpath) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	liftIO $ hsdevLift $ whois dbval fpath nm
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	ms <- liftIO $ hsdevLift $ scopeModules dbval fpath
 	return (ms ^.. each . moduleId . filtered (matchQuery sq))
 runCommand (ResolveScope sq fpath) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	ss <- liftIO $ hsdevLift $ scope dbval fpath
 	return (ordNub $ ss ^.. each . symbolId . filtered (matchQuery sq))
 runCommand (FindUsages nm) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	syms <- liftIO $ hsdevLift $ findSymbol dbval nm
 	let
 		usages = do
@@ -257,10 +256,10 @@ runCommand (FindUsages nm) = toValue $ do
 			_symbolUsedPosition = pos }
 	return usages
 runCommand (Complete input True fpath) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	liftIO $ hsdevLift $ wideCompletions dbval fpath input
 runCommand (Complete input False fpath) = toValue $ do
-	dbval <- getDb
+	dbval <- serverDatabase
 	liftIO $ hsdevLift $ completions dbval fpath input
 runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
@@ -344,19 +343,19 @@ targetFilter f = liftM (. view sourcedModule) $ case f of
 	TargetFile file -> liftM inFile $ refineSourceFile file
 	TargetModule mname -> return $ inModule mname
 	TargetPackageDb pdb -> do
-		dbval <- getDb
+		dbval <- serverDatabase
 		let
 			pkgs = dbval ^. databasePackageDbs . ix pdb
 			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
 	TargetCabal -> do
-		dbval <- getDb
+		dbval <- serverDatabase
 		let
 			pkgs = concat $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs userDb]
 			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
 	TargetSandbox sbox -> do
-		dbval <- getDb
+		dbval <- serverDatabase
 		pdbs <- findSandbox sbox >>= inSessionGhc . sandboxPackageDbStack
 		let
 			pkgs = concat [dbval ^. databasePackageDbs . ix pdb | pdb <- packageDbs pdbs]
@@ -403,7 +402,7 @@ findSandbox fpath = do
 refineSourceFile :: CommandMonad m => FilePath -> m FilePath
 refineSourceFile fpath = do
 	fpath' <- findPath fpath
-	db' <- getDb
+	db' <- serverDatabase
 	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ do
 		m' <- db' ^? databaseModules . atFile fpath' . inspected
 		preview (moduleId . moduleLocation . moduleFile) m'
@@ -412,7 +411,7 @@ refineSourceFile fpath = do
 refineSourceModule :: CommandMonad m => FilePath -> m Module
 refineSourceModule fpath = do
 	fpath' <- findPath fpath
-	db' <- getDb
+	db' <- serverDatabase
 	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return (db' ^? databaseModules . atFile fpath' . inspected)
 
 -- | Set session by source
@@ -425,7 +424,7 @@ setFileSourceSession opts fpath = do
 -- | Ensure package exists
 refinePackage :: CommandMonad m => String -> m String
 refinePackage pkg = do
-	db' <- getDb
+	db' <- serverDatabase
 	if pkg `elem` ordNub (db' ^.. packages . packageName)
 		then return pkg
 		else hsdevError (PackageNotFound pkg)
@@ -437,7 +436,7 @@ getSandboxes = traverse (findPath >=> findSandbox)
 -- | Find project by name or path
 findProject :: CommandMonad m => String -> m Project
 findProject proj = do
-	db' <- getDb
+	db' <- serverDatabase
 	proj' <- liftM addCabal $ findPath proj
 	let
 		resultProj =
@@ -448,10 +447,6 @@ findProject proj = do
 		addCabal p
 			| takeExtension p == ".cabal" = p
 			| otherwise = p </> (takeBaseName p <.> "cabal")
-
--- | Get actual DB state
-getDb :: SessionMonad m => m Database
-getDb = askSession sessionDatabase >>= liftIO . DB.readAsync
 
 -- | Run DB update action
 updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()

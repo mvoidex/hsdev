@@ -5,7 +5,7 @@ module HsDev.Server.Types (
 	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverDatabase, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -181,6 +181,10 @@ serverWaitClients :: SessionMonad m => m ()
 serverWaitClients = do
 	clientChan <- askSession sessionClients
 	liftIO (F.stopChan clientChan) >>= sequence_ . map liftIO
+
+-- | Get database
+serverDatabase :: SessionMonad m => m Database
+serverDatabase = askSession sessionDatabase >>= liftIO . DB.readAsync
 
 -- | Update database
 serverUpdateDB :: SessionMonad m => Database -> m ()
