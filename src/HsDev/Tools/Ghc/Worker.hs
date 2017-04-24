@@ -161,11 +161,12 @@ modifyFlags f = do
 	let
 		fs' = f fs
 	_ <- setSessionDynFlags fs'
-	_ <- liftIO $ initPackages fs'
+	-- _ <- liftIO $ initPackages fs'
 	return ()
 
 -- | Add options without reinit session
 addCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
+addCmdOpts [] = return ()
 addCmdOpts opts = do
 	Log.sendLog Log.Trace $ "setting ghc options: {}" ~~ unwords opts
 	fs <- getSessionDynFlags

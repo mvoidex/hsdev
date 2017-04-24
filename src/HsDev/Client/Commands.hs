@@ -254,21 +254,21 @@ runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do
 			m <- setFileSourceSession ghcs' file
 			Log.sendLog Log.Trace $ "file source session set"
 			inSessionGhc $ fn m
-	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check ghcs' m c)) fs
+	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check [] m c)) fs
 runCommand (CheckLint fs ghcs') = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			m <- setFileSourceSession ghcs' file
 			inSessionGhc $ fn m
-	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check ghcs' m c)) fs
+	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check [] m c)) fs
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs') = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	liftM concat $ forM fs $ \(FileSource file msrc) -> do
 		m <- setFileSourceSession ghcs' file
-		inSessionGhc $ Types.fileTypes ghcs' m msrc
+		inSessionGhc $ Types.fileTypes [] m msrc
 runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
 runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns

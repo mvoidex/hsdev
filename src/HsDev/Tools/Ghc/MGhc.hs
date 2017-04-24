@@ -26,6 +26,7 @@ import System.Log.Simple.Monad (MonadLog(..))
 import DynFlags
 import Exception hiding (catch, mask, uninterruptibleMask, bracket, finally)
 import GHC
+import GHCi
 import GhcMonad
 import HscTypes
 import Outputable
@@ -209,5 +210,6 @@ cleanupSession :: HscEnv -> IO ()
 cleanupSession env = do
 	cleanTempFiles df
 	cleanTempDirs df
+	stopIServ env
 	where
 		df = hsc_dflags env

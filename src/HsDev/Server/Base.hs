@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Base (
-	initLog, runServer, Server, startServer, inServer, clientCommand, parseCommand, readCommand,
+	initLog, runServer, Server, startServer, stopServer, withServer, inServer, clientCommand, parseCommand, readCommand,
 	sendServer, sendServer_,
 	withCache, writeCache, readCache,
 
@@ -117,6 +117,12 @@ type Server = Worker (ServerM IO)
 
 startServer :: ServerOpts -> IO Server
 startServer sopts = startWorker (runServer sopts) id id
+
+stopServer :: Server -> IO ()
+stopServer s = sendServer_ s ["exit"] >> stopWorker s
+
+withServer :: ServerOpts -> (Server -> IO a) -> IO a
+withServer sopts = bracket (startServer sopts) stopServer
 
 inServer :: Server -> ServerM IO a -> IO a
 inServer = inWorker
