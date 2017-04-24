@@ -199,7 +199,7 @@ runCommand (InfoSymbol sq fs h _) = toValue $ do
 	dbval <- getDb
 	filter' <- targetFilters fs
 	let
-		syms = dbval ^.. freshSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq)
+		syms = ordNub $ dbval ^.. freshSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq)
 		formatted
 			| h = toJSON $ map (view symbolId) syms
 			| otherwise = toJSON syms
@@ -235,7 +235,7 @@ runCommand (ResolveScopeModules sq fpath) = toValue $ do
 runCommand (ResolveScope sq fpath) = toValue $ do
 	dbval <- getDb
 	ss <- liftIO $ hsdevLift $ scope dbval fpath
-	return (ss ^.. each . symbolId . filtered (matchQuery sq))
+	return (ordNub $ ss ^.. each . symbolId . filtered (matchQuery sq))
 runCommand (FindUsages nm) = toValue $ do
 	dbval <- getDb
 	syms <- liftIO $ hsdevLift $ findSymbol dbval nm
@@ -249,7 +249,7 @@ runCommand (FindUsages nm) = toValue $ do
 					(unpack $ sym ^. symbolId . symbolModule . moduleName)
 					(unpack $ sym ^. symbolId . symbolName)
 			usage' <- p ^.. P.qnames . P.usages symName
-			return $ symUsage sym (m ^. moduleId) (usage' ^. P.pos)
+			return $ symUsage (sym ^. briefSymbol) (m ^. moduleId) (usage' ^. P.pos)
 
 		symUsage sym mid pos = SymbolUsage {
 			_symbolUsed = sym,

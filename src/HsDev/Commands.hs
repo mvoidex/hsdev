@@ -35,8 +35,8 @@ findSymbol :: Database -> String -> ExceptT String IO [Symbol]
 findSymbol db ident = case nameModule qname of
 	Just mname -> do
 		ms <- findModule db (T.unpack mname)
-		return $ ms ^.. each . exportedSymbols . filtered checkName
-	Nothing -> return $ db ^.. symbols . filtered checkName
+		return $ ordNub $ ms ^.. each . exportedSymbols . filtered checkName
+	Nothing -> return $ ordNub $ db ^.. symbols . filtered checkName
 	where
 		checkName :: Symbol -> Bool
 		checkName s = nameIdent qname == view (symbolId . symbolName) s

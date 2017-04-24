@@ -92,7 +92,7 @@ PS> hsdev whois M.map --file .\src\HsDev\Symbols\Resolve.hs | json | % { $_.decl
 
 Returns all places where symbol is used
 <pre>
-PS> hsdev usages Data.Map.toList | json | % { $_.in.name + ':' + $_.at.line + ':' + $_.at.column }
+PS> hsdev usages Data.Map.toList | json | % { $_.in.name, $_.at.line, $_.at.column -join ':' }
 Data.Deps:33:90
 Data.Deps:57:62
 HsDev.Client.Commands:192:18
