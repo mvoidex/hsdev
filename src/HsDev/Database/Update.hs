@@ -14,7 +14,7 @@ module HsDev.Database.Update (
 	scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
 	scan,
-	updateEvent, processEvent,
+	processEvent, updateEvents, applyUpdates,
 
 	module HsDev.Database.Update.Types,
 
@@ -24,6 +24,8 @@ module HsDev.Database.Update (
 	) where
 
 import Control.Applicative ((<|>))
+import qualified Control.Concurrent.Async as A
+import Control.Concurrent.MVar
 import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
 import Control.Exception (ErrorCall, evaluate, displayException)
@@ -308,14 +310,14 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 
 -- | Scan source file, resolve dependent modules
 scanFile :: UpdateMonad m => [String] -> FilePath -> m ()
-scanFile opts fpath = scanFiles opts [FileSource fpath Nothing]
+scanFile opts fpath = scanFiles [(FileSource fpath Nothing, opts)]
 
 -- | Scan source files, resolving dependent modules
-scanFiles :: UpdateMonad m => [String] -> [FileSource] -> m ()
-scanFiles opts fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ hsdevLiftIO $ do
+scanFiles :: UpdateMonad m => [(FileSource, [String])] -> m ()
+scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ hsdevLiftIO $ do
 	Log.sendLog Log.Trace $ "scanning {} files" ~~ length fsrcs
 	dbval <- readDB
-	fpaths' <- traverse (liftIO . canonicalizePath) $ map fileSource fsrcs
+	fpaths' <- traverse (liftIO . canonicalizePath) $ map (fileSource . fst) fsrcs
 	forM_ fpaths' $ \fpath' -> do
 		ex <- liftIO $ doesFileExist fpath'
 		when (not ex) $ hsdevError $ FileNotFound fpath'
@@ -327,11 +329,11 @@ scanFiles opts fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files
 	mapM_ (watch . flip watchModule) mlocs
 	S.ScanContents dmods _ _ <- fmap mconcat $ mapM S.enumDependent fpaths'
 	Log.sendLog Log.Trace $ "dependent modules: {}" ~~ length dmods
-	scanModules [] ([(mloc, opts, mcts) | (mloc, FileSource _ mcts) <- zip mlocs fsrcs] ++ dmods)
+	scanModules [] ([(mloc, opts, mcts) | (mloc, (FileSource _ mcts, opts)) <- zip mlocs fsrcs] ++ dmods)
 
 -- | Scan source file with contents and resolve dependent modules
 scanFileContents :: UpdateMonad m => [String] -> FilePath -> Maybe String -> m ()
-scanFileContents opts fpath mcts = scanFiles opts [FileSource fpath mcts]
+scanFileContents opts fpath mcts = scanFiles [(FileSource fpath mcts, opts)]
 
 -- | Scan cabal modules, doesn't rescan if already scanned
 scanCabal :: UpdateMonad m => [String] -> m ()
@@ -518,39 +520,61 @@ scan cache' part' mlocs opts act = Log.scope "scan" $ do
 	cleaner $ return obsolete
 	act changed
 
-updateEvent :: ServerMonadBase m => Watched -> Event -> UpdateM m ()
-updateEvent (WatchedProject proj projOpts) e
-	| isSource e = do
-		Log.sendLog Log.Info $ "File '{file}' in project {proj} changed"
-			~~ ("file" ~% view eventPath e)
-			~~ ("proj" ~% view projectName proj)
-		dbval <- readDB
-		let
-			opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each
-		scanFile opts $ view eventPath e
-	| isCabal e = do
-		Log.sendLog Log.Info $ "Project {proj} changed"
-			~~ ("proj" ~% view projectName proj)
-		scanProject projOpts $ view projectCabal proj
-	| otherwise = return ()
-updateEvent (WatchedPackageDb pdbs opts) e
-	| isConf e = do
-		Log.sendLog Log.Info $ "Package db {package} changed"
-			~~ ("package" ~% topPackageDb pdbs)
-		scanPackageDb opts pdbs
-	| otherwise = return ()
-updateEvent WatchedModule e
-	| isSource e = do
-		Log.sendLog Log.Info $ "Module {file} changed"
-			~~ ("file" ~% view eventPath e)
-		dbval <- readDB
-		let
-			opts = dbval ^.. databaseModules . atFile (view eventPath e) . inspection . inspectionOpts . each
-		scanFile opts $ view eventPath e
-	| otherwise = return ()
+processEvent :: ([(Watched, Event)] -> IO ()) -> MVar (A.Async ()) -> MVar [(Watched, Event)] -> Watched -> Event -> ClientM IO ()
+processEvent handleEvents updaterTask eventsVar w e = Log.scope "event" $ do
+	Log.sendLog Log.Trace $ "event received: {}" ~~ view eventPath e
+	l <- Log.askLog
+	liftIO $ do
+		modifyMVar_ eventsVar (return . ((w, e):))
+		modifyMVar_ updaterTask $ \task -> do
+			done <- fmap isJust $ poll task
+			if done
+				then do
+					Log.withLog l $ Log.sendLog Log.Trace "starting update thread"
+					A.async $ fix $ \loop -> do
+						updates <- modifyMVar eventsVar (\es -> return ([], es))
+						when (not $ null updates) $ handleEvents updates >> loop
+				else return task
 
-processEvent :: UpdateOptions -> Watched -> Event -> ClientM IO ()
-processEvent uopts w e = runUpdate uopts $ updateEvent w e
+updateEvents :: ServerMonadBase m => [(Watched, Event)] -> UpdateM m ()
+updateEvents updates = Log.scope "updater" $ do
+	Log.sendLog Log.Trace $ "prepared to process {} events" ~~ length updates
+	files <- fmap concat $ forM updates $ \(w, e) -> case w of
+		WatchedProject proj projOpts
+			| isSource e -> do
+				Log.sendLog Log.Info $ "File '{file}' in project {proj} changed"
+					~~ ("file" ~% view eventPath e)
+					~~ ("proj" ~% view projectName proj)
+				dbval <- readDB
+				let
+					opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each
+				return [(FileSource (view eventPath e) Nothing, opts)]
+			| isCabal e -> do
+				Log.sendLog Log.Info $ "Project {proj} changed"
+					~~ ("proj" ~% view projectName proj)
+				scanProject projOpts $ view projectCabal proj
+				return []
+			| otherwise -> return []
+		WatchedPackageDb pdbs opts
+			| isConf e -> do
+				Log.sendLog Log.Info $ "Package db {package} changed"
+					~~ ("package" ~% topPackageDb pdbs)
+				scanPackageDb opts pdbs
+				return []
+			| otherwise -> return []
+		WatchedModule
+			| isSource e -> do
+				Log.sendLog Log.Info $ "Module {file} changed"
+					~~ ("file" ~% view eventPath e)
+				dbval <- readDB
+				let
+					opts = dbval ^.. databaseModules . atFile (view eventPath e) . inspection . inspectionOpts . each
+				return [(FileSource (view eventPath e) Nothing, opts)]
+			| otherwise -> return []
+	scanFiles files
+
+applyUpdates :: UpdateOptions -> [(Watched, Event)] -> ClientM IO ()
+applyUpdates uopts = runUpdate uopts . updateEvents
 
 watch :: SessionMonad m => (Watcher -> IO ()) -> m ()
 watch f = do

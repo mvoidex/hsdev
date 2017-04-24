@@ -11,6 +11,7 @@ module HsDev.Server.Base (
 	) where
 
 import Control.Concurrent
+import Control.Concurrent.Async
 import Control.Exception
 import Control.Monad
 import Control.Monad.Except
@@ -104,8 +105,12 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 				signalQSem waitSem)
 			(waitQSem waitSem)
 			defs
-	_ <- liftIO $ forkIO $ Update.onEvent watcher $ \w e -> withSession session $
-		void $ Client.runClient def $ Update.processEvent def w e
+	_ <- liftIO $ forkIO $ do
+		emptyTask <- async $ return ()
+		updaterTask <- newMVar emptyTask
+		tasksVar <- newMVar []
+		Update.onEvent watcher $ \w e -> withSession session $
+			void $ Client.runClient def $ Update.processEvent (withSession session . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar w e
 	liftIO $ runReaderT (runServerM act) session
 
 type Server = Worker (ServerM IO)
