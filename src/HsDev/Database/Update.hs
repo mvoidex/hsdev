@@ -392,22 +392,24 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 	scan (const $ return mempty) (packageDbStackSlice pdbs) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
-		docs <- inSessionGhc $ hdocsCabal pdbs opts
 
-		-- BUG: I don't know why, but these steps leads to segfault:
+		-- BUG: I don't know why, but these steps leads to segfault on my PC:
 		-- > hsdev scan --cabal --project .
 		-- > hsdev check -f .\src\HsDev\Client\Commands.hs
-		-- But it works if docs are scanned
+		-- But it works if docs are scanned, it also works from ghci
 		
 		-- needDocs <- asks (view updateDocs)
 		-- ms' <- if needDocs
 		-- 	then do
 		-- 		docs <- inSessionGhc $ hdocsCabal pdbs opts
-		-- 		map (fmap $ setDocs' docs) ms
+		-- 		return $ map (fmap $ setDocs' docs) ms
 		-- 	else return ms
 
+		docs <- inSessionGhc $ hdocsCabal pdbs opts
 		Log.sendLog Log.Trace "docs scanned"
+
 		updater $ mconcat [
+			-- mconcat $ map fromModule ms',
 			mconcat $ map (fromModule . fmap (setDocs' docs)) ms,
 			mconcat [fromPackageDbState pdb pdbState | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]]
 	where
