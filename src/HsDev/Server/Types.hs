@@ -45,7 +45,7 @@ import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
 import HsDev.Tools.Ghc.Worker (GhcWorker, GhcM)
 import HsDev.Tools.Types (Note, OutputMessage)
-import HsDev.Tools.AutoFix (Correction)
+import HsDev.Tools.AutoFix (Refact)
 import HsDev.Types (HsDevError(..))
 import HsDev.Util
 
@@ -444,7 +444,7 @@ data Command =
 
 data AutoFixCommand =
 	AutoFixShow [Note OutputMessage] |
-	AutoFixFix [Note Correction] [Note Correction] Bool
+	AutoFixFix [Note Refact] [Note Refact] Bool
 		deriving (Show)
 
 data FileSource = FileSource { fileSource :: FilePath, fileContents :: Maybe String } deriving (Show)

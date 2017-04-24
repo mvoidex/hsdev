@@ -306,10 +306,10 @@ data SymbolUsage = SymbolUsage {
 		deriving (Eq, Ord)
 
 instance Show SymbolUsage where
-	show (SymbolUsage s m pos) = show s ++ " at " ++ show m ++ ":" ++ show pos
+	show (SymbolUsage s m p) = show s ++ " at " ++ show m ++ ":" ++ show p
 
 instance ToJSON SymbolUsage where
-	toJSON (SymbolUsage s m pos) = object $ noNulls ["symbol" .= s, "in" .= m, "at" .= pos]
+	toJSON (SymbolUsage s m p) = object $ noNulls ["symbol" .= s, "in" .= m, "at" .= p]
 
 instance FromJSON SymbolUsage where
 	parseJSON = withObject "symbol-usage" $ \v -> SymbolUsage <$>

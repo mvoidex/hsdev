@@ -2,7 +2,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.AutoFix (
-	Correction(..), correctionMessage, corrector,
 	corrections,
 	autoFix,
 	CorrectorMatch,
@@ -11,78 +10,64 @@ module HsDev.Tools.AutoFix (
 	findCorrector,
 
 	module Data.Text.Region,
+	module HsDev.Tools.Refact,
 	module HsDev.Tools.Types
 	) where
 
 import Control.Applicative
 import Control.Lens hiding ((.=), at)
-import Data.Aeson
 import Data.Maybe (listToMaybe, mapMaybe)
-import Data.Text.Region hiding (Region(..))
+import Data.Text.Region hiding (Region(..), update)
 import qualified Data.Text.Region as R
 
+import HsDev.Tools.Refact
 import HsDev.Symbols.Location (Position(..), Region(..))
 import HsDev.Tools.Base
 import HsDev.Tools.Types
-import HsDev.Util ((.::))
 
-data Correction = Correction {
-	_correctionMessage :: String,
-	_corrector :: Replace String }
-		deriving (Eq, Show)
+instance Regioned a => Regioned (Note a) where
+	regions = note . regions
 
-instance ToJSON Correction where
-	toJSON (Correction msg cor) = object [
-		"message" .= msg,
-		"corrector" .= cor]
-
-instance FromJSON Correction where
-	parseJSON = withObject "correction" $ \v -> Correction <$>
-		v .:: "message" <*>
-		v .:: "corrector"
-
-makeLenses ''Correction
-
-corrections :: [Note OutputMessage] -> [Note Correction]
-corrections = mapMaybe toCorrection where
-	toCorrection :: Note OutputMessage -> Maybe (Note Correction)
-	toCorrection n = useSuggestion <|> findCorrector n where
+corrections :: [Note OutputMessage] -> [Note Refact]
+corrections = mapMaybe toRefact where
+	toRefact :: Note OutputMessage -> Maybe (Note Refact)
+	toRefact n = useSuggestion <|> findCorrector n where
 		-- Use existing suggestion
-		useSuggestion :: Maybe (Note Correction)
+		useSuggestion :: Maybe (Note Refact)
 		useSuggestion = do
 			sugg <- view (note . messageSuggestion) n
 			return $ set
 				note
-				(Correction
+				(Refact
 					(view (note . message) n)
-					(replace (fromRegion $ view noteRegion n) (by sugg)))
+					(replace (fromRegion $ view noteRegion n) sugg))
 				n
 
 -- | Apply corrections
-autoFix :: [Note Correction] -> ([Note Correction], Maybe String) -> ([Note Correction], Maybe String)
-autoFix ns (upd, mcts) = (over (each . note . corrector . replaceRegion) (update act) upd, over (_Just . contents) (apply act) mcts) where
-	act = Edit (ns ^.. each . note . corrector)
+autoFix :: [Note Refact] -> ([Note Refact], Maybe String) -> ([Note Refact], Maybe String)
+autoFix ns (upd, mcts) = (update rs upd, over _Just (refact rs) mcts) where
+	rs = ns ^.. each . note
 
-type CorrectorMatch = Note OutputMessage -> Maybe (Note Correction)
+type CorrectorMatch = Note OutputMessage -> Maybe (Note Refact)
 
 correctors :: [CorrectorMatch]
 correctors = [
-	match "^The (?:qualified )?import of .([\\w\\.]+). is redundant" $ \_ rgn -> Correction -- There are different quotes in Windows/Linux
+	match "^The (?:qualified )?import of .([\\w\\.]+). is redundant" $ \_ rgn -> Refact -- There are different quotes in Windows/Linux
 		"Redundant import"
 		(cut
 			(expandLines rgn)),
-	match "^(.*?)\nFound:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g rgn -> Correction
+	match "^(.*?)\nFound:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g rgn -> Refact
 		(g `at` 1)
 		(replace
 			((rgn ^. regionFrom) `regionSize` pt 0 (length $ g `at` 2))
-			(by $ g `at` 3))]
+			(g `at` 3))]
 
-match :: String -> ((Int -> Maybe String) -> R.Region -> Correction) -> CorrectorMatch
+match :: String -> ((Int -> Maybe String) -> R.Region -> Refact) -> CorrectorMatch
 match pat f n = do
 	g <- matchRx pat (view (note . message) n)
 	return $ set note (f g (fromRegion $ view noteRegion n)) n
 
-findCorrector :: Note OutputMessage -> Maybe (Note Correction)
+findCorrector :: Note OutputMessage -> Maybe (Note Refact)
 findCorrector n = listToMaybe $ mapMaybe ($ n) correctors
 
 fromRegion :: Region -> R.Region

@@ -77,12 +77,13 @@ library
     HsDev.Tools.Ghc.Compat
     HsDev.Tools.Ghc.MGhc
     HsDev.Tools.Ghc.Prelude
+    HsDev.Tools.Ghc.Session
     HsDev.Tools.Ghc.Types
     HsDev.Tools.Ghc.Worker
-    HsDev.Tools.Ghc.Session
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Tools.HLint
+    HsDev.Tools.Refact
     HsDev.Tools.Types
     HsDev.Types
     HsDev.Util
@@ -155,7 +156,7 @@ library
     syb >= 0.5.1,
     template-haskell,
     text >= 1.2.0,
-    text-region >= 0.2,
+    text-region >= 0.3,
     time >= 1.5.0,
     transformers >= 0.4.0,
     transformers-base >= 0.4.0,

@@ -320,18 +320,17 @@ runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections n
 runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
 	let
-		doFix :: FilePath -> Maybe String -> ([Tools.Note AutoFix.Correction], Maybe String)
-		doFix file mcts = AutoFix.autoFix fCorrs (fUpCorrs, mcts) where
-			findCorrs :: FilePath -> [Tools.Note AutoFix.Correction] -> [Tools.Note AutoFix.Correction]
-			findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
-			fCorrs = findCorrs file ns
-			fUpCorrs = findCorrs file rest
-		runFix file
-			| isPure = return $ fst $ doFix file Nothing
-			| otherwise = do
-				(corrs', Just cts') <- liftM (doFix file) $ liftIO $ Just <$> readFileUtf8 file
-				liftIO $ writeFileUtf8 file cts'
-				return corrs'
+		runFix file = do
+			when (not isPure) $ do
+				liftIO $ readFileUtf8 file >>= writeFileUtf8 file . AutoFix.refact fixRefacts'
+			return newCorrs'
+			where
+				findCorrs :: FilePath -> [Tools.Note AutoFix.Refact] -> [Tools.Note AutoFix.Refact]
+				findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
+				fixCorrs' = findCorrs file ns
+				upCorrs' = findCorrs file rest
+				fixRefacts' = fixCorrs' ^.. each . Tools.note
+				newCorrs' = AutoFix.update fixRefacts' upCorrs'
 	liftM concat $ mapM runFix files
 runCommand (GhcEval exprs mfile) = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] [] False False) (maybeToList mfile)

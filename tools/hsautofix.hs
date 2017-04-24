@@ -4,9 +4,9 @@ module Main (
 	main
 	) where
 
-import Control.Lens (preview)
+import Control.Lens (preview, (^..), each)
 import Control.Arrow ((***))
-import Control.Monad (liftM)
+import Control.Monad (liftM, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Except (throwError)
 import Data.Aeson hiding (Error)
@@ -72,16 +72,15 @@ main = toolMain "hsautofix" "automatically fix some errors" fixP (printExceptT .
 				partition (check . fst) $ zip [1..] corrs
 		files <- liftE $ mapM canonicalizePath $ ordNub $ sort $ mapMaybe (preview $ noteSource . moduleFile) corrs
 		let
-			doFix :: FilePath -> Maybe String -> ([Note Correction], Maybe String)
-			doFix file mcts = autoFix fixCorrs' (upCorrs', mcts) where
-				findCorrs :: FilePath -> [Note Correction] -> [Note Correction]
-				findCorrs f = filter ((== Just f) . preview (noteSource . moduleFile))
-				fixCorrs' = findCorrs file fixCorrs
-				upCorrs' = findCorrs file upCorrs
-			runFix file
-				| pure' = return $ fst $ doFix file Nothing
-				| otherwise = do
-					(corrs', Just cts') <- liftM (doFix file) $ liftE $ liftM Just $ readFileUtf8 file
-					liftE $ writeFileUtf8 file cts'
-					return corrs'
+			runFix file = do
+				when (not pure') $ do
+					liftE $ readFileUtf8 file >>= writeFileUtf8 file . refact fixRefacts'
+				return newCorrs'
+				where
+					findCorrs :: FilePath -> [Note Refact] -> [Note Refact]
+					findCorrs f = filter ((== Just f) . preview (noteSource . moduleFile))
+					fixCorrs' = findCorrs file fixCorrs
+					upCorrs' = findCorrs file upCorrs
+					fixRefacts' = fixCorrs' ^.. each . note
+					newCorrs' = update fixRefacts' upCorrs'
 		liftM concat $ mapM runFix files
