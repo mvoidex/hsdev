@@ -69,7 +69,9 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `types` — get types for all source spans
 * `flags`, `langs` — list ghc flags and language extensions
 * `ghc eval` — evaluate expression
-* `autofix show`, `autofix fix` — commands to fix some warnings and apply `hlint` suggestions, see description below
+* `autofixes` — get suggestions to fix some warnings and errors
+* `rename` — get regions to rename some symbol
+* `refactor` — apply suggestions/renames from previous commands
 
 #### TODO: Detailed commands description with examples
 
@@ -103,20 +105,22 @@ HsDev.Database:76:17
 ...
 </pre>
 
-#### AutoFix
+#### AutoFixes/Rename/Refactor
 
-Autofix commands used to assist for automatic fix of some warnings and hints from `hlint`. `autofix show` command parses `check` and `lint` command output, and returns `corrections` — data with regions and suggestions to fix. `autofix fix` command perform fix of selected corrections and also updates positions of other corrections, such that they stay relevant. These updated corrections can be used to pass them to `autofix fix` again.
+Autofix commands used to assist for automatic fix of some warnings and hints from `hlint`. `autofixes` command parses `check` and `lint` command output, and returns `corrections` — data with regions and suggestions to fix. `refactor` command perform fix of selected corrections and also updates positions of other corrections, such that they stay relevant. These updated corrections can be used to pass them to `refactor` again.
 Example of interactive command, based on this command in SublimeHaskell:
 ![autofix](https://raw.githubusercontent.com/SublimeHaskell/SublimeHaskell/hsdev/Commands/AutoFix.gif)
 
+Rename generates corrections to rename symbol
+
 <pre>
 # Get corrections
-PS> $corrs = hsdev check-lint ..\haskell\Test.hs | hsdev autofix show --stdin
+PS> $corrs = hsdev check-lint ..\haskell\Test.hs | hsdev autofixes --stdin
 # Apply first correction, other corrections passed as --rest param to update their positions
 # Result is updated --rest corrections, which can be used again
-PS> $corrs2 = ($corrs | jq '[.[1]]' -c -r) | hsdev autofix fix --pure --rest (escape ($corrs | jq '.[1:5]' -c -r)) --stdin
+PS> $corrs2 = ($corrs | jq '[.[1]]' -c -r) | hsdev refactor --pure --rest (escape ($corrs | jq '.[1:5]' -c -r)) --stdin
 # One more
-PS> $corrs2 | hsdev autofix fix --stdin --pure
+PS> $corrs2 | hsdev refactor --stdin --pure
 </pre>
 
 

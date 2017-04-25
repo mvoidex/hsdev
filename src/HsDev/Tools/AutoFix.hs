@@ -21,7 +21,6 @@ import Data.Text.Region hiding (Region(..), update)
 import qualified Data.Text.Region as R
 
 import HsDev.Tools.Refact
-import HsDev.Symbols.Location (Position(..), Region(..))
 import HsDev.Tools.Base
 import HsDev.Tools.Types
 
@@ -69,9 +68,3 @@ match pat f n = do
 
 findCorrector :: Note OutputMessage -> Maybe (Note Refact)
 findCorrector n = listToMaybe $ mapMaybe ($ n) correctors
-
-fromRegion :: Region -> R.Region
-fromRegion (Region f t) = fromPosition f `till` fromPosition t
-
-fromPosition :: Position -> Point
-fromPosition (Position l c) = pt (pred l) (pred c)

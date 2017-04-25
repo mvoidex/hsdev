@@ -316,8 +316,8 @@ runCommand (Types fs ghcs') = toValue $ do
 	liftM concat $ forM fs $ \(FileSource file msrc) -> do
 		m <- setFileSourceSession ghcs' file
 		inSessionGhc $ Types.fileTypes [] m msrc
-runCommand (AutoFix (AutoFixShow ns)) = toValue $ return $ AutoFix.corrections ns
-runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
+runCommand (AutoFix ns) = toValue $ return $ AutoFix.corrections ns
+runCommand (Refactor ns rest isPure) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
 	let
 		runFix file = do
@@ -332,6 +332,28 @@ runCommand (AutoFix (AutoFixFix ns rest isPure)) = toValue $ do
 				fixRefacts' = fixCorrs' ^.. each . Tools.note
 				newCorrs' = AutoFix.update fixRefacts' upCorrs'
 	liftM concat $ mapM runFix files
+runCommand (Rename nm newName fpath) = toValue $ do
+	m <- refineSourceModule fpath
+	sym <- maybe (hsdevError $ OtherError $ "symbol not found") return $
+		m ^? exportedSymbols . filtered ((== fromString nm) . view sourcedName) -- FIXME: use not exported symbols
+
+	dbval <- serverDatabase
+	let
+		refacts = do
+			m' <- dbval ^.. sourcesSlice . modules
+			p <- m' ^.. moduleSource . _Just
+			let
+				symName = Name.qualName
+					(unpack $ sym ^. symbolId . symbolModule . moduleName)
+					(unpack $ sym ^. symbolId . symbolName)
+			usage' <- p ^.. P.qnames . P.usages symName
+			return $ Tools.Note {
+				Tools._noteSource = m' ^. moduleId . moduleLocation,
+				Tools._noteRegion = usage' ^. P.regionL,
+				Tools._noteLevel = Nothing,
+				Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion $ usage' ^. P.regionL) newName) }
+
+	return refacts
 runCommand (GhcEval exprs mfile) = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] [] False False) (maybeToList mfile)
 	ghcw <- askSession sessionGhc

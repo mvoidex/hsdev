@@ -132,12 +132,13 @@ List of commands with additional fiels:
      -  `files` — list of files
      -  `contents` — list of `content` objects
      -  `ghc-opts` — list of additional ghc options (not applied for `lint` command)
- * `autofix show` — show suggestions
+ * `autofixes` — show suggestions
      -  `messages` — list of `message` objects, which returned by `lint`/`check`/`check-lint` commands
- * `autofix fix` — apply some suggestions and return updated locations of rest suggestions
+ * `refactor` — apply some suggestions and return updated locations of rest suggestions
      -  `messages` — list of `message` objects to apply
      -  `rest` — list of `message` objects to update locations
      -  `pure` — just update locations, don't actually modify file, useful when some editor applies suggestions itself
+ * `rename` — get corrections to rename symbol, applied with `refactor`
  * `ghc eval` — evaluate expression
      - `exprs` — list of expressions
  * `link` — link to server, so that it will exit after client disconnects

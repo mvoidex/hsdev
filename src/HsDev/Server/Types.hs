@@ -9,7 +9,6 @@ module HsDev.Server.Types (
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
-	AutoFixCommand(..),
 	FileSource(..), TargetFilter(..), SearchQuery(..), SearchType(..),
 	FromCmd(..),
 	) where
@@ -434,17 +433,14 @@ data Command =
 	Types {
 		typesFiles :: [FileSource],
 		typesGhcOpts :: [String] } |
-	AutoFix { autoFixCommand :: AutoFixCommand } |
+	AutoFix [Note OutputMessage] |
+	Refactor [Note Refact] [Note Refact] Bool |
+	Rename String String FilePath |
 	GhcEval { ghcEvalExpressions :: [String], ghcEvalSource :: Maybe FileSource } |
 	Langs |
 	Flags |
 	Link { linkHold :: Bool } |
 	Exit
-		deriving (Show)
-
-data AutoFixCommand =
-	AutoFixShow [Note OutputMessage] |
-	AutoFixFix [Note Refact] [Note Refact] Bool
 		deriving (Show)
 
 data FileSource = FileSource { fileSource :: FilePath, fileContents :: Maybe String } deriving (Show)
@@ -552,20 +548,17 @@ instance FromCmd Command where
 		cmd "check" "check source files or file contents" (Check <$> many cmdP <*> ghcOpts),
 		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many cmdP <*> ghcOpts),
 		cmd "types" "get types for file expressions" (Types <$> many cmdP <*> ghcOpts),
-		cmd "autofix" "autofix commands" (AutoFix <$> cmdP),
+		cmd "autofixes" "get autofixes by output messages" (AutoFix <$> option readJSON (long "data" <> metavar "message" <> help "messages to make fixes for")),
+		cmd "refactor" "apply some refactors and get rest updated" (Refactor <$>
+			option readJSON (long "data" <> metavar "message" <> help "messages to fix") <*>
+			option readJSON (long "rest" <> metavar "correction" <> short 'r' <> help "update corrections") <*>
+			pureFlag),
+		cmd "rename" "get rename refactors" (Rename <$> strArgument idm <*> strArgument idm <*> ctx),
 		cmd "ghc" "ghc commands" (subparser $ cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm) <*> optional cmdP)),
 		cmd "langs" "ghc language options" (pure Langs),
 		cmd "flags" "ghc flags" (pure Flags),
 		cmd "link" "link to server" (Link <$> holdFlag),
 		cmd "exit" "exit" (pure Exit)]
-
-instance FromCmd AutoFixCommand where
-	cmdP = subparser $ mconcat [
-		cmd "show" "generate corrections for check & lint messages" (AutoFixShow <$> option readJSON (long "data" <> metavar "message" <> help "messages to make fixes for")),
-		cmd "fix" "fix errors and return rest corrections with updated regions" (AutoFixFix <$>
-			option readJSON (long "data" <> metavar "message" <> help "messages to fix") <*>
-			option readJSON (long "rest" <> metavar "correction" <> short 'r' <> help "update corrections") <*>
-			pureFlag)]
 
 instance FromCmd FileSource where
 	cmdP = option readJSON (long "contents") <|> (FileSource <$> fileArg <*> pure Nothing)
@@ -677,7 +670,9 @@ instance ToJSON Command where
 	toJSON (Check fs ghcs) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs]
 	toJSON (CheckLint fs ghcs) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs]
 	toJSON (Types fs ghcs) = cmdJson "types" ["files" .= fs, "ghc-opts" .= ghcs]
-	toJSON (AutoFix acmd) = toJSON acmd
+	toJSON (AutoFix ns) = cmdJson "autofixes" ["messages" .= ns]
+	toJSON (Refactor ns rests pure') = cmdJson "refactor" ["messages" .= ns, "rest" .= rests, "pure" .= pure']
+	toJSON (Rename n n' f) = cmdJson "rename" ["name" .= n, "new-name" .= n', "file" .= f]
 	toJSON (GhcEval exprs f) = cmdJson "ghc eval" ["exprs" .= exprs, "file" .= f]
 	toJSON Langs = cmdJson "langs" []
 	toJSON Flags = cmdJson "flags" []
@@ -728,21 +723,14 @@ instance FromJSON Command where
 		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "ghc-opts"),
 		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "ghc-opts"),
 		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "ghc-opts"),
-		AutoFix <$> parseJSON (Object v),
+		guardCmd "autofixes" v *> (AutoFix <$> v .:: "messages"),
+		guardCmd "refactor" v *> (Refactor <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True)),
+		guardCmd "rename" v *> (Rename <$> v .:: "name" <*> v .:: "new-name" <*> v .:: "file"),
 		guardCmd "ghc eval" v *> (GhcEval <$> v .::?! "exprs" <*> v .::? "file"),
 		guardCmd "langs" v *> pure Langs,
 		guardCmd "flags" v *> pure Flags,
 		guardCmd "link" v *> (Link <$> (v .:: "hold" <|> pure False)),
 		guardCmd "exit" v *> pure Exit]
-
-instance ToJSON AutoFixCommand where
-	toJSON (AutoFixShow ns) = cmdJson "autofix show" ["messages" .= ns]
-	toJSON (AutoFixFix ns rests pure') = cmdJson "autofix fix" ["messages" .= ns, "rest" .= rests, "pure" .= pure']
-
-instance FromJSON AutoFixCommand where
-	parseJSON = withObject "auto-fix-command" $ \v -> asum [
-		guardCmd "autofix show" v *> (AutoFixShow <$> v .:: "messages"),
-		guardCmd "autofix fix" v *> (AutoFixFix <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True))]
 
 instance ToJSON FileSource where
 	toJSON (FileSource fpath mcts) = object ["file" .= fpath, "contents" .= mcts]
