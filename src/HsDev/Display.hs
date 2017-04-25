@@ -67,3 +67,5 @@ instance Formattable ModuleLocation where
 instance Formattable Project where
 	formattable = formattable . display
 
+instance Formattable Sandbox where
+	formattable = formattable . display

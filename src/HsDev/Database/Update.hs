@@ -106,27 +106,33 @@ runUpdate uopts act = Log.scope "update" $ do
 					mlocs <- dbval ^.. databasePackages . ix pkg
 					mloc <- mlocs
 					return $ M.singleton mloc (S.singleton pdb)
-				dbs = ordNub $ concat $ mapMaybe (`M.lookup` invertedIndex) mlocs'
+				dbs = S.fromList $ concat $ mapMaybe (`M.lookup` invertedIndex) mlocs'
+				mlocsSet = S.fromList mlocs'
 				-- If some sourced files depends on currently scanned package-dbs
 				-- We must resolve them and even rescan if there was errors scanning without
 				-- dependencies provided (lack of fixities can cause errors inspecting files)
 				sboxes = databaseSandboxes dbval
 				sboxOf :: Path -> Maybe Sandbox
 				sboxOf fpath = find (pathInSandbox fpath) sboxes
-				sboxUpdated s = s `elem` map packageDbSandbox dbs
 
 				projs = do
 					proj <- dbval ^.. databaseProjects . each
-					guard $ sboxUpdated $ sboxOf (proj ^. projectPath)
-					guard $ any (`notElem` mlocs') (dbval ^.. projectSlice proj . modules . moduleId . moduleLocation)
+					let
+						mpdbs = dbval ^? databaseProjectsInfos . at (Just proj) . _Just . _1
+						pdbs = maybe S.empty (S.fromList . packageDbs) mpdbs
+						projMods = S.fromList $ dbval ^.. projectSlice proj . modules . moduleId . moduleLocation
+					guard $ not $ S.null $ pdbs `S.intersection` dbs
 					return proj
-				stands = do
-					sloc <- dbval ^.. standaloneSlice . modules . moduleId . moduleLocation
-					guard $ sboxUpdated $ sboxOf (sloc ^?! moduleFile)
-					guard (notElem sloc mlocs')
-					return (sloc, dbval ^.. databaseModules . ix sloc . inspection . inspectionOpts . each . unpacked, Nothing)
+				stands = []
+				-- HOWTO?
+				-- stands = do
+				-- 	sloc <- dbval ^.. standaloneSlice . modules . moduleId . moduleLocation
+				-- 	guard $ sboxUpdated $ sboxOf (sloc ^?! moduleFile)
+				-- 	guard (notElem sloc mlocs')
+				-- 	return (sloc, dbval ^.. databaseModules . ix sloc . inspection . inspectionOpts . each . unpacked, Nothing)
+
 			Log.sendLog Log.Trace $ "updated package-dbs: {}, have to rescan {} projects and {} files"
-				~~ intercalate ", " (map display dbs)
+				~~ intercalate ", " (map display $ S.toList dbs)
 				~~ length projs ~~ length stands
 			(_, rlocs') <- listen $ runTasks_ (scanModules [] stands : [scanProject [] (proj ^. projectCabal) | proj <- projs])
 			let
