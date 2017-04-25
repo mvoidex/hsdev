@@ -428,13 +428,16 @@ data Command =
 		lintFiles :: [FileSource] } |
 	Check {
 		checkFiles :: [FileSource],
-		checkGhcOpts :: [String] } |
+		checkGhcOpts :: [String],
+		checkClear :: Bool } |
 	CheckLint {
 		checkLintFiles :: [FileSource],
-		checkLintGhcOpts :: [String] } |
+		checkLintGhcOpts :: [String],
+		checkLinkClear :: Bool } |
 	Types {
 		typesFiles :: [FileSource],
-		typesGhcOpts :: [String] } |
+		typesGhcOpts :: [String],
+		typesClear :: Bool } |
 	AutoFix [Note OutputMessage] |
 	Refactor [Note Refact] [Note Refact] Bool |
 	Rename Text Text Path |
@@ -487,9 +490,9 @@ instance Paths Command where
 	paths f (Complete n g fpath) = Complete n g <$> paths f fpath
 	paths f (UnresolvedSymbols fs) = UnresolvedSymbols <$> traverse (paths f) fs
 	paths f (Lint fs) = Lint <$> traverse (paths f) fs
-	paths f (Check fs ghcs) = Check <$> traverse (paths f) fs <*> pure ghcs
-	paths f (CheckLint fs ghcs) = CheckLint <$> traverse (paths f) fs <*> pure ghcs
-	paths f (Types fs ghcs) = Types <$> traverse (paths f) fs <*> pure ghcs
+	paths f (Check fs ghcs c) = Check <$> traverse (paths f) fs <*> pure ghcs <*> pure c
+	paths f (CheckLint fs ghcs c) = CheckLint <$> traverse (paths f) fs <*> pure ghcs <*> pure c
+	paths f (Types fs ghcs c) = Types <$> traverse (paths f) fs <*> pure ghcs <*> pure c
 	paths f (GhcEval e mf) = GhcEval e <$> traverse (paths f) mf
 	paths _ c = pure c
 
@@ -544,9 +547,9 @@ instance FromCmd Command where
 		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (textArgument idm))),
 		cmd "unresolveds" "list unresolved symbols in source file" (UnresolvedSymbols <$> many fileArg),
 		cmd "lint" "lint source files or file contents" (Lint <$> many cmdP),
-		cmd "check" "check source files or file contents" (Check <$> many cmdP <*> ghcOpts),
-		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many cmdP <*> ghcOpts),
-		cmd "types" "get types for file expressions" (Types <$> many cmdP <*> ghcOpts),
+		cmd "check" "check source files or file contents" (Check <$> many cmdP <*> ghcOpts <*> clearFlag),
+		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many cmdP <*> ghcOpts <*> clearFlag),
+		cmd "types" "get types for file expressions" (Types <$> many cmdP <*> ghcOpts <*> clearFlag),
 		cmd "autofixes" "get autofixes by output messages" (AutoFix <$> option readJSON (long "data" <> metavar "message" <> help "messages to make fixes for")),
 		cmd "refactor" "apply some refactors and get rest updated" (Refactor <$>
 			option readJSON (long "data" <> metavar "message" <> help "messages to fix") <*>
@@ -592,6 +595,7 @@ textArgument :: Mod ArgumentFields String -> Parser Text
 textArgument = fmap fromString . strArgument
 
 cabalFlag :: Parser Bool
+clearFlag :: Parser Bool
 ctx :: Parser Path
 docsFlag :: Parser Bool
 fileArg :: Parser Path
@@ -613,6 +617,7 @@ sandboxArg :: Parser Path
 wideFlag :: Parser Bool
 
 cabalFlag = switch (long "cabal")
+clearFlag = switch (long "clear" <> short 'c' <> help "clear run, drop previous state")
 ctx = fileArg
 docsFlag = switch (long "docs" <> help "scan source file docs")
 fileArg = textOption (long "file" <> metavar "path" <> short 'f')
@@ -672,9 +677,9 @@ instance ToJSON Command where
 	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
 	toJSON (UnresolvedSymbols fs) = cmdJson "unresolveds" ["files" .= fs]
 	toJSON (Lint fs) = cmdJson "lint" ["files" .= fs]
-	toJSON (Check fs ghcs) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs]
-	toJSON (CheckLint fs ghcs) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs]
-	toJSON (Types fs ghcs) = cmdJson "types" ["files" .= fs, "ghc-opts" .= ghcs]
+	toJSON (Check fs ghcs c) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
+	toJSON (CheckLint fs ghcs c) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
+	toJSON (Types fs ghcs c) = cmdJson "types" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
 	toJSON (AutoFix ns) = cmdJson "autofixes" ["messages" .= ns]
 	toJSON (Refactor ns rests pure') = cmdJson "refactor" ["messages" .= ns, "rest" .= rests, "pure" .= pure']
 	toJSON (Rename n n' f) = cmdJson "rename" ["name" .= n, "new-name" .= n', "file" .= f]
@@ -725,9 +730,9 @@ instance FromJSON Command where
 		guardCmd "cabal list" v *> (CabalList <$> v .::?! "packages"),
 		guardCmd "unresolveds" v *> (UnresolvedSymbols <$> v .::?! "files"),
 		guardCmd "lint" v *> (Lint <$> v .::?! "files"),
-		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "ghc-opts"),
-		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "ghc-opts"),
-		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "ghc-opts"),
+		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
+		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
+		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
 		guardCmd "autofixes" v *> (AutoFix <$> v .:: "messages"),
 		guardCmd "refactor" v *> (Refactor <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True)),
 		guardCmd "rename" v *> (Rename <$> v .:: "name" <*> v .:: "new-name" <*> v .:: "file"),

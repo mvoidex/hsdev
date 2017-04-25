@@ -49,6 +49,7 @@ import qualified HsDev.Symbols.Name as Name
 import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Session
+import HsDev.Tools.Ghc.Worker (clearTargets)
 import qualified HsDev.Tools.Ghc.Compat as Compat
 import qualified HsDev.Tools.Ghc.Check as Check
 import qualified HsDev.Tools.Ghc.Types as Types
@@ -292,29 +293,35 @@ runCommand (UnresolvedSymbols fs) = toValue $ do
 	return unresolveds
 runCommand (Lint fs) = toValue $ do
 	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
-runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do
+runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			Log.sendLog Log.Trace $ "setting file source session for {}" ~~ file
 			m <- setFileSourceSession ghcs' file
 			Log.sendLog Log.Trace $ "file source session set"
-			inSessionGhc $ fn m
+			inSessionGhc $ do
+				when clear $ clearTargets
+				fn m
 	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check [] m c)) fs
-runCommand (CheckLint fs ghcs') = toValue $ do
+runCommand (CheckLint fs ghcs' clear) = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			m <- setFileSourceSession ghcs' file
-			inSessionGhc $ fn m
+			inSessionGhc $ do
+				when clear $ clearTargets
+				fn m
 	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check [] m c)) fs
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
 	return $ checkMsgs ++ lintMsgs
-runCommand (Types fs ghcs') = toValue $ do
+runCommand (Types fs ghcs' clear) = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	liftM concat $ forM fs $ \(FileSource file msrc) -> do
 		m <- setFileSourceSession ghcs' file
-		inSessionGhc $ Types.fileTypes [] m msrc
+		inSessionGhc $ do
+			when clear $ clearTargets
+			Types.fileTypes [] m msrc
 runCommand (AutoFix ns) = toValue $ return $ AutoFix.corrections ns
 runCommand (Refactor ns rest isPure) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
