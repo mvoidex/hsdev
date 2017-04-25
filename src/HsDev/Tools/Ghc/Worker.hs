@@ -27,6 +27,7 @@ module HsDev.Tools.Ghc.Worker (
 	module Control.Concurrent.Worker
 	) where
 
+import Control.Lens (view, over)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -35,6 +36,9 @@ import Data.Dynamic
 import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
 import Data.Version (showVersion)
+import Data.String (fromString)
+import Data.Text (Text)
+import qualified Data.Text as T
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.FilePath
 import qualified  System.Log.Simple as Log
@@ -205,24 +209,23 @@ clearTargets :: GhcMonad m => m ()
 clearTargets = loadTargets []
 
 -- | Make target with its source code optional
-makeTarget :: GhcMonad m => String -> Maybe String -> m Target
-makeTarget name Nothing = guessTarget name Nothing
+makeTarget :: GhcMonad m => Text -> Maybe Text -> m Target
+makeTarget name Nothing = guessTarget (T.unpack name) Nothing
 makeTarget name (Just cts) = do
-	t <- guessTarget name Nothing
+	t <- guessTarget (T.unpack name) Nothing
 	tm <- liftIO getCurrentTime
-	return t { targetContents = Just (stringToStringBuffer cts, tm) }
+	return t { targetContents = Just (stringToStringBuffer $ T.unpack cts, tm) }
 
 -- | Load all targets
 loadTargets :: GhcMonad m => [Target] -> m ()
 loadTargets ts = setTargets ts >> load LoadAllTargets >> return ()
 
 -- | Load and set interactive context
-loadInteractive :: GhcMonad m => FilePath -> Maybe String -> m ()
+loadInteractive :: GhcMonad m => Path -> Maybe Text -> m ()
 loadInteractive fpath mcts = do
 	fpath' <- liftIO $ canonicalize fpath
-	withCurrentDirectory (takeDirectory fpath') $ do
-		clearTargets
-		t <- makeTarget (takeFileName fpath') mcts
+	withCurrentDirectory (view path $ takeDir fpath') $ do
+		t <- makeTarget (over path takeFileName fpath') mcts
 		loadTargets [t]
 		g <- getModuleGraph
 		setContext [IIModule (ms_mod_name m) | m <- g]
@@ -265,7 +268,7 @@ logToChan ch fs sev src msg
 			_noteRegion = spanRegion src,
 			_noteLevel = Just sev',
 			_note = OutputMessage {
-				_message = showSDoc fs msg,
+				_message = fromString $ showSDoc fs msg,
 				_messageSuggestion = Nothing } }
 	| otherwise = return ()
 	where
@@ -274,7 +277,7 @@ logToChan ch fs sev src msg
 		checkSev SevFatal = Just Error
 		checkSev _ = Nothing
 		srcMod = case src of
-			RealSrcSpan s' -> FileModule (unpackFS $ srcSpanFile s') Nothing
+			RealSrcSpan s' -> FileModule (fromFilePath $ unpackFS $ srcSpanFile s') Nothing
 			_ -> NoLocation
 
 -- | Don't log ghc warnings and errors

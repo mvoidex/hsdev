@@ -11,7 +11,7 @@ module HsDev.PackageDb.Types (
 
 import Control.Applicative
 import Control.Monad (guard)
-import Control.Lens (makeLenses, each)
+import Control.Lens (makeLenses, each, (^.))
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.List (tails, isSuffixOf)
@@ -19,7 +19,7 @@ import Data.List (tails, isSuffixOf)
 import System.Directory.Paths
 import HsDev.Util ((.::))
 
-data PackageDb = GlobalDb | UserDb | PackageDb { _packageDb :: FilePath } deriving (Eq, Ord)
+data PackageDb = GlobalDb | UserDb | PackageDb { _packageDb :: Path } deriving (Eq, Ord)
 
 makeLenses ''PackageDb
 
@@ -31,7 +31,7 @@ instance NFData PackageDb where
 instance Show PackageDb where
 	show GlobalDb = "global-db"
 	show UserDb = "user-db"
-	show (PackageDb p) = "package-db:" ++ p
+	show (PackageDb p) = "package-db:" ++ p ^. path
 
 instance ToJSON PackageDb where
 	toJSON GlobalDb = "global-db"
@@ -48,7 +48,7 @@ instance FromJSON PackageDb where
 instance Paths PackageDb where
 	paths _ GlobalDb = pure GlobalDb
 	paths _ UserDb = pure UserDb
-	paths f (PackageDb p) = PackageDb <$> f p
+	paths f (PackageDb p) = PackageDb <$> paths f p
 
 -- | Stack of PackageDb in reverse order
 newtype PackageDbStack = PackageDbStack { _packageDbStack :: [PackageDb] } deriving (Eq, Ord, Show)
@@ -76,7 +76,7 @@ userDb :: PackageDbStack
 userDb = PackageDbStack [UserDb]
 
 -- | Make package-db stack from paths
-fromPackageDbs :: [FilePath] -> PackageDbStack
+fromPackageDbs :: [Path] -> PackageDbStack
 fromPackageDbs = PackageDbStack . map PackageDb . reverse
 
 -- | Get top package-db for package-db stack
@@ -100,7 +100,7 @@ isSubStack (PackageDbStack l) (PackageDbStack r) = l `isSuffixOf` r
 packageDbOpt :: PackageDb -> String
 packageDbOpt GlobalDb = "-global-package-db"
 packageDbOpt UserDb = "-user-package-db"
-packageDbOpt (PackageDb p) = "-package-db " ++ p
+packageDbOpt (PackageDb p) = "-package-db " ++ p ^. path
 
 -- | Get ghc options for package-db stack
 packageDbStackOpts :: PackageDbStack -> [String]

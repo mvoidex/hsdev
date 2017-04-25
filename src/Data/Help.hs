@@ -3,19 +3,22 @@ module Data.Help (
 	indent, indentHelp, detailed, indented
 	) where
 
+import Data.Text (Text)
+import qualified Data.Text as T
+
 class Help a where
-	brief :: a -> String
-	help :: a -> [String]
+	brief :: a -> Text
+	help :: a -> [Text]
 
-indent :: String -> String
-indent = ('\t':)
+indent :: Text -> Text
+indent = T.cons '\t'
 
-indentHelp :: [String] -> [String]
+indentHelp :: [Text] -> [Text]
 indentHelp [] = []
 indentHelp (h:hs) = h : map indent hs
 
-detailed :: Help a => a -> [String]
+detailed :: Help a => a -> [Text]
 detailed v = brief v : help v
 
-indented :: Help a => a -> [String]
+indented :: Help a => a -> [Text]
 indented = indentHelp . detailed

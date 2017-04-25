@@ -4,7 +4,7 @@ module Main (
 	main
 	) where
 
-import Control.Lens (preview, (^..), each)
+import Control.Lens (preview, (^..), each, view)
 import Control.Arrow ((***))
 import Control.Monad (liftM, when)
 import Control.Monad.IO.Class (liftIO)
@@ -12,11 +12,10 @@ import Control.Monad.Except (throwError)
 import Data.Aeson hiding (Error)
 import Data.List (partition, sort)
 import Data.Maybe (mapMaybe)
-import System.FilePath (normalise)
-import System.Directory (canonicalizePath)
+import Data.String (fromString)
 import Text.Read (readMaybe)
 
-import System.Directory.Paths (canonicalize)
+import System.Directory.Paths
 import HsDev.Symbols (moduleFile)
 import HsDev.Symbols.Location (ModuleLocation(..), regionAt, Position(..))
 import HsDev.Tools.Base
@@ -37,10 +36,10 @@ parseOutputMessage s = do
 	l <- readMaybe (groups `at` 2)
 	c <- readMaybe (groups `at` 3)
 	return Note {
-		_noteSource = FileModule (normalise (groups `at` 1)) Nothing,
+		_noteSource = FileModule (normPath $ fromFilePath (groups `at` 1)) Nothing,
 		_noteRegion = regionAt (Position l c),
 		_noteLevel = Just $ if groups 5 == Just "Warning" then Warning else Error,
-		_note = outputMessage $ nullToNL (groups `at` 6) }
+		_note = outputMessage $ fromString $ nullToNL (groups `at` 6) }
 
 -- | Replace NULL with newline
 nullToNL :: String -> String
@@ -70,14 +69,14 @@ main = toolMain "hsautofix" "automatically fix some errors" fixP (printExceptT .
 			check i = i `elem` ns || null ns
 			(fixCorrs, upCorrs) = (map snd *** map snd) $
 				partition (check . fst) $ zip [1..] corrs
-		files <- liftE $ mapM canonicalizePath $ ordNub $ sort $ mapMaybe (preview $ noteSource . moduleFile) corrs
+		files <- liftE $ mapM canonicalize $ ordNub $ sort $ mapMaybe (preview $ noteSource . moduleFile) corrs
 		let
 			runFix file = do
 				when (not pure') $ do
-					liftE $ readFileUtf8 file >>= writeFileUtf8 file . refact fixRefacts'
+					liftE $ readFileUtf8 (view path file) >>= writeFileUtf8 (view path file) . refact fixRefacts'
 				return newCorrs'
 				where
-					findCorrs :: FilePath -> [Note Refact] -> [Note Refact]
+					findCorrs :: Path -> [Note Refact] -> [Note Refact]
 					findCorrs f = filter ((== Just f) . preview (noteSource . moduleFile))
 					fixCorrs' = findCorrs file fixCorrs
 					upCorrs' = findCorrs file upCorrs

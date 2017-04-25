@@ -24,6 +24,7 @@ import Data.Aeson
 import Data.Group (Group(..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
+import Data.Text (Text)
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Maybe (mapMaybe, catMaybes, fromMaybe)
@@ -33,11 +34,12 @@ import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Util
 import HsDev.Util ((.::), ordNub, ordUnion)
+import System.Directory.Paths
 
 -- | HsDev database
 data Database = Database {
 	_databaseModules :: Map ModuleLocation InspectedModule,
-	_databaseProjects :: Map FilePath Project,
+	_databaseProjects :: Map Path Project,
 	_databaseProjectsInfos :: Map (Maybe Project) (PackageDbStack, [ModuleLocation]),
 	_databasePackageDbs :: Map PackageDb [ModulePackage],
 	_databasePackages :: Map ModulePackage [ModuleLocation] }
@@ -217,10 +219,10 @@ projectSlice proj = slice' fn where
 				concatMap targets (proj ^.. projectDescription . _Just . projectExecutables . each),
 				concatMap targets (proj ^.. projectDescription . _Just . projectTests . each)]
 
-			targets :: Target t => t -> [FilePath]
-			targets target' = map addRoot $ liftM2 (</>) (target' ^. buildInfo . infoSourceDirsDef) (targetFiles target') where
+			targets :: Target t => t -> [Path]
+			targets target' = map addRoot $ liftM2 subPath (target' ^. buildInfo . infoSourceDirsDef) (targetFiles target') where
 				addRoot f
-					| isRelative f = normalise $ (proj ^. projectPath) </> f
+					| isRelative (view path f) = normPath $ (proj ^. projectPath) `subPath` f
 					| otherwise = f
 
 -- | Leave installed module project depends on
@@ -240,7 +242,7 @@ projectDepsSlice proj = slice' fn where
 			pkgs = filter ((`S.member` deps) . view packageName) $ concat $ M.elems (_databasePackageDbs db)
 			mlocs = ordNub $ concat $ catMaybes [M.lookup pkg (_databasePackages db) | pkg <- pkgs]
 
-			depends :: Target t => t -> [String]
+			depends :: Target t => t -> [Text]
 			depends target' = target' ^. buildInfo . infoDepends
 
 -- | Leave source modules within project's target
@@ -253,9 +255,9 @@ targetSlice proj t = slice' fn where
 		_databasePackageDbs = mempty,
 		_databasePackages = mempty }
 		where
-			modFiles' = map addRoot $ liftM2 (</>) (t ^. buildInfo . infoSourceDirsDef) (targetFiles t) where
+			modFiles' = map addRoot $ liftM2 subPath (t ^. buildInfo . infoSourceDirsDef) (targetFiles t) where
 				addRoot f
-					| isRelative f = normalise $ (proj ^. projectPath) </> f
+					| isRelative (view path f) = normPath $ (proj ^. projectPath) `subPath` f
 					| otherwise = f
 
 -- | Remove old packages
@@ -283,7 +285,7 @@ standaloneSlice = slice' fn where
 		where
 			mlocs = db ^.. databaseProjectsInfos . ix Nothing . _2 . each
 
-filesSlice :: [FilePath] -> Slice
+filesSlice :: [Path] -> Slice
 filesSlice fs = slice' fn where
 	fn db = db {
 		_databaseModules = restrictKeys (_databaseModules db) (S.fromList mlocs),
@@ -292,7 +294,7 @@ filesSlice fs = slice' fn where
 		_databasePackageDbs = mempty,
 		_databasePackages = mempty }
 		where
-			mlocs = catMaybes [db ^? databaseModules . ix (FileModule f Nothing) . inspected . moduleId . moduleLocation | f <- fs]
+			mlocs = catMaybes [db ^? databaseModules . atFile f . inspected . moduleId . moduleLocation | f <- fs]
 			projs = mlocs ^.. each . moduleProject
 
 -- | Only source-code modules, no installed
@@ -323,7 +325,7 @@ remove :: Database -> Database -> Database
 remove = sub
 
 -- | Get module at file
-atFile :: Applicative f => FilePath -> (InspectedModule -> f InspectedModule) -> Map ModuleLocation InspectedModule -> f (Map ModuleLocation InspectedModule)
+atFile :: Path -> Traversal' (Map ModuleLocation InspectedModule) InspectedModule
 atFile fpath = ix (FileModule fpath Nothing)
 
 restrictKeys :: Ord k => Map k a -> Set k -> Map k a

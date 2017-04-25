@@ -17,6 +17,7 @@ import qualified Data.ByteString.Lazy.Char8 as L (pack)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.String (fromString)
+import qualified Data.Text as T
 
 import qualified HDocs.Module as HDocs
 import qualified HDocs.Haddock as HDocs (readSourceGhc, readSourcesGhc)
@@ -27,6 +28,7 @@ import HsDev.Error
 import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker (GhcM, haddockSession, liftGhc)
 import HsDev.Symbols
+import System.Directory.Paths
 
 -- | Get docs for modules
 hdocsy :: [ModuleLocation] -> [String] -> GhcM [Map String String]
@@ -35,7 +37,7 @@ hdocsy mlocs opts = (map $ force . HDocs.formatDocs) <$> docs' mlocs where
 	docs' ms = do
 		haddockSession opts
 		liftGhc $ hsdevLiftWith (ToolError "hdocs") $
-			liftM (map snd) $ HDocs.readSourcesGhc opts $ map (view moduleFile) ms
+			liftM (map snd) $ HDocs.readSourcesGhc opts $ map (view (moduleFile . path)) ms
 
 -- | Get docs for module
 hdocs :: ModuleLocation -> [String] -> GhcM (Map String String)
@@ -44,10 +46,10 @@ hdocs mloc opts = (force . HDocs.formatDocs) <$> docs' mloc where
 	docs' mloc' = do
 		haddockSession opts
 		liftGhc $ case mloc' of
-			(FileModule fpath _) -> hsdevLiftWith (ToolError "hdocs") $ liftM snd $ HDocs.readSourceGhc opts fpath
+			(FileModule fpath _) -> hsdevLiftWith (ToolError "hdocs") $ liftM snd $ HDocs.readSourceGhc opts (view path fpath)
 			(InstalledModule _ _ mname) -> do
 				df <- GHC.getSessionDynFlags
-				liftIO $ hsdevLiftWith (ToolError "hdocs") $ HDocs.moduleDocsF df mname
+				liftIO $ hsdevLiftWith (ToolError "hdocs") $ HDocs.moduleDocsF df (T.unpack mname)
 			_ -> hsdevError $ ToolError "hdocs" $ "Can't get docs for: " ++ show mloc'
 
 -- | Get all docs

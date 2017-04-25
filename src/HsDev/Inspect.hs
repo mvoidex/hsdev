@@ -26,7 +26,8 @@ import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
 import Data.Ord (comparing)
 import Data.String (IsString, fromString)
-import qualified Data.Text as T (unpack, Text)
+import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, getPOSIXTime)
 import qualified Data.Map.Strict as M
 import qualified Language.Haskell.Exts as H
@@ -55,6 +56,7 @@ import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker (GhcM)
 import HsDev.Tools.HDocs (hdocs, hdocsProcess)
 import HsDev.Util
+import System.Directory.Paths
 
 -- | Preloaded module with contents and extensions
 data Preloaded = Preloaded {
@@ -62,7 +64,7 @@ data Preloaded = Preloaded {
 	_preloadedMode :: H.ParseMode,
 	_preloadedModule :: H.Module H.SrcSpanInfo,
 	-- ^ Loaded module head without declarations
-	_preloaded :: String }
+	_preloaded :: Text }
 
 instance NFData Preloaded where
 	rnf (Preloaded mid _ _ cts) = rnf mid `seq` rnf cts
@@ -80,43 +82,43 @@ asModule = lens g' s' where
 		_preloadedId = _moduleId m,
 		_preloadedModule = maybe (_preloadedModule p) dropScope (_moduleSource m) }
 
-preloadedImports :: Preloaded -> [String]
-preloadedImports p = [nm | H.ModuleName _ nm <- map H.importModule mimps] where
+preloadedImports :: Preloaded -> [Text]
+preloadedImports p = [fromString nm | H.ModuleName _ nm <- map H.importModule mimps] where
 	H.Module _ _ _ mimps _ = _preloadedModule p
 
 -- | Preload module - load head and imports to get actual extensions and dependencies
-preload :: String -> [(String, String)] -> [String] -> ModuleLocation -> Maybe String -> IO Preloaded
+preload :: Text -> [(String, String)] -> [String] -> ModuleLocation -> Maybe Text -> IO Preloaded
 preload name defines opts mloc@(FileModule fpath mproj) Nothing = do
-	cts <- readFileUtf8 fpath
+	cts <- readFileUtf8 (view path fpath)
 	let
-		srcExts = fromMaybe (takeDirectory fpath `withExtensions` mempty) $ do
+		srcExts = fromMaybe (takeDir fpath `withExtensions` mempty) $ do
 			proj <- mproj
 			findSourceDir proj fpath
 	preload name defines (opts ++ extensionsOpts srcExts) mloc (Just cts)
 preload _ _ _ mloc Nothing = hsdevError $ InspectError $
 	format "preload called non-sourced module: {}" ~~ mloc
 preload name defines opts mloc (Just cts) = do
-	cts' <- preprocess_ defines exts fpath $ map untab cts
-	pragmas <- parseOk $ H.getTopPragmas cts'
+	cts' <- preprocess_ defines exts fpath $ T.map untab cts
+	pragmas <- parseOk $ H.getTopPragmas (T.unpack cts')
 	let
 		fileExts = [H.parseExtension (T.unpack $ fromName_ $ void lang) | H.LanguagePragma _ langs <- pragmas, lang <- langs]
 		pmode = H.ParseMode {
-			H.parseFilename = fpath,
+			H.parseFilename = view path fpath,
 			H.baseLanguage = H.Haskell2010,
 			H.extensions = ordNub (map H.parseExtension exts ++ fileExts),
 			H.ignoreLanguagePragmas = False,
 			H.ignoreLinePragmas = True,
 			H.fixities = Nothing,
 			H.ignoreFunctionArity = False }
-	H.ModuleHeadAndImports l mpragmas mhead mimps <- parseOk $ fmap H.unNonGreedy $ H.parseWithMode pmode cts'
+	H.ModuleHeadAndImports l mpragmas mhead mimps <- parseOk $ fmap H.unNonGreedy $ H.parseWithMode pmode (T.unpack cts')
 	let
 		mname = case mhead of
-			Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> nm
+			Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> fromString nm
 			_
-				| haskellSource fpath -> moduleNameByFile fpath (mloc ^? moduleProject . _Just)
+				| haskellSource (view path fpath) -> moduleNameByFile fpath (mloc ^? moduleProject . _Just)
 				| otherwise -> name
 	return $ Preloaded {
-		_preloadedId = ModuleId (fromString mname) mloc,
+		_preloadedId = ModuleId mname mloc,
 		_preloadedMode = pmode,
 		_preloadedModule = H.Module l mhead mpragmas mimps [],
 		_preloaded = cts' }
@@ -157,7 +159,8 @@ analyzeResolve (AnalyzeEnv env _ rtable) m = case m ^. moduleSource of
 		_moduleFixities = [Fixity (void assoc) (fromMaybe 0 pr) (fixName opName)
 			| H.InfixDecl _ assoc pr ops <- decls', opName <- map getOpName ops],
 		_moduleScope = M.map (map HN.fromSymbol) tbl,
-		_moduleSource = Just annotated }
+		_moduleSource = Nothing }
+		-- _moduleSource = Just annotated }
 		where
 			getOpName (H.VarOp _ nm) = nm
 			getOpName (H.ConOp _ nm) = nm
@@ -179,7 +182,7 @@ analyzeResolve (AnalyzeEnv env _ rtable) m = case m ^. moduleSource of
 
 -- | Inspect preloaded module
 analyzePreloaded :: AnalyzeEnv -> Preloaded -> Either String Module
-analyzePreloaded aenv@(AnalyzeEnv env gfixities _) p = case H.parseFileContentsWithMode (_preloadedMode p') (_preloaded p') of
+analyzePreloaded aenv@(AnalyzeEnv env gfixities _) p = case H.parseFileContentsWithMode (_preloadedMode p') (T.unpack $ _preloaded p') of
 	H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
 	H.ParseOk m -> Right $ analyzeResolve aenv $ Module {
 		_moduleId = _preloadedId p',
@@ -257,9 +260,9 @@ getDecl decl' = case decl' of
 	where
 		tyName :: H.DeclHead Ann -> H.Name Ann
 		tyName = head . universeBi
-		tyArgs :: Data (ast Ann) => ast Ann -> [T.Text]
+		tyArgs :: Data (ast Ann) => ast Ann -> [Text]
 		tyArgs n = map prp (universeBi n :: [H.TyVarBind Ann])
-		getCtx :: Maybe (H.Context Ann) -> [T.Text]
+		getCtx :: Maybe (H.Context Ann) -> [Text]
 		getCtx mctx = map prp (universeBi mctx :: [H.Asst Ann])
 		getCtor (H.DataType _) = Data
 		getCtor (H.NewType _) = NewType
@@ -281,7 +284,7 @@ getGConDecl ptype (H.GadtDecl _ n (Just fs) t) = mkSymbol n (Constructor [prp ft
 	[mkSymbol fn (Selector (Just $ prp ft) (prp ptype) [prp n]) | H.FieldDecl _ fns ft <- fs, fn <- fns]
 
 
-prp :: H.Pretty a => a -> T.Text
+prp :: H.Pretty a => a -> Text
 prp = fromString . H.prettyPrint
 
 
@@ -308,7 +311,7 @@ inspectDocs opts m = do
 	let
 		hdocsWorkaround = False
 	docsMap <- if hdocsWorkaround
-		then liftIO $ hdocsProcess (fromMaybe (T.unpack $ view (moduleId . moduleName) m) (preview (moduleId . moduleLocation . moduleFile) m)) opts
+		then liftIO $ hdocsProcess (fromMaybe (T.unpack $ view (moduleId . moduleName) m) (preview (moduleId . moduleLocation . moduleFile . path) m)) opts
 		else liftM Just $ hdocs (view (moduleId . moduleLocation) m) opts
 	return $ maybe id addDocs docsMap m
 
@@ -316,25 +319,25 @@ inspectDocs opts m = do
 inspectDocsGhc :: [String] -> Module -> Ghc Module
 inspectDocsGhc opts m = case view (moduleId . moduleLocation) m of
 	FileModule fpath _ -> do
-		docsMap <- liftM (fmap (formatDocs . snd) . listToMaybe) $ hsdevLift $ readSourcesGhc opts [fpath]
+		docsMap <- liftM (fmap (formatDocs . snd) . listToMaybe) $ hsdevLift $ readSourcesGhc opts [view path fpath]
 		return $ maybe id addDocs docsMap m
 	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
 
 -- | Inspect contents
-inspectContents :: String -> [(String, String)] -> [String] -> String -> ExceptT String IO InspectedModule
+inspectContents :: Text -> [(String, String)] -> [String] -> Text -> ExceptT String IO InspectedModule
 inspectContents name defines opts cts = inspect (OtherLocation name) (contentsInspection cts opts) $ do
 	p <- lift $ preload name defines opts (OtherLocation name) (Just cts)
 	analyzed <- ExceptT $ return $ analyzePreloaded mempty p
 	return $ set (moduleId . moduleLocation) (OtherLocation name) analyzed
 
-contentsInspection :: String -> [String] -> ExceptT String IO Inspection
+contentsInspection :: Text -> [String] -> ExceptT String IO Inspection
 contentsInspection _ _ = return InspectionNone -- crc or smth
 
 -- | Inspect file
-inspectFile :: [(String, String)] -> [String] -> FilePath -> Maybe Project -> Maybe String -> IO InspectedModule
+inspectFile :: [(String, String)] -> [String] -> Path -> Maybe Project -> Maybe Text -> IO InspectedModule
 inspectFile defines opts file mproj mcts = hsdevLiftIO $ do
-	absFilename <- Dir.canonicalizePath file
-	ex <- Dir.doesFileExist absFilename
+	absFilename <- canonicalize file
+	ex <- fileExists absFilename
 	unless ex $ hsdevError $ FileNotFound absFilename
 	inspect (FileModule absFilename mproj) (sourceInspection absFilename mcts opts) $ do
 		-- docsMap <- liftE $ if hdocsWorkaround
@@ -350,41 +353,41 @@ inspectFile defines opts file mproj mcts = hsdevLiftIO $ do
 		onError = return . Left . show
 
 -- | Source inspection data, differs whether there are contents provided
-sourceInspection :: FilePath -> Maybe String -> [String] -> IO Inspection
+sourceInspection :: Path -> Maybe Text -> [String] -> IO Inspection
 sourceInspection f Nothing = fileInspection f
 sourceInspection f (Just _) = fileContentsInspection f
 
 -- | File inspection data
-fileInspection :: FilePath -> [String] -> IO Inspection
+fileInspection :: Path -> [String] -> IO Inspection
 fileInspection f opts = do
-	tm <- Dir.getModificationTime f
-	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ sort $ ordNub opts
+	tm <- Dir.getModificationTime (view path f)
+	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ map fromString $ sort $ ordNub opts
 
 -- | File contents inspection data
-fileContentsInspection :: FilePath -> [String] -> IO Inspection
+fileContentsInspection :: Path -> [String] -> IO Inspection
 fileContentsInspection _ opts = do
 	tm <- getPOSIXTime
-	return $ InspectionAt tm $ sort $ ordNub opts
+	return $ InspectionAt tm $ map fromString $ sort $ ordNub opts
 
 -- | Enumerate project dirs
-projectDirs :: Project -> IO [Extensions FilePath]
+projectDirs :: Project -> IO [Extensions Path]
 projectDirs p = do
 	p' <- loadProject p
-	return $ ordNub $ map (fmap (normalise . (view projectPath p' </>))) $ maybe [] sourceDirs $ view projectDescription p'
+	return $ ordNub $ map (fmap (normPath . (view projectPath p' `subPath`))) $ maybe [] sourceDirs $ view projectDescription p'
 
 -- | Enumerate project source files
-projectSources :: Project -> IO [Extensions FilePath]
+projectSources :: Project -> IO [Extensions Path]
 projectSources p = do
 	dirs <- projectDirs p
 	let
 		enumCabals = liftM (map takeDirectory . filter cabalFile) . traverseDirectory
-		dirs' = map (view entity) dirs
+		dirs' = map (view (entity . path)) dirs
 	-- enum inner projects and dont consider them as part of this project
-	subProjs <- liftM (delete (view projectPath p) . ordNub . concat) $ triesMap (enumCabals) dirs'
+	subProjs <- liftM (map fromFilePath . delete (view (projectPath . path) p) . ordNub . concat) $ triesMap (enumCabals) dirs'
 	let
 		enumHs = liftM (filter thisProjectSource) . traverseDirectory
-		thisProjectSource h = haskellSource h && not (any (`isParent` h) subProjs)
-	liftM (ordNub . concat) $ triesMap (liftM sequenceA . traverse (enumHs)) dirs
+		thisProjectSource h = haskellSource h && not (any (`isParent` fromFilePath h) subProjs)
+	liftM (ordNub . concat) $ triesMap (liftM sequenceA . traverse (liftM (map fromFilePath) . enumHs . view path)) dirs
 
 -- | Get actual defines
 getDefines :: IO [(String, String)]
@@ -395,26 +398,26 @@ getDefines = E.handle onIO $ do
 	cts <- readFileUtf8 (tmp </> "defines.hspp")
 	Dir.removeFile (tmp </> "defines.hs")
 	Dir.removeFile (tmp </> "defines.hspp")
-	return $ mapMaybe (\g -> (,) <$> g 1 <*> g 2) $ mapMaybe (matchRx rx) $ lines cts
+	return $ mapMaybe (\g -> (,) <$> g 1 <*> g 2) $ mapMaybe (matchRx rx . T.unpack) $ T.lines cts
 	where
 		rx = "#define ([^\\s]+) (.*)"
 		onIO :: E.IOException -> IO [(String, String)]
 		onIO _ = return []
 
-preprocess :: [(String, String)] -> FilePath -> String -> IO String
+preprocess :: [(String, String)] -> Path -> Text -> IO Text
 preprocess defines fpath cts = do
-	cts' <- E.catch (Cpphs.cppIfdef fpath defines [] Cpphs.defaultBoolOptions cts) onIOError
-	return $ unlines $ map snd cts'
+	cts' <- E.catch (Cpphs.cppIfdef (view path fpath) defines [] Cpphs.defaultBoolOptions (T.unpack cts)) onIOError
+	return $ T.unlines $ map (fromString . snd) cts'
 	where
 		onIOError :: E.IOException -> IO [(Cpphs.Posn, String)]
 		onIOError _ = return []
 
-preprocess_ :: [(String, String)] -> [String] -> FilePath -> String -> IO String
+preprocess_ :: [(String, String)] -> [String] -> Path -> Text -> IO Text
 preprocess_ defines exts fpath cts
 	| hasCPP = preprocess defines fpath cts
 	| otherwise = return cts
 	where
-		exts' = map H.parseExtension exts ++ maybe [] snd (H.readExtensions cts)
+		exts' = map H.parseExtension exts ++ maybe [] snd (H.readExtensions $ T.unpack cts)
 		hasCPP = H.EnableExtension H.CPP `elem` exts'
 
 dropScope :: Functor f => f (N.Scoped l) -> f l

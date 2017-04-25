@@ -41,10 +41,11 @@ import Data.List (find, intercalate, (\\))
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
-import qualified Data.Text as T (unpack)
+import Data.Text (Text)
+import Data.Text.Lens (unpacked)
+import qualified Data.Text as T
 import qualified Language.Haskell.Exts as H
 import qualified Language.Haskell.Names as N
-import System.Directory (canonicalizePath, doesFileExist)
 import System.FilePath
 import qualified System.Log.Simple as Log
 
@@ -57,22 +58,22 @@ import HsDev.Inspect.Order
 import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Sandbox
-import HsDev.Stack
+import qualified HsDev.Stack as S
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
-import HsDev.Symbols.Util
 import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
-import HsDev.Util (isParent, ordNub)
+import HsDev.Util (ordNub)
 import qualified HsDev.Util as Util (withCurrentDirectory)
 import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
 import Text.Format
+import System.Directory.Paths
 
 onStatus :: UpdateMonad m => m ()
 onStatus = asks (view updateTasks) >>= commandNotify . Notification . toJSON . reverse
@@ -109,7 +110,7 @@ runUpdate uopts act = Log.scope "update" $ do
 				-- We must resolve them and even rescan if there was errors scanning without
 				-- dependencies provided (lack of fixities can cause errors inspecting files)
 				sboxes = databaseSandboxes dbval
-				sboxOf :: FilePath -> Maybe Sandbox
+				sboxOf :: Path -> Maybe Sandbox
 				sboxOf fpath = find (pathInSandbox fpath) sboxes
 				sboxUpdated s = s `elem` map packageDbSandbox dbs
 
@@ -122,7 +123,7 @@ runUpdate uopts act = Log.scope "update" $ do
 					sloc <- dbval ^.. standaloneSlice . modules . moduleId . moduleLocation
 					guard $ sboxUpdated $ sboxOf (sloc ^?! moduleFile)
 					guard (notElem sloc mlocs')
-					return (sloc, dbval ^.. databaseModules . ix sloc . inspection . inspectionOpts . each, Nothing)
+					return (sloc, dbval ^.. databaseModules . ix sloc . inspection . inspectionOpts . each . unpacked, Nothing)
 			Log.sendLog Log.Trace $ "updated package-dbs: {}, have to rescan {} projects and {} files"
 				~~ intercalate ", " (map display dbs)
 				~~ length projs ~~ length stands
@@ -304,7 +305,7 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 		onError = hsdevError . OtherError . displayException
 
 -- | Scan source file, resolve dependent modules
-scanFile :: UpdateMonad m => [String] -> FilePath -> m ()
+scanFile :: UpdateMonad m => [String] -> Path -> m ()
 scanFile opts fpath = scanFiles [(FileSource fpath Nothing, opts)]
 
 -- | Scan source files, resolving dependent modules
@@ -312,9 +313,9 @@ scanFiles :: UpdateMonad m => [(FileSource, [String])] -> m ()
 scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ hsdevLiftIO $ do
 	Log.sendLog Log.Trace $ "scanning {} files" ~~ length fsrcs
 	dbval <- serverDatabase
-	fpaths' <- traverse (liftIO . canonicalizePath) $ map (fileSource . fst) fsrcs
+	fpaths' <- traverse (liftIO . canonicalize) $ map (fileSource . fst) fsrcs
 	forM_ fpaths' $ \fpath' -> do
-		ex <- liftIO $ doesFileExist fpath'
+		ex <- liftIO $ fileExists fpath'
 		when (not ex) $ hsdevError $ FileNotFound fpath'
 	mlocs <- forM fpaths' $ \fpath' -> case dbval ^? databaseModules . atFile fpath' . inspected of
 		Just m -> return $ view (moduleId . moduleLocation) m
@@ -322,12 +323,12 @@ scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ h
 			mproj <- locateProjectInfo fpath'
 			return $ FileModule fpath' mproj
 	mapM_ (watch . flip watchModule) mlocs
-	S.ScanContents dmods _ _ <- fmap mconcat $ mapM S.enumDependent fpaths'
+	S.ScanContents dmods _ _ <- fmap mconcat $ mapM (S.enumDependent . view path) fpaths'
 	Log.sendLog Log.Trace $ "dependent modules: {}" ~~ length dmods
 	scanModules [] ([(mloc, opts, mcts) | (mloc, (FileSource _ mcts, opts)) <- zip mlocs fsrcs] ++ dmods)
 
 -- | Scan source file with contents and resolve dependent modules
-scanFileContents :: UpdateMonad m => [String] -> FilePath -> Maybe String -> m ()
+scanFileContents :: UpdateMonad m => [String] -> Path -> Maybe Text -> m ()
 scanFileContents opts fpath mcts = scanFiles [(FileSource fpath mcts, opts)]
 
 -- | Scan cabal modules, doesn't rescan if already scanned
@@ -337,10 +338,10 @@ scanCabal opts = Log.scope "cabal" $ scanPackageDbStack opts userDb
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
 prepareSandbox :: UpdateMonad m => Sandbox -> m ()
 prepareSandbox sbox@(Sandbox StackWork fpath) = Log.scope "prepare" $ runTasks_ [
-	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ buildDeps Nothing,
-	runTask "configuring" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ configure Nothing]
+	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ S.buildDeps Nothing,
+	runTask "configuring" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ S.configure Nothing]
 	where
-		dir = takeDirectory fpath
+		dir = takeDirectory $ view path fpath
 prepareSandbox _ = return ()
 
 -- | Scan sandbox modules, doesn't rescan if already scanned
@@ -412,7 +413,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view (moduleId . moduleName) m) docs
 
 -- | Scan project file
-scanProjectFile :: UpdateMonad m => [String] -> FilePath -> m Project
+scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project
 scanProjectFile opts cabal = runTask "scanning" cabal $ do
 	proj <- S.scanProjectFile opts cabal
 	updater $ fromProject proj
@@ -430,11 +431,11 @@ refineProjectInfo proj = do
 		Just proj' -> return proj'
 
 -- | Get project info for module
-locateProjectInfo :: UpdateMonad m => FilePath -> m (Maybe Project)
-locateProjectInfo cabal = liftIO (locateProject cabal) >>= traverse refineProjectInfo
+locateProjectInfo :: UpdateMonad m => Path -> m (Maybe Project)
+locateProjectInfo cabal = liftIO (locateProject (view path cabal)) >>= traverse refineProjectInfo
 
 -- | Scan project and related package-db stack
-scanProjectStack :: UpdateMonad m => [String] -> FilePath -> m ()
+scanProjectStack :: UpdateMonad m => [String] -> Path -> m ()
 scanProjectStack opts cabal = do
 	proj <- scanProjectFile opts cabal
 	scanProject opts cabal
@@ -442,17 +443,17 @@ scanProjectStack opts cabal = do
 	maybe (scanCabal opts) (scanSandbox opts) sbox
 
 -- | Scan project
-scanProject :: UpdateMonad m => [String] -> FilePath -> m ()
-scanProject opts cabal = runTask "scanning" (project cabal) $ Log.scope "project" $ do
+scanProject :: UpdateMonad m => [String] -> Path -> m ()
+scanProject opts cabal = runTask "scanning" (project $ view path cabal) $ Log.scope "project" $ do
 	proj <- scanProjectFile opts cabal
 	watch (\w -> watchProject w proj opts)
 	S.ScanContents _ [(_, sources)] _ <- S.enumProject proj
 	scanModules opts sources
 
 -- | Scan directory for source files and projects
-scanDirectory :: UpdateMonad m => [String] -> FilePath -> m ()
+scanDirectory :: UpdateMonad m => [String] -> Path -> m ()
 scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
-	S.ScanContents standSrcs projSrcs pdbss <- S.enumDirectory dir
+	S.ScanContents standSrcs projSrcs pdbss <- S.enumDirectory (view path dir)
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
@@ -557,8 +558,8 @@ updateEvents updates = Log.scope "updater" $ do
 					~~ ("proj" ~% view projectName proj)
 				dbval <- serverDatabase
 				let
-					opts = dbval ^.. databaseModules . each . filtered (maybe False (inFile (view eventPath e)) . preview inspected) . inspection . inspectionOpts . each
-				return [(FileSource (view eventPath e) Nothing, opts)]
+					opts = dbval ^.. databaseModules . atFile (fromFilePath $ view eventPath e) . inspection . inspectionOpts . each . unpacked
+				return [(FileSource (fromFilePath $ view eventPath e) Nothing, opts)]
 			| isCabal e -> do
 				Log.sendLog Log.Info $ "Project {proj} changed"
 					~~ ("proj" ~% view projectName proj)
@@ -578,8 +579,8 @@ updateEvents updates = Log.scope "updater" $ do
 					~~ ("file" ~% view eventPath e)
 				dbval <- serverDatabase
 				let
-					opts = dbval ^.. databaseModules . atFile (view eventPath e) . inspection . inspectionOpts . each
-				return [(FileSource (view eventPath e) Nothing, opts)]
+					opts = dbval ^.. databaseModules . atFile (fromFilePath $ view eventPath e) . inspection . inspectionOpts . each . unpacked
+				return [(FileSource (fromFilePath $ view eventPath e) Nothing, opts)]
 			| otherwise -> return []
 	scanFiles files
 

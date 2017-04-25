@@ -25,14 +25,15 @@ module HsDev.Symbols.Location (
 
 import Control.Applicative
 import Control.DeepSeq (NFData(..))
-import Control.Lens (makeLenses, preview, view, (^..), (^.), each, _Just)
+import Control.Lens (makeLenses, preview, view, (^..), (^.), each, _Just, over)
 import Control.Monad (msum, mplus)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
 import Data.List (intercalate, findIndex, stripPrefix)
 import Data.Maybe
-import Data.Text (Text)
-import qualified Data.Text as T (split, unpack)
+import Data.Text (Text, pack, unpack)
+import Data.Text.Lens (unpacked)
+import qualified Data.Text as T
 import System.FilePath
 import Text.Read (readMaybe)
 
@@ -43,26 +44,26 @@ import HsDev.Util ((.::), (.::?), (.::?!), objectUnion, ordNub, noNulls)
 
 -- | Just package name and version without its location
 data ModulePackage = ModulePackage {
-	_packageName :: String,
-	_packageVersion :: String }
+	_packageName :: Text,
+	_packageVersion :: Text }
 		deriving (Eq, Ord)
 
 makeLenses ''ModulePackage
 
-mkPackage :: String -> ModulePackage
+mkPackage :: Text -> ModulePackage
 mkPackage n = ModulePackage n ""
 
 instance NFData ModulePackage where
 	rnf (ModulePackage n v) = rnf n `seq` rnf v
 
 instance Show ModulePackage where
-	show (ModulePackage n "") = n
-	show (ModulePackage n v) = n ++ "-" ++ v
+	show (ModulePackage n "") = unpack n
+	show (ModulePackage n v) = unpack n ++ "-" ++ unpack v
 
 instance Read ModulePackage where
 	readsPrec _ str = case pkg of
 		"" -> []
-		_ -> [(ModulePackage n v, str')]
+		_ -> [(ModulePackage (pack n) (pack v), str')]
 		where
 			(pkg, str') = break isSpace str
 			(rv, rn) = span versionChar $ reverse pkg
@@ -102,9 +103,9 @@ instance FromJSON PackageConfig where
 
 -- | Location of module
 data ModuleLocation =
-	FileModule { _moduleFile :: FilePath, _moduleProject :: Maybe Project } |
-	InstalledModule { _moduleInstallDirs :: [FilePath], _modulePackage :: Maybe ModulePackage, _installedModuleName :: String } |
-	OtherLocation { _otherLocationName :: String } |
+	FileModule { _moduleFile :: Path, _moduleProject :: Maybe Project } |
+	InstalledModule { _moduleInstallDirs :: [Path], _modulePackage :: Maybe ModulePackage, _installedModuleName :: Text } |
+	OtherLocation { _otherLocationName :: Text } |
 	NoLocation
 
 instance Eq ModuleLocation where
@@ -131,9 +132,9 @@ makeLenses ''ModuleLocation
 moduleStandalone :: ModuleLocation -> Bool
 moduleStandalone = (== Just Nothing) . preview moduleProject
 
-locationId :: ModuleLocation -> String
+locationId :: ModuleLocation -> Text
 locationId (FileModule fpath _) = fpath
-locationId (InstalledModule dirs mpack nm) = intercalate ":" (take 1 dirs ++ [maybe "" show mpack, nm])
+locationId (InstalledModule dirs mpack nm) = T.intercalate ":" (take 1 dirs ++ [maybe "" (pack . show) mpack, nm])
 locationId (OtherLocation src) = src
 locationId NoLocation = "<no-location>"
 
@@ -144,7 +145,7 @@ instance NFData ModuleLocation where
 	rnf NoLocation = ()
 
 instance Show ModuleLocation where
-	show = locationId
+	show = unpack . locationId
 
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object $ noNulls ["file" .= f, "project" .= fmap (view projectCabal) p]
@@ -162,8 +163,8 @@ instance FromJSON ModuleLocation where
 			readPackage s = maybe (fail $ "can't parse package: " ++ s) return . readMaybe $ s
 
 instance Paths ModuleLocation where
-	paths f (FileModule fpath p) = FileModule <$> f fpath <*> traverse (paths f) p
-	paths f (InstalledModule c p n) = InstalledModule <$> traverse f c <*> pure p <*> pure n
+	paths f (FileModule fpath p) = FileModule <$> paths f fpath <*> traverse (paths f) p
+	paths f (InstalledModule c p n) = InstalledModule <$> traverse (paths f) c <*> pure p <*> pure n
 	paths _ (OtherLocation s) = pure $ OtherLocation s
 	paths _ NoLocation = pure NoLocation
 
@@ -181,7 +182,7 @@ instance NFData ModuleId where
 	rnf (ModuleId n l) = rnf n `seq` rnf l
 
 instance Show ModuleId where
-	show (ModuleId n l) = show l ++ ":" ++ T.unpack n
+	show (ModuleId n l) = show l ++ ":" ++ unpack n
 
 instance ToJSON ModuleId where
 	toJSON m = object $ noNulls [
@@ -205,7 +206,7 @@ instance NFData SymbolId where
 	rnf (SymbolId n m) = rnf n `seq` rnf m
 
 instance Show SymbolId where
-	show (SymbolId n m) = show m ++ ":" ++ T.unpack n
+	show (SymbolId n m) = show m ++ ":" ++ unpack n
 
 instance ToJSON SymbolId where
 	toJSON s = object $ noNulls [
@@ -257,10 +258,10 @@ regionLines :: Region -> Int
 regionLines (Region f t) = succ (view positionLine t - view positionLine f)
 
 -- | Get string at region
-regionStr :: Region -> String -> String
-regionStr r@(Region f t) s = intercalate "\n" $ drop (pred $ view positionColumn f) fline : tl where
-	s' = take (regionLines r) $ drop (pred (view positionLine f)) $ lines s
-	(fline:tl) = init s' ++ [take (pred $ view positionColumn t) (last s')]
+regionStr :: Region -> Text -> Text
+regionStr r@(Region f t) s = T.intercalate "\n" $ T.drop (pred $ view positionColumn f) fline : tl where
+	s' = take (regionLines r) $ drop (pred (view positionLine f)) $ T.lines s
+	(fline:tl) = init s' ++ [T.take (pred $ view positionColumn t) (last s')]
 
 instance NFData Region where
 	rnf (Region f t) = rnf f `seq` rnf t
@@ -303,43 +304,43 @@ instance FromJSON Location where
 		v .::? "pos"
 
 -- | Get source module root directory, i.e. for "...\src\Foo\Bar.hs" with module 'Foo.Bar' will return "...\src"
-sourceModuleRoot :: Text -> FilePath -> FilePath
-sourceModuleRoot mname = 
+sourceModuleRoot :: Text -> Path -> Path
+sourceModuleRoot mname = over paths $
 	normalise . joinPath .
 	reverse . drop (length $ T.split (== '.') mname) . reverse .
 	splitDirectories
 
 -- | Path to module source
 -- >importPath "Quux.Blah" = "Quux/Blah.hs"
-importPath :: Text -> FilePath
-importPath = (`addExtension` "hs") . joinPath . map T.unpack . T.split (== '.')
+importPath :: Text -> Path
+importPath = fromFilePath . (`addExtension` "hs") . joinPath . map unpack . T.split (== '.')
 
 -- | Get supposed module name by its file and project
-moduleNameByFile :: FilePath -> Maybe Project -> String
-moduleNameByFile fpath Nothing = takeBaseName fpath
-moduleNameByFile fpath (Just proj) = maybe (takeBaseName fpath) (intercalate ".") $ do
-	suff <- stripPrefix (splitDirectories (proj ^. projectPath)) (splitDirectories fpath)
+moduleNameByFile :: Path -> Maybe Project -> Text
+moduleNameByFile fpath Nothing = over path takeBaseName fpath
+moduleNameByFile fpath (Just proj) = maybe (over path takeBaseName fpath) (fromFilePath . intercalate ".") $ do
+	suff <- stripPrefix (splitDirectories (proj ^. projectPath . path)) (splitDirectories $ fpath ^. path)
 	-- try cut any of source-dirs
 	flip mplus (return suff) $ msum [
-		stripPrefix (splitDirectories dir) suff
+		stripPrefix (splitDirectories $ dir ^. path) suff
 		| dir <- ordNub (proj ^.. projectDescription . _Just . infos . infoSourceDirs . each)]
 
 packageOpt :: Maybe ModulePackage -> [String]
-packageOpt = maybeToList . fmap (("-package " ++) . view packageName)
+packageOpt = maybeToList . fmap (("-package " ++) . view (packageName . unpacked))
 
 -- | Recalc positions to interpret '\t' as one symbol instead of N
 class RecalcTabs a where
 	-- | Interpret '\t' as one symbol instead of N
-	recalcTabs :: String -> Int -> a -> a
+	recalcTabs :: Text -> Int -> a -> a
 	-- | Inverse of `recalcTabs`: interpret '\t' as N symbols instead of 1
-	calcTabs :: String -> Int -> a -> a
+	calcTabs :: Text -> Int -> a -> a
 
 instance RecalcTabs Position where
 	recalcTabs cts n (Position l c) = Position l c' where
-		line = listToMaybe $ drop (pred l) $ lines cts
+		line = listToMaybe $ drop (pred l) $ T.lines cts
 		c' = case line of
 			Nothing -> c
-			Just line' -> let sizes = map charSize line' in
+			Just line' -> let sizes = map charSize (unpack line') in
 				succ . fromMaybe (length sizes) .
 				findIndex (>= pred c) .
 				scanl (+) 0 $ sizes
@@ -347,8 +348,8 @@ instance RecalcTabs Position where
 		charSize '\t' = n
 		charSize _ = 1
 	calcTabs cts n (Position l c) = Position l c' where
-		line = listToMaybe $ drop (pred l) $ lines cts
-		c' = maybe c (succ . sum . map charSize . take (pred c)) line
+		line = listToMaybe $ drop (pred l) $ T.lines cts
+		c' = maybe c (succ . sum . map charSize . take (pred c) . unpack) $ line
 		charSize :: Char -> Int
 		charSize '\t' = n
 		charSize _ = 1

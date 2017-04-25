@@ -44,7 +44,7 @@ import Text.Format ((~~), (~%))
 
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
-import System.Directory.Paths (canonicalize, paths)
+import System.Directory.Paths
 import qualified System.Directory.Watcher as Watcher
 
 import qualified HsDev.Cache as Cache
@@ -85,7 +85,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 	clientChan <- liftIO F.newChan
 	withCache sopts () $ \cdir -> do
 		Log.sendLog Log.Trace $ "Checking cache version in {}" ~~ cdir 
-		ver <- liftIO $ Cache.readVersion $ cdir </> Cache.versionCache
+		ver <- liftIO $ Cache.readVersion $ fromFilePath cdir `subPath` Cache.versionCache
 		Log.sendLog Log.Debug $ "Cache version: {}" ~~ strVersion ver
 		unless (sameVersion (cutVersion version) (cutVersion ver)) $ ignoreIO $ do
 			Log.sendLog Log.Info $ "Cache version ({cache}) is incompatible with hsdev version ({hsdev}), removing cache ({dir})" ~~
@@ -96,7 +96,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 			liftIO $ removeDirectoryRecursive cdir
 		Log.sendLog Log.Debug $ "Writing new cache version: {}" ~~ strVersion version
 		liftIO $ createDirectoryIfMissing True cdir
-		liftIO $ Cache.writeVersion $ cdir </> Cache.versionCache
+		liftIO $ Cache.writeVersion $ fromFilePath cdir `subPath` Cache.versionCache
 	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
 		Log.sendLog Log.Info $ "Loading cache from {}" ~~ cdir
 		-- dbCache <- liftA merge <$> SC.load cdir

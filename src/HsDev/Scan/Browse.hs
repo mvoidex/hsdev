@@ -34,6 +34,7 @@ import HsDev.Error
 import HsDev.Tools.Base (inspect)
 import HsDev.Tools.Ghc.Worker (GhcM, runGhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
+import System.Directory.Paths
 
 import qualified ConLike as GHC
 import qualified DataCon as GHC
@@ -82,7 +83,7 @@ browseModules opts dbs mlocs = do
 	liftM catMaybes $ sequence [browseModule' p m | (p, m) <- ms, ghcModuleLocation p m `S.member` mlocs']
 	where
 		browseModule' :: GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
-		browseModule' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 opts) (browseModule p m)
+		browseModule' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 (map fromString opts)) (browseModule p m)
 		mlocs' = S.fromList mlocs
 
 browseModule :: GHC.PackageConfig -> GHC.Module -> GhcM Module
@@ -191,7 +192,7 @@ tryT :: MonadCatch m => m a -> m (Maybe a)
 tryT act = catch (fmap Just act) (const (return Nothing) . (id :: SomeException -> SomeException))
 
 readPackage :: GHC.PackageConfig -> ModulePackage
-readPackage pc = ModulePackage (GHC.packageNameString pc) (showVersion (GHC.packageVersion pc))
+readPackage pc = ModulePackage (fromString $ GHC.packageNameString pc) (fromString $ showVersion (GHC.packageVersion pc))
 
 readPackageConfig :: GHC.PackageConfig -> PackageConfig
 readPackageConfig pc = PackageConfig
@@ -200,7 +201,7 @@ readPackageConfig pc = PackageConfig
 	(GHC.exposed pc)
 
 ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> ModuleLocation
-ghcModuleLocation p m = InstalledModule (GHC.libraryDirs p) (Just $ readPackage p) (GHC.moduleNameString $ GHC.moduleName m)
+ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (Just $ readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
 
 ghcPackageDb :: GHC.PackageConfig -> IO PackageDb
 ghcPackageDb = maybe (return GlobalDb) packageDbCandidate_ . listToMaybe . GHC.libraryDirs
@@ -231,13 +232,13 @@ packageDbCandidate fpath = liftM Just (msum [global', user', sandbox', stack']) 
 			platform = takeFileName (takeDirectory fpath')
 			dbPath = sandboxPath </> (platform ++ "-packages.conf.d")
 		guardExist dbPath
-		return $ PackageDb dbPath
+		return $ PackageDb $ fromFilePath dbPath
 	stack' = do
 		guard (takeFileName (takeDirectory (takeDirectory fpath')) == "lib")
 		let
 			pkgDb = takeDirectory (takeDirectory $ takeDirectory fpath') </> "pkgdb"
 		guardExist pkgDb
-		return $ PackageDb pkgDb
+		return $ PackageDb $ fromFilePath pkgDb
 	guardExist = doesDirectoryExist >=> guard
 	fpath' = normalise fpath
 

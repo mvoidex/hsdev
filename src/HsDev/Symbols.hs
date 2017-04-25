@@ -42,6 +42,7 @@ import HsDev.Symbols.Parsed (imports, moduleNames)
 import HsDev.Symbols.Documented (Documented(..))
 import HsDev.Symbols.HaskellNames
 import HsDev.Util (searchPath, uniqueBy, directoryContents)
+import System.Directory.Paths
 
 unnamedModuleId :: ModuleLocation -> ModuleId
 unnamedModuleId = ModuleId ""
@@ -56,9 +57,9 @@ locateProject file = do
 	isDir <- doesDirectoryExist file'
 	if isDir then locateHere file' else locateParent (takeDirectory file')
 	where
-		locateHere path = do
-			cts <- filter (not . null . takeBaseName) <$> directoryContents path
-			return $ fmap (project . (path </>)) $ find ((== ".cabal") . takeExtension) cts
+		locateHere p = do
+			cts <- filter (not . null . takeBaseName) <$> directoryContents p
+			return $ fmap (project . (p </>)) $ find ((== ".cabal") . takeExtension) cts
 		locateParent dir = do
 			cts <- filter (not . null . takeBaseName) <$> directoryContents dir
 			case find ((== ".cabal") . takeExtension) cts of
@@ -70,12 +71,12 @@ searchProject :: FilePath -> IO (Maybe Project)
 searchProject file = runMaybeT $ searchPath file (MaybeT . locateProject) <|> mzero
 
 -- | Locate source dir of file
-locateSourceDir :: FilePath -> IO (Maybe (Extensions FilePath))
+locateSourceDir :: FilePath -> IO (Maybe (Extensions Path))
 locateSourceDir f = runMaybeT $ do
 	file <- liftIO $ canonicalizePath f
 	p <- MaybeT $ locateProject file
 	proj <- lift $ loadProject p
-	MaybeT $ return $ findSourceDir proj file
+	MaybeT $ return $ findSourceDir proj (fromFilePath file)
 
 -- | Make `Info` for standalone `Module`
 standaloneInfo :: [PackageConfig] -> Module -> Info

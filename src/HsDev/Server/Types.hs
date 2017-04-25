@@ -16,7 +16,7 @@ module HsDev.Server.Types (
 import Control.Applicative
 import Control.Concurrent.Worker
 import qualified Control.Concurrent.FiniteChan as F
-import Control.Lens (each, view, set)
+import Control.Lens (view, set)
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Except
@@ -30,6 +30,8 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Default
 import Data.Maybe (fromMaybe)
 import Data.Foldable (asum)
+import Data.Text (Text)
+import Data.String (fromString)
 import Options.Applicative
 import System.Log.Simple as Log
 
@@ -377,51 +379,51 @@ data Command =
 	Ping |
 	Listen (Maybe String) |
 	SetLogLevel String |
-	AddData { addedData :: [FilePath] } |
+	AddData { addedData :: [Path] } |
 	Scan {
-		scanProjects :: [FilePath],
+		scanProjects :: [Path],
 		scanCabal :: Bool,
-		scanSandboxes :: [FilePath],
+		scanSandboxes :: [Path],
 		scanFiles :: [FileSource],
-		scanPaths :: [FilePath],
+		scanPaths :: [Path],
 		scanGhcOpts :: [String],
 		scanDocs :: Bool,
 		scanInferTypes :: Bool } |
 	RefineDocs {
-		docsProjects :: [FilePath],
-		docsFiles :: [FilePath],
-		docsModules :: [String] } |
+		docsProjects :: [Path],
+		docsFiles :: [Path],
+		docsModules :: [Text] } |
 	InferTypes {
-		inferProjects :: [FilePath],
-		inferFiles :: [FilePath],
-		inferModules :: [String] } |
+		inferProjects :: [Path],
+		inferFiles :: [Path],
+		inferModules :: [Text] } |
 	Remove {
-		removeProjects :: [FilePath],
+		removeProjects :: [Path],
 		removeCabal :: Bool,
-		removeSandboxes :: [FilePath],
-		removeFiles :: [FilePath] } |
+		removeSandboxes :: [Path],
+		removeFiles :: [Path] } |
 	RemoveAll |
 	InfoPackages |
 	InfoProjects |
 	InfoSandboxes |
 	InfoSymbol SearchQuery [TargetFilter] Bool Bool |
 	InfoModule SearchQuery [TargetFilter] Bool Bool |
-	InfoProject (Either String FilePath) |
-	InfoSandbox FilePath |
-	Lookup String FilePath |
-	Whois String FilePath |
-	Whoat Int Int FilePath |
-	ResolveScopeModules SearchQuery FilePath |
-	ResolveScope SearchQuery FilePath |
-	FindUsages String |
-	Complete String Bool FilePath |
+	InfoProject (Either Text Path) |
+	InfoSandbox Path |
+	Lookup Text Path |
+	Whois Text Path |
+	Whoat Int Int Path |
+	ResolveScopeModules SearchQuery Path |
+	ResolveScope SearchQuery Path |
+	FindUsages Text |
+	Complete Text Bool Path |
 	Hayoo {
 		hayooQuery :: String,
 		hayooPage :: Int,
 		hayooPages :: Int } |
-	CabalList { cabalListPackages :: [String] } |
+	CabalList { cabalListPackages :: [Text] } |
 	UnresolvedSymbols {
-		unresolvedFiles :: [FilePath] } |
+		unresolvedFiles :: [Path] } |
 	Lint {
 		lintFiles :: [FileSource] } |
 	Check {
@@ -435,7 +437,7 @@ data Command =
 		typesGhcOpts :: [String] } |
 	AutoFix [Note OutputMessage] |
 	Refactor [Note Refact] [Note Refact] Bool |
-	Rename String String FilePath |
+	Rename Text Text Path |
 	GhcEval { ghcEvalExpressions :: [String], ghcEvalSource :: Maybe FileSource } |
 	Langs |
 	Flags |
@@ -443,65 +445,62 @@ data Command =
 	Exit
 		deriving (Show)
 
-data FileSource = FileSource { fileSource :: FilePath, fileContents :: Maybe String } deriving (Show)
+data FileSource = FileSource { fileSource :: Path, fileContents :: Maybe Text } deriving (Show)
 data TargetFilter =
-	TargetProject String |
-	TargetFile FilePath |
-	TargetModule String |
+	TargetProject Text |
+	TargetFile Path |
+	TargetModule Text |
 	TargetPackageDb PackageDb |
 	TargetCabal |
-	TargetSandbox FilePath |
-	TargetPackage String |
+	TargetSandbox Path |
+	TargetPackage Text |
 	TargetSourced |
 	TargetStandalone
 		deriving (Eq, Show)
-data SearchQuery = SearchQuery String SearchType deriving (Show)
+data SearchQuery = SearchQuery Text SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
 
 instance Paths Command where
 	paths f (Scan projs c cs fs ps ghcs docs infer) = Scan <$>
-		each f projs <*>
+		traverse (paths f) projs <*>
 		pure c <*>
-		(each . paths) f cs <*>
-		(each . paths) f fs <*>
-		each f ps <*>
+		traverse (paths f) cs <*>
+		traverse (paths f) fs <*>
+		traverse (paths f) ps <*>
 		pure ghcs <*>
 		pure docs <*>
 		pure infer
-	paths f (RefineDocs projs fs ms) = RefineDocs <$> each f projs <*> each f fs <*> pure ms
-	paths f (InferTypes projs fs ms) = InferTypes <$> each f projs <*> each f fs <*> pure ms
-	paths f (Remove projs c cs fs) = Remove <$> each f projs <*> pure c <*> (each . paths) f cs <*> each f fs
+	paths f (RefineDocs projs fs ms) = RefineDocs <$> traverse (paths f) projs <*> traverse (paths f) fs <*> pure ms
+	paths f (InferTypes projs fs ms) = InferTypes <$> traverse (paths f) projs <*> traverse (paths f) fs <*> pure ms
+	paths f (Remove projs c cs fs) = Remove <$> traverse (paths f) projs <*> pure c <*> traverse (paths f) cs <*> traverse (paths f) fs
 	paths _ RemoveAll = pure RemoveAll
-	paths f (InfoSymbol q t h l) = InfoSymbol <$> pure q <*> paths f t <*> pure h <*> pure l
-	paths f (InfoModule q t h i) = InfoModule <$> pure q <*> paths f t <*> pure h <*> pure i
-	paths f (InfoProject (Right proj)) = InfoProject <$> (Right <$> f proj)
-	paths f (InfoSandbox fpath) = InfoSandbox <$> f fpath
-	paths f (Lookup n fpath) = Lookup <$> pure n <*> f fpath
-	paths f (Whois n fpath) = Whois <$> pure n <*> f fpath
-	paths f (Whoat l c fpath) = Whoat <$> pure l <*> pure c <*> f fpath
-	paths f (ResolveScopeModules q fpath) = ResolveScopeModules q <$> f fpath
-	paths f (ResolveScope q fpath) = ResolveScope q <$> f fpath
+	paths f (InfoSymbol q t h l) = InfoSymbol <$> pure q <*> traverse (paths f) t <*> pure h <*> pure l
+	paths f (InfoModule q t h i) = InfoModule <$> pure q <*> traverse (paths f) t <*> pure h <*> pure i
+	paths f (InfoProject (Right proj)) = InfoProject <$> (Right <$> paths f proj)
+	paths f (InfoSandbox fpath) = InfoSandbox <$> paths f fpath
+	paths f (Lookup n fpath) = Lookup <$> pure n <*> paths f fpath
+	paths f (Whois n fpath) = Whois <$> pure n <*> paths f fpath
+	paths f (Whoat l c fpath) = Whoat <$> pure l <*> pure c <*> paths f fpath
+	paths f (ResolveScopeModules q fpath) = ResolveScopeModules q <$> paths f fpath
+	paths f (ResolveScope q fpath) = ResolveScope q <$> paths f fpath
 	paths _ (FindUsages nm) = pure $ FindUsages nm
-	paths f (Complete n g fpath) = Complete n g <$> f fpath
-	paths f (UnresolvedSymbols fs) = UnresolvedSymbols <$> (each . paths) f fs
-	paths f (Lint fs) = Lint <$> (each . paths) f fs
-	paths f (Check fs ghcs) = Check <$> (each . paths) f fs <*> pure ghcs
-	paths f (CheckLint fs ghcs) = CheckLint <$> (each . paths) f fs <*> pure ghcs
-	paths f (Types fs ghcs) = Types <$> (each . paths) f fs <*> pure ghcs
+	paths f (Complete n g fpath) = Complete n g <$> paths f fpath
+	paths f (UnresolvedSymbols fs) = UnresolvedSymbols <$> traverse (paths f) fs
+	paths f (Lint fs) = Lint <$> traverse (paths f) fs
+	paths f (Check fs ghcs) = Check <$> traverse (paths f) fs <*> pure ghcs
+	paths f (CheckLint fs ghcs) = CheckLint <$> traverse (paths f) fs <*> pure ghcs
+	paths f (Types fs ghcs) = Types <$> traverse (paths f) fs <*> pure ghcs
 	paths f (GhcEval e mf) = GhcEval e <$> traverse (paths f) mf
 	paths _ c = pure c
 
 instance Paths FileSource where
-	paths f (FileSource fpath mcts) = FileSource <$> f fpath <*> pure mcts
+	paths f (FileSource fpath mcts) = FileSource <$> paths f fpath <*> pure mcts
 
 instance Paths TargetFilter where
-	paths f (TargetFile fpath) = TargetFile <$> f fpath
+	paths f (TargetFile fpath) = TargetFile <$> paths f fpath
 	paths f (TargetPackageDb pdb) = TargetPackageDb <$> paths f pdb
 	paths f (TargetSandbox c) = TargetSandbox <$> paths f c
 	paths _ t = pure t
-
-instance Paths [TargetFilter] where
-	paths = each . paths
 
 instance FromCmd Command where
 	cmdP = subparser $ mconcat [
@@ -533,16 +532,16 @@ instance FromCmd Command where
 		cmd "module" "get module info" (InfoModule <$> cmdP <*> many cmdP <*> headerFlag <*> inspectionFlag),
 		cmd "project" "get project info" (InfoProject <$> ((Left <$> projectArg) <|> (Right <$> pathArg idm))),
 		cmd "sandbox" "get sandbox info" (InfoSandbox <$> pathArg (help "locate sandbox in parent of this path")),
-		cmd "lookup" "lookup for symbol" (Lookup <$> strArgument idm <*> ctx),
-		cmd "whois" "get info for symbol" (Whois <$> strArgument idm <*> ctx),
+		cmd "lookup" "lookup for symbol" (Lookup <$> textArgument idm <*> ctx),
+		cmd "whois" "get info for symbol" (Whois <$> textArgument idm <*> ctx),
 		cmd "whoat" "get info for symbol under cursor" (Whoat <$> argument auto (metavar "line") <*> argument auto (metavar "column") <*> ctx),
 		cmd "scope" "get declarations accessible from module or within a project" (
 			subparser (cmd "modules" "get modules accessible from module or within a project" (ResolveScopeModules <$> cmdP <*> ctx)) <|>
 			ResolveScope <$> cmdP <*> ctx),
-		cmd "usages" "find usages of fully qualified symbol (qualified with module its defined in)" (FindUsages <$> strArgument idm),
-		cmd "complete" "show completions for input" (Complete <$> strArgument idm <*> wideFlag <*> ctx),
+		cmd "usages" "find usages of fully qualified symbol (qualified with module its defined in)" (FindUsages <$> textArgument idm),
+		cmd "complete" "show completions for input" (Complete <$> textArgument idm <*> wideFlag <*> ctx),
 		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
-		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (strArgument idm))),
+		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (textArgument idm))),
 		cmd "unresolveds" "list unresolved symbols in source file" (UnresolvedSymbols <$> many fileArg),
 		cmd "lint" "lint source files or file contents" (Lint <$> many cmdP),
 		cmd "check" "check source files or file contents" (Check <$> many cmdP <*> ghcOpts),
@@ -553,7 +552,7 @@ instance FromCmd Command where
 			option readJSON (long "data" <> metavar "message" <> help "messages to fix") <*>
 			option readJSON (long "rest" <> metavar "correction" <> short 'r' <> help "update corrections") <*>
 			pureFlag),
-		cmd "rename" "get rename refactors" (Rename <$> strArgument idm <*> strArgument idm <*> ctx),
+		cmd "rename" "get rename refactors" (Rename <$> textArgument idm <*> textArgument idm <*> ctx),
 		cmd "ghc" "ghc commands" (subparser $ cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm) <*> optional cmdP)),
 		cmd "langs" "ghc language options" (pure Langs),
 		cmd "flags" "ghc flags" (pure Flags),
@@ -576,7 +575,7 @@ instance FromCmd TargetFilter where
 		flag' TargetStandalone (long "stand")]
 
 instance FromCmd SearchQuery where
-	cmdP = SearchQuery <$> (strArgument idm <|> pure "") <*> asum [
+	cmdP = SearchQuery <$> (textArgument idm <|> pure "") <*> asum [
 		flag' SearchExact (long "exact"),
 		flag' SearchRegex (long "regex"),
 		flag' SearchInfix (long "infix"),
@@ -586,10 +585,16 @@ instance FromCmd SearchQuery where
 readJSON :: FromJSON a => ReadM a
 readJSON = str >>= maybe (readerError "Can't parse JSON argument") return . decode . L.pack
 
+textOption :: Mod OptionFields String -> Parser Text
+textOption = fmap fromString . strOption
+
+textArgument :: Mod ArgumentFields String -> Parser Text
+textArgument = fmap fromString . strArgument
+
 cabalFlag :: Parser Bool
-ctx :: Parser FilePath
+ctx :: Parser Path
 docsFlag :: Parser Bool
-fileArg :: Parser FilePath
+fileArg :: Parser Path
 ghcOpts :: Parser [String]
 hayooPageArg :: Parser Int
 hayooPagesArg :: Parser Int
@@ -598,19 +603,19 @@ holdFlag :: Parser Bool
 inferFlag :: Parser Bool
 inspectionFlag :: Parser Bool
 localsFlag :: Parser Bool
-moduleArg :: Parser String
+moduleArg :: Parser Text
 packageDbArg :: Parser PackageDb
-packageArg :: Parser String
-pathArg :: Mod OptionFields String -> Parser FilePath
-projectArg :: Parser String
+packageArg :: Parser Text
+pathArg :: Mod OptionFields String -> Parser Path
+projectArg :: Parser Path
 pureFlag :: Parser Bool
-sandboxArg :: Parser FilePath
+sandboxArg :: Parser Path
 wideFlag :: Parser Bool
 
 cabalFlag = switch (long "cabal")
 ctx = fileArg
 docsFlag = switch (long "docs" <> help "scan source file docs")
-fileArg = strOption (long "file" <> metavar "path" <> short 'f')
+fileArg = textOption (long "file" <> metavar "path" <> short 'f')
 ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "options to pass to GHC"))
 hayooPageArg = option auto (long "page" <> metavar "n" <> short 'p' <> help "page number (0 by default)" <> value 0)
 hayooPagesArg = option auto (long "pages" <> metavar "count" <> short 'n' <> help "pages count (1 by default)" <> value 1)
@@ -619,16 +624,16 @@ holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
 inspectionFlag = switch (long "inspection" <> short 'i' <> help "return inspection data")
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
-moduleArg = strOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
-packageArg = strOption (long "package" <> metavar "name" <> help "module package")
+moduleArg = textOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
+packageArg = textOption (long "package" <> metavar "name" <> help "module package")
 packageDbArg =
 	flag' GlobalDb (long "global-db" <> help "global package-db") <|>
 	flag' UserDb (long "user-db" <> help "user package-db") <|>
-	(PackageDb <$> strOption (long "package-db" <> metavar "path" <> help "custom package-db"))
-pathArg f = strOption (long "path" <> metavar "path" <> short 'p' <> f)
-projectArg = strOption (long "project" <> long "proj" <> metavar "project")
+	(PackageDb <$> textOption (long "package-db" <> metavar "path" <> help "custom package-db"))
+pathArg f = textOption (long "path" <> metavar "path" <> short 'p' <> f)
+projectArg = textOption (long "project" <> long "proj" <> metavar "project")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
-sandboxArg = strOption (long "sandbox" <> metavar "path" <> help "path to cabal sandbox")
+sandboxArg = textOption (long "sandbox" <> metavar "path" <> help "path to cabal sandbox")
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
 
 instance ToJSON Command where

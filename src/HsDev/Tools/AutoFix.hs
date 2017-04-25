@@ -3,7 +3,6 @@
 
 module HsDev.Tools.AutoFix (
 	corrections,
-	autoFix,
 	CorrectorMatch,
 	correctors,
 	match,
@@ -17,6 +16,10 @@ module HsDev.Tools.AutoFix (
 import Control.Applicative
 import Control.Lens hiding ((.=), at)
 import Data.Maybe (listToMaybe, mapMaybe)
+import Data.String (fromString)
+import Data.Text (Text)
+import Data.Text.Lens (unpacked)
+import qualified Data.Text as T
 import Data.Text.Region hiding (Region(..), update)
 import qualified Data.Text.Region as R
 
@@ -42,11 +45,6 @@ corrections = mapMaybe toRefact where
 					(replace (fromRegion $ view noteRegion n) sugg))
 				n
 
--- | Apply corrections
-autoFix :: [Note Refact] -> ([Note Refact], Maybe String) -> ([Note Refact], Maybe String)
-autoFix ns (upd, mcts) = (update rs upd, over _Just (refact rs) mcts) where
-	rs = ns ^.. each . note
-
 type CorrectorMatch = Note OutputMessage -> Maybe (Note Refact)
 
 correctors :: [CorrectorMatch]
@@ -58,13 +56,13 @@ correctors = [
 	match "^(.*?)\nFound:\n  (.*?)\nWhy not:\n  (.*?)$" $ \g rgn -> Refact
 		(g `at` 1)
 		(replace
-			((rgn ^. regionFrom) `regionSize` pt 0 (length $ g `at` 2))
+			((rgn ^. regionFrom) `regionSize` pt 0 (contentsLength $ g `at` 2))
 			(g `at` 3))]
 
-match :: String -> ((Int -> Maybe String) -> R.Region -> Refact) -> CorrectorMatch
+match :: String -> ((Int -> Maybe Text) -> R.Region -> Refact) -> CorrectorMatch
 match pat f n = do
-	g <- matchRx pat (view (note . message) n)
-	return $ set note (f g (fromRegion $ view noteRegion n)) n
+	g <- matchRx pat (view (note . message . unpacked) n)
+	return $ set note (f (fmap fromString . g) (fromRegion $ view noteRegion n)) n
 
 findCorrector :: Note OutputMessage -> Maybe (Note Refact)
 findCorrector n = listToMaybe $ mapMaybe ($ n) correctors

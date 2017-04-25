@@ -11,15 +11,16 @@ module HsDev.Project.Types (
 	Extensions(..), extensions, ghcOptions, entity,
 	) where
 
-import Control.Arrow
 import Control.DeepSeq (NFData(..))
 import Control.Lens hiding ((%=), (.=), (<.>))
 import Data.Aeson
 import Data.Aeson.Types (Parser)
-import Data.List
 import Data.Maybe
 import Data.Monoid
 import Data.Ord
+import Data.Text (Text)
+import Data.Text.Lens (unpacked)
+import qualified Data.Text as T
 import Distribution.Text (display, simpleParse)
 import qualified Distribution.Text (Text)
 import Language.Haskell.Extension
@@ -31,9 +32,9 @@ import HsDev.Util
 
 -- | Cabal project
 data Project = Project {
-	_projectName :: String,
-	_projectPath :: FilePath,
-	_projectCabal :: FilePath,
+	_projectName :: Text,
+	_projectPath :: Path,
+	_projectCabal :: Path,
 	_projectDescription :: Maybe ProjectDescription }
 		deriving (Read)
 
@@ -48,8 +49,8 @@ instance Ord Project where
 
 instance Show Project where
 	show p = unlines $ [
-		"project " ++ _projectName p,
-		"\tcabal: " ++ _projectCabal p,
+		"project " ++ _projectName p ^. path,
+		"\tcabal: " ++ _projectCabal p ^. path,
 		"\tdescription:"] ++ concatMap (map (tab 2) . lines . show) (maybeToList $ _projectDescription p)
 
 instance ToJSON Project where
@@ -67,14 +68,14 @@ instance FromJSON Project where
 		v .:: "description"
 
 instance Paths Project where
-	paths f (Project nm p c desc) = Project nm <$> f p <*> f c <*> traverse (paths f) desc
+	paths f (Project nm p c desc) = Project nm <$> paths f p <*> paths f c <*> traverse (paths f) desc
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
 project file = Project {
-	_projectName = takeBaseName (takeDirectory cabal),
-	_projectPath = takeDirectory cabal,
-	_projectCabal = cabal,
+	_projectName = fromFilePath . takeBaseName . takeDirectory $ cabal,
+	_projectPath = fromFilePath . takeDirectory $ cabal,
+	_projectCabal = fromFilePath cabal,
 	_projectDescription = Nothing }
 	where
 		file' = dropTrailingPathSeparator $ normalise file
@@ -91,7 +92,7 @@ relativiseProjectPaths :: Project -> Project
 relativiseProjectPaths proj = relativise (_projectPath proj) proj
 
 data ProjectDescription = ProjectDescription {
-	_projectVersion :: String,
+	_projectVersion :: Text,
 	_projectLibrary :: Maybe Library,
 	_projectExecutables :: [Executable],
 	_projectTests :: [Test] }
@@ -128,45 +129,43 @@ instance Paths ProjectDescription where
 	paths f (ProjectDescription v lib exes tests) = ProjectDescription v <$> traverse (paths f) lib <*> traverse (paths f) exes <*> traverse (paths f) tests
 
 class Target a where
-	targetName :: Traversal' a String
+	targetName :: Traversal' a Text
 	buildInfo :: Lens' a Info
-	targetModules :: a -> [FilePath]
+	targetModules :: a -> [Path]
 
 -- | Library in project
 data Library = Library {
-	_libraryModules :: [[String]],
+	_libraryModules :: [[Text]],
 	_libraryBuildInfo :: Info }
 		deriving (Eq, Read)
 
 instance Show Library where
 	show l = unlines $
 		["library", "\tmodules:"] ++
-		(map (tab 2 . intercalate ".") $ _libraryModules l) ++
+		(map (tab 2 . T.unpack . T.intercalate ".") $ _libraryModules l) ++
 		(map (tab 1) . lines . show $ _libraryBuildInfo l)
 
 instance ToJSON Library where
 	toJSON l = object [
-		"modules" .= fmap (intercalate ".") (_libraryModules l),
+		"modules" .= fmap (T.intercalate ".") (_libraryModules l),
 		"info" .= _libraryBuildInfo l]
 
 instance FromJSON Library where
-	parseJSON = withObject "library" $ \v -> Library <$> (fmap splitModule <$> v .:: "modules") <*> v .:: "info" where
-		splitModule :: String -> [String]
-		splitModule = takeWhile (not . null) . unfoldr (Just . second (drop 1) . break (== '.'))
+	parseJSON = withObject "library" $ \v -> Library <$> (fmap (T.split (== '.')) <$> v .:: "modules") <*> v .:: "info" where
 
 instance Paths Library where
 	paths f (Library ms info) = Library ms <$> paths f info
 
 -- | Executable
 data Executable = Executable {
-	_executableName :: String,
-	_executablePath :: FilePath,
+	_executableName :: Text,
+	_executablePath :: Path,
 	_executableBuildInfo :: Info }
 		deriving (Eq, Read)
 
 instance Show Executable where
 	show e = unlines $
-		["executable " ++ _executableName e, "\tpath: " ++ _executablePath e] ++
+		["executable " ++ T.unpack (_executableName e), "\tpath: " ++ (_executablePath e ^. path)] ++
 		(map (tab 1) . lines . show $ _executableBuildInfo e)
 
 instance ToJSON Executable where
@@ -182,20 +181,20 @@ instance FromJSON Executable where
 		v .:: "info"
 
 instance Paths Executable where
-	paths f (Executable n p info) = Executable n <$> f p <*> paths f info
+	paths f (Executable n p info) = Executable n <$> paths f p <*> paths f info
 
 -- | Test
 data Test = Test {
-	_testName :: String,
+	_testName :: Text,
 	_testEnabled :: Bool,
-	_testMain :: Maybe FilePath,
+	_testMain :: Maybe Path,
 	_testBuildInfo :: Info }
 		deriving (Eq, Read)
 
 instance Show Test where
 	show t = unlines $
-		["test " ++ _testName t, "\tenabled: " ++ show (_testEnabled t)] ++
-		maybe [] (\f -> ["\tmain-is: " ++ f]) (_testMain t) ++
+		["test " ++ T.unpack (_testName t), "\tenabled: " ++ show (_testEnabled t)] ++
+		maybe [] (\f -> ["\tmain-is: " ++ f ^. path]) (_testMain t) ++
 		(map (tab 1) . lines . show $ _testBuildInfo t)
 
 instance ToJSON Test where
@@ -213,16 +212,16 @@ instance FromJSON Test where
 		v .:: "info"
 
 instance Paths Test where
-	paths f (Test n e m info) = Test n e <$> traverse f m <*> paths f info
+	paths f (Test n e m info) = Test n e <$> traverse (paths f) m <*> paths f info
 
 -- | Build info
 data Info = Info {
-	_infoDepends :: [String],
+	_infoDepends :: [Text],
 	_infoLanguage :: Maybe Language,
 	_infoExtensions :: [Extension],
-	_infoGHCOptions :: [String],
-	_infoSourceDirs :: [FilePath],
-	_infoOtherModules :: [[String]] }
+	_infoGHCOptions :: [Text],
+	_infoSourceDirs :: [Path],
+	_infoOtherModules :: [[Text]] }
 		deriving (Eq, Read)
 
 instance Monoid Info where
@@ -246,9 +245,9 @@ instance Show Info where
 			| otherwise = "extensions:" : map (tab 1 . display) (_infoExtensions i)
 		opts
 			| null (_infoGHCOptions i) = []
-			| otherwise = "ghc-options:" : map (tab 1) (_infoGHCOptions i)
-		sources = "source-dirs:" : (map (tab 1) $ _infoSourceDirs i)
-		otherMods = "other-modules:" : (map (tab 1) . fmap (intercalate ".") $ _infoOtherModules i)
+			| otherwise = "ghc-options:" : map (tab 1 . T.unpack) (_infoGHCOptions i)
+		sources = "source-dirs:" : (map (tab 1 . T.unpack) $ _infoSourceDirs i)
+		otherMods = "other-modules:" : (map (tab 1 . T.unpack) . fmap (T.intercalate ".") $ _infoOtherModules i)
 
 instance ToJSON Info where
 	toJSON i = object [
@@ -273,12 +272,12 @@ instance FromJSON Info where
 				err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
 
 instance Paths Info where
-	paths f (Info deps lang exts opts dirs omods) = Info deps lang exts opts <$> traverse f dirs <*> pure omods
+	paths f (Info deps lang exts opts dirs omods) = Info deps lang exts opts <$> traverse (paths f) dirs <*> pure omods
 
 -- | Entity with project extensions
 data Extensions a = Extensions {
 	_extensions :: [Extension],
-	_ghcOptions :: [String],
+	_ghcOptions :: [Text],
 	_entity :: a }
 		deriving (Eq, Read, Show)
 
@@ -309,8 +308,8 @@ makeLenses ''Extensions
 instance Target Library where
 	targetName _ = pure
 	buildInfo = libraryBuildInfo
-	targetModules lib' = map toFile (lib' ^.. libraryModules . each) where
-		toFile ps = joinPath ps <.> "hs"
+	targetModules lib' = map toPath (lib' ^.. libraryModules . each) where
+		toPath ps = fromFilePath (joinPath (ps ^.. each . unpacked) <.> "hs")
 
 instance Target Executable where
 	targetName = executableName
@@ -320,7 +319,7 @@ instance Target Executable where
 instance Target Test where
 	targetName = testName
 	buildInfo = testBuildInfo
-	targetModules test' = map toFile (test' ^.. testMain . _Just) where
-		toFile f
-			| haskellSource f = f
-			| otherwise = f <.> "hs"
+	targetModules test' = map toPath (test' ^.. testMain . _Just . path) where
+		toPath f
+			| haskellSource f = fromFilePath f
+			| otherwise = fromFilePath (f <.> "hs")

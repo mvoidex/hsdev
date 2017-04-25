@@ -31,26 +31,25 @@ import Distribution.Compiler
 import Distribution.System
 import qualified Distribution.Text as T (display)
 import System.FilePath
-import System.Directory
 import System.Log.Simple (MonadLog(..))
 
 import System.Directory.Paths
 import HsDev.PackageDb
 import HsDev.Project.Types
 import HsDev.Scan.Browse (browsePackages)
-import HsDev.Stack
+import HsDev.Stack hiding (path)
 import HsDev.Symbols (moduleOpts)
 import HsDev.Symbols.Types (moduleId, Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
-import HsDev.Util (searchPath, isParent, directoryContents, cabalFile)
+import HsDev.Util (searchPath, directoryContents, cabalFile)
 
 import qualified GHC
 import qualified Packages as GHC
 
 data SandboxType = CabalSandbox | StackWork deriving (Eq, Ord, Read, Show, Enum, Bounded)
 
-data Sandbox = Sandbox { _sandboxType :: SandboxType, _sandbox :: FilePath } deriving (Eq, Ord)
+data Sandbox = Sandbox { _sandboxType :: SandboxType, _sandbox :: Path } deriving (Eq, Ord)
 
 makeLenses ''Sandbox
 
@@ -62,75 +61,75 @@ instance NFData Sandbox where
 	rnf (Sandbox t p) = rnf t `seq` rnf p
 
 instance Show Sandbox where
-	show (Sandbox _ p) = p
+	show (Sandbox _ p) = T.unpack p
 
 instance ToJSON Sandbox where
 	toJSON (Sandbox _ p) = toJSON p
 
 instance FromJSON Sandbox where
 	parseJSON = withText "sandbox" sandboxPath where
-		sandboxPath = maybe (fail "Not a sandbox") return . sandboxFromPath . T.unpack
+		sandboxPath = maybe (fail "Not a sandbox") return . sandboxFromPath
 
 instance Paths Sandbox where
-	paths f (Sandbox st p) = Sandbox st <$> f p
+	paths f (Sandbox st p) = Sandbox st <$> paths f p
 
-isSandbox :: FilePath -> Bool
+isSandbox :: Path -> Bool
 isSandbox = isJust . guessSandboxType
 
-guessSandboxType :: FilePath -> Maybe SandboxType
+guessSandboxType :: Path -> Maybe SandboxType
 guessSandboxType fpath
-	| takeFileName fpath == ".cabal-sandbox" = Just CabalSandbox
-	| takeFileName fpath == ".stack-work" = Just StackWork
+	| takeFileName (view path fpath) == ".cabal-sandbox" = Just CabalSandbox
+	| takeFileName (view path fpath) == ".stack-work" = Just StackWork
 	| otherwise = Nothing
 
-sandboxFromPath :: FilePath -> Maybe Sandbox
+sandboxFromPath :: Path -> Maybe Sandbox
 sandboxFromPath fpath = Sandbox <$> guessSandboxType fpath <*> pure fpath
 
 -- | Find sandbox in path
-findSandbox :: FilePath -> IO (Maybe Sandbox)
+findSandbox :: Path -> IO (Maybe Sandbox)
 findSandbox fpath = do
 	fpath' <- canonicalize fpath
-	isDir <- doesDirectoryExist fpath'
+	isDir <- dirExists fpath'
 	if isDir
 		then do
-			dirs <- liftM (fpath' :) $ directoryContents fpath'
+			dirs <- liftM ((fpath' :) . map fromFilePath) $ directoryContents (view path fpath')
 			return $ msum $ map sandboxFromDir dirs
 		else return Nothing
 	where
-		sandboxFromDir :: FilePath -> Maybe Sandbox
+		sandboxFromDir :: Path -> Maybe Sandbox
 		sandboxFromDir fdir
-			| takeFileName fdir == "stack.yaml" = sandboxFromPath (takeDirectory fdir </> ".stack-work")
+			| takeFileName (view path fdir) == "stack.yaml" = sandboxFromPath (fromFilePath (takeDirectory (view path fdir) </> ".stack-work"))
 			| otherwise = sandboxFromPath fdir
 
 -- | Search sandbox by parent directory
-searchSandbox :: FilePath -> IO (Maybe Sandbox)
-searchSandbox p = runMaybeT $ searchPath p (MaybeT . findSandbox)
+searchSandbox :: Path -> IO (Maybe Sandbox)
+searchSandbox p = runMaybeT $ searchPath (view path p) (MaybeT . findSandbox . fromFilePath)
 
 -- | Get project sandbox: search up for .cabal, then search for stack.yaml in current directory and cabal sandbox in current + parents
-projectSandbox :: FilePath -> IO (Maybe Sandbox)
+projectSandbox :: Path -> IO (Maybe Sandbox)
 projectSandbox fpath = runMaybeT $ do
-	p <- searchPath fpath (MaybeT . getCabalFile)
-	MaybeT (findSandbox p) <|> searchPath p (MaybeT . findSbox')
+	p <- searchPath (view path fpath) (MaybeT . getCabalFile)
+	MaybeT (findSandbox $ fromFilePath p) <|> searchPath p (MaybeT . findSbox')
 	where
 		getCabalFile = directoryContents >=> return . find cabalFile
-		findSbox' = directoryContents >=> return . msum . map sandboxFromPath
+		findSbox' = directoryContents >=> return . msum . map (sandboxFromPath . fromFilePath)
 
 -- | Get package-db stack for sandbox
 sandboxPackageDbStack :: Sandbox -> GhcM PackageDbStack
 sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
 	dir <- cabalSandboxPackageDb
-	return $ PackageDbStack [PackageDb $ fpath </> dir]
-sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory fpath
+	return $ PackageDbStack [PackageDb $ fromFilePath $ (view path fpath) </> dir]
+sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory (view path fpath)
 
 -- | Get sandbox from package-db
 packageDbSandbox :: PackageDb -> Maybe Sandbox
 packageDbSandbox GlobalDb = Nothing
 packageDbSandbox UserDb = Nothing
 packageDbSandbox (PackageDb fpath) = msum [sandboxFromPath p | p <- parents] where
-	parents = map joinPath . tail . inits . splitDirectories $ fpath
+	parents = map joinPaths . tail . inits . splitPaths $ fpath
 
 -- | Search package-db stack with user-db as default
-searchPackageDbStack :: FilePath -> GhcM PackageDbStack
+searchPackageDbStack :: Path -> GhcM PackageDbStack
 searchPackageDbStack p = do
 	mbox <- liftIO $ projectSandbox p
 	case mbox of
@@ -177,8 +176,8 @@ getModuleOpts opts m = do
 		opts]
 
 -- | Is file in within sandbox, i.e. sandboxes parent is parent for file
-pathInSandbox :: FilePath -> Sandbox -> Bool
-pathInSandbox fpath (Sandbox _ spath) = takeDirectory spath `isParent` fpath
+pathInSandbox :: Path -> Sandbox -> Bool
+pathInSandbox fpath (Sandbox _ spath) = takeDir spath `isParent` fpath
 
 -- | Get sandbox of project (if any)
 getProjectSandbox :: MonadLog m => Project -> m (Maybe Sandbox)

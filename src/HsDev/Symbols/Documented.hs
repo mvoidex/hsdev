@@ -1,4 +1,4 @@
-{-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE DefaultSignatures, OverloadedStrings #-}
 
 module HsDev.Symbols.Documented (
 	Documented(..),
@@ -7,7 +7,8 @@ module HsDev.Symbols.Documented (
 
 import Control.Lens (view, (^..), (^?))
 import Data.Maybe (maybeToList)
-import Data.Text (unpack)
+import Data.Text (Text, pack)
+import qualified Data.Text as T
 
 import Text.Format
 import HsDev.Symbols.Class
@@ -15,23 +16,20 @@ import HsDev.Project.Types
 
 -- | Documented symbol
 class Documented a where
-	brief :: a -> String
-	detailed :: a -> String
-	default detailed :: Sourced a => a -> String
-	detailed = unlines . defaultDetailed
+	brief :: a -> Text
+	detailed :: a -> Text
+	default detailed :: Sourced a => a -> Text
+	detailed = T.unlines . defaultDetailed
 
 -- | Default detailed docs
-defaultDetailed :: (Sourced a, Documented a) => a -> [String]
+defaultDetailed :: (Sourced a, Documented a) => a -> [Text]
 defaultDetailed s = concat [header, docs, loc] where
 	header = [brief s, ""]
-	docs = map unpack $ s ^.. sourcedDocs
-	loc
-		| null mloc = []
-		| otherwise = ["Defined at " ++ mloc]
-	mloc = maybe "" show (s ^? sourcedLocation)
+	docs = s ^.. sourcedDocs
+	loc = maybe [] (\l -> ["Defined at " `T.append` pack (show l)]) (s ^? sourcedLocation)
 
 instance Documented ModulePackage where
-	brief = show
+	brief = pack . show
 	detailed = brief
 
 instance Documented ModuleLocation where
@@ -51,7 +49,7 @@ instance Documented ModuleLocation where
 
 instance Documented Project where
 	brief p = format "{} ({})" ~~ view projectName p ~~ view projectPath p
-	detailed p = unlines (brief p : desc) where
+	detailed p = T.unlines (brief p : desc) where
 		desc = concat [
 			do
 				d <- mdescr

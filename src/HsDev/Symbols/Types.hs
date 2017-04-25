@@ -52,6 +52,7 @@ import HsDev.Symbols.Documented
 import HsDev.Symbols.Parsed
 import HsDev.Types
 import HsDev.Util ((.::), (.::?), (.::?!), noNulls)
+import System.Directory.Paths
 
 instance NFData l => NFData (ModuleName l) where
 	rnf (ModuleName l n) = rnf l `seq` rnf n
@@ -324,7 +325,7 @@ data Inspection =
 	-- | Time and flags of inspection
 	InspectionAt {
 		_inspectionAt :: POSIXTime,
-		_inspectionOpts :: [String] }
+		_inspectionOpts :: [Text] }
 			deriving (Eq, Ord)
 
 instance NFData Inspection where
@@ -333,7 +334,7 @@ instance NFData Inspection where
 
 instance Show Inspection where
 	show InspectionNone = "none"
-	show (InspectionAt tm fs) = "mtime " ++ show tm ++ ", flags [" ++ intercalate ", " fs ++ "]"
+	show (InspectionAt tm fs) = "mtime " ++ show tm ++ ", flags [" ++ intercalate ", " (map T.unpack fs) ++ "]"
 
 instance Read POSIXTime where
 	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
@@ -433,9 +434,9 @@ instance Show InspectedModule where
 	show (Inspected i mi ts m) = unlines [either showError show m, "\tinspected: " ++ show i, "\ttags: " ++ intercalate ", " (map show $ S.toList ts)] where
 		showError :: HsDevError -> String
 		showError e = unlines $ ("\terror: " ++ show e) : case mi of
-			FileModule f p -> ["file: " ++ f, "project: " ++ maybe "" (view projectPath) p]
-			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ n]
-			OtherLocation src -> ["other location: " ++ src]
+			FileModule f p -> ["file: " ++ f ^. path, "project: " ++ maybe "" (view (projectPath . path)) p]
+			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ T.unpack n]
+			OtherLocation src -> ["other location: " ++ T.unpack src]
 			NoLocation -> ["no location"]
 
 notInspected :: ModuleLocation -> InspectedModule
@@ -451,26 +452,26 @@ instance Documented SymbolId where
 
 instance Documented Module where
 	brief = brief . _moduleId
-	detailed m = unlines (brief m : info) where
+	detailed m = T.unlines (brief m : info) where
 		info = [
-			"\texports: {}" ~~ intercalate ", " (map brief (_moduleExports m))]
+			"\texports: {}" ~~ T.intercalate ", " (map brief (_moduleExports m))]
 
 instance Documented Symbol where
 	brief = brief . _symbolId
-	detailed s = unlines [brief s, info] where
+	detailed s = T.unlines [brief s, info] where
 		info = case _symbolInfo s of
-			Function t -> "\t" ++ intercalate ", " (catMaybes [Just "function", fmap ("type: {}" ~~) t])
-			Method t p -> "\t" ++ intercalate ", " (catMaybes [Just "method", fmap ("type: {}" ~~) t, Just $ "parent: {}" ~~ p])
-			Selector t p _ -> "\t" ++ intercalate ", " (catMaybes [Just "selector", fmap ("type: {}" ~~) t, Just $ "parent: {}" ~~ p])
-			Constructor args p -> "\t" ++ intercalate ", " ["constructor", "args: {}" ~~ T.unwords args, "parent: {}" ~~ p]
-			Type args ctx -> "\t" ++ intercalate ", " ["type", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
-			NewType args ctx -> "\t" ++ intercalate ", " ["newtype", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
-			Data args ctx -> "\t" ++ intercalate ", " ["data", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
-			Class args ctx -> "\t" ++ intercalate ", " ["class", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
-			TypeFam args ctx _ -> "\t" ++ intercalate ", " ["type family", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
-			DataFam args ctx _ -> "\t" ++ intercalate ", " ["data family", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
-			PatConstructor args p -> "\t" ++ intercalate ", " (catMaybes [Just "pattern constructor", Just $ "args: {}" ~~ T.unwords args, fmap ("pat-type: {}" ~~) p])
-			PatSelector t p _ -> "\t" ++ intercalate ", " (catMaybes [Just "pattern selector", fmap ("type: {}" ~~) t, fmap ("pat-type: {}" ~~) p])
+			Function t -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "function", fmap ("type: {}" ~~) t])
+			Method t p -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "method", fmap ("type: {}" ~~) t, Just $ "parent: {}" ~~ p])
+			Selector t p _ -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "selector", fmap ("type: {}" ~~) t, Just $ "parent: {}" ~~ p])
+			Constructor args p -> "\t" `T.append` T.intercalate ", " ["constructor", "args: {}" ~~ T.unwords args, "parent: {}" ~~ p]
+			Type args ctx -> "\t" `T.append` T.intercalate ", " ["type", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			NewType args ctx -> "\t" `T.append` T.intercalate ", " ["newtype", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			Data args ctx -> "\t" `T.append` T.intercalate ", " ["data", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			Class args ctx -> "\t" `T.append` T.intercalate ", " ["class", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			TypeFam args ctx _ -> "\t" `T.append` T.intercalate ", " ["type family", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			DataFam args ctx _ -> "\t" `T.append` T.intercalate ", " ["data family", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			PatConstructor args p -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "pattern constructor", Just $ "args: {}" ~~ T.unwords args, fmap ("pat-type: {}" ~~) p])
+			PatSelector t p _ -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "pattern selector", fmap ("type: {}" ~~) t, fmap ("pat-type: {}" ~~) p])
 
 makeLenses ''Module
 makeLenses ''Symbol

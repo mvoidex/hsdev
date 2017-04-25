@@ -5,7 +5,6 @@ module HsDev.Util (
 	withCurrentDirectory,
 	directoryContents,
 	traverseDirectory, searchPath,
-	isParent,
 	haskellSource,
 	cabalFile,
 	-- * String utils
@@ -40,13 +39,14 @@ import Control.Applicative
 import Control.Arrow (second, left, (&&&))
 import Control.Exception
 import Control.Concurrent.Async
+import Control.DeepSeq
 import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Catch as C
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
-import Data.List (isPrefixOf, unfoldr, intercalate)
+import Data.List (unfoldr, intercalate)
 import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Monoid ((<>))
@@ -56,6 +56,7 @@ import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Text (Text)
+import qualified Data.Text.IO as ST
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
 import Options.Applicative
@@ -110,8 +111,8 @@ directoryContents p = handle ignore $ do
 
 -- | Collect all file names in directory recursively
 traverseDirectory :: FilePath -> IO [FilePath]
-traverseDirectory path = handle onError $ do
-	cts <- directoryContents path
+traverseDirectory p = handle onError $ do
+	cts <- directoryContents p
 	liftM concat $ forM cts $ \c -> do
 		isDir <- Dir.doesDirectoryExist c
 		if isDir
@@ -123,21 +124,14 @@ traverseDirectory path = handle onError $ do
 
 -- | Search something up
 searchPath :: (MonadIO m, MonadPlus m) => FilePath -> (FilePath -> m a) -> m a
-searchPath path f = do
-	path' <- liftIO $ Dir.canonicalizePath path
-	isDir <- liftIO $ Dir.doesDirectoryExist path'
-	search' (if isDir then path' else takeDirectory path')
+searchPath p f = do
+	p' <- liftIO $ Dir.canonicalizePath p
+	isDir <- liftIO $ Dir.doesDirectoryExist p'
+	search' (if isDir then p' else takeDirectory p')
 	where
 		search' dir
 			| isDrive dir = f dir
 			| otherwise = f dir `mplus` search' (takeDirectory dir)
-
--- | Is one path parent of another
-isParent :: FilePath -> FilePath -> Bool
-isParent dir file = norm dir `isPrefixOf` norm file where
-	norm = dropDot . splitDirectories . normalise
-	dropDot ("." : chs) = chs
-	dropDot chs = chs
 
 -- | Is haskell source?
 haskellSource :: FilePath -> Bool
@@ -252,16 +246,16 @@ toUtf8 :: String -> ByteString
 toUtf8 = T.encodeUtf8 . T.pack
 
 -- | Read file in UTF8
-readFileUtf8 :: FilePath -> IO String
+readFileUtf8 :: FilePath -> IO Text
 readFileUtf8 f = withFile f ReadMode $ \h -> do
 	hSetEncoding h utf8
-	cts <- hGetContents h
-	length cts `seq` return cts
+	cts <- ST.hGetContents h
+	cts `deepseq` return cts
 
-writeFileUtf8 :: FilePath -> String -> IO ()
+writeFileUtf8 :: FilePath -> Text -> IO ()
 writeFileUtf8 f cts = withFile f WriteMode $ \h -> do
 	hSetEncoding h utf8
-	hPutStr h cts
+	ST.hPutStr h cts
 
 hGetLineBS :: Handle -> IO ByteString
 hGetLineBS = fmap L.fromStrict . B.hGetLine

@@ -8,6 +8,8 @@ import Control.Lens (view)
 import Control.Monad (liftM, (>=>))
 import Control.Monad.IO.Class
 import Data.List (intercalate)
+import qualified Data.Text.IO as T
+import Data.String (fromString)
 import System.Directory (canonicalizePath)
 import System.FilePath (takeExtension)
 
@@ -20,6 +22,7 @@ import HsDev.Scan.Browse (listModules, browseModules)
 import HsDev.Symbols.Location (installedModuleName)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.Ghc.Worker
+import System.Directory.Paths
 
 import Tool
 
@@ -34,13 +37,13 @@ main :: IO ()
 main = toolMain "hsinspect" "haskell inspect" opts (runToolClient . inspect') where
 	inspect' :: Opts -> ClientM IO Value
 	inspect' (Opts Nothing ghcs) = do
-		cts <- liftIO getContents
+		cts <- liftIO T.getContents
 		defs <- liftIO getDefines
 		liftM toJSON $ liftIO $ hsdevLift $ inspectContents "stdin" defs ghcs cts
 	inspect' (Opts (Just fname@(takeExtension -> ".hs")) ghcs) = do
 		fname' <- liftIO $ canonicalizePath fname
 		defs <- liftIO getDefines
-		im <- liftIO $ inspectFile defs ghcs fname' Nothing Nothing
+		im <- liftIO $ inspectFile defs ghcs (fromFilePath fname') Nothing Nothing
 		ghc <- ghcWorker
 		let
 			scanAdditional =
@@ -54,7 +57,7 @@ main = toolMain "hsinspect" "haskell inspect" opts (runToolClient . inspect') wh
 		ghc <- ghcWorker
 		mlocs <- liftIO $ inWorker ghc $ listModules ghcs userDb
 		let
-			mlocs' = filter ((== mname) . view installedModuleName) mlocs
+			mlocs' = filter ((== fromString mname) . view installedModuleName) mlocs
 		case mlocs' of
 			[mloc] -> do
 				[im] <- liftIO $ inWorker ghc $ browseModules ghcs userDb [mloc]

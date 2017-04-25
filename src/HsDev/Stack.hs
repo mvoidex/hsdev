@@ -38,6 +38,7 @@ import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import qualified HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util as Util
 import HsDev.Tools.Base (runTool_)
+import qualified System.Directory.Paths as P
 
 -- | Get compiler version
 stackCompiler :: GhcM String
@@ -72,16 +73,16 @@ yaml :: Maybe FilePath -> [String]
 yaml Nothing = []
 yaml (Just y) = ["--stack-yaml", y]
 
-type Paths = Map String FilePath
+type PathsConf = Map String FilePath
 
 -- | Stack path
-path :: Maybe FilePath -> GhcM Paths
+path :: Maybe FilePath -> GhcM PathsConf
 path mcfg = liftM (M.fromList . map breakPath . lines) $ stack ("path" : yaml mcfg) where
 	breakPath :: String -> (String, FilePath)
 	breakPath = second (dropWhile isSpace . drop 1) . break (== ':')
 
 -- | Get path for
-pathOf :: String -> Lens' Paths (Maybe FilePath)
+pathOf :: String -> Lens' PathsConf (Maybe FilePath)
 pathOf = at
 
 -- | Build stack project
@@ -106,7 +107,7 @@ data StackEnv = StackEnv {
 
 makeLenses ''StackEnv
 
-getStackEnv :: Paths -> Maybe StackEnv
+getStackEnv :: PathsConf -> Maybe StackEnv
 getStackEnv p = StackEnv <$>
 	(p ^. pathOf "stack-root") <*>
 	(p ^. pathOf "project-root") <*>
@@ -125,8 +126,8 @@ projectEnv p = hsdevLiftIO $ Util.withCurrentDirectory p $ do
 stackPackageDbStack :: Lens' StackEnv PackageDbStack
 stackPackageDbStack = lens g s where
 	g :: StackEnv -> PackageDbStack
-	g env' = PackageDbStack $ map PackageDb [_stackLocal env', _stackSnapshot env']
+	g env' = PackageDbStack $ map (PackageDb . P.fromFilePath) [_stackLocal env', _stackSnapshot env']
 	s :: StackEnv -> PackageDbStack -> StackEnv
 	s env' pdbs = env' {
-		_stackSnapshot = fromMaybe (_stackSnapshot env') $ pdbs ^? packageDbStack . ix 1 . packageDb,
-		_stackLocal = fromMaybe (_stackLocal env') $ pdbs ^? packageDbStack . ix 0 . packageDb }
+		_stackSnapshot = fromMaybe (_stackSnapshot env') $ pdbs ^? packageDbStack . ix 1 . packageDb . P.path,
+		_stackLocal = fromMaybe (_stackLocal env') $ pdbs ^? packageDbStack . ix 0 . packageDb . P.path }

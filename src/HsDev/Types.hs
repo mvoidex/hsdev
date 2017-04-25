@@ -9,18 +9,20 @@ import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Aeson.Types (Pair, Parser)
 import Data.Typeable
+import Data.Text (Text)
 import Text.Format
 
 import HsDev.Symbols.Location
+import System.Directory.Paths
 
 -- | hsdev exception type
 data HsDevError =
 	ModuleNotSource ModuleLocation |
 	BrowseNoModuleInfo String |
-	FileNotFound FilePath |
+	FileNotFound Path |
 	ToolNotFound String |
-	ProjectNotFound String |
-	PackageNotFound String |
+	ProjectNotFound Text |
+	PackageNotFound Text |
 	ToolError String String |
 	NotInspected ModuleLocation |
 	InspectError String |

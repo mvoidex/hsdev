@@ -24,7 +24,7 @@ import Data.Either
 import Data.Maybe (listToMaybe, fromJust)
 import Network.HTTP
 import Data.String (fromString)
-import qualified Data.Text as T (unpack)
+import qualified Data.Text as T (unpack, unlines)
 
 import HsDev.Symbols
 import HsDev.Tools.Base (replaceRx)
@@ -66,16 +66,16 @@ instance Sourced HayooSymbol where
 		g' = fromString . hayooName
 		s' sym n = sym { hayooName = T.unpack n }
 	sourcedModule = lens g' s' where
-		g' h = ModuleId nm (OtherLocation $ resultUri h) where
+		g' h = ModuleId nm (OtherLocation $ fromString $ resultUri h) where
 			nm = maybe mempty fromString $ listToMaybe $ hayooModules h
 		s' h _ = h
 	sourcedDocs f h = (\d' -> h { hayooDescription = T.unpack d' }) <$> f (fromString $ hayooDescription h)
 
 instance Documented HayooSymbol where
 	brief f
-		| hayooType f == "function" = hayooName f ++ " :: " ++ hayooSignature f
-		| otherwise = hayooType f ++ " " ++ hayooName f
-	detailed f = unlines $ defaultDetailed f ++ online where
+		| hayooType f == "function" = fromString $ hayooName f ++ " :: " ++ hayooSignature f
+		| otherwise = fromString $ hayooType f ++ " " ++ hayooName f
+	detailed f = T.unlines $ defaultDetailed f ++ map fromString online where
 		online = [
 			"", "Hayoo online documentation", "",
 			"Package: " ++ hayooPackage f,
@@ -105,7 +105,7 @@ hayooAsSymbol f
 			_symbolName = fromString $ hayooName f,
 			_symbolModule = ModuleId {
 				_moduleName = fromString $ head $ hayooModules f,
-				_moduleLocation = OtherLocation (resultUri f) } },
+				_moduleLocation = OtherLocation (fromString $ resultUri f) } },
 		_symbolDocs = Just (fromString $ addOnline $ untagDescription $ hayooDescription f),
 		_symbolPosition = Nothing,
 		_symbolInfo = info }

@@ -14,26 +14,26 @@ import Data.Text (Text)
 import Data.Generics.Uniplate.Operations
 import Language.Haskell.Names (Scoped(..))
 import Language.Haskell.Exts as Exts (ModuleName(..), SrcSpanInfo, importModule)
-import System.FilePath
 
 import Data.Deps
 import HsDev.Database
 import HsDev.Symbols hiding (exportedSymbols)
 import HsDev.Symbols.Util
+import System.Directory.Paths
 
 -- | Flattened dependencies
-sourceDeps :: Database -> Deps FilePath
+sourceDeps :: Database -> Deps Path
 sourceDeps db = either (const mempty) id $ flatten $ mconcat $ do
 	src <- sources
 	fpath <- maybeToList $ preview (moduleId . moduleLocation . moduleFile) src
 	msrc <- maybeToList $ view moduleSource src
-	imp <- [n | ModuleName _ n <- map Exts.importModule (childrenBi msrc) :: [ModuleName (Scoped SrcSpanInfo)]]
+	imp <- [fromString n | ModuleName _ n <- map Exts.importModule (childrenBi msrc) :: [ModuleName (Scoped SrcSpanInfo)]]
 	im <- case preview (moduleId . moduleLocation . moduleProject . _Just) src of
-		Nothing -> maybeToList $ M.lookup (normalise (sourceModuleRoot (view (moduleId . moduleName) src) fpath </> importPath (fromString imp))) tbl
+		Nothing -> maybeToList $ M.lookup (normPath (joinPaths [sourceModuleRoot (view (moduleId . moduleName) src) fpath, importPath imp])) tbl
 		Just proj -> do
 			target <- fileTargets proj fpath
 			dir <- view infoSourceDirs target
-			maybeToList $ M.lookup (normalise $ view projectPath proj </> dir </> importPath (fromString imp)) tbl
+			maybeToList $ M.lookup (normPath $ joinPaths [view projectPath proj, dir, importPath imp]) tbl
 	ipath <- maybeToList $ preview (moduleId . moduleLocation . moduleFile) im
 	return $ dep fpath ipath
 	where
@@ -44,7 +44,7 @@ sourceDeps db = either (const mempty) id $ flatten $ mconcat $ do
 			return (fpath, src)
 
 -- | Flattened reverse dependencies
-sourceRDeps :: Database -> Deps FilePath
+sourceRDeps :: Database -> Deps Path
 sourceRDeps = inverse . sourceDeps
 
 type RefineTable = M.Map (Text, Text, SymbolInfo) Symbol

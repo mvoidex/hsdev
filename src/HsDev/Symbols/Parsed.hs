@@ -165,9 +165,9 @@ positionL = lens g' s' where
 regionL :: Annotated ast => Lens' (ast Ann) Region
 regionL = lens g' s' where
 	g' i = case ann i of
-		Scoped _ sinfo -> pos (srcSpanStart span') `region` pos (srcSpanEnd span') where
+		Scoped _ sinfo -> toPos (srcSpanStart span') `region` toPos (srcSpanEnd span') where
 			span' = srcInfoSpan sinfo
-			pos = uncurry Position
+			toPos = uncurry Position
 	s' i (Region s e) = amap (fmap upd) i where
 		upd :: SrcSpanInfo -> SrcSpanInfo
 		upd sinfo = sinfo {

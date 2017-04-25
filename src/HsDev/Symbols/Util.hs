@@ -11,12 +11,12 @@ import Data.Function (on)
 import Data.Maybe
 import Data.List (maximumBy, groupBy, sortBy)
 import Data.Ord (comparing)
-import Data.String (fromString)
 import Data.Text (Text)
-import System.FilePath (normalise)
+import qualified Data.Text as T
 
 import HsDev.Symbols
 import HsDev.Util (ordNub)
+import System.Directory.Paths
 
 -- | Check is sourced has name
 withName :: Sourced a => Text -> a -> Bool
@@ -33,36 +33,37 @@ inTarget i = maybe False (`fileInTarget` i) . preview (sourcedModule . moduleLoc
 -- | Check if module in deps of project target
 inDepsOfTarget :: Sourced s => Project -> Info -> s -> Bool
 inDepsOfTarget p i = anyPackage $ view infoDepends i where
-	anyPackage :: Sourced s => [String] -> s -> Bool
+	anyPackage :: Sourced s => [Text] -> s -> Bool
 	anyPackage = fmap or . mapM (inPackage . mkPackage) . filter (/= (p ^. projectName))
 
 -- | Check if module in deps of source
-inDepsOfFile :: Sourced s => Project -> FilePath -> s -> Bool
+inDepsOfFile :: Sourced s => Project -> Path -> s -> Bool
 inDepsOfFile p f m = any (\i -> inDepsOfTarget p i m) (fileTargets p f)
 
 -- | Check if module in deps of project, ignoring self package
 inDepsOfProject :: Sourced s => Project -> s -> Bool
 inDepsOfProject p = anyPackage $ ordNub (p ^.. projectDescription . _Just . infos . infoDepends . each) where
-	anyPackage :: Sourced s => [String] -> s -> Bool
+	anyPackage :: Sourced s => [Text] -> s -> Bool
 	anyPackage = fmap or . mapM (inPackage . mkPackage) . filter (/= (p ^. projectName))
 
 -- | Check if module in package
 inPackage :: Sourced s => ModulePackage -> s -> Bool
 inPackage p m = maybe False (equalTo p) $ preview (sourcedModule . moduleLocation . modulePackage . _Just) m where
-	equalTo (ModulePackage n "") r = n == view packageName r
-	equalTo mp r = mp == r
+	equalTo mp@(ModulePackage n v) r
+		| T.null v = n == view packageName r
+		| otherwise = mp == r
 
 -- | Check if module in file
-inFile :: Sourced s => FilePath -> s -> Bool
-inFile fpath m = preview (sourcedModule . moduleLocation . moduleFile) m == Just (normalise fpath)
+inFile :: Sourced s => Path -> s -> Bool
+inFile fpath m = preview (sourcedModule . moduleLocation . moduleFile) m == Just (normPath fpath)
 
 -- | Check if module in source
-inOtherLocation :: Sourced s => String -> s -> Bool
+inOtherLocation :: Sourced s => Text -> s -> Bool
 inOtherLocation src m = preview (sourcedModule . moduleLocation . otherLocationName) m == Just src
 
 -- | Check if declaration is in module
-inModule :: Sourced s => String -> s -> Bool
-inModule mname m = fromString mname == view sourcedModuleName m
+inModule :: Sourced s => Text -> s -> Bool
+inModule mname m = mname == view sourcedModuleName m
 
 -- | Check if module defined in file
 byFile :: Sourced s => s -> Bool

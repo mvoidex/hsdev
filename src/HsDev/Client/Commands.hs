@@ -22,8 +22,7 @@ import Data.List
 import Data.Maybe
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import Data.String (fromString)
-import Data.Text (pack, unpack)
+import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
 import System.Directory
 import System.FilePath
@@ -33,8 +32,8 @@ import Text.Read (readMaybe)
 import Text.Regex.PCRE ((=~))
 
 import qualified System.Directory.Watcher as W
-import qualified Data.Async as A
 import System.Directory.Paths
+import qualified Data.Async as A
 import Text.Format
 import HsDev.Commands
 import HsDev.Error
@@ -91,7 +90,7 @@ runCommand (AddData fs) = toValue $ do
 			A.Success v' -> Just v'
 	forM_ fs $ \f -> do
 		commandNotify (Notification $ object ["message" .= ("adding data" :: String), "file" .= f])
-		cts <- liftIO $ L.readFile f
+		cts <- liftIO $ L.readFile (view path f)
 		case eitherDecode cts of
 			Left e -> hsdevError $ OtherError e
 			Right v -> do
@@ -219,7 +218,7 @@ runCommand (InfoModule sq fs h i) = toValue $ do
 				shorten = view moduleId
 	return converted
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
-runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject projPath
+runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $ do
 	dbval <- serverDatabase
@@ -236,7 +235,7 @@ runCommand (Whoat l c fpath) = toValue $ do
 		pos = Position l c
 		inRegion' :: Position -> Region -> Bool
 		inRegion' p' (Region s e) = p' >= s && p' <= e
-	maybe (return []) (liftIO . hsdevLift . findSymbol dbval . unpack . Name.fromName) mname
+	maybe (return []) (liftIO . hsdevLift . findSymbol dbval . Name.fromName) mname
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
 	dbval <- serverDatabase
 	ms <- liftIO $ hsdevLift $ scopeModules dbval fpath
@@ -274,7 +273,7 @@ runCommand (Complete input False fpath) = toValue $ do
 runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
 	liftIO $ hsdevLift $ Hayoo.hayoo hq (Just i)
-runCommand (CabalList packages') = toValue $ liftIO $ hsdevLift $ Cabal.cabalList packages'
+runCommand (CabalList packages') = toValue $ liftIO $ hsdevLift $ Cabal.cabalList $ map unpack packages'
 runCommand (UnresolvedSymbols fs) = toValue $ do
 	ms <- mapM refineSourceModule fs
 	let
@@ -292,7 +291,7 @@ runCommand (UnresolvedSymbols fs) = toValue $ do
 		symByName nm = Symbol (SymbolId nm (ModuleId "" NoLocation)) Nothing Nothing (Function Nothing)
 	return unresolveds
 runCommand (Lint fs) = toValue $ do
-	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
+	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
 runCommand (Check fs ghcs') = toValue $ Log.scope "check" $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
@@ -309,7 +308,7 @@ runCommand (CheckLint fs ghcs') = toValue $ do
 			m <- setFileSourceSession ghcs' file
 			inSessionGhc $ fn m
 	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check [] m c)) fs
-	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint f c) fs
+	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs') = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
@@ -322,10 +321,10 @@ runCommand (Refactor ns rest isPure) = toValue $ do
 	let
 		runFix file = do
 			when (not isPure) $ do
-				liftIO $ readFileUtf8 file >>= writeFileUtf8 file . AutoFix.refact fixRefacts'
+				liftIO $ readFileUtf8 (view path file) >>= writeFileUtf8 (view path file) . AutoFix.refact fixRefacts'
 			return newCorrs'
 			where
-				findCorrs :: FilePath -> [Tools.Note AutoFix.Refact] -> [Tools.Note AutoFix.Refact]
+				findCorrs :: Path -> [Tools.Note AutoFix.Refact] -> [Tools.Note AutoFix.Refact]
 				findCorrs f = filter ((== Just f) . preview (Tools.noteSource . moduleFile))
 				fixCorrs' = findCorrs file ns
 				upCorrs' = findCorrs file rest
@@ -335,13 +334,13 @@ runCommand (Refactor ns rest isPure) = toValue $ do
 runCommand (Rename nm newName fpath) = toValue $ do
 	m <- refineSourceModule fpath
 	sym <- maybe (hsdevError $ OtherError $ "symbol not found") return $
-		m ^? exportedSymbols . filtered ((== fromString nm) . view sourcedName) -- FIXME: use not exported symbols
+		m ^? exportedSymbols . filtered ((== nm) . view sourcedName) -- FIXME: use not exported symbols
 
 	dbval <- serverDatabase
 	let
 		defRefacts = do
 			p <- m ^.. moduleSource . _Just
-			def' <- p ^.. P.names . P.binders . filtered ((== fromString nm) . Name.fromName_ . void)
+			def' <- p ^.. P.names . P.binders . filtered ((== nm) . Name.fromName_ . void)
 			return $ Tools.Note {
 				Tools._noteSource = m ^. moduleId . moduleLocation,
 				Tools._noteRegion = def' ^. P.regionL,
@@ -447,14 +446,14 @@ findPath = paths findPath' where
 		liftIO $ canonicalizePath (normalise $ if isRelative f then r </> f else f)
 
 -- | Find sandbox by path
-findSandbox :: CommandMonad m => FilePath -> m Sandbox
+findSandbox :: CommandMonad m => Path -> m Sandbox
 findSandbox fpath = do
 	fpath' <- findPath fpath
 	sbox <- liftIO $ S.findSandbox fpath'
 	maybe (hsdevError $ FileNotFound fpath') return sbox
 
 -- | Get source file
-refineSourceFile :: CommandMonad m => FilePath -> m FilePath
+refineSourceFile :: CommandMonad m => Path -> m Path
 refineSourceFile fpath = do
 	fpath' <- findPath fpath
 	db' <- serverDatabase
@@ -463,21 +462,21 @@ refineSourceFile fpath = do
 		preview (moduleId . moduleLocation . moduleFile) m'
 
 -- | Get module by source
-refineSourceModule :: CommandMonad m => FilePath -> m Module
+refineSourceModule :: CommandMonad m => Path -> m Module
 refineSourceModule fpath = do
 	fpath' <- findPath fpath
 	db' <- serverDatabase
 	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return (db' ^? databaseModules . atFile fpath' . inspected)
 
 -- | Set session by source
-setFileSourceSession :: CommandMonad m => [String] -> FilePath -> m Module
+setFileSourceSession :: CommandMonad m => [String] -> Path -> m Module
 setFileSourceSession opts fpath = do
 	m <- refineSourceModule fpath
 	inSessionGhc $ targetSession opts m
 	return m
 
 -- | Ensure package exists
-refinePackage :: CommandMonad m => String -> m String
+refinePackage :: CommandMonad m => Text -> m Text
 refinePackage pkg = do
 	db' <- serverDatabase
 	if pkg `elem` ordNub (db' ^.. packages . packageName)
@@ -485,23 +484,23 @@ refinePackage pkg = do
 		else hsdevError (PackageNotFound pkg)
 
 -- | Get list of enumerated sandboxes
-getSandboxes :: CommandMonad m => [FilePath] -> m [Sandbox]
+getSandboxes :: CommandMonad m => [Path] -> m [Sandbox]
 getSandboxes = traverse (findPath >=> findSandbox)
 
 -- | Find project by name or path
-findProject :: CommandMonad m => String -> m Project
+findProject :: CommandMonad m => Text -> m Project
 findProject proj = do
 	db' <- serverDatabase
 	proj' <- liftM addCabal $ findPath proj
 	let
 		resultProj =
-			refineProject db' (project proj') <|>
+			refineProject db' (project $ view path proj') <|>
 			find ((== proj) . view projectName) (M.elems $ view databaseProjects db')
 	maybe (hsdevError $ ProjectNotFound proj) return resultProj
 	where
 		addCabal p
-			| takeExtension p == ".cabal" = p
-			| otherwise = p </> (takeBaseName p <.> "cabal")
+			| takeExtension (view path p) == ".cabal" = p
+			| otherwise = over path (\p' -> p' </> (takeBaseName p' <.> "cabal")) p
 
 -- | Run DB update action
 updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()
@@ -515,12 +514,11 @@ updateProcess uopts acts = Update.runUpdate uopts $ mapM_ runAct acts where
 
 -- | Check matching search query
 matchQuery :: Sourced a => SearchQuery -> a -> Bool
-matchQuery (SearchQuery q st) s = case st of
+matchQuery (SearchQuery sq st) s = case st of
 	SearchExact -> sq == sn
 	SearchPrefix -> sq `T.isPrefixOf` sn
 	SearchInfix -> sq `T.isInfixOf` sn
 	SearchSuffix -> sq `T.isSuffixOf` sn
-	SearchRegex -> unpack sn =~ q
+	SearchRegex -> unpack sn =~ unpack sq
 	where
-		sq = fromString q
 		sn = view sourcedName s

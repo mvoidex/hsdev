@@ -15,8 +15,7 @@ import Data.Generics
 import Data.List (find)
 import Data.Maybe
 import Data.String (fromString)
-import System.Directory
-import System.FilePath
+import Data.Text (Text)
 import System.Log.Simple (MonadLog(..), scope)
 
 import GHC hiding (exprType, Module, moduleName)
@@ -29,7 +28,7 @@ import Outputable
 import PprTyThing
 import qualified Pretty
 
-import System.Directory.Paths (canonicalize)
+import System.Directory.Paths
 import HsDev.Error
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Worker as Ghc
@@ -62,13 +61,13 @@ locatedTypes = types' p where
 	types' p' = everythingStaged TypeChecker (++) [] ([] `mkQ` (\x -> [x | p' x]))
 	p (L spn _) = isGoodSrcSpan spn
 
-moduleTypes :: GhcMonad m => FilePath -> m [(SrcSpan, Type)]
+moduleTypes :: GhcMonad m => Path -> m [(SrcSpan, Type)]
 moduleTypes fpath = do
 	fpath' <- liftIO $ canonicalize fpath
 	mg <- getModuleGraph
 	[m] <- liftIO $ flip filterM mg $ \m -> do
 		mfile <- traverse (liftIO . canonicalize) $ ml_hs_file (ms_location m)
-		return (Just fpath' == mfile)
+		return (Just (view path fpath') == mfile)
 	p <- parseModule m
 	tm <- typecheckModule p
 	let
@@ -79,8 +78,8 @@ moduleTypes fpath = do
 		mapM (getType tm) (locatedTypes ts :: [LPat Id])]
 
 data TypedExpr = TypedExpr {
-	_typedExpr :: String,
-	_typedType :: String }
+	_typedExpr :: Text,
+	_typedType :: Text }
 		deriving (Eq, Ord, Read, Show)
 
 makeLenses ''TypedExpr
@@ -99,32 +98,32 @@ instance FromJSON TypedExpr where
 		v .:: "type"
 
 -- | Get all types in module
-fileTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe String -> m [Note TypedExpr]
+fileTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe Text -> m [Note TypedExpr]
 fileTypes opts m msrc = scope "types" $ case view (moduleId . moduleLocation) m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
-		cts <- maybe (liftIO $ readFileUtf8 file') return msrc
+		cts <- maybe (liftIO $ readFileUtf8 (view path file')) return msrc
 		let
 			dir = fromMaybe
 				(sourceModuleRoot (view (moduleId . moduleName) m) file') $
 				preview (_Just . projectPath) proj
-		dirExist <- liftIO $ doesDirectoryExist dir
-		withFlags $ (if dirExist then Ghc.withCurrentDirectory dir else id) $ do
+		ex <- liftIO $ dirExists dir
+		withFlags $ (if ex then Ghc.withCurrentDirectory (view path dir) else id) $ do
 			addCmdOpts opts
-			target <- makeTarget (makeRelative dir file') msrc
+			target <- makeTarget (relPathTo dir file') msrc
 			loadTargets [target]
 			ts <- moduleTypes file'
 			df <- getSessionDynFlags
 			return $ map (setExpr cts . recalcTabs cts 8 . uncurry (toNote df)) ts
 	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
 	where
-		toNote :: DynFlags -> SrcSpan -> Type -> Note String
+		toNote :: DynFlags -> SrcSpan -> Type -> Note Text
 		toNote df spn tp = Note {
 			_noteSource = noLocation,
 			_noteRegion = spanRegion spn,
 			_noteLevel = Nothing,
-			_note = showType df tp }
-		setExpr :: String -> Note String -> Note TypedExpr
+			_note = fromString $ showType df tp }
+		setExpr :: Text -> Note Text -> Note TypedExpr
 		setExpr cts n = over note (TypedExpr (regionStr (view noteRegion n) cts)) n
 		showType :: DynFlags -> Type -> String
 		showType df = renderStyle Pretty.OneLineMode 80 . withPprStyleDoc df unqualStyle . pprTypeForUser
@@ -138,8 +137,8 @@ setModuleTypes ts = over (moduleScope . each . each) setType . over (moduleExpor
 	setType d = fromMaybe d $ do
 		pos <- view symbolPosition d
 		tnote <- find ((== pos) . view (noteRegion . regionFrom)) ts
-		return $ set (symbolInfo . functionType) (Just $ fromString $ view (note . typedType) tnote) d
+		return $ set (symbolInfo . functionType) (Just $ view (note . typedType) tnote) d
 
 -- | Infer types in module
-inferTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe String -> m Module
+inferTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe Text -> m Module
 inferTypes opts m msrc = scope "infer" $ liftM (`setModuleTypes` m) $ fileTypes opts m msrc
