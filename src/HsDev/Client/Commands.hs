@@ -232,7 +232,7 @@ runCommand (Whoat l c fpath) = toValue $ do
 	m <- refineSourceModule fpath
 	p <- maybe (hsdevError $ InspectError $ "module doesn't have parsed info") return $ m ^. moduleSource
 	let
-		mname = p ^? P.qnames . filtered (inRegion' pos . view P.regionL) . P.resolvedName
+		mname = p ^? P.names . filtered (inRegion' pos . view P.regionL) . P.resolvedName
 		pos = Position l c
 		inRegion' :: Position -> Region -> Bool
 		inRegion' p' (Region s e) = p' >= s && p' <= e
@@ -257,7 +257,7 @@ runCommand (FindUsages nm) = toValue $ do
 				symName = Name.qualName
 					(unpack $ sym ^. symbolId . symbolModule . moduleName)
 					(unpack $ sym ^. symbolId . symbolName)
-			usage' <- p ^.. P.qnames . P.usages symName
+			usage' <- p ^.. P.names . P.usages symName
 			return $ symUsage (sym ^. briefSymbol) (m ^. moduleId) (usage' ^. P.pos)
 
 		symUsage sym mid pos = SymbolUsage {
@@ -339,6 +339,14 @@ runCommand (Rename nm newName fpath) = toValue $ do
 
 	dbval <- serverDatabase
 	let
+		defRefacts = do
+			p <- m ^.. moduleSource . _Just
+			def' <- p ^.. P.names . P.binders . filtered ((== fromString nm) . Name.fromName_ . void)
+			return $ Tools.Note {
+				Tools._noteSource = m ^. moduleId . moduleLocation,
+				Tools._noteRegion = def' ^. P.regionL,
+				Tools._noteLevel = Nothing,
+				Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion $ def' ^. P.regionL) newName) }
 		refacts = do
 			m' <- dbval ^.. sourcesSlice . modules
 			p <- m' ^.. moduleSource . _Just
@@ -346,14 +354,14 @@ runCommand (Rename nm newName fpath) = toValue $ do
 				symName = Name.qualName
 					(unpack $ sym ^. symbolId . symbolModule . moduleName)
 					(unpack $ sym ^. symbolId . symbolName)
-			usage' <- p ^.. P.qnames . P.usages symName
+			usage' <- p ^.. P.names . P.usages symName
 			return $ Tools.Note {
 				Tools._noteSource = m' ^. moduleId . moduleLocation,
 				Tools._noteRegion = usage' ^. P.regionL,
 				Tools._noteLevel = Nothing,
 				Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion $ usage' ^. P.regionL) newName) }
 
-	return refacts
+	return $ defRefacts ++ refacts
 runCommand (GhcEval exprs mfile) = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] [] False False) (maybeToList mfile)
 	ghcw <- askSession sessionGhc
