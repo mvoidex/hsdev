@@ -159,8 +159,7 @@ analyzeResolve (AnalyzeEnv env _ rtable) m = case m ^. moduleSource of
 		_moduleFixities = [Fixity (void assoc) (fromMaybe 0 pr) (fixName opName)
 			| H.InfixDecl _ assoc pr ops <- decls', opName <- map getOpName ops],
 		_moduleScope = M.map (map HN.fromSymbol) tbl,
-		_moduleSource = Nothing }
-		-- _moduleSource = Just annotated }
+		_moduleSource = Just annotated }
 		where
 			getOpName (H.VarOp _ nm) = nm
 			getOpName (H.ConOp _ nm) = nm

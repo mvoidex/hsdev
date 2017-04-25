@@ -34,6 +34,7 @@ library
     Data.Help
     Data.Lisp
     Data.Maybe.JustIf
+    Data.LookupTable
     HsDev
     HsDev.Cache
     HsDev.Client.Commands

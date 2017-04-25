@@ -28,6 +28,7 @@ import System.FilePath
 import System.Log.Simple.Monad (MonadLog)
 
 import Data.Deps
+import Data.LookupTable
 import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Error
@@ -80,24 +81,29 @@ browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [Inspect
 browseModules opts dbs mlocs = do
 	tmpSession (packageDbStackOpts dbs ++ opts)
 	ms <- packageDbModules
-	liftM catMaybes $ sequence [browseModule' p m | (p, m) <- ms, ghcModuleLocation p m `S.member` mlocs']
+	midTbl <- newLookupTable
+	sidTbl <- newLookupTable
+	let
+		lookupModuleId p' m' = lookupTable m' (ghcModuleId p' m') midTbl
+	liftM catMaybes $ sequence [browseModule' lookupModuleId (cacheInTableM sidTbl) p m | (p, m) <- ms, ghcModuleLocation p m `S.member` mlocs']
 	where
-		browseModule' :: GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
-		browseModule' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 (map fromString opts)) (browseModule p m)
+		browseModule' :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
+		browseModule' modId' sym' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m)
 		mlocs' = S.fromList mlocs
 
-browseModule :: GHC.PackageConfig -> GHC.Module -> GhcM Module
-browseModule package' m = do
+browseModule :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM Module
+browseModule modId lookSym package' m = do
 	df <- GHC.getSessionDynFlags
 	mi <- GHC.getModuleInfo m >>= maybe (hsdevError $ BrowseNoModuleInfo thisModule) return
-	ds <- mapM (toDecl df mi) (GHC.modInfoExports mi)
+	ds <- mapM (\n -> lookSym n (toDecl df mi n)) (GHC.modInfoExports mi)
+	myModId <- modId package' m
 	let
 		dirAssoc GHC.InfixL = AssocLeft ()
 		dirAssoc GHC.InfixR = AssocRight ()
 		dirAssoc GHC.InfixN = AssocNone ()
 		fixName o = Qual () (ModuleName () thisModule) (Ident () (GHC.occNameString o))
 	return Module {
-		_moduleId = mloc df m,
+		_moduleId = myModId,
 		_moduleDocs = Nothing,
 		_moduleExports = ds,
 		_moduleFixities = [Fixity (dirAssoc dir) pr (fixName oname) | (oname, (pr, dir)) <- map (second Compat.getFixity) (maybe [] GHC.mi_fixities (GHC.modInfoIface mi))],
@@ -105,16 +111,17 @@ browseModule package' m = do
 		_moduleSource = Nothing }
 	where
 		thisModule = GHC.moduleNameString (GHC.moduleName m)
-		mloc df m' = ModuleId (fromString mname') $
-			ghcModuleLocation (fromMaybe package' $ GHC.lookupPackage df (moduleUnitId m')) m'
-			where
-				mname' = GHC.moduleNameString $ GHC.moduleName m'
+		mloc df m' = do
+			pkg' <- maybe (hsdevError $ OtherError $ "Error getting module package: " ++ GHC.moduleNameString (GHC.moduleName m')) return $
+				GHC.lookupPackage df (moduleUnitId m')
+			modId pkg' m'
 		toDecl df minfo n = do
 			tyInfo <- GHC.modInfoLookupName minfo n
 			tyResult <- maybe (GHC.lookupName n) (return . Just) tyInfo
 			dflag <- GHC.getSessionDynFlags
+			declModId <- mloc df (GHC.nameModule n)
 			return $ Symbol {
-				_symbolId = SymbolId (fromString $ GHC.getOccString n) (mloc df (GHC.nameModule n)),
+				_symbolId = SymbolId (fromString $ GHC.getOccString n) declModId,
 				_symbolDocs = Nothing,
 				_symbolPosition = Nothing,
 				_symbolInfo = fromMaybe (Function Nothing) (tyResult >>= showResult dflag) }
@@ -202,6 +209,11 @@ readPackageConfig pc = PackageConfig
 
 ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> ModuleLocation
 ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (Just $ readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
+
+ghcModuleId :: GHC.PackageConfig -> GHC.Module -> ModuleId
+ghcModuleId p m = ModuleId (fromString mname') (ghcModuleLocation p m) where
+	mname' = GHC.moduleNameString $ GHC.moduleName m
+
 
 ghcPackageDb :: GHC.PackageConfig -> IO PackageDb
 ghcPackageDb = maybe (return GlobalDb) packageDbCandidate_ . listToMaybe . GHC.libraryDirs

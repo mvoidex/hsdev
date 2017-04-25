@@ -49,6 +49,7 @@ import qualified Language.Haskell.Names as N
 import System.FilePath
 import qualified System.Log.Simple as Log
 
+import Data.LookupTable
 import HsDev.Error
 import HsDev.Database
 import HsDev.Database.Async hiding (Event)
@@ -366,12 +367,12 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 	scan (const $ return mempty) (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		docs <- inSessionGhc $ hdocsCabal pdbs opts
+		Log.sendLog Log.Trace "docs scanned"
+		docsTbl <- newLookupTable
+		ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
 		updater $ mconcat [
-			mconcat $ map (fromModule . fmap (setDocs' docs)) ms,
+			mconcat $ map fromModule ms',
 			fromPackageDbState (topPackageDb pdbs) pdbState]
-	where
-		setDocs' :: Map String (Map String String) -> Module -> Module
-		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view (moduleId . moduleName) m) docs
 
 -- | Scan top of package-db stack, usable for rescan
 scanPackageDbStack :: UpdateMonad m => [String] -> PackageDbStack -> m ()
@@ -403,14 +404,12 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 
 		docs <- inSessionGhc $ hdocsCabal pdbs opts
 		Log.sendLog Log.Trace "docs scanned"
+		docsTbl <- newLookupTable
+		ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
 
 		updater $ mconcat [
-			-- mconcat $ map fromModule ms',
-			mconcat $ map (fromModule . fmap (setDocs' docs)) ms,
+			mconcat $ map fromModule ms',
 			mconcat [fromPackageDbState pdb pdbState | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]]
-	where
-		setDocs' :: Map String (Map String String) -> Module -> Module
-		setDocs' docs m = maybe m (`setDocs` m) $ M.lookup (T.unpack $ view (moduleId . moduleName) m) docs
 
 -- | Scan project file
 scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project

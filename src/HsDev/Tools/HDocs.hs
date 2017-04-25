@@ -1,6 +1,6 @@
 module HsDev.Tools.HDocs (
 	hdocsy, hdocs, hdocsCabal,
-	setDocs,
+	setSymbolDocs, setDocs, setModuleDocs,
 
 	hdocsProcess,
 
@@ -8,7 +8,7 @@ module HsDev.Tools.HDocs (
 	) where
 
 import Control.DeepSeq
-import Control.Lens (set, view, over, each)
+import Control.Lens (set, view, mapMOf, each)
 import Control.Monad ()
 import Control.Monad.Except
 
@@ -17,6 +17,7 @@ import qualified Data.ByteString.Lazy.Char8 as L (pack)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.String (fromString)
+import Data.Text (Text)
 import qualified Data.Text as T
 
 import qualified HDocs.Module as HDocs
@@ -24,6 +25,7 @@ import qualified HDocs.Haddock as HDocs (readSourceGhc, readSourcesGhc)
 
 import qualified GHC
 
+import Data.LookupTable
 import HsDev.Error
 import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker (GhcM, haddockSession, liftGhc)
@@ -53,18 +55,33 @@ hdocs mloc opts = (force . HDocs.formatDocs) <$> docs' mloc where
 			_ -> hsdevError $ ToolError "hdocs" $ "Can't get docs for: " ++ show mloc'
 
 -- | Get all docs
-hdocsCabal :: PackageDbStack -> [String] -> GhcM (Map String (Map String String))
+hdocsCabal :: PackageDbStack -> [String] -> GhcM (Map Text (Map Text Text))
 hdocsCabal pdbs opts = do
 	haddockSession (packageDbStackOpts pdbs ++ opts)
 	df <- GHC.getSessionDynFlags
-	liftIO $ hsdevLiftWith (ToolError "hdocs") $
+	docs <- liftIO $ hsdevLiftWith (ToolError "hdocs") $
 		liftM (M.map $ force . HDocs.formatDocs) $ HDocs.installedDocsF df
+	let
+		tdocs = M.map (M.map fromString . M.mapKeys fromString) . M.mapKeys fromString $ docs
+	return $!! tdocs
 
 -- | Set docs for module
-setDocs :: Map String String -> Module -> Module
-setDocs d = over (moduleExports . each) setDoc . over (moduleScope . each . each) setDoc where
-	setDoc sym' = set symbolDocs (M.lookup (view (symbolId . symbolName) sym') d') sym'
-	d' = M.mapKeys fromString . M.map fromString $ d
+setSymbolDocs :: MonadIO m => LookupTable (Text, Text) (Maybe Text) -> Map Text Text -> Symbol -> m Symbol
+setSymbolDocs tbl d sym = do
+	symDocs <- cacheInTableM tbl (symName, symMod) (return $ M.lookup symName d)
+	return $ set symbolDocs symDocs sym
+	where
+		symName = view (symbolId . symbolName) sym
+		symMod = view (symbolId . symbolModule . moduleName) sym
+
+-- | Set docs for module symbols
+setDocs :: MonadIO m => LookupTable (Text, Text) (Maybe Text) -> Map Text Text -> Module -> m Module
+setDocs tbl d = mapMOf (moduleExports . each) setDoc >=> mapMOf (moduleScope . each . each) setDoc where
+	setDoc = setSymbolDocs tbl d
+
+-- | Set docs for modules
+setModuleDocs :: MonadIO m => LookupTable (Text, Text) (Maybe Text) -> Map Text (Map Text Text) -> Module -> m Module
+setModuleDocs tbl docs m = maybe return (setDocs tbl) (M.lookup (view (moduleId . moduleName) m) docs) $ m
 
 hdocsProcess :: String -> [String] -> IO (Maybe (Map String String))
 hdocsProcess mname opts = liftM (decode . L.pack . last . lines) $ runTool_ "hdocs" opts' where
