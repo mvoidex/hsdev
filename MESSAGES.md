@@ -132,6 +132,7 @@ List of commands with additional fiels:
      -  `files` — list of files
      -  `contents` — list of `content` objects
      -  `ghc-opts` — list of additional ghc options (not applied for `lint` command)
+     -  `clear` (except `lint`) — set to clear targets before running command
  * `autofixes` — show suggestions
      -  `messages` — list of `message` objects, which returned by `lint`/`check`/`check-lint` commands
  * `refactor` — apply some suggestions and return updated locations of rest suggestions
