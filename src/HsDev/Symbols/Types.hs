@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
-	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleExports, moduleScope, moduleSource,
+	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, definedSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
 	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
@@ -104,6 +104,9 @@ scopeSymbols :: Traversal' Module (Symbol, [Name])
 scopeSymbols f m = (\s -> m { _moduleScope = invMap s }) <$> traverse f (M.toList . invMap . M.toList $ _moduleScope m) where
 	invMap :: Ord b => [(a, [b])] -> Map b [a]
 	invMap es = M.unionsWith (++) [M.singleton v [k] | (k, vs) <- es, v <- vs]
+
+definedSymbols :: Traversal' Module Symbol
+definedSymbols f m = (moduleSymbols . filtered ((== _moduleId m) . _symbolModule . _symbolId)) f m
 
 fixitiesMap :: Lens' Module (Map Name Fixity)
 fixitiesMap = lens g' s' where
