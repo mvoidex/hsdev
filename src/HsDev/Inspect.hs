@@ -114,9 +114,7 @@ preload name defines opts mloc (Just cts) = do
 	let
 		mname = case mhead of
 			Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> fromString nm
-			_
-				| haskellSource (view path fpath) -> moduleNameByFile fpath (mloc ^? moduleProject . _Just)
-				| otherwise -> name
+			_ -> fromString "Main"
 	return $ Preloaded {
 		_preloadedId = ModuleId mname mloc,
 		_preloadedMode = pmode,
