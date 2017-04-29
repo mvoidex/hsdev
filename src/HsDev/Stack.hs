@@ -28,7 +28,6 @@ import qualified Distribution.Text as T (display)
 import System.Directory
 import System.Environment
 import System.FilePath
-import System.Process
 import System.Log.Simple (MonadLog(..))
 
 import qualified Packages as GHC

@@ -102,10 +102,10 @@ runUpdate uopts act = Log.scope "update" $ do
 					db' <- liftIO $ readAsync db
 					return $ filter ((`elem` mlocs') . view inspectedId) $ toList $ databaseModules db'
 			when (view updateDocs uopts) $ do
-				Log.log Log.Trace "forking inspecting source docs"
+				Log.sendLog Log.Trace "forking inspecting source docs"
 				void $ fork (getMods >>= waiter . mapM_ scanDocs_)
 			when (view updateInfer uopts) $ do
-				Log.log Log.Trace "forking inferring types"
+				Log.sendLog Log.Trace "forking inferring types"
 				void $ fork (getMods >>= waiter . mapM_ inferModTypes_)
 			return r
 		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
@@ -253,7 +253,7 @@ scanCabal opts = Log.scope "cabal" $ do
 		scannedDbs = databasePackageDbs dbval
 		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks userDb
 	if null unscannedDbs
-		then Log.log Log.Trace $ "cabal (global-db and user-db) already scanned"
+		then Log.sendLog Log.Trace $ "cabal (global-db and user-db) already scanned"
 		else runTasks $ map (scanPackageDb opts) unscannedDbs
 
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
@@ -275,7 +275,7 @@ scanSandbox opts sbox = Log.scope "sandbox" $ do
 		scannedDbs = databasePackageDbs dbval
 		unscannedDbs = filter ((`notElem` scannedDbs) . topPackageDb) $ reverse $ packageDbStacks pdbs
 	if null unscannedDbs
-		then Log.log Log.Trace $ "sandbox already scanned"
+		then Log.sendLog Log.Trace $ "sandbox already scanned"
 		else runTasks $ map (scanPackageDb opts) unscannedDbs
 
 -- | Scan top of package-db stack, usable for rescan
@@ -305,7 +305,7 @@ scanProjectStack :: UpdateMonad m => [String] -> FilePath -> m ()
 scanProjectStack opts cabal = do
 	proj <- scanProjectFile opts cabal
 	scanProject opts cabal
-	sbox <- liftIO $ searchSandbox (view projectPath proj)
+	sbox <- liftIO $ projectSandbox (view projectPath proj)
 	maybe (scanCabal opts) (scanSandbox opts) sbox
 
 -- | Scan project
@@ -337,12 +337,12 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 		srcs = standSrcs ^.. each . _1 . moduleFile
 		inSrcs src = src `elem` srcs && src `notElem` files
 		inFiles = maybe False inSrcs . preview (moduleIdLocation . moduleFile)
-	mapMOf_ (each . _1 . projectCabal) (\p -> Log.log Log.Trace ("scanning project: {}" ~~ p)) projSrcs
+	mapMOf_ (each . _1 . projectCabal) (\p -> Log.sendLog Log.Trace ("scanning project: {}" ~~ p)) projSrcs
 	runTasks [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
-	mapMOf_ (each . _1 . moduleFile) (\f -> Log.log Log.Trace ("scanning file: {}" ~~ f)) standSrcs
+	mapMOf_ (each . _1 . moduleFile) (\f -> Log.sendLog Log.Trace ("scanning file: {}" ~~ f)) standSrcs
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	scan (Cache.loadFiles inSrcs) (filterDB inFiles (const False) . standaloneDB) standSrcs opts $ scanModules opts
-	mapMOf_ each (\s -> Log.log Log.Trace ("scanning package-db: {}" ~~ topPackageDb s)) pdbss
+	mapMOf_ each (\s -> Log.sendLog Log.Trace ("scanning package-db: {}" ~~ topPackageDb s)) pdbss
 	runTasks [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
 
 -- | Scan docs for inspected modules
@@ -354,14 +354,14 @@ scanDocs ims = do
 	where
 		scanDocs' im
 			| not $ hasTag RefinedDocsTag im = runTask "scanning docs" (view inspectedId im) $ Log.scope "docs" $ do
-				Log.log Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
+				Log.sendLog Log.Trace $ "Scanning docs for {}" ~~  view inspectedId im
 				im' <- (liftM (setTag RefinedDocsTag) $ S.scanModify doScan im)
 					<|> return im
-				Log.log Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
+				Log.sendLog Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
 					view inspectedId im' ~~
 					length (im' ^.. inspectionResult . _Right . moduleDeclarations . each . declarationDocs . _Just)
 				updater $ fromModule im'
-			| otherwise = Log.log Log.Trace $ "Docs for {} already scanned" ~~ view inspectedId im
+			| otherwise = Log.sendLog Log.Trace $ "Docs for {} already scanned" ~~ view inspectedId im
 		doScan _ _ m = do
 			w <- askSession sessionGhc
 			liftIO $ inWorker w $ do
@@ -374,13 +374,13 @@ inferModTypes = runTasks . map inferModTypes' where
 	inferModTypes' im
 		| not $ hasTag InferredTypesTag im = runTask "inferring types" (view inspectedId im) $ Log.scope "docs" $ do
 			w <- askSession sessionGhc
-			Log.log Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
+			Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view inspectedId im
 			im' <- (liftM (setTag InferredTypesTag) $
 				S.scanModify (\opts _ m -> liftIO (inWorker w (targetSession opts m >> inferTypes opts m Nothing))) im)
 				<|> return im
-			Log.log Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
+			Log.sendLog Log.Trace $ "Types for {} inferred" ~~ view inspectedId im
 			updater $ fromModule im'
-		| otherwise = Log.log Log.Trace $ "Types for {} already inferred" ~~ view inspectedId im
+		| otherwise = Log.sendLog Log.Trace $ "Types for {} already inferred" ~~ view inspectedId im
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
 scan :: UpdateMonad m
@@ -406,9 +406,9 @@ scan cache' part' mlocs opts act = Log.scope "scan" $ do
 updateEvent :: ServerMonadBase m => Watched -> Event -> UpdateM m ()
 updateEvent (WatchedProject proj projOpts) e
 	| isSource e = do
-		Log.log Log.Info $ "File '{file}' in project {proj} changed"
-			~~ ("file" %= view eventPath e)
-			~~ ("proj" %= view projectName proj)
+		Log.sendLog Log.Info $ "File '{file}' in project {proj} changed"
+			~~ ("file" ~% view eventPath e)
+			~~ ("proj" ~% view projectName proj)
 		dbval <- readDB
 		let
 			opts = fromMaybe [] $ do
@@ -416,20 +416,20 @@ updateEvent (WatchedProject proj projOpts) e
 				preview (inspection . inspectionOpts) $ getInspected dbval m
 		scanFile opts $ view eventPath e
 	| isCabal e = do
-		Log.log Log.Info $ "Project {proj} changed"
-			~~ ("proj" %= view projectName proj)
+		Log.sendLog Log.Info $ "Project {proj} changed"
+			~~ ("proj" ~% view projectName proj)
 		scanProject projOpts $ view projectCabal proj
 	| otherwise = return ()
 updateEvent (WatchedPackageDb pdbs opts) e
 	| isConf e = do
-		Log.log Log.Info $ "Package db {package} changed"
-			~~ ("package" %= topPackageDb pdbs)
+		Log.sendLog Log.Info $ "Package db {package} changed"
+			~~ ("package" ~% topPackageDb pdbs)
 		scanPackageDb opts pdbs
 	| otherwise = return ()
 updateEvent WatchedModule e
 	| isSource e = do
-		Log.log Log.Info $ "Module {file} changed"
-			~~ ("file" %= view eventPath e)
+		Log.sendLog Log.Info $ "Module {file} changed"
+			~~ ("file" ~% view eventPath e)
 		dbval <- readDB
 		let
 			opts = fromMaybe [] $ do

@@ -3,7 +3,7 @@
 module HsDev.Sandbox (
 	SandboxType(..), Sandbox(..), sandboxType, sandbox,
 	isSandbox, guessSandboxType, sandboxFromPath,
-	findSandbox, searchSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
+	findSandbox, searchSandbox, projectSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
 
 	-- * cabal-sandbox util
 	cabalSandboxLib, cabalSandboxPackageDb,
@@ -11,15 +11,15 @@ module HsDev.Sandbox (
 	getModuleOpts
 	) where
 
+import Control.Applicative
 import Control.Arrow
 import Control.DeepSeq (NFData(..))
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Control.Lens (view, makeLenses)
 import Data.Aeson
+import Data.List (find)
 import Data.Maybe (isJust, fromMaybe)
-import Data.List ((\\))
-import Data.String (fromString)
 import qualified Data.Text as T (unpack)
 import Distribution.Compiler
 import Distribution.System
@@ -27,7 +27,6 @@ import qualified Distribution.Text as T (display)
 import System.FilePath
 import System.Directory
 import System.Log.Simple (MonadLog(..))
-import qualified System.Log.Simple as Log
 
 import System.Directory.Paths
 import HsDev.PackageDb
@@ -36,7 +35,7 @@ import HsDev.Stack
 import HsDev.Symbols (moduleOpts)
 import HsDev.Symbols.Types (Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Compat as Compat
-import HsDev.Util (searchPath, directoryContents)
+import HsDev.Util (searchPath, directoryContents, cabalFile)
 
 import qualified Packages as GHC
 
@@ -98,6 +97,15 @@ findSandbox fpath = do
 searchSandbox :: FilePath -> IO (Maybe Sandbox)
 searchSandbox p = runMaybeT $ searchPath p (MaybeT . findSandbox)
 
+-- | Get project sandbox: search up for .cabal, then search for stack.yaml in current directory and cabal sandbox in current + parents
+projectSandbox :: FilePath -> IO (Maybe Sandbox)
+projectSandbox fpath = runMaybeT $ do
+	p <- searchPath fpath (MaybeT . getCabalFile)
+	MaybeT (findSandbox p) <|> searchPath p (MaybeT . findSbox')
+	where
+		getCabalFile = directoryContents >=> return . find cabalFile
+		findSbox' = directoryContents >=> return . msum . map sandboxFromPath
+
 -- | Get package-db stack for sandbox
 sandboxPackageDbStack :: MonadLog m => Sandbox -> m PackageDbStack
 sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
@@ -108,7 +116,7 @@ sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStac
 -- | Search package-db stack with user-db as default
 searchPackageDbStack :: MonadLog m => FilePath -> m PackageDbStack
 searchPackageDbStack p = do
-	mbox <- liftIO $ searchSandbox p
+	mbox <- liftIO $ projectSandbox p
 	case mbox of
 		Nothing -> return userDb
 		Just sbox -> sandboxPackageDbStack sbox
@@ -143,7 +151,7 @@ cabalSandboxPackageDb = liftM (++ "-packages.conf.d") cabalSandboxLib
 getModuleOpts :: MonadLog m => [String] -> Module -> m [String]
 getModuleOpts opts m = do
 	pdbs <- case view moduleLocation m of
-		FileModule fpath p -> searchPackageDbStack fpath
+		FileModule fpath _ -> searchPackageDbStack fpath
 		InstalledModule pdb _ _ -> restorePackageDbStack pdb
 		ModuleSource _ -> return userDb
 	pkgs <- browsePackages opts pdbs

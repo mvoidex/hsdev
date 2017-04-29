@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards, OverloadedStrings #-}
+{-# LANGUAGE PatternGuards, OverloadedStrings, FlexibleContexts #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Worker (
@@ -95,26 +95,26 @@ instance MonadThrow Ghc where
 
 runGhcM :: MonadLog m => Maybe FilePath -> GhcM a -> m a
 runGhcM dir act = do
-	l <- askLog
+	l <- Log.askLog
 	liftIO $ withLog l $ runMGhcT dir act
 
 -- | Multi-session ghc worker
 ghcWorker :: MonadLog m => m GhcWorker
 ghcWorker = do
-	l <- askLog
+	l <- Log.askLog
 	liftIO $ startWorker (withLog l . runGhcM (Just libdir)) id (Log.scope "ghc")
 
 -- | Create session with options
 workerSession :: SessionTarget -> GhcM ()
 workerSession SessionGhci = do
-	Log.log Log.Trace $ "session: {}" ~~ SessionGhci
+	Log.sendLog Log.Trace $ "session: {}" ~~ SessionGhci
 	switchSession_ SessionGhci $ Just $ ghcRun [] (importModules preludeModules)
 workerSession s@(SessionGhc opts) = do
 	ms <- findSessionBy isGhcSession
 	forM_ ms $ \s'@(SessionGhc opts') -> when (opts /= opts') $ do
-		Log.log Log.Trace $ "killing session: {}" ~~ s'
+		Log.sendLog Log.Trace $ "killing session: {}" ~~ s'
 		deleteSession s'
-	Log.log Log.Trace $ "session: {}" ~~ s
+	Log.sendLog Log.Trace $ "session: {}" ~~ s
 	switchSession_ s $ Just $ ghcRun opts (return ())
 	where
 		isGhcSession (SessionGhc _) = True
@@ -153,7 +153,7 @@ modifyFlags f = do
 -- | Add options without reinit session
 addCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
 addCmdOpts opts = do
-	Log.log Log.Trace $ "setting ghc options: {}" ~~ unwords opts
+	Log.sendLog Log.Trace $ "setting ghc options: {}" ~~ unwords opts
 	fs <- getSessionDynFlags
 	(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
 	let fs'' = fs' {
@@ -167,7 +167,7 @@ addCmdOpts opts = do
 -- | Set options after session reinit
 setCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
 setCmdOpts opts = do
-	Log.log Log.Trace $ "restarting ghc session with: {}" ~~ unwords opts
+	Log.sendLog Log.Trace $ "restarting ghc session with: {}" ~~ unwords opts
 	initGhcMonad (Just libdir)
 	addCmdOpts opts
 	modifyFlags $ setLogAction logToNull

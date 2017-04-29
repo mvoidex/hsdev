@@ -15,6 +15,7 @@ import System.Directory.Watcher hiding (Watcher)
 import HsDev.Project
 import HsDev.Symbols
 import HsDev.Watcher.Types
+import HsDev.Util
 
 -- | Watch for project sources changes
 watchProject :: Watcher -> Project -> [String] -> IO ()
@@ -63,10 +64,10 @@ unwatchPackageDb _ UserDb = return () -- TODO: Unwatch user package-db
 unwatchPackageDb w (PackageDb pdb) = void $ unwatchTree w pdb
 
 isSource :: Event -> Bool
-isSource (Event _ f _) = takeExtension f == ".hs"
+isSource = haskellSource . view eventPath
 
 isCabal :: Event -> Bool
-isCabal (Event _ f _) = takeExtension f == ".cabal"
+isCabal = cabalFile . view eventPath
 
 isConf :: Event -> Bool
 isConf (Event _ f _) = takeExtension f == ".conf"
