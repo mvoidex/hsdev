@@ -1,5 +1,5 @@
 flags: {}
-extra-package-dbs: []
+resolver: lts-8.12
 packages:
 - '.'
 - tests/test-package/
@@ -10,4 +10,4 @@ extra-deps:
 - hformat-0.2.0.0
 - simple-log-0.8.5
 - text-region-0.2.0.0
-resolver: lts-8.12
+extra-package-dbs: []
