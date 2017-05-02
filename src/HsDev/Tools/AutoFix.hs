@@ -19,7 +19,6 @@ import Data.Maybe (listToMaybe, mapMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text.Lens (unpacked)
-import qualified Data.Text as T
 import Data.Text.Region hiding (Region(..), update)
 import qualified Data.Text.Region as R
 

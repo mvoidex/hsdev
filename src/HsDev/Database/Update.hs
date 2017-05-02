@@ -37,13 +37,12 @@ import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
-import Data.List (find, intercalate, (\\))
+import Data.List (intercalate, (\\))
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
 import Data.Text (Text)
 import Data.Text.Lens (unpacked)
-import qualified Data.Text as T
 import qualified Language.Haskell.Exts as H
 import qualified Language.Haskell.Names as N
 import System.FilePath
@@ -107,20 +106,20 @@ runUpdate uopts act = Log.scope "update" $ do
 					mloc <- mlocs
 					return $ M.singleton mloc (S.singleton pdb)
 				dbs = S.fromList $ concat $ mapMaybe (`M.lookup` invertedIndex) mlocs'
-				mlocsSet = S.fromList mlocs'
 				-- If some sourced files depends on currently scanned package-dbs
 				-- We must resolve them and even rescan if there was errors scanning without
 				-- dependencies provided (lack of fixities can cause errors inspecting files)
-				sboxes = databaseSandboxes dbval
-				sboxOf :: Path -> Maybe Sandbox
-				sboxOf fpath = find (pathInSandbox fpath) sboxes
+
+				-- sboxes = databaseSandboxes dbval
+				-- sboxOf :: Path -> Maybe Sandbox
+				-- sboxOf fpath = find (pathInSandbox fpath) sboxes
 
 				projs = do
 					proj <- dbval ^.. databaseProjects . each
 					let
 						mpdbs = dbval ^? databaseProjectsInfos . at (Just proj) . _Just . _1
 						pdbs = maybe S.empty (S.fromList . packageDbs) mpdbs
-						projMods = S.fromList $ dbval ^.. projectSlice proj . modules . moduleId . moduleLocation
+						-- projMods = S.fromList $ dbval ^.. projectSlice proj . modules . moduleId . moduleLocation
 					guard $ not $ S.null $ pdbs `S.intersection` dbs
 					return proj
 				stands = []

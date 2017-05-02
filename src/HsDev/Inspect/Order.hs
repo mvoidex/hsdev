@@ -10,7 +10,6 @@ import Data.Maybe
 import Data.String
 import qualified Data.Set as S
 import qualified Language.Haskell.Exts as H
-import System.FilePath
 
 import Data.Deps
 import HsDev.Inspect
