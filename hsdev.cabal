@@ -140,7 +140,7 @@ library
     haskell-src-exts >= 1.18.0 && < 1.20.0,
     hdocs >= 0.5.1,
     hformat >= 0.3.0,
-    hlint >= 1.9.13 && < 2.0.0,
+    hlint >= 1.9.13 && < 2.1,
     HTTP >= 4000.2.0,
     lens >= 4.8,
     lifted-base >= 0.2,
