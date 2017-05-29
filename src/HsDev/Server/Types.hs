@@ -33,7 +33,7 @@ import Options.Applicative
 import System.Log.Simple
 
 import System.Directory.Paths
-import Text.Format (FormatBuild(..))
+import Text.Format (Formattable(..))
 
 import HsDev.Database
 import qualified HsDev.Database.Async as DB
@@ -215,7 +215,7 @@ instance Show ConnectionPort where
 	show (NetworkPort p) = show p
 	show (UnixPort s) = "unix " ++ s
 
-instance FormatBuild ConnectionPort
+instance Formattable ConnectionPort
 
 -- | Server options
 data ServerOpts = ServerOpts {

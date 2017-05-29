@@ -39,7 +39,7 @@ import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import qualified  System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Read (readMaybe)
-import Text.Format
+import Text.Format hiding (withFlags)
 
 import Exception (ExceptionMonad(..))
 import GHC hiding (Warning, Module, moduleName, pkgDatabase)
@@ -65,7 +65,7 @@ instance Show SessionTarget where
 	show SessionGhci = "ghci"
 	show (SessionGhc opts) = "ghc " ++ intercalate ", " opts
 
-instance FormatBuild SessionTarget
+instance Formattable SessionTarget
 
 instance Eq SessionTarget where
 	SessionGhci == SessionGhci = True

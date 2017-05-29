@@ -60,8 +60,8 @@ instance Monoid ScanContents where
 		(uniqueBy (view _1) $ lp ++ rp)
 		(ordNub $ ls ++ rs)
 
-instance FormatBuild ScanContents where
-	formatBuild (ScanContents ms ps cs) = formatBuild str where
+instance Formattable ScanContents where
+	formattable (ScanContents ms ps cs) = formattable str where
 		str :: String
 		str = format "modules: {}, projects: {}, package-dbs: {}"
 			~~ (intercalate ", " $ ms ^.. each . _1 . moduleFile)
