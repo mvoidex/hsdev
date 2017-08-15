@@ -11,7 +11,11 @@ import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
 import Distribution.Version (Version)
 import Distribution.Text (display)
+#if MIN_VERSION_Cabal(2,0,0)
 import Distribution.Types.CondTree
+#else 
+import Distribution.PackageDescription (CondTree(..))
+#endif
 
 #if MIN_VERSION_Cabal(2,0,0)
 import Distribution.Types.UnqualComponentName

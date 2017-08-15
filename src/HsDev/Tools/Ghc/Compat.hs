@@ -25,6 +25,10 @@ import Exception (ExceptionMonad)
 import Control.Monad.Reader
 #endif
 
+#if __GLASGOW_HASKELL__ <= 800
+import qualified GHC.PackageDb as GHC
+#endif
+
 pkgDatabase :: GHC.DynFlags -> Maybe [GHC.PackageConfig]
 #if __GLASGOW_HASKELL__ >= 800
 pkgDatabase = fmap (concatMap snd) . GHC.pkgDatabase
