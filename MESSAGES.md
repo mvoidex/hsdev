@@ -60,6 +60,7 @@ List of commands with additional fiels:
      - `modules` — list of module names
  * `remove` — remove data
      - `projects` — list of project `.cabal` files or names to remove
+     - `cabal` — remove global-db and user-db
      - `sandboxes` — list of `sandbox` objects to remove (see above)
      - `files` — list of sources
  * `remove-all` — remove all data
@@ -90,10 +91,12 @@ List of commands with additional fiels:
          + `"sources"` — search for sourced
          + `"standalone"` — search for standalone (project-free)
      - `locals` — search in local declarations (default is `false`)
+     - `header` — return only header — name and module
  * `module` — get module info
      - `query` — `query` object
      - `filters` — list of `filter` objects
      - `header` — return only module header — name and location
+     - `inspection` — include inspection data
  * `project` — get project info, one of:
      - `name` — name of project
      - `path` — path to `.cabal`
@@ -140,6 +143,9 @@ List of commands with additional fiels:
      -  `rest` — list of `message` objects to update locations
      -  `pure` — just update locations, don't actually modify file, useful when some editor applies suggestions itself
  * `rename` — get corrections to rename symbol, applied with `refactor`
+     - `name` — symbol to rename
+     - `new-name` — new name
+     - `file` — symbol definition file
  * `ghc eval` — evaluate expression
      - `exprs` — list of expressions
  * `link` — link to server, so that it will exit after client disconnects
