@@ -50,6 +50,7 @@ library
     HsDev.PackageDb
     HsDev.PackageDb.Types
     HsDev.Project
+    HsDev.Project.Compat
     HsDev.Project.Types
     HsDev.Scan
     HsDev.Scan.Browse
@@ -105,7 +106,13 @@ library
     build-depends:
       unix >= 2.7.0
 
-  if impl(ghc >= 8.0)
+  if impl(ghc >= 8.2) && impl(ghc < 8.3)
+    build-depends:
+      haddock-api >= 2.18.0 && < 2.19.0,
+      ghc == 8.2.*,
+      ghc-boot,
+      directory >= 1.2.6.0
+  if impl(ghc >= 8.0) && impl(ghc < 8.2)
     build-depends:
       haddock-api >= 2.17.0 && < 2.18.0,
       ghc >= 8.0.0 && < 8.1.0,
@@ -136,7 +143,7 @@ library
     fsnotify >= 0.2.1,
     ghc-paths >= 0.1.0,
     ghc-syb-utils >= 0.2.3,
-    haskell-names >= 0.8.0 && < 0.9.0,
+    haskell-names >= 0.9.0 && < 0.10.0,
     haskell-src-exts >= 1.18.0 && < 1.20.0,
     hdocs >= 0.5.1,
     hformat >= 0.3.0,
@@ -146,7 +153,7 @@ library
     lifted-base >= 0.2,
     monad-control >= 1.0,
     monad-loops >= 0.4,
-    mmorph == 1.0.*,
+    mmorph >= 1.0 && < 1.2,
     mtl >= 2.2.0,
     network >= 2.6.0,
     optparse-applicative >= 0.11,
@@ -229,7 +236,7 @@ executable hsclearimports
     containers >= 0.5,
     data-default >= 0.5.0,
     directory,
-    haskell-names >= 0.8.0 && < 0.9.0,
+    haskell-names >= 0.9.0 && < 0.10.0,
     haskell-src-exts >= 1.18.0 && < 1.20.0,
     lens >= 4.8,
     mtl >= 2.2.0,

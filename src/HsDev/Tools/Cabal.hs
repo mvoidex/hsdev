@@ -5,7 +5,7 @@ module HsDev.Tools.Cabal (
 	cabalList,
 
 	-- * Reexports
-	Version(..), License(..)
+	Version, License(..)
 	) where
 
 import Control.Arrow

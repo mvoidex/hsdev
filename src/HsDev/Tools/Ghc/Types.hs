@@ -126,9 +126,7 @@ fileTypes opts m msrc = scope "types" $ case view (moduleId . moduleLocation) m 
 		setExpr :: Text -> Note Text -> Note TypedExpr
 		setExpr cts n = over note (TypedExpr (regionStr (view noteRegion n) cts)) n
 		showType :: DynFlags -> Type -> String
-		showType df = renderStyle Pretty.OneLineMode 80 . withPprStyleDoc df unqualStyle . pprTypeForUser
-		unqualStyle :: PprStyle
-		unqualStyle = mkUserStyle neverQualify AllTheWay
+		showType df = renderStyle Pretty.OneLineMode 80 . withPprStyleDoc df (unqualStyle df) . pprTypeForUser
 
 -- | Set types to module
 setModuleTypes :: [Note TypedExpr] -> Module -> Module

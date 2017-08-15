@@ -190,10 +190,7 @@ showOutputable :: GHC.Outputable a => GHC.DynFlags -> a -> String
 showOutputable dflag = unwords . lines . showUnqualifiedPage dflag . GHC.ppr
 
 showUnqualifiedPage :: GHC.DynFlags -> GHC.SDoc -> String
-showUnqualifiedPage dflag = renderStyle Pretty.LeftMode 0 . GHC.withPprStyleDoc dflag styleUnqualified
-
-styleUnqualified :: GHC.PprStyle
-styleUnqualified = GHC.mkUserStyle GHC.neverQualify GHC.AllTheWay
+showUnqualifiedPage dflag = renderStyle Pretty.LeftMode 0 . GHC.withPprStyleDoc dflag (Compat.unqualStyle dflag)
 
 tryT :: MonadCatch m => m a -> m (Maybe a)
 tryT act = catch (fmap Just act) (const (return Nothing) . (id :: SomeException -> SomeException))
@@ -204,7 +201,7 @@ readPackage pc = ModulePackage (fromString $ GHC.packageNameString pc) (fromStri
 readPackageConfig :: GHC.PackageConfig -> PackageConfig
 readPackageConfig pc = PackageConfig
 	(readPackage pc)
-	(map (fromString . GHC.moduleNameString . GHC.exposedName) $ GHC.exposedModules pc)
+	(map (fromString . GHC.moduleNameString . Compat.exposedModuleName) $ GHC.exposedModules pc)
 	(GHC.exposed pc)
 
 ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> ModuleLocation
@@ -267,7 +264,7 @@ packageDbModules = do
 	dflags <- GHC.getSessionDynFlags
 	return [(p, m) |
 		p <- pkgs,
-		mn <- map GHC.exposedName (GHC.exposedModules p),
+		mn <- map Compat.exposedModuleName (GHC.exposedModules p),
 		m <- lookupModule_ dflags mn]
 
 -- Lookup module everywhere

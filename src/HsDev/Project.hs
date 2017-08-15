@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, CPP #-}
 
 module HsDev.Project (
 	module HsDev.Project.Types,
@@ -22,7 +22,6 @@ import Data.List
 import Data.Maybe
 import Data.Text (Text, pack, unpack)
 import Data.Text.Lens (unpacked)
-import Data.Version (showVersion)
 import Distribution.Compiler (CompilerFlavor(GHC))
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
@@ -34,6 +33,7 @@ import Language.Haskell.Extension
 import System.FilePath
 
 import System.Directory.Paths
+import HsDev.Project.Compat
 import HsDev.Project.Types
 import HsDev.Error
 import HsDev.Util
@@ -54,18 +54,18 @@ targetFiles target' = targetModules target' ++ map toFile (target' ^.. buildInfo
 
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
-analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source of
+analyzeCabal source = case liftM flattenDescr $ parsePackageDesc source of
 	ParseOk _ r -> Right ProjectDescription {
-		_projectVersion = pack $ showVersion $ P.pkgVersion $ PD.package r,
+		_projectVersion = pack $ showVer $ P.pkgVersion $ PD.package r,
 		_projectLibrary = fmap toLibrary $ PD.library r,
 		_projectExecutables = fmap toExecutable $ PD.executables r,
 		_projectTests = fmap toTest $ PD.testSuites r }
 	ParseFailed e -> Left $ "Parse failed: " ++ show e
 	where
-		toLibrary (PD.Library exposeds _ _ _ _ info) = Library (map (map pack . components) exposeds) (toInfo info)
-		toExecutable (PD.Executable name path' info) = Executable (pack name) (fromFilePath path') (toInfo info)
-		toTest (PD.TestSuite name testInterface info enabled) = Test (pack name) enabled (fmap fromFilePath mainFile) (toInfo info) where
-			mainFile = case testInterface of
+		toLibrary lib = Library (map (map pack . components) $ PD.exposedModules lib) (toInfo $ PD.libBuildInfo lib)
+		toExecutable exe = Executable (componentName $ PD.exeName exe) (fromFilePath $ PD.modulePath exe) (toInfo $ PD.buildInfo exe)
+		toTest test = Test (componentName $ PD.testName test) (testSuiteEnabled test) (fmap fromFilePath mainFile) (toInfo $ PD.testBuildInfo test) where
+			mainFile = case PD.testInterface test of
 				PD.TestSuiteExeV10 _ fpath -> Just fpath
 				PD.TestSuiteLibV09 _ mname -> Just $ PD.toFilePath mname
 				_ -> Nothing
@@ -78,25 +78,26 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDescription source o
 			_infoOtherModules = map (map pack . components) (PD.otherModules info) }
 
 		pkgName :: P.Dependency -> Text
-		pkgName (P.Dependency (P.PackageName s) _) = pack s
+		pkgName (P.Dependency dep _) = pack $ P.unPackageName dep
 
 		flattenDescr :: PD.GenericPackageDescription -> PD.PackageDescription
-		flattenDescr (PD.GenericPackageDescription pkg _ mlib mexes mtests _) = pkg {
-			PD.library = flip fmap mlib $ flattenTree
+		flattenDescr gpkg = pkg {
+			PD.library = flip fmap mlib $ flattenCondTree
 				(insertInfo PD.libBuildInfo (\i l -> l { PD.libBuildInfo = i })),
 			PD.executables = flip fmap mexes $
-				second (flattenTree (insertInfo PD.buildInfo (\i l -> l { PD.buildInfo = i }))) >>>
+				second (flattenCondTree (insertInfo PD.buildInfo (\i l -> l { PD.buildInfo = i }))) >>>
 				(\(n, e) -> e { PD.exeName = n }),
 			PD.testSuites = flip fmap mtests $
-				second (flattenTree (insertInfo PD.testBuildInfo (\i l -> l { PD.testBuildInfo = i }))) >>>
+				second (flattenCondTree (insertInfo PD.testBuildInfo (\i l -> l { PD.testBuildInfo = i }))) >>>
 				(\(n, t) -> t { PD.testName = n }) }
 			where
+				pkg = PD.packageDescription gpkg
+				mlib = PD.condLibrary gpkg
+				mexes = PD.condExecutables gpkg
+				mtests = PD.condTestSuites gpkg
+
 				insertInfo :: (a -> PD.BuildInfo) -> (PD.BuildInfo -> a -> a) -> [P.Dependency] -> a -> a
 				insertInfo f s deps' x = s ((f x) { PD.targetBuildDepends = deps' }) x
-
-		flattenTree :: Monoid a => (c -> a -> a) -> PD.CondTree v c a -> a
-		flattenTree f (PD.CondNode x cs cmps) = f cs x `mappend` mconcat (concatMap flattenBranch cmps) where
-			flattenBranch (_, t, mb) = flattenTree f t : map (flattenTree f) (maybeToList mb)
 
 -- | Read project info from .cabal
 readProject :: FilePath -> IO Project
