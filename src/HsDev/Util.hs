@@ -82,7 +82,9 @@ withCurrentDirectory cur act = C.bracket (liftIO Dir.getCurrentDirectory) (liftI
 
 -- | Is directory symbolic link
 dirIsSymLink :: FilePath -> IO Bool
-#if MIN_VERSION_directory(1,2,6)
+#if MIN_VERSION_directory(1,3,0)
+dirIsSymLink = Dir.pathIsSymbolicLink
+#elif MIN_VERSION_directory(1,2,6)
 dirIsSymLink = Dir.isSymbolicLink
 #else
 dirIsSymLink path = do
