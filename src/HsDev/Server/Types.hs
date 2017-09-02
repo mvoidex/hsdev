@@ -380,6 +380,7 @@ data Command =
 	Listen (Maybe String) |
 	SetLogLevel String |
 	AddData { addedData :: [Path] } |
+	Dump |
 	Scan {
 		scanProjects :: [Path],
 		scanCabal :: Bool,
@@ -511,6 +512,7 @@ instance FromCmd Command where
 		cmd "listen" "listen server log" (Listen <$> optional logLevelArg),
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
 		cmd "add" "add info to database" (AddData <$> many fileArg),
+		cmd "dump" "dump database (debug)" (pure Dump),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
 			cabalFlag <*>
@@ -646,6 +648,7 @@ instance ToJSON Command where
 	toJSON (Listen lev) = cmdJson "listen" ["level" .= lev]
 	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
 	toJSON (AddData fs) = cmdJson "add" ["files" .= fs]
+	toJSON Dump = cmdJson "dump" []
 	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
@@ -695,6 +698,7 @@ instance FromJSON Command where
 		guardCmd "listen" v *> (Listen <$> v .::? "level"),
 		guardCmd "set-log" v *> (SetLogLevel <$> v .:: "level"),
 		guardCmd "add" v *> (AddData <$> v .:: "files"),
+		guardCmd "dump" v *> pure Dump,
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>
 			(v .:: "cabal" <|> pure False) <*>

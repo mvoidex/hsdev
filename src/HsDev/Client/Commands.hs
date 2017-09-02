@@ -116,6 +116,7 @@ runCommand (AddData fs) = toValue $ do
 			(v .:: "package-db") <*>
 			(v .:: "packages")
 		fromPackageDbInfo = uncurry fromPackageDb
+runCommand Dump = toValue serverDatabase
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
