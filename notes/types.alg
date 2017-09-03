@@ -88,6 +88,44 @@ record symbol-id : set where
 	name : string
 	module : module-id
 
+data symbol-info : set where
+	function : symbol-info where
+		type : maybe string
+	method : symbol-info where
+		type : maybe string
+		parent : string
+	selector : symbol-info where
+		type : maybe string
+		parent : string
+		constructors : list string
+	type : symbol-info where
+		args : list string
+		context : list string
+	newtype : symbol-info where
+		args : list string
+		context : list string
+	data : symbol-info where
+		args : list string
+		context : list string
+	class : symbol-info where
+		args : list string
+		context : list string
+	type-family : symbol-info where
+		args : list string
+		context : list string
+		associate : maybe string
+	data-family : symbol-info where
+		args : list string
+		context : list string
+		associate : maybe string
+	pat-constructor : symbol-info where
+		args : list string
+		pat-type : maybe string
+	pat-selector : symbol-info where
+		type : maybe string
+		pat-type : maybe string
+		constructor : string
+
 record module-package : set where
 	name : text
 	version : text

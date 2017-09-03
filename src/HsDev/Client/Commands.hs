@@ -22,6 +22,7 @@ import Data.List
 import Data.Maybe
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
+import qualified Database.SQLite.Simple as SQL
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
 import System.Directory
@@ -117,6 +118,86 @@ runCommand (AddData fs) = toValue $ do
 			(v .:: "packages")
 		fromPackageDbInfo = uncurry fromPackageDb
 runCommand Dump = toValue serverDatabase
+runCommand (DumpSqlite fpath) = toValue $ do
+	-- TODO: init file by calling 'sqlite3' with '.load notes/hsdev.sql'
+	dbval <- serverDatabase
+	liftIO $ bracket (SQL.open $ fpath ^. path) SQL.close (insertData dbval)
+	where
+		insertData dbval conn = SQL.withTransaction conn $ do
+			forM_ (M.toList $ view databasePackageDbs dbval) insertPackageDb
+			forM_ (view databaseProjects dbval) insertProject
+			forM_ (view databaseModules dbval) insertModule
+			where
+				insertPackageDb (pdb, pkgs) = forM_ pkgs $ \pkg ->
+					SQL.execute conn "insert into package_dbs (package_db, package_name, package_version) values (?, ?, ?);"
+						(showPackageDb pdb, pkg ^. packageName, pkg ^. packageVersion)
+
+				insertProject proj = do
+					-- TODO: Insert package_db_stack too
+					SQL.execute conn "insert into projects (name, cabal, version) values (?, ?, ?);"
+						(proj ^. projectName, proj ^. projectCabal . path, proj ^? projectDescription . _Just . projectVersion)
+					projId <- lastRow
+
+					forM_ (proj ^? projectDescription . _Just . projectLibrary . _Just) $ \lib -> do
+						buildInfoId <- insertBuildInfo $ lib ^. libraryBuildInfo
+						SQL.execute conn "insert into libraries (project_id, modules, build_info_id) values (?, ?, ?);"
+							(projId, encode $ lib ^. libraryModules, buildInfoId)
+
+					forM_ (proj ^.. projectDescription . _Just . projectExecutables . each) $ \exe -> do
+						buildInfoId <- insertBuildInfo $ exe ^. executableBuildInfo
+						SQL.execute conn "insert into executables (project_id, name, path, build_info_id) values (?, ?, ?, ?);"
+							(projId, exe ^. executableName, exe ^. executablePath . path, buildInfoId)
+
+					forM_ (proj ^.. projectDescription . _Just . projectTests . each) $ \test -> do
+						buildInfoId <- insertBuildInfo $ test ^. testBuildInfo
+						SQL.execute conn "insert into tests (project_id, name, enabled, main, build_info_id) values (?, ?, ?, ?, ?);"
+							(projId, test ^. testName, test ^. testEnabled, test ^? testMain . _Just . path, buildInfoId)
+					where
+						insertBuildInfo info = do
+							-- TODO: Encode correctly Language and Extension
+							SQL.execute conn "insert into build_infos (depends, language, extensions, ghc_options, source_dirs, other_modules) values (?, ?, ?, ?, ?, ?);" (
+								encode $ info ^. infoDepends,
+								fmap show $ info ^. infoLanguage,
+								encode $ map show $ info ^. infoExtensions,
+								encode $ info ^. infoGHCOptions,
+								encode $ info ^.. infoSourceDirs . each . path,
+								encode $ info ^. infoOtherModules)
+							lastRow
+
+				insertModule im = do
+					-- TODO: Insert parsed source
+					SQL.execute conn "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tag, inspection_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+						im ^? inspectedKey . moduleFile . path,
+						im ^? inspectedKey . moduleProject . _Just . projectCabal,
+						fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
+						im ^? inspectedKey . modulePackage . _Just . packageName,
+						im ^? inspectedKey . modulePackage . _Just . packageVersion,
+						im ^? inspectedKey . otherLocationName)
+						SQL.:. (
+						msum [im ^? inspectionResult . _Right . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
+						im ^? inspectionResult . _Right . moduleDocs,
+						fmap (encode . (map show)) $ im ^? inspectionResult . _Right . moduleFixities,
+						encode $ im ^. inspectionTags,
+						fmap show $ im ^? inspectionResult . _Left)
+					mid <- lastRow
+
+					forM_ (im ^.. inspectionResult . _Right . moduleExports) insertSymbol
+
+					-- TODO: insert scope for source modules
+					where
+						insertSymbol sym = do
+							-- TODO: insert, but check for existance, in that case return id
+							-- TODO: insert 'exports'
+							return ()
+
+				lastRow :: IO Int
+				lastRow = do
+					[SQL.Only i] <- SQL.query_ conn "select last_insert_rowid();"
+					return i
+
+				showPackageDb GlobalDb = "global"
+				showPackageDb UserDb = "user"
+				showPackageDb (PackageDb p) = p ^. path
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [

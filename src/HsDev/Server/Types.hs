@@ -381,6 +381,7 @@ data Command =
 	SetLogLevel String |
 	AddData { addedData :: [Path] } |
 	Dump |
+	DumpSqlite Path |
 	Scan {
 		scanProjects :: [Path],
 		scanCabal :: Bool,
@@ -513,6 +514,7 @@ instance FromCmd Command where
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
 		cmd "add" "add info to database" (AddData <$> many fileArg),
 		cmd "dump" "dump database (debug)" (pure Dump),
+		cmd "dump-sqlite" "dump database to sqlite file (debug)" (DumpSqlite <$> fileArg),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
 			cabalFlag <*>
@@ -649,6 +651,7 @@ instance ToJSON Command where
 	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
 	toJSON (AddData fs) = cmdJson "add" ["files" .= fs]
 	toJSON Dump = cmdJson "dump" []
+	toJSON (DumpSqlite f) = cmdJson "dump-sqlite" ["file" .= f]
 	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
@@ -699,6 +702,7 @@ instance FromJSON Command where
 		guardCmd "set-log" v *> (SetLogLevel <$> v .:: "level"),
 		guardCmd "add" v *> (AddData <$> v .:: "files"),
 		guardCmd "dump" v *> pure Dump,
+		guardCmd "dump-sqlite" v *> (DumpSqlite <$> v .:: "file"),
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>
 			(v .:: "cabal" <|> pure False) <*>
