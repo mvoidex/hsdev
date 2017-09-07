@@ -12,6 +12,8 @@ create table projects (
 	package_db_stack json -- list of package-db
 );
 
+create unique index projects_id_index on projects (id);
+
 create table libraries (
 	project_id integer,
 	modules json, -- list of modules
@@ -43,8 +45,11 @@ create table build_infos(
 	other_modules json -- list of other modules
 );
 
+create unique index build_infos_id_index on build_infos (id);
+
 create table symbols (
 	id integer primary key autoincrement,
+	name text,
 	module_id integer,
 	docs text,
 	line integer,
@@ -59,6 +64,10 @@ create table symbols (
 	pat_type text,
 	pat_constructor text
 );
+
+create unique index symbols_id_index on symbols (id);
+create index symbols_module_id_index on symbols (module_id);
+create index symbols_name_index on symbols (name);
 
 create table modules (
 	id integer primary key autoincrement,
@@ -77,6 +86,9 @@ create table modules (
 	tag json,
 	inspection_error text
 );
+
+create unique index modules_id_index on modules (id);
+create index modules_name_index on modules (name);
 
 create table exports (
 	module_id integer,

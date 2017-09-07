@@ -26,7 +26,10 @@ import qualified Database.SQLite.Simple as SQL
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
 import System.Directory
+import System.Exit (ExitCode(..))
 import System.FilePath
+import System.IO (hPutStrLn, hClose)
+import System.Process (runInteractiveProcess, waitForProcess)
 import qualified System.Log.Simple as Log
 import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
@@ -119,21 +122,40 @@ runCommand (AddData fs) = toValue $ do
 		fromPackageDbInfo = uncurry fromPackageDb
 runCommand Dump = toValue serverDatabase
 runCommand (DumpSqlite fpath) = toValue $ do
-	-- TODO: init file by calling 'sqlite3' with '.load notes/hsdev.sql'
+	sess <- getSession
+	let
+		putLog l msg = withSession sess $ Log.sendLog l msg
+	ex <- liftIO $ doesFileExist (fpath ^. path)
+	when ex $ hsdevError $ OtherError "file already exists, remove it"
+	inited <- liftIO initializeSqliteDB
+	when (not inited) $ hsdevError $ OtherError "failed to initialize database"
 	dbval <- serverDatabase
-	liftIO $ bracket (SQL.open $ fpath ^. path) SQL.close (insertData dbval)
+	liftIO $ bracket (SQL.open $ fpath ^. path) SQL.close (insertData putLog dbval)
 	where
-		insertData dbval conn = SQL.withTransaction conn $ do
-			forM_ (M.toList $ view databasePackageDbs dbval) insertPackageDb
-			forM_ (view databaseProjects dbval) insertProject
-			forM_ (view databaseModules dbval) insertModule
+		initializeSqliteDB = do
+			(hin, _, _, ph) <- runInteractiveProcess "sqlite3" [fpath ^. path] Nothing Nothing
+			mapM_ (hPutStrLn hin) sqliteSchema
+			hPutStrLn hin ".q"
+			hClose hin
+			e <- waitForProcess ph
+			return (e == ExitSuccess)
+
+		insertData putLog dbval conn = do
+			putLog Log.Trace "inserting sqlite data..."
+			SQL.withTransaction conn $ do
+				forM_ (M.toList $ view databasePackageDbs dbval) insertPackageDb
+				forM_ (view databaseProjects dbval) insertProject
+				forM_ (view databaseModules dbval) insertModule
+			SQL.withTransaction conn $ forM_ (view databaseModules dbval) insertModuleSymbols
 			where
-				insertPackageDb (pdb, pkgs) = forM_ pkgs $ \pkg ->
+				insertPackageDb (pdb, pkgs) = forM_ pkgs $ \pkg -> do
+					putLog Log.Trace $ "inserting package {}..." ~~ (pkg ^. packageName)
 					SQL.execute conn "insert into package_dbs (package_db, package_name, package_version) values (?, ?, ?);"
 						(showPackageDb pdb, pkg ^. packageName, pkg ^. packageVersion)
 
 				insertProject proj = do
 					-- TODO: Insert package_db_stack too
+					putLog Log.Trace $ "inserting project {}..." ~~ (proj ^. projectName)
 					SQL.execute conn "insert into projects (name, cabal, version) values (?, ?, ?);"
 						(proj ^. projectName, proj ^. projectCabal . path, proj ^? projectDescription . _Just . projectVersion)
 					projId <- lastRow
@@ -166,6 +188,7 @@ runCommand (DumpSqlite fpath) = toValue $ do
 
 				insertModule im = do
 					-- TODO: Insert parsed source
+					putLog Log.Trace $ "inserting module {}..." ~~ (fromMaybe "<error>" $ im ^? inspectionResult . _Right . moduleId . moduleName)
 					SQL.execute conn "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tag, inspection_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
 						im ^? inspectedKey . moduleFile . path,
 						im ^? inspectedKey . moduleProject . _Just . projectCabal,
@@ -179,16 +202,74 @@ runCommand (DumpSqlite fpath) = toValue $ do
 						fmap (encode . (map show)) $ im ^? inspectionResult . _Right . moduleFixities,
 						encode $ im ^. inspectionTags,
 						fmap show $ im ^? inspectionResult . _Left)
-					mid <- lastRow
 
-					forM_ (im ^.. inspectionResult . _Right . moduleExports) insertSymbol
+				insertModuleSymbols im = do
+					[SQL.Only mid] <- SQL.query conn "select id from modules where file is ? and package_name is ? and package_version is ? and other_location is ? and (name is ? or ? is null);" (
+						im ^? inspectedKey . moduleFile . path,
+						im ^? inspectedKey . modulePackage . _Just . packageName,
+						im ^? inspectedKey . modulePackage . _Just . packageVersion,
+						im ^? inspectedKey . otherLocationName,
+						im ^? inspectedKey . installedModuleName,
+						im ^? inspectedKey . installedModuleName)
+					forM_ (im ^.. inspectionResult . _Right . moduleExports . each) (insertSymbol mid)
 
 					-- TODO: insert scope for source modules
 					where
-						insertSymbol sym = do
-							-- TODO: insert, but check for existance, in that case return id
-							-- TODO: insert 'exports'
-							return ()
+						insertSymbol :: Int -> Symbol -> IO ()
+						insertSymbol mid sym = do
+							putLog Log.Trace $ "inserting symbol {}.{}..." ~~ (sym ^. symbolId . symbolModule . moduleName) ~~ (sym ^. symbolId . symbolName)
+							defMid <- insertLookupModuleId (sym ^. symbolId . symbolModule)
+							sid <- insertLookupSymbolId defMid sym
+							SQL.execute conn "insert into exports (module_id, symbol_id) values (?, ?);" (mid, sid)
+
+						insertLookupModuleId :: ModuleId -> IO Int
+						insertLookupModuleId m = do
+							mods <- SQL.query conn "select id from modules where name is ? and file is ? and package_name is ? and package_version is ? and other_location is ?;" (
+								m ^. moduleName,
+								m ^? moduleLocation . moduleFile . path,
+								m ^? moduleLocation . modulePackage . _Just . packageName,
+								m ^? moduleLocation . modulePackage . _Just . packageVersion,
+								m ^? moduleLocation .  otherLocationName)
+							case mods of
+								[] -> do
+									SQL.execute conn "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name) values (?, ?, ?, ?, ?, ?, ?);" (
+										m ^? moduleLocation . moduleFile . path,
+										m ^? moduleLocation . moduleProject . _Just . projectCabal,
+										fmap (encode . map (view path)) (m ^? moduleLocation . moduleInstallDirs),
+										m ^? moduleLocation . modulePackage . _Just . packageName,
+										m ^? moduleLocation . modulePackage . _Just . packageVersion,
+										m ^? moduleLocation . otherLocationName,
+										m ^. moduleName)
+									lastRow
+								[SQL.Only mid] -> return mid
+								_ -> error $ "different modules with same name and location: {}" ~~ (m ^. moduleName)
+
+						insertLookupSymbolId :: Int -> Symbol -> IO Int
+						insertLookupSymbolId mid sym = do
+							syms <- SQL.query conn "select id from symbols where name is ? and module_id is ?;" (
+								sym ^. symbolId . symbolName,
+								mid)
+							case syms of
+								[] -> do
+									SQL.execute conn "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+										sym ^. symbolId . symbolName,
+										mid,
+										sym ^. symbolDocs,
+										sym ^? symbolPosition . _Just . positionLine,
+										sym ^? symbolPosition . _Just . positionColumn)
+										SQL.:. (
+										symbolType sym,
+										sym ^? symbolInfo . functionType . _Just,
+										msum [sym ^? symbolInfo . parentClass, sym ^? symbolInfo . parentType],
+										encode $ sym ^? symbolInfo . selectorConstructors,
+										encode $ sym ^? symbolInfo . typeArgs,
+										encode $ sym ^? symbolInfo . typeContext,
+										sym ^? symbolInfo . familyAssociate . _Just,
+										sym ^? symbolInfo . patternType . _Just,
+										sym ^? symbolInfo . patternConstructor)
+									lastRow
+								[SQL.Only sid] -> return sid
+								_ -> error $ "different symbols with same module id: {}.{}" ~~ show mid ~~ (sym ^. symbolId . symbolName)
 
 				lastRow :: IO Int
 				lastRow = do
@@ -611,3 +692,109 @@ matchQuery (SearchQuery sq st) s = case st of
 	SearchRegex -> unpack sn =~ unpack sq
 	where
 		sn = view sourcedName s
+
+sqliteSchema :: [String]
+sqliteSchema = [
+	"create table package_dbs (",
+	"\tpackage_db text, -- global, user or path",
+	"\tpackage_name text,",
+	"\tpackage_version text",
+	");",
+	"",
+	"create table projects (",
+	"\tid integer primary key autoincrement,",
+	"\tname text,",
+	"\tcabal text,",
+	"\tversion text,",
+	"\tpackage_db_stack json -- list of package-db",
+	");",
+	"",
+	"create unique index projects_id_index on projects (id);",
+	"",
+	"create table libraries (",
+	"\tproject_id integer,",
+	"\tmodules json, -- list of modules",
+	"\tbuild_info_id integer",
+	");",
+	"",
+	"create table executables (",
+	"\tproject_id integer,",
+	"\tname text,",
+	"\tpath text,",
+	"\tbuild_info_id integer",
+	");",
+	"",
+	"create table tests (",
+	"\tproject_id integer,",
+	"\tname text,",
+	"\tenabled integer,",
+	"\tmain text,",
+	"\tbuild_info_id integer",
+	");",
+	"",
+	"create table build_infos(",
+	"\tid integer primary key autoincrement,",
+	"\tdepends json, -- list of dependencies",
+	"\tlanguage text,",
+	"\textensions json, -- list of extensions",
+	"\tghc_options json, -- list of ghc-options",
+	"\tsource_dirs json, -- list of source directories",
+	"\tother_modules json -- list of other modules",
+	");",
+	"",
+	"create unique index build_infos_id_index on build_infos (id);",
+	"",
+	"create table symbols (",
+	"\tid integer primary key autoincrement,",
+	"\tname text,",
+	"\tmodule_id integer,",
+	"\tdocs text,",
+	"\tline integer,",
+	"\tcolumn integer,",
+	"\twhat text, -- kind of symbol: function, method, ...",
+	"\ttype text,",
+	"\tparent text,",
+	"\tconstructors json, -- list of constructors for selector",
+	"\targs json, -- list of arguments for types",
+	"\tcontext json, -- list of contexts for types",
+	"\tassociate text, -- associates for families",
+	"\tpat_type text,",
+	"\tpat_constructor text",
+	");",
+	"",
+	"create unique index symbols_id_index on symbols (id);",
+	"create index symbols_module_id_index on symbols (module_id);",
+	"create index symbols_name_index on symbols (name);",
+	"",
+	"create table modules (",
+	"\tid integer primary key autoincrement,",
+	"\tfile text,",
+	"\tcabal text,",
+	"\t-- project_id integer,",
+	"\tinstall_dirs json, -- list of paths",
+	"\tpackage_name text,",
+	"\tpackage_version text,",
+	"\tother_location text,",
+	"",
+	"\tname text,",
+	"\tdocs text,",
+	"\tfixities json, -- list of fixities",
+	"\tsource json, -- parsed and resolved source",
+	"\ttag json,",
+	"\tinspection_error text",
+	");",
+	"",
+	"create unique index modules_id_index on modules (id);",
+	"create index modules_name_index on modules (name);",
+	"",
+	"create table exports (",
+	"\tmodule_id integer,",
+	"\tsymbol_id integer",
+	");",
+	"",
+	"create table scopes (",
+	"\tmodule_id integer,",
+	"\tqualifier text,",
+	"\tname text,",
+	"\tsymbol_id integer",
+	");"]
