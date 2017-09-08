@@ -211,16 +211,28 @@ runCommand (DumpSqlite fpath) = toValue $ do
 						im ^? inspectedKey . otherLocationName,
 						im ^? inspectedKey . installedModuleName,
 						im ^? inspectedKey . installedModuleName)
-					forM_ (im ^.. inspectionResult . _Right . moduleExports . each) (insertSymbol mid)
+					forM_ (im ^.. inspectionResult . _Right . moduleExports . each) (insertExportSymbol mid)
+					forM_ (im ^.. inspectionResult . _Right . scopeSymbols) (uncurry $ insertScopeSymbol mid)
 
 					-- TODO: insert scope for source modules
 					where
-						insertSymbol :: Int -> Symbol -> IO ()
-						insertSymbol mid sym = do
-							putLog Log.Trace $ "inserting symbol {}.{}..." ~~ (sym ^. symbolId . symbolModule . moduleName) ~~ (sym ^. symbolId . symbolName)
+						insertExportSymbol :: Int -> Symbol -> IO ()
+						insertExportSymbol mid sym = do
+							putLog Log.Trace $ "inserting exported symbol {}.{}..." ~~ (sym ^. symbolId . symbolModule . moduleName) ~~ (sym ^. symbolId . symbolName)
 							defMid <- insertLookupModuleId (sym ^. symbolId . symbolModule)
 							sid <- insertLookupSymbolId defMid sym
 							SQL.execute conn "insert into exports (module_id, symbol_id) values (?, ?);" (mid, sid)
+
+						insertScopeSymbol :: Int -> Symbol -> [Name] -> IO ()
+						insertScopeSymbol mid sym names = do
+							putLog Log.Trace $ "inserting scope symbol {}.{}..." ~~ (sym ^. symbolId . symbolModule . moduleName) ~~ (sym ^. symbolId . symbolName)
+							defMid <- insertLookupModuleId (sym ^. symbolId . symbolModule)
+							sid <- insertLookupSymbolId defMid sym
+							forM_ names $ \name -> SQL.execute conn "insert into scopes (module_id, qualifier, name, symbol_id) values (?, ?, ?, ?);" (
+								mid,
+								Name.nameModule name,
+								Name.nameIdent name,
+								sid)
 
 						insertLookupModuleId :: ModuleId -> IO Int
 						insertLookupModuleId m = do
