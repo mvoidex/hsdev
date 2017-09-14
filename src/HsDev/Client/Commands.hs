@@ -25,6 +25,7 @@ import qualified Data.Set as S
 import qualified Database.SQLite.Simple as SQL
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
+import Distribution.Text (display)
 import System.Directory
 import System.Exit (ExitCode(..))
 import System.FilePath
@@ -154,10 +155,12 @@ runCommand (DumpSqlite fpath) = toValue $ do
 						(showPackageDb pdb, pkg ^. packageName, pkg ^. packageVersion)
 
 				insertProject proj = do
-					-- TODO: Insert package_db_stack too
 					putLog Log.Trace $ "inserting project {}..." ~~ (proj ^. projectName)
-					SQL.execute conn "insert into projects (name, cabal, version) values (?, ?, ?);"
-						(proj ^. projectName, proj ^. projectCabal . path, proj ^? projectDescription . _Just . projectVersion)
+					SQL.execute conn "insert into projects (name, cabal, version, package_db_stack) values (?, ?, ?, ?);" (
+						proj ^. projectName,
+						proj ^. projectCabal . path,
+						proj ^? projectDescription . _Just . projectVersion,
+						fmap (encode . map showPackageDb . packageDbs) $ dbval ^? databaseProjectsInfos . ix (Just proj) . _1)
 					projId <- lastRow
 
 					forM_ (proj ^? projectDescription . _Just . projectLibrary . _Just) $ \lib -> do
@@ -176,11 +179,10 @@ runCommand (DumpSqlite fpath) = toValue $ do
 							(projId, test ^. testName, test ^. testEnabled, test ^? testMain . _Just . path, buildInfoId)
 					where
 						insertBuildInfo info = do
-							-- TODO: Encode correctly Language and Extension
 							SQL.execute conn "insert into build_infos (depends, language, extensions, ghc_options, source_dirs, other_modules) values (?, ?, ?, ?, ?, ?);" (
 								encode $ info ^. infoDepends,
-								fmap show $ info ^. infoLanguage,
-								encode $ map show $ info ^. infoExtensions,
+								fmap display $ info ^. infoLanguage,
+								encode $ map display $ info ^. infoExtensions,
 								encode $ info ^. infoGHCOptions,
 								encode $ info ^.. infoSourceDirs . each . path,
 								encode $ info ^. infoOtherModules)
@@ -213,8 +215,6 @@ runCommand (DumpSqlite fpath) = toValue $ do
 						im ^? inspectedKey . installedModuleName)
 					forM_ (im ^.. inspectionResult . _Right . moduleExports . each) (insertExportSymbol mid)
 					forM_ (im ^.. inspectionResult . _Right . scopeSymbols) (uncurry $ insertScopeSymbol mid)
-
-					-- TODO: insert scope for source modules
 					where
 						insertExportSymbol :: Int -> Symbol -> IO ()
 						insertExportSymbol mid sym = do
