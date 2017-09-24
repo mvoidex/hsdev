@@ -101,3 +101,17 @@ create table scopes (
 	name text,
 	symbol_id integer
 );
+
+create table names (
+	module_id integer,
+	qualifier text,
+	name text,
+	line integer,
+	column integer,
+	line_to integer,
+	column_to integer,
+	def_line integer,
+	def_column integer,
+	resolved_module text,
+	resolved_name text
+);

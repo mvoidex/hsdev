@@ -190,7 +190,7 @@ runCommand (DumpSqlite fpath) = toValue $ do
 
 				insertModule im = do
 					-- TODO: Insert parsed source
-					putLog Log.Trace $ "inserting module {}..." ~~ (fromMaybe "<error>" $ im ^? inspectionResult . _Right . moduleId . moduleName)
+					putLog Log.Trace $ "inserting module {}..." ~~ (fromMaybe "<error>" $ im ^? inspected . moduleId . moduleName)
 					SQL.execute conn "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tag, inspection_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
 						im ^? inspectedKey . moduleFile . path,
 						im ^? inspectedKey . moduleProject . _Just . projectCabal,
@@ -199,9 +199,9 @@ runCommand (DumpSqlite fpath) = toValue $ do
 						im ^? inspectedKey . modulePackage . _Just . packageVersion,
 						im ^? inspectedKey . otherLocationName)
 						SQL.:. (
-						msum [im ^? inspectionResult . _Right . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
-						im ^? inspectionResult . _Right . moduleDocs,
-						fmap (encode . (map show)) $ im ^? inspectionResult . _Right . moduleFixities,
+						msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
+						im ^? inspected . moduleDocs,
+						fmap (encode . (map show)) $ im ^? inspected . moduleFixities,
 						encode $ im ^. inspectionTags,
 						fmap show $ im ^? inspectionResult . _Left)
 
@@ -213,8 +213,12 @@ runCommand (DumpSqlite fpath) = toValue $ do
 						im ^? inspectedKey . otherLocationName,
 						im ^? inspectedKey . installedModuleName,
 						im ^? inspectedKey . installedModuleName)
-					forM_ (im ^.. inspectionResult . _Right . moduleExports . each) (insertExportSymbol mid)
-					forM_ (im ^.. inspectionResult . _Right . scopeSymbols) (uncurry $ insertScopeSymbol mid)
+					putLog Log.Trace "inserting exported symbols..."
+					forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
+					putLog Log.Trace "inserting scope symbols..."
+					forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
+					putLog Log.Trace "inserting resolved names..."
+					forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedName mid)
 					where
 						insertExportSymbol :: Int -> Symbol -> IO ()
 						insertExportSymbol mid sym = do
@@ -233,6 +237,21 @@ runCommand (DumpSqlite fpath) = toValue $ do
 								Name.nameModule name,
 								Name.nameIdent name,
 								sid)
+
+						insertResolvedName mid qname = do
+							SQL.execute conn "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+								mid,
+								Name.nameModule $ void qname,
+								Name.nameIdent $ void qname,
+								qname ^. P.pos . positionLine,
+								qname ^. P.pos . positionColumn,
+								qname ^. P.regionL . regionTo . positionLine,
+								qname ^. P.regionL . regionTo . positionColumn)
+								SQL.:. (
+								qname ^? P.defPos . positionLine,
+								qname ^? P.defPos . positionColumn,
+								(qname ^? P.resolvedName) >>= Name.nameModule,
+								Name.nameIdent <$> (qname ^? P.resolvedName))
 
 						insertLookupModuleId :: ModuleId -> IO Int
 						insertLookupModuleId m = do
@@ -809,4 +828,18 @@ sqliteSchema = [
 	"\tqualifier text,",
 	"\tname text,",
 	"\tsymbol_id integer",
+	");",
+	"",
+	"create table names (",
+	"\tmodule_id integer,",
+	"\tqualifier text,",
+	"\tname text,",
+	"\tline integer,",
+	"\tcolumn integer,",
+	"\tline_to integer,",
+	"\tcolumn_to integer,",
+	"\tdef_line integer,",
+	"\tdef_column integer,",
+	"\tresolved_module text,",
+	"\tresolved_name text",
 	");"]
