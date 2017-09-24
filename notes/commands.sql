@@ -8,12 +8,15 @@ where
 
 -- whoat
 select mdef.name, s.name, s.what
-from modules as m, names as n, modules as mdef, symbols as s
+from modules as m, names as n, modules as mdef, symbols as s, projects as p, projects_modules_scope as msc
 where
 	(m.id == n.module_id) and
 	(mdef.id == s.module_id) and
 	(mdef.name == n.resolved_module) and
 	(s.name == n.resolved_name) and
+	(m.cabal == p.cabal) and
+	(p.id == msc.project_id) and
+	(mdef.id == msc.module_id) and
 	(m.file == 'D:\users\voidex\Documents\Projects\hsdev\src\Data\Group.hs') and
 	((28, 13) between (n.line, n.column) and (n.line_to, n.column_to));
 

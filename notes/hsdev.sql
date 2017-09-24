@@ -1,8 +1,19 @@
+pragma case_sensitive_like = true;
+
 create table package_dbs (
 	package_db text, -- global, user or path
 	package_name text,
 	package_version text
 );
+
+create view latest_packages (
+	package_db,
+	package_name,
+	package_version
+) as
+select package_db, package_name, max(package_version)
+from package_dbs
+group by package_db, package_name;
 
 create table projects (
 	id integer primary key autoincrement,
@@ -57,11 +68,24 @@ create table build_infos(
 
 create view projects_deps (
 	project_id,
-	package_name
+	package_name,
+	package_version
 ) as
-select distinct p.id, deps.value
-from projects as p, build_infos as b, json_each(b.depends) as deps, targets as t
-where (p.id == t.project_id) and (b.id == t.build_info_id);
+select distinct p.id, deps.value, ps.package_version
+from projects as p, build_infos as b, json_each(b.depends) as deps, targets as t, latest_packages as ps
+where (p.id == t.project_id) and (b.id == t.build_info_id) and (deps.value <> p.name) and (ps.package_name == deps.value);
+
+create view projects_modules_scope (
+	project_id,
+	module_id
+) as
+select pdbs.project_id, m.id
+from projects_deps as pdbs, modules as m
+where (m.package_name == pdbs.package_name) and (m.package_version == pdbs.package_version)
+union
+select p.id, m.id
+from projects as p, modules as m
+where (m.cabal == p.cabal);
 
 create unique index build_infos_id_index on build_infos (id);
 
