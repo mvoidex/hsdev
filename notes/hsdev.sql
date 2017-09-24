@@ -35,6 +35,16 @@ create table tests (
 	build_info_id integer
 );
 
+create view targets (
+	project_id,
+	build_info_id
+) as
+select project_id, build_info_id from libraries
+union
+select project_id, build_info_id from executables
+union
+select project_id, build_info_id from tests;
+
 create table build_infos(
 	id integer primary key autoincrement,
 	depends json, -- list of dependencies
@@ -44,6 +54,14 @@ create table build_infos(
 	source_dirs json, -- list of source directories
 	other_modules json -- list of other modules
 );
+
+create view projects_deps (
+	project_id,
+	package_name
+) as
+select distinct p.id, deps.value
+from projects as p, build_infos as b, json_each(b.depends) as deps, targets as t
+where (p.id == t.project_id) and (b.id == t.build_info_id);
 
 create unique index build_infos_id_index on build_infos (id);
 
@@ -102,6 +120,18 @@ create table scopes (
 	symbol_id integer
 );
 
+create view completions (
+	module_id,
+	completion
+) as
+select id, (case when sc.qualifier is null then sc.name else sc.qualifier || '.' || sc.name end) as full_name
+from modules as m, scopes as sc
+where (m.id == sc.module_id)
+union
+select id, sc.qualifier as full_name
+from modules as m, scopes as sc
+where (m.id == sc.module_id) and (sc.qualifier is not null);
+
 create table names (
 	module_id integer,
 	qualifier text,
@@ -113,5 +143,6 @@ create table names (
 	def_line integer,
 	def_column integer,
 	resolved_module text,
-	resolved_name text
+	resolved_name text,
+	resolve_error text
 );

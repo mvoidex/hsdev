@@ -239,7 +239,7 @@ runCommand (DumpSqlite fpath) = toValue $ do
 								sid)
 
 						insertResolvedName mid qname = do
-							SQL.execute conn "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+							SQL.execute conn "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
 								mid,
 								Name.nameModule $ void qname,
 								Name.nameIdent $ void qname,
@@ -251,7 +251,8 @@ runCommand (DumpSqlite fpath) = toValue $ do
 								qname ^? P.defPos . positionLine,
 								qname ^? P.defPos . positionColumn,
 								(qname ^? P.resolvedName) >>= Name.nameModule,
-								Name.nameIdent <$> (qname ^? P.resolvedName))
+								Name.nameIdent <$> (qname ^? P.resolvedName),
+								P.resolveError qname)
 
 						insertLookupModuleId :: ModuleId -> IO Int
 						insertLookupModuleId m = do
@@ -763,6 +764,16 @@ sqliteSchema = [
 	"\tbuild_info_id integer",
 	");",
 	"",
+	"create view targets (",
+	"\tproject_id,",
+	"\tbuild_info_id",
+	") as",
+	"select project_id, build_info_id from libraries",
+	"union",
+	"select project_id, build_info_id from executables",
+	"union",
+	"select project_id, build_info_id from tests;",
+	"",
 	"create table build_infos(",
 	"\tid integer primary key autoincrement,",
 	"\tdepends json, -- list of dependencies",
@@ -772,6 +783,14 @@ sqliteSchema = [
 	"\tsource_dirs json, -- list of source directories",
 	"\tother_modules json -- list of other modules",
 	");",
+	"",
+	"create view projects_deps (",
+	"\tproject_id,",
+	"\tpackage_name",
+	") as",
+	"select distinct p.id, deps.value",
+	"from projects as p, build_infos as b, json_each(b.depends) as deps, targets as t",
+	"where (p.id == t.project_id) and (b.id == t.build_info_id);",
 	"",
 	"create unique index build_infos_id_index on build_infos (id);",
 	"",
@@ -830,6 +849,18 @@ sqliteSchema = [
 	"\tsymbol_id integer",
 	");",
 	"",
+	"create view completions (",
+	"\tmodule_id,",
+	"\tcompletion",
+	") as",
+	"select id, (case when sc.qualifier is null then sc.name else sc.qualifier || '.' || sc.name end) as full_name",
+	"from modules as m, scopes as sc",
+	"where (m.id == sc.module_id)",
+	"union",
+	"select id, sc.qualifier as full_name",
+	"from modules as m, scopes as sc",
+	"where (m.id == sc.module_id) and (sc.qualifier is not null);",
+	"",
 	"create table names (",
 	"\tmodule_id integer,",
 	"\tqualifier text,",
@@ -841,5 +872,6 @@ sqliteSchema = [
 	"\tdef_line integer,",
 	"\tdef_column integer,",
 	"\tresolved_module text,",
-	"\tresolved_name text",
+	"\tresolved_name text,",
+	"\tresolve_error text",
 	");"]

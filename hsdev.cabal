@@ -198,6 +198,27 @@ executable hsdev
     transformers >= 0.4.0,
     unordered-containers >= 0.2.0
 
+executable hsdev-sqlite
+  main-is: hsdev-sqlite.hs
+  hs-source-dirs: tools
+  ghc-options: -Wall -fno-warn-tabs
+  other-modules:
+    Tool
+  build-depends:
+    base >= 4.7 && < 5,
+    hsdev,
+    aeson >= 0.7.0,
+    bytestring >= 0.10.0,
+    data-default >= 0.5.0,
+    directory,
+    exceptions >= 0.6.0,
+    filepath >= 1.4.0,
+    hformat >= 0.3.0,
+    mtl >= 2.2.0,
+    optparse-applicative >= 0.11,
+    sqlite-simple,
+    transformers >= 0.4.0
+
 executable hsinspect
   main-is: hsinspect.hs
   hs-source-dirs: tools

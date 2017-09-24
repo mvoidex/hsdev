@@ -6,7 +6,7 @@ module HsDev.Symbols.Parsed (
 	usages, named, imports, declarations, moduleNames,
 
 	annL, symbolL, file, pos, defPos, resolvedName,
-	isBinder, isLocal, isGlobal, isReference, isUnresolved,
+	isBinder, isLocal, isGlobal, isReference, isUnresolved, resolveError,
 	refsTo, refsToName,
 	nameInfoL, positionL, regionL, fileL,
 	symbolNameL,
@@ -17,6 +17,7 @@ module HsDev.Symbols.Parsed (
 import Control.Lens
 import Data.Data
 import Data.Data.Lens
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import Language.Haskell.Exts hiding (Name(..))
 import qualified Language.Haskell.Exts as E (Name(..))
@@ -132,9 +133,13 @@ isReference e = isLocal e || isGlobal e
 
 -- | Is ast node not resolved
 isUnresolved :: Annotated ast => ast Ann -> Bool
-isUnresolved e = case e ^. annL . nameInfoL of
-	ScopeError _ -> True
-	_ -> False
+isUnresolved = isJust . resolveError
+
+-- | Resolve error
+resolveError :: Annotated ast => ast Ann -> Maybe String
+resolveError e = case e ^. annL . nameInfoL of
+	ScopeError e -> Just $ ppError e
+	_ -> Nothing
 
 -- | Node references to specified symbol
 refsTo :: Annotated ast => Name -> ast Ann -> Bool
