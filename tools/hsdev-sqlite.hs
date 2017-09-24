@@ -74,5 +74,5 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP main' where
 				(f', prefix ++ "%") :: IO [Only String]
 			let
 				dots = length . filter (== '.')
-				rs' = sort [r | Only r <- rs, dots r == dots prefix]
+				rs' = ordNub [intercalate "." . take (succ $ dots prefix) . split (== '.') $ r | Only r <- rs]
 			forM_ rs' putStrLn
