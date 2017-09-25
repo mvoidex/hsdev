@@ -145,15 +145,12 @@ create table scopes (
 
 create view completions (
 	module_id,
-	completion
+	completion,
+	symbol_id
 ) as
-select id, (case when sc.qualifier is null then sc.name else sc.qualifier || '.' || sc.name end) as full_name
+select id, (case when sc.qualifier is null then sc.name else sc.qualifier || '.' || sc.name end) as full_name, sc.symbol_id
 from modules as m, scopes as sc
-where (m.id == sc.module_id)
-union
-select id, sc.qualifier as full_name
-from modules as m, scopes as sc
-where (m.id == sc.module_id) and (sc.qualifier is not null);
+where (m.id == sc.module_id);
 
 create table names (
 	module_id integer,

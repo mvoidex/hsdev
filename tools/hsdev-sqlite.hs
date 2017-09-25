@@ -16,6 +16,7 @@ import Database.SQLite.Simple
 import Database.SQLite.Simple.ToField
 import Database.SQLite.Simple.FromField
 import Language.Haskell.Extension
+import Text.Format
 
 import System.Directory.Paths
 import HsDev.Util
@@ -95,51 +96,48 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 			runCommand (InfoProject (Right projPath)) = notImplemented
 			runCommand (InfoSandbox sandbox') = notImplemented
 			runCommand (Lookup nm fpath) = toValue $ do
-				rs <- query conn "select s.name, m.name from projects as p, projects_deps as pdeps, modules as m, modules as srcm, symbols as s where (p.id == pdeps.project_id) and (m.cabal == p.cabal or m.package_name == pdeps.package_name) and (s.module_id == m.id) and (p.cabal == srcm.cabal) and (srcm.file == ?) and (s.name == ?);"
-					(fpath ^. path, nm) :: IO [(String, String)]
-				return $ map (\(nm', m) -> object [
-					"name" .= nm',
-					"module" .= m]) rs
+				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from projects as p, projects_deps as pdeps, modules as m, modules as srcm, symbols as s where (p.id == pdeps.project_id) and (m.cabal == p.cabal or m.package_name == pdeps.package_name) and (s.module_id == m.id) and (p.cabal == srcm.cabal) and (srcm.file == ?) and (s.name == ?);"
+					(fpath ^. path, nm) :: IO [Symbol]
+				return rs
 			runCommand (Whois nm fpath) = toValue $ do
 				let
 					q = nameModule $ toName nm
 					ident = nameIdent $ toName nm
-				rs <- query conn "select s.name, mdef.name from modules as m, modules as mdef, scopes as sc, symbols as s where (m.id == sc.module_id) and (s.id == sc.symbol_id) and (s.module_id == mdef.id) and (m.file == ?) and (sc.qualifier is ?) and (sc.name == ?);"
-					(fpath ^. path, q, ident) :: IO [(String, String)]
-				return $ map (\(nm', m) -> object [
-					"name" .= nm',
-					"module" .= m]) rs
+				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from modules as m, modules as srcm, scopes as sc, symbols as s where (srcm.id == sc.module_id) and (s.id == sc.symbol_id) and (s.module_id == m.id) and (srcm.file == ?) and (sc.qualifier is ?) and (sc.name == ?);"
+					(fpath ^. path, q, ident) :: IO [Symbol]
+				return rs
 			runCommand (Whoat l c fpath) = toValue $ do
-				rs <- query conn "select mdef.name, s.name, s.what from modules as m, names as n, modules as mdef, symbols as s, projects as p, projects_modules_scope as msc where (m.id == n.module_id) and (mdef.id == s.module_id) and (mdef.name == n.resolved_module) and (s.name == n.resolved_name) and (p.cabal == m.cabal) and (p.id == msc.project_id) and (mdef.id == msc.module_id) and (m.file == ?) and ((?, ?) between (n.line, n.column) and (n.line_to, n.column_to));"
-					(fpath ^. path, l, c) :: IO [(String, String, String)]
-				return $ map (\(m, sym, what) -> object [
-					"module" .= m,
-					"name" .= sym,
-					"what" .= what]) rs
-			runCommand (ResolveScopeModules sq fpath) = notImplemented
-			runCommand (ResolveScope sq fpath) = notImplemented
+				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from modules as m, names as n, modules as srcm, symbols as s, projects as p, projects_modules_scope as msc where (srcm.id == n.module_id) and (m.id == s.module_id) and (m.name == n.resolved_module) and (s.name == n.resolved_name) and (p.cabal == srcm.cabal) and (p.id == msc.project_id) and (m.id == msc.module_id) and (srcm.file == ?) and ((?, ?) between (n.line, n.column) and (n.line_to, n.column_to));"
+					(fpath ^. path, l, c) :: IO [Symbol]
+				return rs
+			runCommand (ResolveScopeModules sq fpath) = toValue $ do
+				pids <- query conn "select p.id from projects as p, modules as m where (m.cabal == p.cabal) and (m.file == ?);"
+					(Only $ fpath ^. path) :: IO [Only Int]
+				case pids of
+					[] -> query conn "select m.id, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m, latest_packages as ps where (m.package_name == ps.package_name) and (m.package_version == ps.package_version) and (ps.package_db in ('user_db', 'global_db')) and (m.name like ?);"
+						(Only $ qlike sq) :: IO [ModuleId]
+					[Only proj] -> query conn "select m.id, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m, projects_modules_scope as msc where (msc.module_id == m.id) and (msc.project_id == ?) and (m.name like ?);"
+						(proj, qlike sq) :: IO [ModuleId]
+					_ -> fail "Impossible happened: several projects for one module"
+			runCommand (ResolveScope sq fpath) = toValue $ do
+				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m, scopes as sc, symbols as s where (m.id == sc.module_id) and (sc.symbol_id == s.id) and (m.file == ?) and (s.name like ?);"
+					(fpath ^. path, qlike sq) :: IO [SymbolId]
+				return rs
 			runCommand (FindUsages nm) = toValue $ do
 				let
 					q = nameModule $ toName nm
 					ident = nameIdent $ toName nm
-				rs <- query conn "select m.file, n.line, n.column from modules as m, names as n where (m.id == n.module_id) and (n.resolved_module == ? or ? is null) and (n.resolved_name == ?);"
-					(q, q, ident) :: IO [(String, Int, Int)]
-				return $ map (\(file, line, column) -> object [
-					"file" .= file,
-					"line" .= line,
-					"column" .= column]) rs
+				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor, mu.name, mu.file, mu.cabal, mu.install_dirs, mu.package_name, mu.package_version, mu.other_location, n.line, n.column from modules as m, sybmols as s, modules as mu, names as n where (m.id == s.module_id) and (m.name == n.resolved_module) and (s.name == m.resolved_name) and (mu.id == n.module_id) and (n.resolved_module == ? or ? is null) and (n.resolved_name == ?);"
+					(q, q, ident) :: IO [SymbolUsage]
+				return rs
 			runCommand (Complete input True fpath) = toValue $ do
-				rs <- query conn "select s.name from projects_modules_scope as msc, projects as p, modules as srcm, modules as m, symbols as s where (srcm.cabal == p.cabal) and (p.id == msc.project_id) and (msc.module_id == m.id) and (s.module_id == m.id) and (msrc.file == ?) and (s.name like ?) union select m.name from projects_modules_scope as msc, projects as p, modules as srcm, modules as m where (srcm.cabal == p.cabal) and (p.id == msc.project_id) and (m.id == msc.module_id) and (msrc.file == ?) and (m.name like ?);"
-					(fpath ^. path, input `T.append` "%", fpath ^. path, input `T.append` "%") :: IO [Only T.Text]
-				let
-					dots = T.length . T.filter (== '.')
-				return $ ordNub [T.intercalate "." . take (succ $ dots input) . T.splitOn (".") $ r | Only r <- rs]
+				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from projects_modules_scope as msc, projects as p, modules as srcm, modules as m, symbols as s where (srcm.cabal == p.cabal) and (p.id == msc.project_id) and (msc.module_id == m.id) and (s.module_id == m.id) and (msrc.file == ?) and (s.name like ?) union select m.name from projects_modules_scope as msc, projects as p, modules as srcm, modules as m where (srcm.cabal == p.cabal) and (p.id == msc.project_id) and (m.id == msc.module_id) and (msrc.file == ?) and (m.name like ?);"
+					(fpath ^. path, input `T.append` "%", fpath ^. path, input `T.append` "%") :: IO [Symbol]
+				return rs
 			runCommand (Complete input False fpath) = toValue $ do
-				rs <- query conn "select c.completion from modules as m, completions as c where (m.id == c.module_id) and (m.file == ?) and (c.completion like ?);"
-					(fpath ^. path, input `T.append` "%") :: IO [Only T.Text]
-				let
-					dots = T.length . T.filter (== '.')
-				return $ ordNub [T.intercalate "." . take (succ $ dots input) . T.splitOn (".") $ r | Only r <- rs]
+				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from modules as m, symbols as s, completions as c, modules as srcm where (m.id == s.module_id) and (c.module_id == srcm.id) and (c.symbol_id == s.id) and (srcm.file == ?) and (c.completion like ?);"
+					(fpath ^. path, input `T.append` "%") :: IO [Symbol]
+				return rs
 			runCommand (Hayoo hq p ps) = notImplemented
 			runCommand (CabalList packages') = notImplemented
 			runCommand (UnresolvedSymbols fs) = toValue $ liftM concat $ forM fs $ \f -> do
@@ -185,6 +183,9 @@ instance FromField Value where
 		SQLText s -> either fail return . eitherDecode . L.fromStrict . T.encodeUtf8 $ s
 		SQLBlob s -> either fail return . eitherDecode . L.fromStrict $ s
 		_ -> fail "invalid json field type"
+
+instance FromRow Position where
+	fromRow = Position <$> field <*> field
 
 instance FromRow ModulePackage where
 	fromRow = ModulePackage <$> field <*> (fromMaybe T.empty <$> field)
@@ -282,8 +283,21 @@ instance FromField PackageDb where
 		SQLText txt -> return $ PackageDb txt
 		_ -> fail "Can't parse package-db, invalid type"
 
+instance FromRow SymbolUsage where
+	fromRow = SymbolUsage <$> fromRow <*> fromRow <*> fromRow
 
 fromJSON' :: FromJSON a => Value -> Maybe a
 fromJSON' v = case fromJSON v of
 	A.Success r -> Just r
 	_ -> Nothing
+
+data QueryPart = QueryPart {
+	queryColumns :: [T.Text],
+	queryTables :: [T.Text],
+	queryConditions :: [T.Text] }
+
+toQuery :: QueryPart -> Query
+toQuery (QueryPart cols tables conds) = Query $ "select {} from {} where {};"
+	~~ T.intercalate ", " cols
+	~~ T.intercalate ", " tables
+	~~ T.intercalate " and " (map (\cond -> T.concat ["(", cond, ")"]) conds)
