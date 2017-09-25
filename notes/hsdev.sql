@@ -124,7 +124,6 @@ create table modules (
 	name text,
 	docs text,
 	fixities json, -- list of fixities
-	source json, -- parsed and resolved source
 	tag json,
 	inspection_error text
 );

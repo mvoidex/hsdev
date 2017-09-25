@@ -201,7 +201,7 @@ runCommand (DumpSqlite fpath) = toValue $ do
 						SQL.:. (
 						msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
 						im ^? inspected . moduleDocs,
-						fmap (encode . (map show)) $ im ^? inspected . moduleFixities,
+						fmap encode $ im ^? inspected . moduleFixities,
 						encode $ im ^. inspectionTags,
 						fmap show $ im ^? inspectionResult . _Left)
 
@@ -853,7 +853,6 @@ sqliteSchema = [
 	"\tname text,",
 	"\tdocs text,",
 	"\tfixities json, -- list of fixities",
-	"\tsource json, -- parsed and resolved source",
 	"\ttag json,",
 	"\tinspection_error text",
 	");",

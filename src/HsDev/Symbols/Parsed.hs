@@ -138,7 +138,7 @@ isUnresolved = isJust . resolveError
 -- | Resolve error
 resolveError :: Annotated ast => ast Ann -> Maybe String
 resolveError e = case e ^. annL . nameInfoL of
-	ScopeError e -> Just $ ppError e
+	ScopeError err -> Just $ ppError err
 	_ -> Nothing
 
 -- | Node references to specified symbol

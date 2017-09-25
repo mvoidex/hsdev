@@ -209,6 +209,7 @@ executable hsdev-sqlite
     hsdev,
     aeson >= 0.7.0,
     bytestring >= 0.10.0,
+    Cabal >= 1.22.0,
     data-default >= 0.5.0,
     directory,
     exceptions >= 0.6.0,

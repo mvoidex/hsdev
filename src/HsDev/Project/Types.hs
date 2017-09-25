@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Project.Types (
 	Project(..), projectName, projectPath, projectCabal, projectDescription, project, absolutiseProjectPaths, relativiseProjectPaths,
@@ -14,17 +15,14 @@ module HsDev.Project.Types (
 import Control.DeepSeq (NFData(..))
 import Control.Lens hiding ((%=), (.=), (<.>))
 import Data.Aeson
-import Data.Aeson.Types (Parser)
 import Data.Maybe
 import Data.Monoid
 import Data.Ord
 import Data.Text (Text)
 import Data.Text.Lens (unpacked)
 import qualified Data.Text as T
-import Distribution.Text (display, simpleParse)
-import qualified Distribution.Text (Text)
+import Distribution.Text (display)
 import Language.Haskell.Extension
-import Text.Format
 import System.FilePath
 
 import System.Directory.Paths
@@ -252,8 +250,8 @@ instance Show Info where
 instance ToJSON Info where
 	toJSON i = object [
 		"build-depends" .= _infoDepends i,
-		"language" .= fmap display (_infoLanguage i),
-		"extensions" .= map display (_infoExtensions i),
+		"language" .= _infoLanguage i,
+		"extensions" .= _infoExtensions i,
 		"ghc-options" .= _infoGHCOptions i,
 		"source-dirs" .= _infoSourceDirs i,
 		"other-modules" .= _infoOtherModules i]
@@ -261,15 +259,23 @@ instance ToJSON Info where
 instance FromJSON Info where
 	parseJSON = withObject "info" $ \v -> Info <$>
 		v .: "build-depends" <*>
-		((v .:: "language") >>= traverse (parseDT "Language")) <*>
-		((v .:: "extensions") >>= traverse (parseDT "Extension")) <*>
+		v .:: "language" <*>
+		v .:: "extensions" <*>
 		v .:: "ghc-options" <*>
 		v .:: "source-dirs" <*>
 		v .:: "other-modules"
-		where
-			parseDT :: Distribution.Text.Text a => String -> String -> Parser a
-			parseDT typeName v = maybe err return (simpleParse v) where
-				err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
+
+instance ToJSON Language where
+	toJSON = toJSON . display
+
+instance FromJSON Language where
+	parseJSON = withText "language" $ \txt -> parseDT "Language" (T.unpack txt)
+
+instance ToJSON Extension where
+	toJSON = toJSON . display
+
+instance FromJSON Extension where
+	parseJSON = withText "extension" $ \txt -> parseDT "Extension" (T.unpack txt)
 
 instance Paths Info where
 	paths f (Info deps lang exts opts dirs omods) = Info deps lang exts opts <$> traverse (paths f) dirs <*> pure omods

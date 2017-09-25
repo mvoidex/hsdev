@@ -29,6 +29,8 @@ module HsDev.Util (
 	withHelp, cmd, parseArgs,
 	-- * Version stuff
 	version, cutVersion, sameVersion, strVersion,
+	-- * Parse
+	parseDT,
 
 	-- * Reexportss
 	module Control.Monad.Except,
@@ -59,10 +61,13 @@ import Data.Text (Text)
 import qualified Data.Text.IO as ST
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
+import Distribution.Text (simpleParse)
+import qualified Distribution.Text (Text)
 import Options.Applicative
 import qualified System.Directory as Dir
 import System.FilePath
 import System.IO
+import Text.Format
 import Text.Read (readMaybe)
 
 #if !MIN_VERSION_directory(1,2,6)
@@ -335,3 +340,8 @@ sameVersion l r = fromMaybe False $ liftA2 (==) l r
 strVersion :: Maybe [Int] -> String
 strVersion Nothing = "unknown"
 strVersion (Just vers) = intercalate "." $ map show vers
+
+-- | Parse Distribution.Text
+parseDT :: Monad m => Distribution.Text.Text a => String -> String -> m a
+parseDT typeName v = maybe err return (simpleParse v) where
+	err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
