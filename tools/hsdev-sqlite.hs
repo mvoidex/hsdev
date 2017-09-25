@@ -9,7 +9,6 @@ import Control.Lens hiding ((.=))
 import Control.Exception
 import Data.Aeson as A
 import qualified Data.ByteString.Lazy.Char8 as L
-import Data.List
 import Data.Maybe
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -17,14 +16,11 @@ import Database.SQLite.Simple
 import Database.SQLite.Simple.ToField
 import Database.SQLite.Simple.FromField
 import Language.Haskell.Extension
-import System.Directory
-import Text.Format
 
 import System.Directory.Paths
 import HsDev.Util
 import HsDev.Server.Types
 import HsDev.Symbols
-import HsDev.Symbols.Name
 
 import Tool
 
@@ -71,7 +67,9 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 						set (projectDescription . _Just . projectExecutables) exes .
 						set (projectDescription . _Just . projectTests) tsts $
 						proj
-			runCommand InfoSandboxes = notImplemented
+			runCommand InfoSandboxes = toValue $ do
+				rs <- query_ conn "select distinct package_db from package_dbs;" :: IO [Only PackageDb]
+				return [pdb | Only pdb <- rs]
 			runCommand (InfoSymbol sq fs True _) = toValue $ do
 				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m, symbols as s where (m.id == s.module_id) and (s.name like ?);"
 					(Only $ qlike sq) :: IO [SymbolId]
@@ -276,6 +274,14 @@ instance FromField Language where
 	fromField fld = case fieldData fld of
 		SQLText txt -> parseDT "Language" (T.unpack txt)
 		_ -> fail "Can't parse language, invalid type"
+
+instance FromField PackageDb where
+	fromField fld = case fieldData fld of
+		SQLText "global" -> return GlobalDb
+		SQLText "user" -> return UserDb
+		SQLText txt -> return $ PackageDb txt
+		_ -> fail "Can't parse package-db, invalid type"
+
 
 fromJSON' :: FromJSON a => Value -> Maybe a
 fromJSON' v = case fromJSON v of
