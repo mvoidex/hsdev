@@ -234,7 +234,8 @@ getDecl decl' = case decl' of
 	H.GDataDecl _ dt mctx h _ gcons _ -> mkSymbol nm ((getCtor dt) (tyArgs h) (getCtx mctx)) : concatMap (getGConDecl nm) gcons where
 		nm = tyName h
 	H.DataFamDecl _ mctx h _ -> [mkSymbol (tyName h) (DataFam (tyArgs h) (getCtx mctx) Nothing)]
-	H.ClassDecl _ mctx h _ _ -> [mkSymbol (tyName h) (Class (tyArgs h) (getCtx mctx))]
+	H.ClassDecl _ mctx h _ clsDecls -> mkSymbol nm (Class (tyArgs h) (getCtx mctx)) : concatMap (getClassDecl nm) (fromMaybe [] clsDecls) where
+		nm = tyName h
 	H.TypeSig _ ns tsig -> [mkSymbol n (Function (Just $ oneLinePrint tsig)) | n <- ns]
 	H.PatSynSig _ n mas _ _ t -> [mkSymbol n (PatConstructor (maybe [] (map prp) mas) (Just $ oneLinePrint t))]
 	H.FunBind _ ms -> [mkSymbol (matchName m) (Function Nothing) | m <- ms] where
@@ -280,6 +281,9 @@ getGConDecl _ (H.GadtDecl _ n Nothing t) = [mkSymbol n (Constructor (map prp as)
 getGConDecl ptype (H.GadtDecl _ n (Just fs) t) = mkSymbol n (Constructor [prp ft | H.FieldDecl _ _ ft <- fs] (prp t)) :
 	[mkSymbol fn (Selector (Just $ prp ft) (prp ptype) [prp n]) | H.FieldDecl _ fns ft <- fs, fn <- fns]
 
+getClassDecl :: H.Name Ann -> H.ClassDecl Ann -> [Symbol]
+getClassDecl pclass (H.ClsDecl _ (H.TypeSig _ ns tsig)) = [mkSymbol n (Method (Just $ oneLinePrint tsig) (prp pclass)) | n <- ns]
+getClassDecl _ _ = []
 
 prp :: H.Pretty a => a -> Text
 prp = fromString . H.prettyPrint

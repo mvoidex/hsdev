@@ -72,15 +72,15 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 				rs <- query_ conn "select distinct package_db from package_dbs;" :: IO [Only PackageDb]
 				return [pdb | Only pdb <- rs]
 			runCommand (InfoSymbol sq fs True _) = toValue $ do
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m, symbols as s where (m.id == s.module_id) and (s.name like ?);"
+				rs <- query conn (toQuery $ qSymbolId `mappend` qWhere ["s.name like ?"])
 					(Only $ qlike sq) :: IO [SymbolId]
 				return rs
 			runCommand (InfoSymbol sq fs False _) = toValue $ do
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from modules as m, symbols as s where (m.id == s.module_id) and (s.name like ?);"
+				rs <- query conn (toQuery $ qSymbol `mappend` qWhere ["s.name like ?"])
 					(Only $ qlike sq) :: IO [Symbol]
 				return rs
 			runCommand (InfoModule sq fs h i) = toValue $ do
-				rs <- query conn "select m.id, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m where (m.name like ?);"
+				rs <- query conn (toQuery $ qSelect ["mu.id"] [] [] `mappend` qModuleId `mappend` qWhere ["mu.name like ?"])
 					(Only $ qlike sq) :: IO [Only Int :. ModuleId]
 				if h
 					then return (toJSON $ map (\(_ :. m) -> m) rs)
@@ -89,53 +89,120 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 							(Only mid) :: IO [(Maybe T.Text, Maybe Value)]
 						let
 							fixities' = fromMaybe [] (fixities >>= fromJSON')
-						exports' <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from modules as m, symbols as s, exports as e where (m.id == s.module_id) and (e.module_id == ?) and (e.symbol_id == s.id);"
+						exports' <- query conn (toQuery $ qSymbol `mappend` qSelect []
+							["exports as e"]
+							["e.module_id == ?", "e.symbol_id == s.id"])
 							(Only mid) :: IO [Symbol]
 						return $ Module mheader docs exports' fixities' mempty Nothing
 			runCommand (InfoProject (Left projName)) = notImplemented
 			runCommand (InfoProject (Right projPath)) = notImplemented
 			runCommand (InfoSandbox sandbox') = notImplemented
 			runCommand (Lookup nm fpath) = toValue $ do
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from projects as p, projects_deps as pdeps, modules as m, modules as srcm, symbols as s where (p.id == pdeps.project_id) and (m.cabal == p.cabal or m.package_name == pdeps.package_name) and (s.module_id == m.id) and (p.cabal == srcm.cabal) and (srcm.file == ?) and (s.name == ?);"
+				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+					["projects as p", "projects_deps as pdeps", "modules as srcm"]
+					[
+						"p.id == pdeps.project_id",
+						"m.cabal == p.cabal or m.package_name == pdeps.package_name",
+						"p.cabal == srcm.cabal",
+						"srcm.file == ?",
+						"s.name == ?"])
 					(fpath ^. path, nm) :: IO [Symbol]
 				return rs
 			runCommand (Whois nm fpath) = toValue $ do
 				let
 					q = nameModule $ toName nm
 					ident = nameIdent $ toName nm
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from modules as m, modules as srcm, scopes as sc, symbols as s where (srcm.id == sc.module_id) and (s.id == sc.symbol_id) and (s.module_id == m.id) and (srcm.file == ?) and (sc.qualifier is ?) and (sc.name == ?);"
+				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+					["modules as srcm", "scopes as sc"]
+					[
+						"srcm.id == sc.module_id",
+						"s.id == sc.symbol_id",
+						"srcm.file == ?",
+						"sc.qualifier is ?",
+						"sc.name == ?"])
 					(fpath ^. path, q, ident) :: IO [Symbol]
 				return rs
 			runCommand (Whoat l c fpath) = toValue $ do
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from modules as m, names as n, modules as srcm, symbols as s, projects as p, projects_modules_scope as msc where (srcm.id == n.module_id) and (m.id == s.module_id) and (m.name == n.resolved_module) and (s.name == n.resolved_name) and (p.cabal == srcm.cabal) and (p.id == msc.project_id) and (m.id == msc.module_id) and (srcm.file == ?) and ((?, ?) between (n.line, n.column) and (n.line_to, n.column_to));"
+				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+					["names as n", "modules as srcm", "projects as p", "projects_modules_scope as msc"]
+					[
+						"srcm.id == n.module_id",
+						"m.name == n.resolved_module",
+						"s.name == n.resolved_name",
+						"p.cabal == srcm.cabal",
+						"p.id == msc.project_id",
+						"m.id == msc.module_id",
+						"srcm.file == ?",
+						"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
 					(fpath ^. path, l, c) :: IO [Symbol]
 				return rs
 			runCommand (ResolveScopeModules sq fpath) = toValue $ do
 				pids <- query conn "select p.id from projects as p, modules as m where (m.cabal == p.cabal) and (m.file == ?);"
 					(Only $ fpath ^. path) :: IO [Only Int]
 				case pids of
-					[] -> query conn "select m.id, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m, latest_packages as ps where (m.package_name == ps.package_name) and (m.package_version == ps.package_version) and (ps.package_db in ('user_db', 'global_db')) and (m.name like ?);"
+					[] -> query conn (toQuery $ qModuleId `mappend` qSelect []
+						["latest_packages as ps"]
+						[
+							"mu.package_name == ps.package_name",
+							"mu.package_version == ps.package_version",
+							"ps.package_db in ('user_db', 'global_db')",
+							"mu.name like ?"])
 						(Only $ qlike sq) :: IO [ModuleId]
-					[Only proj] -> query conn "select m.id, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m, projects_modules_scope as msc where (msc.module_id == m.id) and (msc.project_id == ?) and (m.name like ?);"
+					[Only proj] -> query conn (toQuery $ qModuleId `mappend` qSelect []
+						["projects_modules_scope as msc"]
+						[
+							"msc.module_id == mu.id",
+							"msc.project_id == ?",
+							"mu.name like ?"])
 						(proj, qlike sq) :: IO [ModuleId]
 					_ -> fail "Impossible happened: several projects for one module"
 			runCommand (ResolveScope sq fpath) = toValue $ do
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location from modules as m, scopes as sc, symbols as s where (m.id == sc.module_id) and (sc.symbol_id == s.id) and (m.file == ?) and (s.name like ?);"
+				rs <- query conn (toQuery $ qSymbolId `mappend` qSelect []
+					["scopes as sc", "modules as srcm"]
+					[
+						"srcm.id == sc.module_id",
+						"sc.symbol_id == s.id",
+						"srcm.file == ?",
+						"s.name like ?"])
 					(fpath ^. path, qlike sq) :: IO [SymbolId]
 				return rs
 			runCommand (FindUsages nm) = toValue $ do
 				let
 					q = nameModule $ toName nm
 					ident = nameIdent $ toName nm
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor, mu.name, mu.file, mu.cabal, mu.install_dirs, mu.package_name, mu.package_version, mu.other_location, n.line, n.column from modules as m, sybmols as s, modules as mu, names as n where (m.id == s.module_id) and (m.name == n.resolved_module) and (s.name == m.resolved_name) and (mu.id == n.module_id) and (n.resolved_module == ? or ? is null) and (n.resolved_name == ?);"
+				rs <- query conn (toQuery $ qSymbol `mappend` qModuleId `mappend` qSelect
+					["n.line", "n.column"]
+					["names as n"]
+					[
+						"m.name == n.resolved_module",
+						"s.name == n.resolved_name",
+						"mu.id == n.module_id",
+						"n.resolved_module == ? or ? is null",
+						"n.resolved_name == ?"])
 					(q, q, ident) :: IO [SymbolUsage]
 				return rs
 			runCommand (Complete input True fpath) = toValue $ do
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from projects_modules_scope as msc, projects as p, modules as srcm, modules as m, symbols as s where (srcm.cabal == p.cabal) and (p.id == msc.project_id) and (msc.module_id == m.id) and (s.module_id == m.id) and (msrc.file == ?) and (s.name like ?) union select m.name from projects_modules_scope as msc, projects as p, modules as srcm, modules as m where (srcm.cabal == p.cabal) and (p.id == msc.project_id) and (m.id == msc.module_id) and (msrc.file == ?) and (m.name like ?);"
+				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+					[
+						"projects_modules_scope as msc",
+						"projects as p",
+						"modules as srcm"]
+					[
+						"srcm.cabal == p.cabal",
+						"p.id == msc.project_id",
+						"msc.module_id == m.id",
+						"msrc.file == ?",
+						"s.name like ?"])
 					(fpath ^. path, input `T.append` "%", fpath ^. path, input `T.append` "%") :: IO [Symbol]
 				return rs
 			runCommand (Complete input False fpath) = toValue $ do
-				rs <- query conn "select s.name, m.name, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.other_location, s.docs, s.line, s.column, s.what, s.type, s.parent, s.constructors, s.args, s.context, s.associate, s.pat_type, s.pat_constructor from modules as m, symbols as s, completions as c, modules as srcm where (m.id == s.module_id) and (c.module_id == srcm.id) and (c.symbol_id == s.id) and (srcm.file == ?) and (c.completion like ?);"
+				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+					["completions as c", "modules as srcm"]
+					[
+						"c.module_id == srcm.id",
+						"c.symbol_id == s.id",
+						"srcm.file == ?",
+						"c.completion like ?"])
 					(fpath ^. path, input `T.append` "%") :: IO [Symbol]
 				return rs
 			runCommand (Hayoo hq p ps) = notImplemented
@@ -296,8 +363,64 @@ data QueryPart = QueryPart {
 	queryTables :: [T.Text],
 	queryConditions :: [T.Text] }
 
+instance Monoid QueryPart where
+	mempty = QueryPart mempty mempty mempty
+	QueryPart lc lt lconds `mappend` QueryPart rc rt rconds = QueryPart
+		(lc `mappend` rc)
+		(lt `mappend` rt)
+		(lconds `mappend` rconds)
+
+qSelect :: [T.Text] -> [T.Text] -> [T.Text] -> QueryPart
+qSelect = QueryPart
+
+qWhere :: [T.Text] -> QueryPart
+qWhere = qSelect [] []
+
 toQuery :: QueryPart -> Query
 toQuery (QueryPart cols tables conds) = Query $ "select {} from {} where {};"
 	~~ T.intercalate ", " cols
 	~~ T.intercalate ", " tables
 	~~ T.intercalate " and " (map (\cond -> T.concat ["(", cond, ")"]) conds)
+
+qSymbolId :: QueryPart
+qSymbolId = qSelect
+	[
+		"s.name",
+		"m.name",
+		"m.file",
+		"m.cabal",
+		"m.install_dirs",
+		"m.package_name",
+		"m.package_version",
+		"m.other_location"]
+	["modules as m", "symbols as s"]
+	["m.id == s.module_id"]
+
+qSymbol :: QueryPart
+qSymbol = qSymbolId `mappend` qSelect cols [] [] where
+	cols = [
+		"s.docs",
+		"s.line",
+		"s.column",
+		"s.what",
+		"s.type",
+		"s.parent",
+		"s.constructors",
+		"s.args",
+		"s.context",
+		"s.associate",
+		"s.pat_type",
+		"s.pat_constructor"]
+
+qModuleId :: QueryPart
+qModuleId = qSelect
+	[
+		"mu.name",
+		"mu.file",
+		"mu.cabal",
+		"mu.install_dirs",
+		"mu.package_name",
+		"mu.package_version",
+		"mu.other_location"]
+	["modules as mu"]
+	[]
