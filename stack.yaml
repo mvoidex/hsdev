@@ -1,12 +1,13 @@
 flags: {}
+resolver: lts-9.6
 packages:
 - '.'
-- 'tests/test-package/'
+- tests/test-package/
 extra-deps:
 - aeson-lens-0.5.0.0
 - haddock-api-2.17.3.1
 - hdocs-0.5.2.0
-- hformat-0.3.0.0
-- simple-log-0.9.2
+- hformat-0.3.1.0
+- simple-log-0.9.3
 - text-region-0.3.0.0
-resolver: lts-8.12
+extra-package-dbs: []
