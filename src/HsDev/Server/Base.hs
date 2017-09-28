@@ -29,7 +29,7 @@ import System.FilePath
 import qualified Control.Concurrent.FiniteChan as F
 import System.Directory.Paths (canonicalize)
 import qualified System.Directory.Watcher as Watcher
-import Text.Format ((~~), FormatBuild(..), (~%))
+import Text.Format ((~~), (~%))
 
 import qualified HsDev.Cache as Cache
 import qualified HsDev.Cache.Structured as SC
@@ -58,8 +58,6 @@ initLog sopts = do
 	let
 		listenLog = F.dupChan msgs >>= F.readChan
 	return $ SessionLog l listenLog (stopLog l)
-
-instance FormatBuild Log.Level where
 
 -- | Run server
 runServer :: ServerOpts -> ServerM IO () -> IO ()

@@ -30,7 +30,7 @@ import HsDev.Symbols.Types
 import HsDev.Project (fileTarget)
 import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker
-import HsDev.Tools.Ghc.Compat
+import HsDev.Tools.Ghc.Compat as C
 import HsDev.Tools.Types
 import HsDev.Util (readFileUtf8, ordNub)
 
@@ -39,7 +39,7 @@ checkFiles :: (MonadLog m, GhcMonad m) => [String] -> [FilePath] -> Maybe Projec
 checkFiles opts files _ = scope "check-files" $ do
 	ch <- liftIO newChan
 	withFlags $ do
-		modifyFlags $ setLogAction $ logToChan ch
+		modifyFlags $ C.setLogAction $ logToChan ch
 		addCmdOpts opts
 		clearTargets
 		mapM (`makeTarget` Nothing) files >>= loadTargets
@@ -58,7 +58,7 @@ check opts m msrc = scope "check" $ case view moduleLocation m of
 		dirExist <- liftIO $ doesDirectoryExist dir
 		withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
 			addCmdOpts opts
-			modifyFlags $ setLogAction $ logToChan ch
+			modifyFlags $ C.setLogAction $ logToChan ch
 			clearTargets
 			target <- makeTarget (makeRelative dir file) msrc
 			loadTargets [target]

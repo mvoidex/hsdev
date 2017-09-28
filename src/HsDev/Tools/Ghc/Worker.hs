@@ -39,7 +39,7 @@ import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import qualified  System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Read (readMaybe)
-import Text.Format
+import Text.Format hiding (withFlags)
 
 import Exception (ExceptionMonad(..))
 import GHC hiding (Warning, Module, moduleName, pkgDatabase)
@@ -54,7 +54,8 @@ import Control.Concurrent.Worker
 import System.Directory.Paths
 import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage, ModuleLocation(..))
 import HsDev.Tools.Types
-import HsDev.Tools.Ghc.Compat
+import HsDev.Tools.Ghc.Compat hiding (setLogAction)
+import qualified HsDev.Tools.Ghc.Compat as C (setLogAction)
 import HsDev.Tools.Ghc.MGhc
 
 data SessionTarget =
@@ -65,7 +66,7 @@ instance Show SessionTarget where
 	show SessionGhci = "ghci"
 	show (SessionGhc opts) = "ghc " ++ intercalate ", " opts
 
-instance FormatBuild SessionTarget
+instance Formattable SessionTarget
 
 instance Eq SessionTarget where
 	SessionGhci == SessionGhci = True
@@ -133,7 +134,7 @@ ghcRun opts f = do
 			-- ghcLink = NoLink,
 			-- hscTarget = HscNothing }
 		void $ setSessionDynFlags fs''
-		modifyFlags $ setLogAction logToNull
+		modifyFlags $ C.setLogAction logToNull
 		f
 
 -- | Alter @DynFlags@ temporary
@@ -170,7 +171,7 @@ setCmdOpts opts = do
 	Log.sendLog Log.Trace $ "restarting ghc session with: {}" ~~ unwords opts
 	initGhcMonad (Just libdir)
 	addCmdOpts opts
-	modifyFlags $ setLogAction logToNull
+	modifyFlags $ C.setLogAction logToNull
 
 -- | Import some modules
 importModules :: GhcMonad m => [String] -> m ()

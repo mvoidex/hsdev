@@ -2,9 +2,13 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Compat (
-	pkgDatabase, UnitId, unitId, moduleUnitId, depends, getPackageDetails, patSynType, cleanupHandler, renderStyle,
+	pkgDatabase,
+	UnitId, InstalledUnitId, toInstalledUnitId,
+	unitId, moduleUnitId, depends, getPackageDetails, patSynType, cleanupHandler, renderStyle,
 	LogAction, setLogAction,
-	languages, flags
+	languages, flags,
+	unqualStyle,
+	exposedModuleName
 	) where
 
 import qualified DynFlags as GHC
@@ -14,53 +18,75 @@ import qualified Module
 import qualified Packages as GHC
 import qualified PatSyn as GHC
 import qualified Pretty
+import Outputable
 
 #if __GLASGOW_HASKELL__ == 710
 import Exception (ExceptionMonad)
 import Control.Monad.Reader
 #endif
 
+#if __GLASGOW_HASKELL__ <= 800
+import qualified GHC.PackageDb as GHC
+#endif
+
 pkgDatabase :: GHC.DynFlags -> Maybe [GHC.PackageConfig]
-#if __GLASGOW_HASKELL__ == 800
+#if __GLASGOW_HASKELL__ >= 800
 pkgDatabase = fmap (concatMap snd) . GHC.pkgDatabase
 #elif __GLASGOW_HASKELL__ == 710
 pkgDatabase = GHC.pkgDatabase
 #endif
 
-#if __GLASGOW_HASKELL__ == 800
+#if __GLASGOW_HASKELL__ >= 800
 type UnitId = Module.UnitId
 #elif __GLASGOW_HASKELL__ == 710
 type UnitId = Module.PackageKey
 #endif
 
-unitId :: GHC.PackageConfig -> UnitId
-#if __GLASGOW_HASKELL__ == 800
+#if __GLASGOW_HASKELL__ == 802
+type InstalledUnitId = Module.InstalledUnitId
+#else
+type InstalledUnitId = UnitId
+#endif
+
+toInstalledUnitId :: UnitId -> InstalledUnitId
+#if __GLASGOW_HASKELL__ == 802
+toInstalledUnitId = Module.toInstalledUnitId
+#else
+toInstalledUnitId = id
+#endif
+
+unitId :: GHC.PackageConfig -> InstalledUnitId
+#if __GLASGOW_HASKELL__ >= 800
 unitId = GHC.unitId
 #elif __GLASGOW_HASKELL__ == 710
 unitId = GHC.packageKey
 #endif
 
 moduleUnitId :: GHC.Module -> UnitId
-#if __GLASGOW_HASKELL__ == 800
+#if __GLASGOW_HASKELL__ >= 800
 moduleUnitId = GHC.moduleUnitId
 #elif __GLASGOW_HASKELL__ == 710
 moduleUnitId = GHC.modulePackageKey
 #endif
 
-depends :: GHC.DynFlags -> GHC.PackageConfig -> [UnitId]
-#if __GLASGOW_HASKELL__ == 800
+depends :: GHC.DynFlags -> GHC.PackageConfig -> [InstalledUnitId]
+#if __GLASGOW_HASKELL__ >= 800
 depends _ = GHC.depends
 #elif __GLASGOW_HASKELL__ == 710
 depends df = map (GHC.resolveInstalledPackageId df) . GHC.depends
 #endif
 
-getPackageDetails :: GHC.DynFlags -> UnitId -> GHC.PackageConfig
+getPackageDetails :: GHC.DynFlags -> InstalledUnitId -> GHC.PackageConfig
+#if __GLASGOW_HASKELL__ == 802
+getPackageDetails = GHC.getInstalledPackageDetails
+#else
 getPackageDetails = GHC.getPackageDetails
+#endif
 
 patSynType :: GHC.PatSyn -> GHC.Type
 patSynType p = GHC.patSynInstResTy p (GHC.patSynArgs p)
 
-#if __GLASGOW_HASKELL__ == 800
+#if __GLASGOW_HASKELL__ >= 800
 cleanupHandler :: GHC.DynFlags -> m a -> m a
 cleanupHandler _ = id
 #elif __GLASGOW_HASKELL__ == 710
@@ -69,7 +95,7 @@ cleanupHandler = GHC.defaultCleanupHandler
 #endif
 
 renderStyle :: Pretty.Mode -> Int -> Pretty.Doc -> String
-#if __GLASGOW_HASKELL__ == 800
+#if __GLASGOW_HASKELL__ >= 800
 renderStyle m cols = Pretty.renderStyle (Pretty.Style m cols 1.5)
 #elif __GLASGOW_HASKELL__ == 710
 renderStyle = Pretty.showDoc
@@ -80,7 +106,7 @@ type LogAction = GHC.DynFlags -> GHC.Severity -> GHC.SrcSpan -> ErrUtils.MsgDoc 
 setLogAction :: LogAction -> GHC.DynFlags -> GHC.DynFlags
 setLogAction act fs = fs { GHC.log_action = act' } where
 	act' :: GHC.LogAction
-#if __GLASGOW_HASKELL__ == 800
+#if __GLASGOW_HASKELL__ >= 800
 	act' df _ sev src _ msg = act df sev src msg
 #elif __GLASGOW_HASKELL__ == 710
 	act' df sev src _ msg = act df sev src msg
@@ -111,3 +137,18 @@ flags = concat [
 
 languages :: [String]
 languages = GHC.supportedLanguagesAndExtensions
+
+unqualStyle :: GHC.DynFlags -> PprStyle
+#if __GLASGOW_HASKELL__ == 802
+unqualStyle df = mkUserStyle df neverQualify AllTheWay
+#else
+unqualStyle _ = mkUserStyle neverQualify AllTheWay
+#endif
+
+#if __GLASGOW_HASKELL__ == 802
+exposedModuleName :: (a, Maybe b) -> a
+exposedModuleName = fst
+#else
+exposedModuleName :: GHC.ExposedModule unit mname -> mname
+exposedModuleName = GHC.exposedName
+#endif

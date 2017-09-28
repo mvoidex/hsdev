@@ -55,12 +55,12 @@ corrections = mapMaybe toCorrection where
 				note
 				(Correction
 					(view (note . message) n)
-					(replace (fromRegion $ view noteRegion n) (by sugg)))
+					(replace (fromRegion $ view noteRegion n) sugg))
 				n
 
 -- | Apply corrections
 autoFix :: [Note Correction] -> ([Note Correction], Maybe String) -> ([Note Correction], Maybe String)
-autoFix ns (upd, mcts) = (over (each . note . corrector . replaceRegion) (update act) upd, over (_Just . contents) (apply act) mcts) where
+autoFix ns (upd, mcts) = (over (each . note . corrector . replaceRegion) (update act) upd, over _Just (apply act) mcts) where
 	act = Edit (ns ^.. each . note . corrector)
 
 type CorrectorMatch = Note OutputMessage -> Maybe (Note Correction)
@@ -75,7 +75,7 @@ correctors = [
 		(g `at` 1)
 		(replace
 			((rgn ^. regionFrom) `regionSize` pt 0 (length $ g `at` 2))
-			(by $ g `at` 3))]
+			(g `at` 3))]
 
 match :: String -> ((Int -> Maybe String) -> R.Region -> Correction) -> CorrectorMatch
 match pat f n = do
