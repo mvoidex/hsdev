@@ -161,6 +161,7 @@ library
     regex-pcre-builtin >= 0.94,
     scientific >= 0.3,
     simple-log == 0.9.*,
+    direct-sqlite >= 2.3.21,
     sqlite-simple,
     syb >= 0.5.1,
     template-haskell,
