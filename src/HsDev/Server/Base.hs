@@ -31,6 +31,7 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Maybe
 import Data.String (fromString)
 import qualified Data.Text as T (pack)
+import qualified Database.SQLite.Simple as SQL
 import Options.Applicative (info, progDesc)
 import System.Log.Simple hiding (Level(..), Message)
 import qualified System.Log.Simple.Base as Log (level_)
@@ -82,6 +83,7 @@ runServer :: ServerOpts -> ServerM IO () -> IO ()
 runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.withWatcher $ \watcher -> withLog (sessionLogger slog) $ do
 	waitSem <- liftIO $ newQSem 0
 	db <- liftIO $ DB.newAsync
+	sqlDb <- liftIO $ SQL.open (fromMaybe ":memory:" $ serverSqlDbFile sopts)
 	clientChan <- liftIO F.newChan
 	withCache sopts () $ \cdir -> do
 		Log.sendLog Log.Trace $ "Checking cache version in {}" ~~ cdir 
@@ -111,6 +113,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 	let
 		session = Session
 			db
+			sqlDb
 			(writeCache sopts)
 			(readCache sopts)
 			slog

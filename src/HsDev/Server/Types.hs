@@ -5,7 +5,7 @@ module HsDev.Server.Types (
 	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverDatabase, serverUpdateDB, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverDatabase, serverUpdateDB, serverSqlDatabase, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -32,6 +32,7 @@ import Data.Maybe (fromMaybe)
 import Data.Foldable (asum)
 import Data.Text (Text)
 import Data.String (fromString)
+import qualified Database.SQLite.Simple as SQL
 import Options.Applicative
 import System.Log.Simple as Log
 
@@ -63,6 +64,7 @@ data SessionLog = SessionLog {
 
 data Session = Session {
 	sessionDatabase :: DB.Async Database,
+	sessionSqlDatabase :: SQL.Connection,
 	sessionWriteCache :: Database -> ServerM IO (),
 	sessionReadCache :: (FilePath -> ExceptT String IO Database) -> ServerM IO (Maybe Database),
 	sessionLog :: SessionLog,
@@ -191,6 +193,10 @@ serverDatabase = askSession sessionDatabase >>= liftIO . DB.readAsync
 serverUpdateDB :: SessionMonad m => Database -> m ()
 serverUpdateDB db = askSession sessionDatabase >>= (`DB.update` return db)
 
+-- | Get sql connection
+serverSqlDatabase :: SessionMonad m => m SQL.Connection
+serverSqlDatabase = askSession sessionSqlDatabase
+
 -- | Server write cache
 serverWriteCache :: SessionMonad m => Database -> m ()
 serverWriteCache db = do
@@ -255,12 +261,13 @@ data ServerOpts = ServerOpts {
 	serverLog :: Maybe FilePath,
 	serverLogLevel :: String,
 	serverCache :: Maybe FilePath,
+	serverSqlDbFile :: Maybe FilePath,
 	serverLoad :: Bool,
 	serverSilent :: Bool }
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts def 0 Nothing "info" Nothing False False
+	def = ServerOpts def 0 Nothing "info" Nothing Nothing False False
 
 -- | Silent server with no connection, useful for ghci
 silentOpts :: ServerOpts
@@ -295,6 +302,7 @@ instance FromCmd ServerOpts where
 		optional logArg <*>
 		(logLevelArg <|> pure (serverLogLevel def)) <*>
 		optional cacheArg <*>
+		optional sqlDbFileArg <*>
 		loadFlag <*>
 		serverSilentFlag
 
@@ -318,6 +326,7 @@ prettyFlag :: Parser Bool
 serverSilentFlag :: Parser Bool
 stdinFlag :: Parser Bool
 silentFlag :: Parser Bool
+sqlDbFileArg :: Parser FilePath
 
 portArg = NetworkPort <$> option auto (long "port" <> metavar "number" <> help "connection port")
 #if mingw32_HOST_OS
@@ -337,6 +346,7 @@ prettyFlag = switch (long "pretty" <> help "pretty json output")
 serverSilentFlag = switch (long "silent" <> help "no stdout/stderr")
 stdinFlag = switch (long "stdin" <> help "pass data to stdin")
 silentFlag = switch (long "silent" <> help "supress notifications")
+sqlDbFileArg = strOption (long "sql" <> metavar "path" <> help "path to sql database")
 
 serverOptsArgs :: ServerOpts -> [String]
 serverOptsArgs sopts = concat [
@@ -345,6 +355,7 @@ serverOptsArgs sopts = concat [
 	marg "--log" (serverLog sopts),
 	["--log-level", serverLogLevel sopts],
 	marg "--cache" (serverCache sopts),
+	marg "--sql" (serverSqlDbFile sopts),
 	["--load" | serverLoad sopts],
 	["--silent" | serverSilent sopts]]
 	where
