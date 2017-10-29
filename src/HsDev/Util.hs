@@ -12,7 +12,7 @@ module HsDev.Util (
 	-- * Other utils
 	ordNub, ordUnion, uniqueBy, mapBy,
 	-- * Helper
-	(.::), (.::?), (.::?!), objectUnion, jsonUnion, noNulls,
+	(.::), (.::?), (.::?!), objectUnion, jsonUnion, noNulls, fromJSON',
 	-- * Exceptions
 	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
 	eitherT,
@@ -210,6 +210,12 @@ noNulls :: [A.Pair] -> [A.Pair]
 noNulls = filter (not . isNull . snd) where
 	isNull Null = True
 	isNull v = v == A.emptyArray || v == A.emptyObject || v == A.String ""
+
+-- | Try convert json to value
+fromJSON' :: FromJSON a => Value -> Maybe a
+fromJSON' v = case fromJSON v of
+	A.Success r -> Just r
+	_ -> Nothing
 
 -- | Lift IO exception to ExceptT
 liftException :: C.MonadCatch m => m a -> ExceptT String m a

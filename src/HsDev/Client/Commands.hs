@@ -86,10 +86,6 @@ runCommand (SetLogLevel l) = case Log.level (pack l) of
 		Log.sendLog Log.Debug $ "log level changed from '{}' to '{}'" ~~ show lev' ~~ show lev
 		Log.sendLog Log.Info $ "log level updated to: {}" ~~ show lev
 runCommand (AddData fs) = toValue $ do
-	let
-		fromJSON' v = case fromJSON v of
-			A.Error _ -> Nothing
-			A.Success v' -> Just v'
 	forM_ fs $ \f -> do
 		commandNotify (Notification $ object ["message" .= ("adding data" :: String), "file" .= f])
 		cts <- liftIO $ L.readFile (view path f)

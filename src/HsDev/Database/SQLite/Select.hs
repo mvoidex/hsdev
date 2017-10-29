@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Database.SQLite.Select (
-	Select(..), select_, where_, buildQuery, toQuery
+	Select(..), select_, where_, buildQuery, toQuery,
+	qSymbolId, qSymbol, qModuleId
 	) where
 
 import Data.String
@@ -37,3 +38,47 @@ buildQuery (Select cols tables conds) = "select {} from {} where {};"
 
 toQuery :: Select -> Query
 toQuery = fromString . buildQuery
+
+
+qSymbolId :: Select
+qSymbolId = select_
+	[
+		"s.name",
+		"m.name",
+		"m.file",
+		"m.cabal",
+		"m.install_dirs",
+		"m.package_name",
+		"m.package_version",
+		"m.other_location"]
+	["modules as m", "symbols as s"]
+	["m.id == s.module_id"]
+
+qSymbol :: Select
+qSymbol = qSymbolId `mappend` select_ cols [] [] where
+	cols = [
+		"s.docs",
+		"s.line",
+		"s.column",
+		"s.what",
+		"s.type",
+		"s.parent",
+		"s.constructors",
+		"s.args",
+		"s.context",
+		"s.associate",
+		"s.pat_type",
+		"s.pat_constructor"]
+
+qModuleId :: Select
+qModuleId = select_
+	[
+		"mu.name",
+		"mu.file",
+		"mu.cabal",
+		"mu.install_dirs",
+		"mu.package_name",
+		"mu.package_version",
+		"mu.other_location"]
+	["modules as mu"]
+	[]

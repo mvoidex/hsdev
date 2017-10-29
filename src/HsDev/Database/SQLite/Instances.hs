@@ -4,6 +4,7 @@
 module HsDev.Database.SQLite.Instances (
 	) where
 
+import Control.Lens ((^.), (^?), _Just)
 import Data.Aeson as A
 import Data.Maybe
 import Data.Foldable
@@ -33,8 +34,14 @@ instance FromField Value where
 instance FromRow Position where
 	fromRow = Position <$> field <*> field
 
+instance ToRow Position where
+	toRow (Position l c) = [toField l, toField c]
+
 instance FromRow ModulePackage where
 	fromRow = ModulePackage <$> field <*> (fromMaybe T.empty <$> field)
+
+instance ToRow ModulePackage where
+	toRow (ModulePackage name ver) = [toField name, toField ver]
 
 instance FromRow ModuleId where
 	fromRow = do
@@ -53,8 +60,21 @@ instance FromRow ModuleId where
 
 		return $ ModuleId name mloc
 
+instance ToRow ModuleId where
+	toRow mid = [
+		toField $ mid ^. moduleName,
+		toField $ mid ^? moduleLocation . moduleFile,
+		toField $ mid ^? moduleLocation . moduleProject . _Just . projectCabal,
+		toField $ fmap toJSON $ mid ^? moduleLocation . moduleInstallDirs,
+		toField $ mid ^? moduleLocation . modulePackage . _Just . packageName,
+		toField $ mid ^? moduleLocation . modulePackage . _Just . packageVersion,
+		toField $ mid ^? moduleLocation . otherLocationName]
+
 instance FromRow SymbolId where
 	fromRow = SymbolId <$> field <*> fromRow
+
+instance ToRow SymbolId where
+	toRow (SymbolId nm mid) = toField nm : toRow mid
 
 instance FromRow Symbol where
 	fromRow = Symbol <$> fromRow <*> field <*> pos <*> infoP where
@@ -88,6 +108,24 @@ instance FromRow Symbol where
 				_ -> Nothing
 		str' :: String -> String
 		str' = id
+
+instance ToRow Symbol where
+	toRow sym = concat [
+		toRow (sym ^. symbolId),
+		[toField $ sym ^. symbolDocs],
+		maybe [SQLNull, SQLNull] toRow (sym ^. symbolPosition),
+		info]
+		where
+			info = [
+				toField $ symbolType sym,
+				toField $ sym ^? symbolInfo . functionType . _Just,
+				toField $ msum [sym ^? symbolInfo . parentClass, sym ^? symbolInfo . parentType],
+				toField $ toJSON $ sym ^? symbolInfo . selectorConstructors,
+				toField $ toJSON $ sym ^? symbolInfo . typeArgs,
+				toField $ toJSON $ sym ^? symbolInfo . typeContext,
+				toField $ sym ^? symbolInfo . familyAssociate . _Just,
+				toField $ sym ^? symbolInfo . patternType . _Just,
+				toField $ sym ^? symbolInfo . patternConstructor]
 
 instance FromRow Project where
 	fromRow = do
@@ -131,8 +169,3 @@ instance FromField PackageDb where
 
 instance FromRow SymbolUsage where
 	fromRow = SymbolUsage <$> fromRow <*> fromRow <*> fromRow
-
-fromJSON' :: FromJSON a => Value -> Maybe a
-fromJSON' v = case fromJSON v of
-	A.Success r -> Just r
-	_ -> Nothing
