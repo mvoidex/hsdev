@@ -10,7 +10,8 @@ module HsDev.Database.SQLite (
 	lastRow,
 
 	-- * Reexports
-	close
+	close,
+	module HsDev.Database.SQLite.Select
 	) where
 
 import Control.Lens
@@ -29,6 +30,7 @@ import System.Directory.Paths
 
 import HsDev.Database.SQLite.Instances ()
 import HsDev.Database.SQLite.Schema
+import HsDev.Database.SQLite.Select
 import qualified HsDev.Display as Display
 import HsDev.PackageDb.Types
 import HsDev.Project.Types

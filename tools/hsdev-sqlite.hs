@@ -10,10 +10,9 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Maybe
 import qualified Data.Text as T
 import Database.SQLite.Simple
-import System.IO
-import Text.Format
 
 import System.Directory.Paths
+import HsDev.Database.SQLite.Select
 import HsDev.Util
 import HsDev.Server.Types
 import HsDev.Symbols
@@ -67,15 +66,15 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 				rs <- query_ conn "select distinct package_db from package_dbs;" :: IO [Only PackageDb]
 				return [pdb | Only pdb <- rs]
 			runCommand (InfoSymbol sq fs True _) = toValue $ do
-				rs <- query conn (toQuery $ qSymbolId `mappend` qWhere ["s.name like ?"])
+				rs <- query conn (toQuery $ qSymbolId `mappend` where_ ["s.name like ?"])
 					(Only $ qlike sq) :: IO [SymbolId]
 				return rs
 			runCommand (InfoSymbol sq fs False _) = toValue $ do
-				rs <- query conn (toQuery $ qSymbol `mappend` qWhere ["s.name like ?"])
+				rs <- query conn (toQuery $ qSymbol `mappend` where_ ["s.name like ?"])
 					(Only $ qlike sq) :: IO [Symbol]
 				return rs
 			runCommand (InfoModule sq fs h i) = toValue $ do
-				rs <- query conn (toQuery $ qSelect ["mu.id"] [] [] `mappend` qModuleId `mappend` qWhere ["mu.name like ?"])
+				rs <- query conn (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like ?"])
 					(Only $ qlike sq) :: IO [Only Int :. ModuleId]
 				if h
 					then return (toJSON $ map (\(_ :. m) -> m) rs)
@@ -84,7 +83,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 							(Only mid) :: IO [(Maybe T.Text, Maybe Value)]
 						let
 							fixities' = fromMaybe [] (fixities >>= fromJSON')
-						exports' <- query conn (toQuery $ qSymbol `mappend` qSelect []
+						exports' <- query conn (toQuery $ qSymbol `mappend` select_ []
 							["exports as e"]
 							["e.module_id == ?", "e.symbol_id == s.id"])
 							(Only mid) :: IO [Symbol]
@@ -93,7 +92,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 			runCommand (InfoProject (Right projPath)) = notImplemented
 			runCommand (InfoSandbox sandbox') = notImplemented
 			runCommand (Lookup nm fpath) = toValue $ do
-				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+				rs <- query conn (toQuery $ qSymbol `mappend` select_ []
 					["projects as p", "projects_deps as pdeps", "modules as srcm"]
 					[
 						"p.id == pdeps.project_id",
@@ -107,7 +106,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 				let
 					q = nameModule $ toName nm
 					ident = nameIdent $ toName nm
-				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+				rs <- query conn (toQuery $ qSymbol `mappend` select_ []
 					["modules as srcm", "scopes as sc"]
 					[
 						"srcm.id == sc.module_id",
@@ -118,7 +117,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 					(fpath ^. path, q, ident) :: IO [Symbol]
 				return rs
 			runCommand (Whoat l c fpath) = toValue $ do
-				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+				rs <- query conn (toQuery $ qSymbol `mappend` select_ []
 					["names as n", "modules as srcm", "projects as p", "projects_modules_scope as msc"]
 					[
 						"srcm.id == n.module_id",
@@ -135,7 +134,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 				pids <- query conn "select p.id from projects as p, modules as m where (m.cabal == p.cabal) and (m.file == ?);"
 					(Only $ fpath ^. path) :: IO [Only Int]
 				case pids of
-					[] -> query conn (toQuery $ qModuleId `mappend` qSelect []
+					[] -> query conn (toQuery $ qModuleId `mappend` select_ []
 						["latest_packages as ps"]
 						[
 							"mu.package_name == ps.package_name",
@@ -143,7 +142,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 							"ps.package_db in ('user_db', 'global_db')",
 							"mu.name like ?"])
 						(Only $ qlike sq) :: IO [ModuleId]
-					[Only proj] -> query conn (toQuery $ qModuleId `mappend` qSelect []
+					[Only proj] -> query conn (toQuery $ qModuleId `mappend` select_ []
 						["projects_modules_scope as msc"]
 						[
 							"msc.module_id == mu.id",
@@ -152,7 +151,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 						(proj, qlike sq) :: IO [ModuleId]
 					_ -> fail "Impossible happened: several projects for one module"
 			runCommand (ResolveScope sq fpath) = toValue $ do
-				rs <- query conn (toQuery $ qSymbolId `mappend` qSelect []
+				rs <- query conn (toQuery $ qSymbolId `mappend` select_ []
 					["scopes as sc", "modules as srcm"]
 					[
 						"srcm.id == sc.module_id",
@@ -165,7 +164,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 				let
 					q = nameModule $ toName nm
 					ident = nameIdent $ toName nm
-				rs <- query conn (toQuery $ qSymbol `mappend` qModuleId `mappend` qSelect
+				rs <- query conn (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
 					["n.line", "n.column"]
 					["names as n"]
 					[
@@ -177,7 +176,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 					(q, q, ident) :: IO [SymbolUsage]
 				return rs
 			runCommand (Complete input True fpath) = toValue $ do
-				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+				rs <- query conn (toQuery $ qSymbol `mappend` select_ []
 					[
 						"projects_modules_scope as msc",
 						"projects as p",
@@ -191,7 +190,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 					(fpath ^. path, input `T.append` "%", fpath ^. path, input `T.append` "%") :: IO [Symbol]
 				return rs
 			runCommand (Complete input False fpath) = toValue $ do
-				rs <- query conn (toQuery $ qSymbol `mappend` qSelect []
+				rs <- query conn (toQuery $ qSymbol `mappend` select_ []
 					["completions as c", "modules as srcm"]
 					[
 						"c.module_id == srcm.id",
@@ -242,42 +241,8 @@ fromJSON' v = case fromJSON v of
 	A.Success r -> Just r
 	_ -> Nothing
 
-data QueryPart = QueryPart {
-	queryColumns :: [T.Text],
-	queryTables :: [T.Text],
-	queryConditions :: [T.Text] }
-
-instance Monoid QueryPart where
-	mempty = QueryPart mempty mempty mempty
-	QueryPart lc lt lconds `mappend` QueryPart rc rt rconds = QueryPart
-		(lc `mappend` rc)
-		(lt `mappend` rt)
-		(lconds `mappend` rconds)
-
-qSelect :: [T.Text] -> [T.Text] -> [T.Text] -> QueryPart
-qSelect = QueryPart
-
-qWhere :: [T.Text] -> QueryPart
-qWhere = qSelect [] []
-
-buildQueryString :: QueryPart -> String
-buildQueryString (QueryPart cols tables conds) = "select {} from {} where {};"
- ~~ T.intercalate ", " cols
- ~~ T.intercalate ", " tables
- ~~ T.intercalate " and " (map (\cond -> T.concat ["(", cond, ")"]) conds)
-
-toQuery :: QueryPart -> Query
-toQuery = Query . T.pack . buildQueryString
-
-mkQuery :: QueryPart -> IO Query
-mkQuery q = do
-	hPutStrLn stderr s
-	return $ Query $ T.pack s
-	where
-		s = buildQueryString q
-
-qSymbolId :: QueryPart
-qSymbolId = qSelect
+qSymbolId :: Select
+qSymbolId = select_
 	[
 		"s.name",
 		"m.name",
@@ -290,8 +255,8 @@ qSymbolId = qSelect
 	["modules as m", "symbols as s"]
 	["m.id == s.module_id"]
 
-qSymbol :: QueryPart
-qSymbol = qSymbolId `mappend` qSelect cols [] [] where
+qSymbol :: Select
+qSymbol = qSymbolId `mappend` select_ cols [] [] where
 	cols = [
 		"s.docs",
 		"s.line",
@@ -306,8 +271,8 @@ qSymbol = qSymbolId `mappend` qSelect cols [] [] where
 		"s.pat_type",
 		"s.pat_constructor"]
 
-qModuleId :: QueryPart
-qModuleId = qSelect
+qModuleId :: Select
+qModuleId = select_
 	[
 		"mu.name",
 		"mu.file",

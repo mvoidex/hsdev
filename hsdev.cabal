@@ -44,6 +44,7 @@ library
     HsDev.Database.SQLite
     HsDev.Database.SQLite.Instances
     HsDev.Database.SQLite.Schema
+    HsDev.Database.SQLite.Select
     HsDev.Database.Update
     HsDev.Database.Update.Types
     HsDev.Display
