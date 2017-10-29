@@ -5,7 +5,7 @@ module HsDev.Server.Types (
 	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverDatabase, serverUpdateDB, serverSqlDatabase, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverDatabase, serverUpdateDB, serverSqlDatabase, withSqlTransaction, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -20,6 +20,7 @@ import Control.Lens (view, set)
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Except
+import Control.Monad.Morph
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer
@@ -103,6 +104,9 @@ instance MonadBaseControl b m => MonadBaseControl b (ServerM m) where
 	liftBaseWith f = ServerM $ liftBaseWith (\f' -> f (f' . runServerM))
 	restoreM = ServerM . restoreM
 
+instance MFunctor ServerM where
+	hoist fn = ServerM . hoist fn . runServerM
+
 instance SessionMonad m => SessionMonad (ReaderT r m) where
 	getSession = lift getSession
 
@@ -151,6 +155,9 @@ instance MonadBaseControl b m => MonadBaseControl b (ClientM m) where
 	liftBaseWith f = ClientM $ liftBaseWith (\f' -> f (f' . runClientM))
 	restoreM = ClientM . restoreM
 
+instance MFunctor ClientM where
+	hoist fn = ClientM . hoist (hoist fn) . runClientM
+
 instance CommandMonad m => CommandMonad (ReaderT r m) where
 	getOptions = lift getOptions
 
@@ -196,6 +203,13 @@ serverUpdateDB db = askSession sessionDatabase >>= (`DB.update` return db)
 -- | Get sql connection
 serverSqlDatabase :: SessionMonad m => m SQL.Connection
 serverSqlDatabase = askSession sessionSqlDatabase
+
+-- | With sql transaction
+withSqlTransaction :: SessionMonad m => ServerM IO a -> m a
+withSqlTransaction fn = do
+	conn <- serverSqlDatabase
+	sess <- getSession
+	liftIO $ SQL.withTransaction conn $ withSession sess fn
 
 -- | Server write cache
 serverWriteCache :: SessionMonad m => Database -> m ()
@@ -392,7 +406,7 @@ data Command =
 	SetLogLevel String |
 	AddData { addedData :: [Path] } |
 	Dump |
-	DumpSqlite Path |
+	DumpSqlite |
 	Scan {
 		scanProjects :: [Path],
 		scanCabal :: Bool,
@@ -525,7 +539,7 @@ instance FromCmd Command where
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
 		cmd "add" "add info to database" (AddData <$> many fileArg),
 		cmd "dump" "dump database (debug)" (pure Dump),
-		cmd "dump-sqlite" "dump database to sqlite file (debug)" (DumpSqlite <$> fileArg),
+		cmd "dump-sqlite" "dump database to sqlite file (debug)" (pure DumpSqlite),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
 			cabalFlag <*>
@@ -662,7 +676,7 @@ instance ToJSON Command where
 	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
 	toJSON (AddData fs) = cmdJson "add" ["files" .= fs]
 	toJSON Dump = cmdJson "dump" []
-	toJSON (DumpSqlite f) = cmdJson "dump-sqlite" ["file" .= f]
+	toJSON DumpSqlite = cmdJson "dump-sqlite" []
 	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
@@ -713,7 +727,7 @@ instance FromJSON Command where
 		guardCmd "set-log" v *> (SetLogLevel <$> v .:: "level"),
 		guardCmd "add" v *> (AddData <$> v .:: "files"),
 		guardCmd "dump" v *> pure Dump,
-		guardCmd "dump-sqlite" v *> (DumpSqlite <$> v .:: "file"),
+		guardCmd "dump-sqlite" v *> pure DumpSqlite,
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>
 			(v .:: "cabal" <|> pure False) <*>

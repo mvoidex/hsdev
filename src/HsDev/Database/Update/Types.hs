@@ -1,8 +1,11 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, FlexibleInstances, MultiParamTypeClasses, TypeFamilies, UndecidableInstances, ConstraintKinds, FlexibleContexts, TemplateHaskell #-}
 
 module HsDev.Database.Update.Types (
-	Status(..), Progress(..), Task(..), UpdateOptions(..), UpdateM(..), UpdateMonad,
-	taskName, taskStatus, taskSubjectType, taskSubjectName, taskProgress, updateTasks, updateGhcOpts, updateDocs, updateInfer,
+	Status(..), Progress(..), Task(..),
+	UpdateOptions(..), updateTasks, updateGhcOpts, updateDocs, updateInfer,
+	UpdateState(..), updateOptions, updateChan, withUpdateState, sendUpdateAction,
+	UpdateM(..), UpdateMonad,
+	taskName, taskStatus, taskSubjectType, taskSubjectName, taskProgress,
 
 	module HsDev.Server.Types
 	) where
@@ -20,7 +23,8 @@ import Data.Aeson
 import Data.Default
 import qualified System.Log.Simple as Log
 
-import HsDev.Server.Types (ServerMonadBase, Session(..), CommandOptions(..), SessionMonad(..), askSession, CommandMonad(..), ClientM(..))
+import qualified Control.Concurrent.FiniteChan as F
+import HsDev.Server.Types (ServerMonadBase, Session(..), CommandOptions(..), SessionMonad(..), askSession, CommandMonad(..), ClientM(..), ServerM(..))
 import HsDev.Symbols
 import HsDev.Types
 import HsDev.Util ((.::))
@@ -87,10 +91,27 @@ instance Default UpdateOptions where
 
 makeLenses ''UpdateOptions
 
-type UpdateMonad m = (CommandMonad m, MonadReader UpdateOptions m, MonadWriter [ModuleLocation] m)
+data UpdateState = UpdateState {
+	_updateOptions :: UpdateOptions,
+	_updateChan :: F.Chan (ServerM IO ()) }
 
-newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateOptions (WriterT [ModuleLocation] (ClientM m)) a }
-	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask, Functor, MonadReader UpdateOptions, MonadWriter [ModuleLocation])
+makeLenses ''UpdateState
+
+withUpdateState :: ServerMonadBase m => UpdateOptions -> (UpdateState -> m a) -> m (a, [ServerM IO ()])
+withUpdateState uopts fn = bracket (liftIO F.newChan) (liftIO . F.closeChan) $ \ch -> do
+	r <- fn (UpdateState uopts ch)
+	cts <- liftIO $ F.readChan ch
+	return (r, cts)
+
+type UpdateMonad m = (CommandMonad m, MonadReader UpdateState m, MonadWriter [ModuleLocation] m)
+
+sendUpdateAction :: UpdateMonad m => ServerM IO () -> m ()
+sendUpdateAction act = do
+	ch <- asks _updateChan
+	liftIO $ F.putChan ch act
+
+newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateState (WriterT [ModuleLocation] (ClientM m)) a }
+	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask, Functor, MonadReader UpdateState, MonadWriter [ModuleLocation])
 
 instance MonadTrans UpdateM where
 	lift = UpdateM . lift . lift . lift
@@ -109,6 +130,6 @@ instance MonadBase b m => MonadBase b (UpdateM m) where
 	liftBase = UpdateM . liftBase
 
 instance MonadBaseControl b m => MonadBaseControl b (UpdateM m) where
-	type StM (UpdateM m) a = StM (ReaderT UpdateOptions (WriterT [ModuleLocation] (ClientM m))) a
+	type StM (UpdateM m) a = StM (ReaderT UpdateState (WriterT [ModuleLocation] (ClientM m))) a
 	liftBaseWith f = UpdateM $ liftBaseWith (\f' -> f (f' . runUpdateM))
 	restoreM = UpdateM . restoreM

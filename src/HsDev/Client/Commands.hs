@@ -22,15 +22,10 @@ import Data.List
 import Data.Maybe
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
-import qualified Database.SQLite.Simple as SQL
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
-import Distribution.Text (display)
 import System.Directory
-import System.Exit (ExitCode(..))
 import System.FilePath
-import System.IO (hPutStrLn, hClose)
-import System.Process (runInteractiveProcess, waitForProcess)
 import qualified System.Log.Simple as Log
 import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
@@ -43,6 +38,7 @@ import Text.Format
 import HsDev.Commands
 import HsDev.Error
 import qualified HsDev.Database.Async as DB
+import qualified HsDev.Database.SQLite as SQL
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Sandbox hiding (findSandbox)
@@ -122,195 +118,19 @@ runCommand (AddData fs) = toValue $ do
 			(v .:: "packages")
 		fromPackageDbInfo = uncurry fromPackageDb
 runCommand Dump = toValue serverDatabase
-runCommand (DumpSqlite fpath) = toValue $ do
-	sess <- getSession
-	let
-		putLog l msg = withSession sess $ Log.sendLog l msg
-	ex <- liftIO $ doesFileExist (fpath ^. path)
-	when ex $ hsdevError $ OtherError "file already exists, remove it"
-	inited <- liftIO initializeSqliteDB
-	when (not inited) $ hsdevError $ OtherError "failed to initialize database"
+runCommand DumpSqlite = toValue $ do
 	dbval <- serverDatabase
-	liftIO $ bracket (SQL.open $ fpath ^. path) SQL.close (insertData putLog dbval)
-	where
-		initializeSqliteDB = do
-			(hin, _, _, ph) <- runInteractiveProcess "sqlite3" [fpath ^. path] Nothing Nothing
-			mapM_ (hPutStrLn hin) sqliteSchema
-			hPutStrLn hin ".q"
-			hClose hin
-			e <- waitForProcess ph
-			return (e == ExitSuccess)
-
-		insertData putLog dbval conn = do
-			putLog Log.Trace "inserting sqlite data..."
-			SQL.withTransaction conn $ do
-				forM_ (M.toList $ view databasePackageDbs dbval) insertPackageDb
-				forM_ (view databaseProjects dbval) insertProject
-				forM_ (view databaseModules dbval) insertModule
-			SQL.withTransaction conn $ forM_ (view databaseModules dbval) insertModuleSymbols
-			where
-				insertPackageDb (pdb, pkgs) = forM_ pkgs $ \pkg -> do
-					putLog Log.Trace $ "inserting package {}..." ~~ (pkg ^. packageName)
-					SQL.execute conn "insert into package_dbs (package_db, package_name, package_version) values (?, ?, ?);"
-						(showPackageDb pdb, pkg ^. packageName, pkg ^. packageVersion)
-
-				insertProject proj = do
-					putLog Log.Trace $ "inserting project {}..." ~~ (proj ^. projectName)
-					SQL.execute conn "insert into projects (name, cabal, version, package_db_stack) values (?, ?, ?, ?);" (
-						proj ^. projectName,
-						proj ^. projectCabal . path,
-						proj ^? projectDescription . _Just . projectVersion,
-						fmap (encode . map showPackageDb . packageDbs) $ dbval ^? databaseProjectsInfos . ix (Just proj) . _1)
-					projId <- lastRow
-
-					forM_ (proj ^? projectDescription . _Just . projectLibrary . _Just) $ \lib -> do
-						buildInfoId <- insertBuildInfo $ lib ^. libraryBuildInfo
-						SQL.execute conn "insert into libraries (project_id, modules, build_info_id) values (?, ?, ?);"
-							(projId, encode $ lib ^. libraryModules, buildInfoId)
-
-					forM_ (proj ^.. projectDescription . _Just . projectExecutables . each) $ \exe -> do
-						buildInfoId <- insertBuildInfo $ exe ^. executableBuildInfo
-						SQL.execute conn "insert into executables (project_id, name, path, build_info_id) values (?, ?, ?, ?);"
-							(projId, exe ^. executableName, exe ^. executablePath . path, buildInfoId)
-
-					forM_ (proj ^.. projectDescription . _Just . projectTests . each) $ \test -> do
-						buildInfoId <- insertBuildInfo $ test ^. testBuildInfo
-						SQL.execute conn "insert into tests (project_id, name, enabled, main, build_info_id) values (?, ?, ?, ?, ?);"
-							(projId, test ^. testName, test ^. testEnabled, test ^? testMain . _Just . path, buildInfoId)
-					where
-						insertBuildInfo info = do
-							SQL.execute conn "insert into build_infos (depends, language, extensions, ghc_options, source_dirs, other_modules) values (?, ?, ?, ?, ?, ?);" (
-								encode $ info ^. infoDepends,
-								fmap display $ info ^. infoLanguage,
-								encode $ map display $ info ^. infoExtensions,
-								encode $ info ^. infoGHCOptions,
-								encode $ info ^.. infoSourceDirs . each . path,
-								encode $ info ^. infoOtherModules)
-							lastRow
-
-				insertModule im = do
-					-- TODO: Insert parsed source
-					putLog Log.Trace $ "inserting module {}..." ~~ (fromMaybe "<error>" $ im ^? inspected . moduleId . moduleName)
-					SQL.execute conn "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tag, inspection_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
-						im ^? inspectedKey . moduleFile . path,
-						im ^? inspectedKey . moduleProject . _Just . projectCabal,
-						fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
-						im ^? inspectedKey . modulePackage . _Just . packageName,
-						im ^? inspectedKey . modulePackage . _Just . packageVersion,
-						im ^? inspectedKey . otherLocationName)
-						SQL.:. (
-						msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
-						im ^? inspected . moduleDocs,
-						fmap encode $ im ^? inspected . moduleFixities,
-						encode $ im ^. inspectionTags,
-						fmap show $ im ^? inspectionResult . _Left)
-
-				insertModuleSymbols im = do
-					[SQL.Only mid] <- SQL.query conn "select id from modules where file is ? and package_name is ? and package_version is ? and other_location is ? and (name is ? or ? is null);" (
-						im ^? inspectedKey . moduleFile . path,
-						im ^? inspectedKey . modulePackage . _Just . packageName,
-						im ^? inspectedKey . modulePackage . _Just . packageVersion,
-						im ^? inspectedKey . otherLocationName,
-						im ^? inspectedKey . installedModuleName,
-						im ^? inspectedKey . installedModuleName)
-					putLog Log.Trace "inserting exported symbols..."
-					forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
-					putLog Log.Trace "inserting scope symbols..."
-					forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
-					putLog Log.Trace "inserting resolved names..."
-					forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedName mid)
-					where
-						insertExportSymbol :: Int -> Symbol -> IO ()
-						insertExportSymbol mid sym = do
-							putLog Log.Trace $ "inserting exported symbol {}.{}..." ~~ (sym ^. symbolId . symbolModule . moduleName) ~~ (sym ^. symbolId . symbolName)
-							defMid <- insertLookupModuleId (sym ^. symbolId . symbolModule)
-							sid <- insertLookupSymbolId defMid sym
-							SQL.execute conn "insert into exports (module_id, symbol_id) values (?, ?);" (mid, sid)
-
-						insertScopeSymbol :: Int -> Symbol -> [Name] -> IO ()
-						insertScopeSymbol mid sym names = do
-							putLog Log.Trace $ "inserting scope symbol {}.{}..." ~~ (sym ^. symbolId . symbolModule . moduleName) ~~ (sym ^. symbolId . symbolName)
-							defMid <- insertLookupModuleId (sym ^. symbolId . symbolModule)
-							sid <- insertLookupSymbolId defMid sym
-							forM_ names $ \name -> SQL.execute conn "insert into scopes (module_id, qualifier, name, symbol_id) values (?, ?, ?, ?);" (
-								mid,
-								Name.nameModule name,
-								Name.nameIdent name,
-								sid)
-
-						insertResolvedName mid qname = do
-							SQL.execute conn "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
-								mid,
-								Name.nameModule $ void qname,
-								Name.nameIdent $ void qname,
-								qname ^. P.pos . positionLine,
-								qname ^. P.pos . positionColumn,
-								qname ^. P.regionL . regionTo . positionLine,
-								qname ^. P.regionL . regionTo . positionColumn)
-								SQL.:. (
-								qname ^? P.defPos . positionLine,
-								qname ^? P.defPos . positionColumn,
-								(qname ^? P.resolvedName) >>= Name.nameModule,
-								Name.nameIdent <$> (qname ^? P.resolvedName),
-								P.resolveError qname)
-
-						insertLookupModuleId :: ModuleId -> IO Int
-						insertLookupModuleId m = do
-							mods <- SQL.query conn "select id from modules where name is ? and file is ? and package_name is ? and package_version is ? and other_location is ?;" (
-								m ^. moduleName,
-								m ^? moduleLocation . moduleFile . path,
-								m ^? moduleLocation . modulePackage . _Just . packageName,
-								m ^? moduleLocation . modulePackage . _Just . packageVersion,
-								m ^? moduleLocation .  otherLocationName)
-							case mods of
-								[] -> do
-									SQL.execute conn "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name) values (?, ?, ?, ?, ?, ?, ?);" (
-										m ^? moduleLocation . moduleFile . path,
-										m ^? moduleLocation . moduleProject . _Just . projectCabal,
-										fmap (encode . map (view path)) (m ^? moduleLocation . moduleInstallDirs),
-										m ^? moduleLocation . modulePackage . _Just . packageName,
-										m ^? moduleLocation . modulePackage . _Just . packageVersion,
-										m ^? moduleLocation . otherLocationName,
-										m ^. moduleName)
-									lastRow
-								[SQL.Only mid] -> return mid
-								_ -> error $ "different modules with same name and location: {}" ~~ (m ^. moduleName)
-
-						insertLookupSymbolId :: Int -> Symbol -> IO Int
-						insertLookupSymbolId mid sym = do
-							syms <- SQL.query conn "select id from symbols where name is ? and module_id is ?;" (
-								sym ^. symbolId . symbolName,
-								mid)
-							case syms of
-								[] -> do
-									SQL.execute conn "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
-										sym ^. symbolId . symbolName,
-										mid,
-										sym ^. symbolDocs,
-										sym ^? symbolPosition . _Just . positionLine,
-										sym ^? symbolPosition . _Just . positionColumn)
-										SQL.:. (
-										symbolType sym,
-										sym ^? symbolInfo . functionType . _Just,
-										msum [sym ^? symbolInfo . parentClass, sym ^? symbolInfo . parentType],
-										encode $ sym ^? symbolInfo . selectorConstructors,
-										encode $ sym ^? symbolInfo . typeArgs,
-										encode $ sym ^? symbolInfo . typeContext,
-										sym ^? symbolInfo . familyAssociate . _Just,
-										sym ^? symbolInfo . patternType . _Just,
-										sym ^? symbolInfo . patternConstructor)
-									lastRow
-								[SQL.Only sid] -> return sid
-								_ -> error $ "different symbols with same module id: {}.{}" ~~ show mid ~~ (sym ^. symbolId . symbolName)
-
-				lastRow :: IO Int
-				lastRow = do
-					[SQL.Only i] <- SQL.query_ conn "select last_insert_rowid();"
-					return i
-
-				showPackageDb GlobalDb = "global"
-				showPackageDb UserDb = "user"
-				showPackageDb (PackageDb p) = p ^. path
+	Log.sendLog Log.Debug "dropping sql database..."
+	withSqlTransaction SQL.purge
+	Log.sendLog Log.Debug "dumping sql database..."
+	withSqlTransaction $ forM_ (M.toList $ view databasePackageDbs dbval) (uncurry SQL.insertPackageDb)
+	withSqlTransaction $ forM_ (M.toList $ view databaseProjectsInfos dbval) $ \(mproj, (pdbs, _)) -> case mproj of
+		Just proj -> SQL.insertProject proj (Just pdbs)
+		Nothing -> return ()
+	withSqlTransaction $ do
+		forM_ (view databaseModules dbval) SQL.insertModule
+		forM_ (view databaseModules dbval) SQL.insertModuleSymbols
+	Log.sendLog Log.Debug "sql database dumped"
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
@@ -706,7 +526,7 @@ findProject proj = do
 
 -- | Run DB update action
 updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()
-updateProcess uopts acts = Update.runUpdate uopts $ mapM_ runAct acts where
+updateProcess uopts acts = mapM_ (Update.runUpdate uopts . runAct) acts where
 	runAct act = catch act onError
 	onError e = Log.sendLog Log.Error $ "{}" ~~ (e :: HsDevError)
 
@@ -724,174 +544,3 @@ matchQuery (SearchQuery sq st) s = case st of
 	SearchRegex -> unpack sn =~ unpack sq
 	where
 		sn = view sourcedName s
-
-sqliteSchema :: [String]
-sqliteSchema = [
-	"pragma case_sensitive_like = true;",
-	"",
-	"create table package_dbs (",
-	"\tpackage_db text, -- global, user or path",
-	"\tpackage_name text,",
-	"\tpackage_version text",
-	");",
-	"",
-	"create view latest_packages (",
-	"\tpackage_db,",
-	"\tpackage_name,",
-	"\tpackage_version",
-	") as",
-	"select package_db, package_name, max(package_version)",
-	"from package_dbs",
-	"group by package_db, package_name;",
-	"",
-	"create table projects (",
-	"\tid integer primary key autoincrement,",
-	"\tname text,",
-	"\tcabal text,",
-	"\tversion text,",
-	"\tpackage_db_stack json -- list of package-db",
-	");",
-	"",
-	"create unique index projects_id_index on projects (id);",
-	"",
-	"create table libraries (",
-	"\tproject_id integer,",
-	"\tmodules json, -- list of modules",
-	"\tbuild_info_id integer",
-	");",
-	"",
-	"create table executables (",
-	"\tproject_id integer,",
-	"\tname text,",
-	"\tpath text,",
-	"\tbuild_info_id integer",
-	");",
-	"",
-	"create table tests (",
-	"\tproject_id integer,",
-	"\tname text,",
-	"\tenabled integer,",
-	"\tmain text,",
-	"\tbuild_info_id integer",
-	");",
-	"",
-	"create view targets (",
-	"\tproject_id,",
-	"\tbuild_info_id",
-	") as",
-	"select project_id, build_info_id from libraries",
-	"union",
-	"select project_id, build_info_id from executables",
-	"union",
-	"select project_id, build_info_id from tests;",
-	"",
-	"create table build_infos(",
-	"\tid integer primary key autoincrement,",
-	"\tdepends json, -- list of dependencies",
-	"\tlanguage text,",
-	"\textensions json, -- list of extensions",
-	"\tghc_options json, -- list of ghc-options",
-	"\tsource_dirs json, -- list of source directories",
-	"\tother_modules json -- list of other modules",
-	");",
-	"",
-	"create view projects_deps (",
-	"\tproject_id,",
-	"\tpackage_name,",
-	"\tpackage_version",
-	") as",
-	"select distinct p.id, deps.value, ps.package_version",
-	"from projects as p, build_infos as b, json_each(b.depends) as deps, targets as t, latest_packages as ps",
-	"where (p.id == t.project_id) and (b.id == t.build_info_id) and (deps.value <> p.name) and (ps.package_name == deps.value);",
-	"",
-	"create view projects_modules_scope (",
-	"\tproject_id,",
-	"\tmodule_id",
-	") as",
-	"select pdbs.project_id, m.id",
-	"from projects_deps as pdbs, modules as m",
-	"where (m.package_name == pdbs.package_name) and (m.package_version == pdbs.package_version)",
-	"union",
-	"select p.id, m.id",
-	"from projects as p, modules as m",
-	"where (m.cabal == p.cabal);",
-	"",
-	"create unique index build_infos_id_index on build_infos (id);",
-	"",
-	"create table symbols (",
-	"\tid integer primary key autoincrement,",
-	"\tname text,",
-	"\tmodule_id integer,",
-	"\tdocs text,",
-	"\tline integer,",
-	"\tcolumn integer,",
-	"\twhat text, -- kind of symbol: function, method, ...",
-	"\ttype text,",
-	"\tparent text,",
-	"\tconstructors json, -- list of constructors for selector",
-	"\targs json, -- list of arguments for types",
-	"\tcontext json, -- list of contexts for types",
-	"\tassociate text, -- associates for families",
-	"\tpat_type text,",
-	"\tpat_constructor text",
-	");",
-	"",
-	"create unique index symbols_id_index on symbols (id);",
-	"create index symbols_module_id_index on symbols (module_id);",
-	"create index symbols_name_index on symbols (name);",
-	"",
-	"create table modules (",
-	"\tid integer primary key autoincrement,",
-	"\tfile text,",
-	"\tcabal text,",
-	"\t-- project_id integer,",
-	"\tinstall_dirs json, -- list of paths",
-	"\tpackage_name text,",
-	"\tpackage_version text,",
-	"\tother_location text,",
-	"",
-	"\tname text,",
-	"\tdocs text,",
-	"\tfixities json, -- list of fixities",
-	"\ttag json,",
-	"\tinspection_error text",
-	");",
-	"",
-	"create unique index modules_id_index on modules (id);",
-	"create index modules_name_index on modules (name);",
-	"",
-	"create table exports (",
-	"\tmodule_id integer,",
-	"\tsymbol_id integer",
-	");",
-	"",
-	"create table scopes (",
-	"\tmodule_id integer,",
-	"\tqualifier text,",
-	"\tname text,",
-	"\tsymbol_id integer",
-	");",
-	"",
-	"create view completions (",
-	"\tmodule_id,",
-	"\tcompletion,",
-	"\tsymbol_id",
-	") as",
-	"select id, (case when sc.qualifier is null then sc.name else sc.qualifier || '.' || sc.name end) as full_name, sc.symbol_id",
-	"from modules as m, scopes as sc",
-	"where (m.id == sc.module_id);",
-	"",
-	"create table names (",
-	"\tmodule_id integer,",
-	"\tqualifier text,",
-	"\tname text,",
-	"\tline integer,",
-	"\tcolumn integer,",
-	"\tline_to integer,",
-	"\tcolumn_to integer,",
-	"\tdef_line integer,",
-	"\tdef_column integer,",
-	"\tresolved_module text,",
-	"\tresolved_name text,",
-	"\tresolve_error text",
-	");"]

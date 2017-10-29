@@ -25,6 +25,10 @@ import qualified PatSyn as GHC
 import qualified Pretty
 import Outputable
 
+#if __GLASGOW_HASKELL__ >= 800
+import Data.List (nub)
+#endif
+
 #if __GLASGOW_HASKELL__ == 800
 import qualified IdInfo
 #endif
@@ -40,7 +44,7 @@ import qualified GHC.PackageDb as GHC
 
 pkgDatabase :: GHC.DynFlags -> Maybe [GHC.PackageConfig]
 #if __GLASGOW_HASKELL__ >= 800
-pkgDatabase = fmap (concatMap snd) . GHC.pkgDatabase
+pkgDatabase = fmap (nub . concatMap snd) . GHC.pkgDatabase
 #elif __GLASGOW_HASKELL__ == 710
 pkgDatabase = GHC.pkgDatabase
 #endif

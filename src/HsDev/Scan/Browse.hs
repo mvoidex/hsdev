@@ -8,11 +8,13 @@ module HsDev.Scan.Browse (
 	readPackage, readPackageConfig, ghcPackageDb, ghcModuleLocation,
 	packageDbCandidate, packageDbCandidate_,
 	packageConfigs, packageDbModules, lookupModule_,
+	modulesPackages,
 
 	module Control.Monad.Except
 	) where
 
 import Control.Arrow
+import Control.Lens (preview, _Just)
 import Control.Monad.Catch (MonadCatch, catch, SomeException)
 import Control.Monad.Except
 import Data.List (isPrefixOf)
@@ -35,6 +37,7 @@ import HsDev.Error
 import HsDev.Tools.Base (inspect)
 import HsDev.Tools.Ghc.Worker (GhcM, runGhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
+import HsDev.Util (ordNub)
 import System.Directory.Paths
 
 import qualified ConLike as GHC
@@ -71,15 +74,18 @@ browsePackagesDeps opts dbs = do
 	where
 		toPkg df' = readPackageConfig . getPackageDetails df'
 
-listModules :: [String] -> PackageDbStack -> GhcM [ModuleLocation]
-listModules opts dbs = do
-	tmpSession (packageDbStackOpts dbs ++ opts)
+-- | List modules from ghc, accepts ghc-opts, stack of package-db to get modules for
+-- and list of packages to explicitely expose them with '-package' flag,
+-- otherwise hidden packages won't be loaded
+listModules :: [String] -> PackageDbStack -> [ModulePackage] -> GhcM [ModuleLocation]
+listModules opts dbs pkgs = do
+	tmpSession (packageDbStackOpts dbs ++ opts ++ ["-package " ++ show p | p <- pkgs])
 	ms <- packageDbModules
 	return [ghcModuleLocation p m | (p, m) <- ms]
 
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
-	tmpSession (packageDbStackOpts dbs ++ opts)
+	tmpSession (packageDbStackOpts dbs ++ opts ++ packagesOpts)
 	ms <- packageDbModules
 	midTbl <- newLookupTable
 	sidTbl <- newLookupTable
@@ -90,6 +96,7 @@ browseModules opts dbs mlocs = do
 		browseModule' :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
 		browseModule' modId' sym' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m)
 		mlocs' = S.fromList mlocs
+		packagesOpts = ["-package " ++ show p | p <- modulesPackages mlocs]
 
 browseModule :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM Module
 browseModule modId lookSym package' m = do
@@ -274,3 +281,7 @@ lookupModule_ d mn = case GHC.lookupModuleWithSuggestions d mn Nothing of
 	GHC.LookupMultiple ms -> map fst ms
 	GHC.LookupHidden ls rs -> map fst $ ls ++ rs
 	GHC.LookupNotFound _ -> []
+
+-- | Get modules packages
+modulesPackages :: [ModuleLocation] -> [ModulePackage]
+modulesPackages = ordNub . mapMaybe (preview (modulePackage . _Just))

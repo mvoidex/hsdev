@@ -41,6 +41,8 @@ library
     HsDev.Commands
     HsDev.Database
     HsDev.Database.Async
+    HsDev.Database.SQLite
+    HsDev.Database.SQLite.Schema
     HsDev.Database.Update
     HsDev.Database.Update.Types
     HsDev.Display

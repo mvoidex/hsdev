@@ -51,6 +51,7 @@ import qualified System.Log.Simple as Log
 import Data.LookupTable
 import HsDev.Error
 import HsDev.Database
+import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Database.Async hiding (Event)
 import HsDev.Display
 import HsDev.Inspect
@@ -68,7 +69,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (ordNub)
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase)
+import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase, withSqlTransaction)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -76,20 +77,24 @@ import Text.Format
 import System.Directory.Paths
 
 onStatus :: UpdateMonad m => m ()
-onStatus = asks (view updateTasks) >>= commandNotify . Notification . toJSON . reverse
+onStatus = asks (view (updateOptions . updateTasks)) >>= commandNotify . Notification . toJSON . reverse
 
 childTask :: UpdateMonad m => Task -> m a -> m a
-childTask t = local (over updateTasks (t:))
+childTask t = local (over (updateOptions . updateTasks) (t:))
 
 isStatus :: Value -> Bool
 isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
 
 runUpdate :: ServerMonadBase m => UpdateOptions -> UpdateM m a -> ClientM m a
 runUpdate uopts act = Log.scope "update" $ do
-	(r, updatedMods) <- runWriterT (runUpdateM act' `runReaderT` uopts)
+	((r, updatedMods), sqlActions) <- withUpdateState uopts $ \ust ->
+		runWriterT (runUpdateM act' `runReaderT` ust)
 	Log.sendLog Log.Debug $ "updated {} modules" ~~ length updatedMods
 	db <- askSession sessionDatabase
 	wait db
+	Log.sendLog Log.Debug "updating sql database under transaction"
+	withSqlTransaction $ Log.component "sqlite" $ sequence_ sqlActions
+	Log.sendLog Log.Debug "sql database updated"
 	-- TODO: serverWriteCache modifiedDb
 	return r
 	where
@@ -150,11 +155,13 @@ runUpdate uopts act = Log.scope "update" $ do
 		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
 		scanDocs_ im = do
 			im' <- (S.scanModify (\opts -> inSessionGhc . liftGhc . inspectDocsGhc opts) im) <|> return im
+			sendUpdateAction $ Log.scope "scan-docs" $ SQLite.updateModule im'
 			updater $ fromModule im'
 		inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
 		inferModTypes_ im = do
 			-- TODO: locate sandbox
 			im' <- (S.scanModify infer' im) <|> return im
+			sendUpdateAction $ Log.scope "infer-types" $ SQLite.updateModule im'
 			updater $ fromModule im'
 		infer' :: UpdateMonad m => [String] -> Module -> m Module
 		infer' opts m = case preview (moduleId . moduleLocation . moduleFile) m of
@@ -228,7 +235,7 @@ runTasks :: UpdateMonad m => [m a] -> m [a]
 runTasks ts = liftM catMaybes $ zipWithM taskNum [1..] (map noErr ts) where
 	total = length ts
 	taskNum n = local setProgress where
-		setProgress = set (updateTasks . _head . taskProgress) (Just (Progress n total))
+		setProgress = set (updateOptions . updateTasks . _head . taskProgress) (Just (Progress n total))
 	noErr v = hsdevIgnore Nothing (Just <$> v)
 
 -- | Run many tasks with numeration
@@ -240,6 +247,9 @@ scanModules :: UpdateMonad m => [String] -> [S.ModuleToScan] -> m ()
 scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 	scanModules' mproj ms' = do
 		pdbs <- maybe (return userDb) (inSessionGhc . getProjectPackageDbStack) mproj
+		case mproj of
+			Just proj -> sendUpdateAction $ Log.scope "scan-modules" $ SQLite.updateProject proj (Just pdbs)
+			Nothing -> return ()
 		waiter $ updater $ fromProjectInfo mproj pdbs (ms' ^.. each . _1)
 		dbval <- serverDatabase
 		defines <- askSession sessionDefines
@@ -273,7 +283,10 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 			let
 				mloc = p ^. preloadedId . moduleLocation
 			insp <- liftIO $ inspectionInfos ^?! ix mloc
-			return $ fromModule $ Inspected insp mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
+			let
+				inspectedMod = Inspected insp mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
+			sendUpdateAction $ Log.scope "scan-modules/preloaded" $ SQLite.updateModule inspectedMod
+			return $ fromModule inspectedMod
 		updater db'
 		let
 			pmods = map fst ploaded
@@ -293,7 +306,10 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 					let
 						mloc = m ^. moduleId . moduleLocation
 					insp <- liftIO $ inspectionInfos ^?! ix mloc
-					return $ fromModule $ Inspected insp mloc mempty (Right m)
+					let
+						inspectedMod = Inspected insp mloc mempty (Right m)
+					sendUpdateAction $ Log.scope "scan-modules/resolved" $ SQLite.updateModule inspectedMod
+					return $ fromModule inspectedMod
 				updater db''
 				where
 					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
@@ -363,11 +379,12 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 	pdbState <- liftIO $ readPackageDb (topPackageDb pdbs)
 	let
 		packageDbMods = S.fromList $ concat $ M.elems pdbState
+		packages' = M.keys pdbState
 	Log.sendLog Log.Trace $ "package-db state: {} modules" ~~ length packageDbMods
 	watch (\w -> watchPackageDb w pdbs opts)
 	mlocs <- liftM
 		(filter (`S.member` packageDbMods)) $
-		(inSessionGhc $ listModules opts pdbs)
+		(inSessionGhc $ listModules opts pdbs packages')
 	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
 	scan (const $ return mempty) (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
@@ -375,6 +392,9 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 		Log.sendLog Log.Trace "docs scanned"
 		docsTbl <- newLookupTable
 		ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
+		sendUpdateAction $ Log.scope "scan-package-db" $ do
+			mapM_ SQLite.updateModule ms'
+			SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
 		updater $ mconcat [
 			mconcat $ map fromModule ms',
 			fromPackageDbState (topPackageDb pdbs) pdbState]
@@ -385,11 +405,12 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 	pdbStates <- liftIO $ mapM readPackageDb (packageDbs pdbs)
 	let
 		packageDbMods = S.fromList $ concat $ concatMap M.elems pdbStates
+		packages' = ordNub $ concatMap M.keys pdbStates
 	Log.sendLog Log.Trace $ "package-db-stack state: {} modules" ~~ length packageDbMods
 	watch (\w -> watchPackageDbStack w pdbs opts)
 	mlocs <- liftM
 		(filter (`S.member` packageDbMods)) $
-		(inSessionGhc $ listModules opts pdbs)
+		(inSessionGhc $ listModules opts pdbs packages')
 	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
 	scan (const $ return mempty) (packageDbStackSlice pdbs) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
@@ -412,6 +433,10 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 		docsTbl <- newLookupTable
 		ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
 
+		sendUpdateAction $ Log.scope "scan-package-db-stack" $ do
+			mapM_ SQLite.updateModule ms'
+			sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
+
 		updater $ mconcat [
 			mconcat $ map fromModule ms',
 			mconcat [fromPackageDbState pdb pdbState | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]]
@@ -420,6 +445,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project
 scanProjectFile opts cabal = runTask "scanning" cabal $ do
 	proj <- S.scanProjectFile opts cabal
+	sendUpdateAction $ Log.scope "scan-project-file" $ SQLite.updateProject proj Nothing
 	updater $ fromProject proj
 	return proj
 
@@ -430,6 +456,7 @@ refineProjectInfo proj = do
 	case refineProject dbval proj of
 		Nothing -> runTask "scanning" (proj ^. projectCabal) $ do
 			proj' <- liftIO $ loadProject proj
+			sendUpdateAction $ Log.scope "refine-project-info" $ SQLite.updateProject proj' Nothing
 			updater $ fromProject proj'
 			return proj'
 		Just proj' -> return proj'
@@ -495,6 +522,7 @@ scanDocs ims = do
 				Log.sendLog Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
 					view inspectedKey im' ~~
 					length (im' ^.. inspectionResult . _Right . moduleSymbols . symbolDocs . _Just)
+				sendUpdateAction $ Log.scope "scan-docs" $ SQLite.updateModule im'
 				updater $ fromModule im'
 			| otherwise = Log.sendLog Log.Trace $ "Docs for {} already scanned" ~~ view inspectedKey im
 		doScan _ m = inSessionGhc $ do
@@ -511,6 +539,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 				S.scanModify (\opts m -> inSessionGhc (targetSession opts m >> inferTypes opts m Nothing)) im)
 				<|> return im
 			Log.sendLog Log.Trace $ "Types for {} inferred" ~~ view inspectedKey im
+			sendUpdateAction $ Log.scope "infer-types" $ SQLite.updateModule im'
 			updater $ fromModule im'
 		| otherwise = Log.sendLog Log.Trace $ "Types for {} already inferred" ~~ view inspectedKey im
 

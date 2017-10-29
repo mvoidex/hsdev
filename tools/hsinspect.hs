@@ -8,6 +8,7 @@ import Control.Lens (view)
 import Control.Monad (liftM, (>=>))
 import Control.Monad.IO.Class
 import Data.List (intercalate)
+import qualified Data.Map as M
 import qualified Data.Text.IO as T
 import Data.String (fromString)
 import System.Directory (canonicalizePath)
@@ -22,6 +23,7 @@ import HsDev.Scan.Browse (listModules, browseModules)
 import HsDev.Symbols.Location (installedModuleName)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.Ghc.Worker
+import HsDev.Util (ordNub)
 import System.Directory.Paths
 
 import Tool
@@ -55,7 +57,8 @@ main = toolMain "hsinspect" "haskell inspect" opts (runToolClient . inspect') wh
 		toJSON <$> liftIO (readProject fcabal')
 	inspect' (Opts (Just mname) ghcs) = do
 		ghc <- ghcWorker
-		mlocs <- liftIO $ inWorker ghc $ listModules ghcs userDb
+		pkgs <- liftIO $ liftM (ordNub . concat) $ mapM (liftM M.keys . readPackageDb) (packageDbs userDb)
+		mlocs <- liftIO $ inWorker ghc $ listModules ghcs userDb pkgs
 		let
 			mlocs' = filter ((== fromString mname) . view installedModuleName) mlocs
 		case mlocs' of

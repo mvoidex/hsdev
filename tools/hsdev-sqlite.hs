@@ -1,9 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TypeOperators #-}
 {-# OPTIONS_GHC -fno-warn-orphans -fno-warn-unused-matches #-}
 
-module Main (
-	main
-	) where
+module Main where
 
 import Control.Lens hiding ((.=))
 import Control.Exception
@@ -16,6 +14,7 @@ import Database.SQLite.Simple
 import Database.SQLite.Simple.ToField
 import Database.SQLite.Simple.FromField
 import Language.Haskell.Extension
+import System.IO
 import Text.Format
 
 import System.Directory.Paths
@@ -46,7 +45,7 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 			runCommand (SetLogLevel l) = notImplemented
 			runCommand (AddData fs) = notImplemented
 			runCommand Dump = notImplemented
-			runCommand (DumpSqlite fpath) = notImplemented
+			runCommand DumpSqlite = notImplemented
 			runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = notImplemented
 			runCommand (RefineDocs projs fs ms) = notImplemented
 			runCommand (InferTypes projs fs ms) = notImplemented
@@ -267,9 +266,9 @@ instance FromRow ModuleId where
 		pver <- field
 		other <- field
 
-		mloc <- maybe (fail "Can't parse module location") return $ msum [
+		mloc <- maybe (fail $ "Can't parse module location: {}" ~~ show (name, file, cabal, dirs, pname, pver, other)) return $ msum [
 			FileModule <$> file <*> pure (project <$> cabal),
-			InstalledModule <$> (fromJSON' =<< dirs) <*> pure (ModulePackage <$> pname <*> pver) <*> pure name,
+			InstalledModule <$> (maybe (pure []) fromJSON' dirs) <*> pure (ModulePackage <$> pname <*> pver) <*> pure name,
 			OtherLocation <$> other]
 
 		return $ ModuleId name mloc
@@ -376,11 +375,21 @@ qSelect = QueryPart
 qWhere :: [T.Text] -> QueryPart
 qWhere = qSelect [] []
 
+buildQueryString :: QueryPart -> String
+buildQueryString (QueryPart cols tables conds) = "select {} from {} where {};"
+ ~~ T.intercalate ", " cols
+ ~~ T.intercalate ", " tables
+ ~~ T.intercalate " and " (map (\cond -> T.concat ["(", cond, ")"]) conds)
+
 toQuery :: QueryPart -> Query
-toQuery (QueryPart cols tables conds) = Query $ "select {} from {} where {};"
-	~~ T.intercalate ", " cols
-	~~ T.intercalate ", " tables
-	~~ T.intercalate " and " (map (\cond -> T.concat ["(", cond, ")"]) conds)
+toQuery = Query . T.pack . buildQueryString
+
+mkQuery :: QueryPart -> IO Query
+mkQuery q = do
+	hPutStrLn stderr s
+	return $ Query $ T.pack s
+	where
+		s = buildQueryString q
 
 qSymbolId :: QueryPart
 qSymbolId = qSelect
