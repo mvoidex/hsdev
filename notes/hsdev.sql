@@ -131,6 +131,15 @@ create table modules (
 create unique index modules_id_index on modules (id);
 create index modules_name_index on modules (name);
 
+create table imports (
+	module_id integer,
+	module_name text,
+	qualified integer,
+	alias text,
+	hiding integer,
+	import_list json -- list of import specs
+);
+
 create table exports (
 	module_id integer,
 	symbol_id integer

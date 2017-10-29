@@ -17,16 +17,18 @@ module HsDev.Database.SQLite (
 	module HsDev.Database.SQLite.Select
 	) where
 
-import Control.Lens
+import Control.Lens hiding ((.=))
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.Aeson
+import Data.Generics.Uniplate.Operations
 import Data.Maybe
 import Data.String
 import Data.Text (Text)
 import Database.SQLite.Simple hiding (query, query_, execute, execute_)
 import qualified Database.SQLite.Simple as SQL (query, query_, execute, execute_)
 import Distribution.Text (display)
+import Language.Haskell.Exts.Syntax hiding (Name, Module)
 import Language.Haskell.Extension ()
 import System.Log.Simple
 import Text.Format
@@ -39,6 +41,8 @@ import HsDev.Database.SQLite.Select
 import qualified HsDev.Display as Display
 import HsDev.PackageDb.Types
 import HsDev.Project.Types
+import HsDev.Symbols.Name
+import HsDev.Symbols.Parsed
 import HsDev.Symbols.Types
 import qualified HsDev.Symbols.Parsed as P
 import qualified HsDev.Symbols.Name as Name
@@ -169,6 +173,7 @@ removeModule mid = scope "remove-module" $ do
 		execute "delete from exports where symbol_id == ?;" sid
 		execute "delete from scopes where symbol_id == ?;" sid
 	execute "delete from symbols where module_id == ?;" (Only mid)
+	execute "delete from imports where module_id == ?;" (Only mid)
 	execute "delete from exports where module_id == ?;" (Only mid)
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
@@ -199,10 +204,45 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		im ^? inspectedKey . otherLocationName,
 		im ^? inspectedKey . installedModuleName,
 		im ^? inspectedKey . installedModuleName)
+	insertModuleImports mid
 	forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
 	forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
 	forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedName mid)
 	where
+		insertModuleImports :: SessionMonad m => Int -> m ()
+		insertModuleImports mid = scope "insert-module-imports" $ do
+			case im ^? inspected . moduleSource . _Just of
+				Nothing -> return ()
+				Just psrc -> do
+					let
+						imps = childrenBi psrc :: [ImportDecl Ann]
+					forM_ imps $ \(ImportDecl _ mname qual _ _ _ alias specList) -> do
+						execute "insert into imports (module_id, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?);" (
+							mid,
+							getModuleName mname,
+							qual,
+							fmap getModuleName alias,
+							maybe False getHiding specList,
+							fmap makeImportList specList)
+			where
+				getModuleName (ModuleName _ s) = s
+				getHiding (ImportSpecList _ h _) = h
+
+				makeImportList (ImportSpecList _ _ specs) = encode $ map asJson specs
+				asJson (IVar _ nm) = object ["name" .= fromName_ (void nm), "what" .= str' "var"]
+				asJson (IAbs _ ns nm) = object ["name" .= fromName_ (void nm), "what" .= str' "abs", "ns" .= fromNamespace ns] where
+					fromNamespace :: Namespace l -> Maybe String
+					fromNamespace (NoNamespace _) = Nothing
+					fromNamespace (TypeNamespace _) = Just "type"
+					fromNamespace (PatternNamespace _) = Just "pat"
+				asJson (IThingAll _ nm) = object ["name" .= fromName_ (void nm), "what" .= str' "all"]
+				asJson (IThingWith _ nm cs) = object ["name" .= fromName_ (void nm), "what" .= str' "with", "list" .= map (fromName_ . void . toName') cs] where
+					toName' (VarName _ n') = n'
+					toName' (ConName _ n') = n'
+
+				str' :: String -> String
+				str' = id
+
 		insertExportSymbol :: SessionMonad m => Int -> Symbol -> m ()
 		insertExportSymbol mid sym = scope "export" $ do
 			defMid <- insertLookupModule (sym ^. symbolId . symbolModule)

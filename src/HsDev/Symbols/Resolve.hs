@@ -12,13 +12,13 @@ import Data.Maybe (fromMaybe, maybeToList)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Generics.Uniplate.Operations
-import Language.Haskell.Names (Scoped(..))
-import Language.Haskell.Exts as Exts (ModuleName(..), SrcSpanInfo, importModule)
+import Language.Haskell.Exts as Exts (ModuleName(..), importModule)
 
 import Data.Deps
 import HsDev.Database
 import HsDev.Symbols hiding (exportedSymbols)
 import HsDev.Symbols.Util
+import HsDev.Symbols.Parsed (Ann)
 import System.Directory.Paths
 
 -- | Flattened dependencies
@@ -27,7 +27,7 @@ sourceDeps db = either (const mempty) id $ flatten $ mconcat $ do
 	src <- sources
 	fpath <- maybeToList $ preview (moduleId . moduleLocation . moduleFile) src
 	msrc <- maybeToList $ view moduleSource src
-	imp <- [fromString n | ModuleName _ n <- map Exts.importModule (childrenBi msrc) :: [ModuleName (Scoped SrcSpanInfo)]]
+	imp <- [fromString n | ModuleName _ n <- map Exts.importModule (childrenBi msrc) :: [ModuleName Ann]]
 	im <- case preview (moduleId . moduleLocation . moduleProject . _Just) src of
 		Nothing -> maybeToList $ M.lookup (normPath (joinPaths [sourceModuleRoot (view (moduleId . moduleName) src) fpath, importPath imp])) tbl
 		Just proj -> do
