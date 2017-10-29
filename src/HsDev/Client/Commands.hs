@@ -114,19 +114,6 @@ runCommand (AddData fs) = toValue $ do
 			(v .:: "packages")
 		fromPackageDbInfo = uncurry fromPackageDb
 runCommand Dump = toValue serverDatabase
-runCommand DumpSqlite = toValue $ do
-	dbval <- serverDatabase
-	Log.sendLog Log.Debug "dropping sql database..."
-	withSqlTransaction purge
-	Log.sendLog Log.Debug "dumping sql database..."
-	withSqlTransaction $ forM_ (M.toList $ view databasePackageDbs dbval) (uncurry insertPackageDb)
-	withSqlTransaction $ forM_ (M.toList $ view databaseProjectsInfos dbval) $ \(mproj, (pdbs, _)) -> case mproj of
-		Just proj -> insertProject proj (Just pdbs)
-		Nothing -> return ()
-	withSqlTransaction $ do
-		forM_ (view databaseModules dbval) insertModule
-		forM_ (view databaseModules dbval) insertModuleSymbols
-	Log.sendLog Log.Debug "sql database dumped"
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [

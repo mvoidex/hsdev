@@ -40,7 +40,6 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 			runCommand (SetLogLevel l) = notImplemented
 			runCommand (AddData fs) = notImplemented
 			runCommand Dump = notImplemented
-			runCommand DumpSqlite = notImplemented
 			runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = notImplemented
 			runCommand (RefineDocs projs fs ms) = notImplemented
 			runCommand (InferTypes projs fs ms) = notImplemented
