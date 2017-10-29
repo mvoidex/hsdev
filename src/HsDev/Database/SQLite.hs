@@ -10,7 +10,7 @@ module HsDev.Database.SQLite (
 	lookupSymbol, insertLookupSymbol,
 	lastRow,
 
-	loadModules,
+	loadModule, loadModules,
 
 	-- * Reexports
 	module Database.SQLite.Simple,
@@ -20,7 +20,7 @@ module HsDev.Database.SQLite (
 import Control.Lens hiding ((.=))
 import Control.Monad
 import Control.Monad.IO.Class
-import Data.Aeson
+import Data.Aeson hiding (Error)
 import Data.Generics.Uniplate.Operations
 import Data.Maybe
 import Data.String
@@ -39,6 +39,7 @@ import HsDev.Database.SQLite.Instances ()
 import HsDev.Database.SQLite.Schema
 import HsDev.Database.SQLite.Select
 import qualified HsDev.Display as Display
+import HsDev.Error
 import HsDev.PackageDb.Types
 import HsDev.Project.Types
 import HsDev.Symbols.Name
@@ -352,6 +353,24 @@ lastRow :: SessionMonad m => m Int
 lastRow = do
 	[Only i] <- query_ "select last_insert_rowid();"
 	return i
+
+loadModule :: SessionMonad m => Int -> m Module
+loadModule mid = do
+	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int)) (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString $ "mu.id == ?"])) (Only mid)
+	case ms of
+		[] -> do
+			sendLog Error $ "module with id {} not found" ~~ mid
+			hsdevError $ SQLiteError $ "module with id {} not found" ~~ mid
+		mods@((mid' :. (mdocs, mfixities, _)):_) -> do
+			when (length mods > 1) $ sendLog Warning $ "multiple modules with same id = {} found" ~~ mid
+			syms <- query @_ @Symbol (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid)
+			return $ Module {
+				_moduleId = mid',
+				_moduleDocs = mdocs,
+				_moduleExports = syms,
+				_moduleFixities = fromMaybe [] (mfixities >>= fromJSON'),
+				_moduleScope = mempty,
+				_moduleSource = Nothing }
 
 loadModules :: (SessionMonad m, ToRow q) => String -> q -> m [Module]
 loadModules selectExpr args = do

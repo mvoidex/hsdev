@@ -7,7 +7,7 @@ module HsDev.Symbols.Types (
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
 	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
 	infoOf, nullifyInfo,
-	Inspection(..), inspectionAt, inspectionOpts, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
+	Inspection(..), inspectionAt, inspectionOpts, fresh, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
 	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
 	briefSymbol,
 
@@ -360,6 +360,13 @@ instance FromJSON Inspection where
 	parseJSON = withObject "inspection" $ \v ->
 		((const InspectionNone :: Bool -> Inspection) <$> v .:: "inspected") <|>
 		(InspectionAt <$> (fromInteger <$> v .:: "mtime") <*> (v .:: "flags"))
+
+-- | Is left @Inspection@ fresh comparing to right one
+fresh :: Inspection -> Inspection -> Bool
+fresh InspectionNone InspectionNone = True
+fresh InspectionNone _ = False
+fresh _ InspectionNone = True
+fresh (InspectionAt tm opts) (InspectionAt tm' opts') = S.fromList opts == S.fromList opts' && tm >= tm'
 
 -- | Inspected entity
 data Inspected k t a = Inspected {

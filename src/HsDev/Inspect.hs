@@ -5,7 +5,7 @@ module HsDev.Inspect (
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
 	analyzeResolve, analyzePreloaded, inspectPreloaded, inspectDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
-	inspectFile, sourceInspection, fileInspection, fileContentsInspection,
+	inspectFile, sourceInspection, fileInspection, fileContentsInspection, installedInspection,
 	projectDirs, projectSources,
 	getDefines,
 	preprocess, preprocess_,
@@ -369,6 +369,10 @@ fileContentsInspection :: Path -> [String] -> IO Inspection
 fileContentsInspection _ opts = do
 	tm <- getPOSIXTime
 	return $ InspectionAt tm $ map fromString $ sort $ ordNub opts
+
+-- | Installed module inspection data, just opts
+installedInspection :: [String] -> IO Inspection
+installedInspection opts = return $ InspectionAt 0 $ map fromString $ sort $ ordNub opts
 
 -- | Enumerate project dirs
 projectDirs :: Project -> IO [Extensions Path]

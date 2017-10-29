@@ -29,7 +29,6 @@ import System.FilePath
 import qualified System.Log.Simple as Log
 import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
-import Text.Regex.PCRE ((=~))
 
 import qualified System.Directory.Watcher as W
 import System.Directory.Paths
@@ -167,7 +166,7 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 			from' <- State.get
 			return $ null $ filter (pdbs `isSubStack`) $ delete pdbs from'
 		-- Remove top of package-db stack if possible
-		removePackageDb pdbs = do
+		removePackageDb' pdbs = do
 			db <- lift $ askSession sessionDatabase
 			dbval <- lift serverDatabase
 			w <- lift $ askSession sessionWatcher
@@ -177,7 +176,7 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 				DB.clear db (return $ dbval ^. packageDbSlice (topPackageDb pdbs))
 				liftIO $ unwatchPackageDb w $ topPackageDb pdbs
 		-- Remove package-db stack when possible
-		removePackageDbStack = mapM_ removePackageDb . packageDbStacks
+		removePackageDbStack = mapM_ removePackageDb' . packageDbStacks
 runCommand RemoveAll = toValue $ do
 	db <- askSession sessionDatabase
 	liftIO $ A.modifyAsync db A.Clear
@@ -203,8 +202,12 @@ runCommand InfoProjects = toValue $ do
 runCommand InfoSandboxes = toValue $ do
 	rs <- query_ @(Only PackageDb) "select distinct package_db from package_dbs;"
 	return [pdb | Only pdb <- rs]
-runCommand (InfoSymbol sq fs h _) = toValue $ do
+runCommand (InfoSymbol sq fs True _) = toValue $ do
 	rs <- query @_ @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like ?"])
+		(Only $ likePattern sq)
+	return rs
+runCommand (InfoSymbol sq fs False _) = toValue $ do
+	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like ?"])
 		(Only $ likePattern sq)
 	return rs
 runCommand (InfoModule sq fs h i) = toValue $ do

@@ -37,12 +37,11 @@ import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
-import Data.List (intercalate, (\\))
+import Data.List (intercalate)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
 import Data.Text (Text)
-import Data.Text.Lens (unpacked)
 import qualified Language.Haskell.Exts as H
 import qualified Language.Haskell.Names as N
 import System.FilePath
@@ -61,13 +60,13 @@ import HsDev.Project
 import HsDev.Sandbox
 import qualified HsDev.Stack as S
 import HsDev.Symbols
-import HsDev.Symbols.Resolve
+import HsDev.Symbols.Parsed (Parsed)
 import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
 import HsDev.Tools.Ghc.Types (inferTypes)
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
-import HsDev.Util (ordNub)
+import HsDev.Util (ordNub, fromJSON')
 import qualified HsDev.Util as Util (withCurrentDirectory)
 import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..), serverDatabase, withSqlTransaction)
 import HsDev.Server.Message
@@ -233,16 +232,30 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 		defines <- askSession sessionDefines
 		-- Make table of already scanned and up to date modules
 		let
-			scanned' (_, _, Just _) = return Nothing
-			scanned' (mloc, mopts, Nothing) = case dbval ^? databaseModules . ix mloc of
+			isActual (_, _, Just _) = return Nothing
+			isActual (mloc, mopts, Nothing) = case findParsedSource mloc of
 				Nothing -> return Nothing
-				Just im -> do
-					up <- S.upToDate (opts ++ mopts) im
-					return $ do
-						guard (up && not (hasTag OnlyHeaderTag im))
-						im ^? inspected
-			toMap = M.fromList . map (\m' -> (m' ^. moduleId . moduleLocation, m'))
-		alreadyScanned <- liftIO $ liftM (toMap . catMaybes) $ traverse scanned' ms
+				Just parsed' -> do
+					modId <- SQLite.lookupModuleLocation mloc
+					case modId of
+						Nothing -> return Nothing
+						Just modId' -> do
+							[insp] <- SQLite.query "select inspection_time, inspection_opts from modules as m where m.id == ?;" (SQLite.Only modId')
+							insp' <- liftIO $ case mloc of
+								FileModule p' _ -> fileInspection p' (opts ++ mopts)
+								InstalledModule{} -> installedInspection (opts ++ mopts)
+								_ -> return InspectionNone
+							if fresh insp insp'
+								then do
+									m' <- SQLite.loadModule modId'
+									return $ Just (mloc, set moduleSource (Just parsed') m')
+								else return Nothing
+
+			findParsedSource :: ModuleLocation -> Maybe Parsed
+			findParsedSource mloc' = dbval ^? databaseModules . ix mloc' . inspected . moduleSource . _Just
+
+		alreadyScanned <- liftM (M.fromList . catMaybes) $ traverse isActual ms'
+
 		let
 			inspectionInfos = M.fromList
 				[(mloc, sourceInspection mfile mcts (opts ++ mopts)) |
@@ -269,15 +282,8 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 
 		let
 			pmods = map fst ploaded
-			dbval' = dbval ^. maybe standaloneSlice projectSlice mproj
-			deps' = sourceDeps dbval'
-			dependencies = ordNub (concat [fromMaybe [] (deps' ^? ix f) | f <- ms ^.. each . _1 . moduleFile]) \\ (ms ^.. each . _1 . moduleFile)
-			mods' = dbval ^.. slices [globalDeps, localDeps] . modules where
-				globalDeps = maybe (packageDbStackSlice userDb) projectDepsSlice mproj
-				localDeps = filesSlice dependencies
-			aenv' = mconcat (map moduleAnalyzeEnv mods')
 
-		sqlAenv' <- Log.scope "exp" $ do
+		(sqlMods', sqlAenv') <- Log.scope "exp" $ do
 			let
 				noProjectDeps = SQLite.buildQuery $ SQLite.select_
 					["m.id"]
@@ -290,10 +296,9 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 			sqlMods' <- case mproj of
 				Nothing -> SQLite.loadModules noProjectDeps ()
 				Just proj -> SQLite.loadModules projectDeps (SQLite.Only $ proj ^. projectCabal)
-			Log.sendLog Log.Debug $ "sqlite dep modules: {0}, default: {1}" ~~ length sqlMods' ~~ length mods'
-			return $ mconcat (map moduleAnalyzeEnv sqlMods')
+			return (sqlMods', mconcat (map moduleAnalyzeEnv sqlMods'))
 
-		Log.sendLog Log.Trace $ "resolving environment: {} modules" ~~ length mods'
+		Log.sendLog Log.Trace $ "resolving environment: {} modules" ~~ length sqlMods'
 		case order pmods of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
@@ -330,16 +335,17 @@ scanFile opts fpath = scanFiles [(FileSource fpath Nothing, opts)]
 scanFiles :: UpdateMonad m => [(FileSource, [String])] -> m ()
 scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ hsdevLiftIO $ do
 	Log.sendLog Log.Trace $ "scanning {} files" ~~ length fsrcs
-	dbval <- serverDatabase
 	fpaths' <- traverse (liftIO . canonicalize) $ map (fileSource . fst) fsrcs
 	forM_ fpaths' $ \fpath' -> do
 		ex <- liftIO $ fileExists fpath'
 		when (not ex) $ hsdevError $ FileNotFound fpath'
-	mlocs <- forM fpaths' $ \fpath' -> case dbval ^? databaseModules . atFile fpath' . inspected of
-		Just m -> return $ view (moduleId . moduleLocation) m
-		Nothing -> do
-			mproj <- locateProjectInfo fpath'
-			return $ FileModule fpath' mproj
+	mlocs <- forM fpaths' $ \fpath' -> do
+		mids <- SQLite.query (SQLite.toQuery $ SQLite.qModuleId `mappend` SQLite.where_ ["mu.file == ?"]) (SQLite.Only fpath')
+		if length mids > 1
+			then return (head mids ^. moduleLocation)
+			else do
+				mproj <- locateProjectInfo fpath'
+				return $ FileModule fpath' mproj
 	mapM_ (watch . flip watchModule) mlocs
 	S.ScanContents dmods _ _ <- fmap mconcat $ mapM (S.enumDependent . view path) fpaths'
 	Log.sendLog Log.Trace $ "dependent modules: {}" ~~ length dmods
@@ -490,11 +496,10 @@ scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 
 scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()
 scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
-	dbval <- serverDatabase
+	projs <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select cabal from projects;"
+	pdbs <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select package_db from package_dbs;"
+	files <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select m.file from modules as m where m.file is not null and m.cabal is null;"
 	let
-		projs = dbval ^.. databaseProjects . each . projectCabal
-		pdbs = M.keys (dbval ^. databasePackageDbs)
-		files = dbval ^.. standaloneSlice . modules . moduleId . moduleLocation . moduleFile
 		srcs = standSrcs ^.. each . _1 . moduleFile
 		inSrcs src = src `elem` srcs && src `notElem` files
 		inFiles = maybe False inSrcs . preview (sourcedModule . moduleLocation . moduleFile)
@@ -583,9 +588,8 @@ updateEvents updates = Log.scope "updater" $ do
 				Log.sendLog Log.Info $ "File '{file}' in project {proj} changed"
 					~~ ("file" ~% view eventPath e)
 					~~ ("proj" ~% view projectName proj)
-				dbval <- serverDatabase
-				let
-					opts = dbval ^.. databaseModules . atFile (fromFilePath $ view eventPath e) . inspection . inspectionOpts . each . unpacked
+				[SQLite.Only mopts] <- SQLite.query "select inspection_opts from modules where file == ?;" (SQLite.Only $ view eventPath e)
+				opts <- maybe (return []) (maybe (parseErr' mopts) return . fromJSON') mopts
 				return [(FileSource (fromFilePath $ view eventPath e) Nothing, opts)]
 			| isCabal e -> do
 				Log.sendLog Log.Info $ "Project {proj} changed"
@@ -604,12 +608,15 @@ updateEvents updates = Log.scope "updater" $ do
 			| isSource e -> do
 				Log.sendLog Log.Info $ "Module {file} changed"
 					~~ ("file" ~% view eventPath e)
-				dbval <- serverDatabase
-				let
-					opts = dbval ^.. databaseModules . atFile (fromFilePath $ view eventPath e) . inspection . inspectionOpts . each . unpacked
+				[SQLite.Only mopts] <- SQLite.query "select inspection_opts from modules where file == ?;" (SQLite.Only $ view eventPath e)
+				opts <- maybe (return []) (maybe (parseErr' mopts) return . fromJSON') mopts
 				return [(FileSource (fromFilePath $ view eventPath e) Nothing, opts)]
 			| otherwise -> return []
 	scanFiles files
+	where
+		parseErr' mopts' = do
+			Log.sendLog Log.Error $ "Error parsing inspection_opts: {}" ~~ show mopts'
+			hsdevError $ SQLiteError $ "Error parsing inspection_opts: {}" ~~ show mopts'
 
 applyUpdates :: UpdateOptions -> [(Watched, Event)] -> ClientM IO ()
 applyUpdates uopts = runUpdate uopts . updateEvents

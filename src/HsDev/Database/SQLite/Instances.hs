@@ -169,3 +169,19 @@ instance FromField PackageDb where
 
 instance FromRow SymbolUsage where
 	fromRow = SymbolUsage <$> fromRow <*> fromRow <*> fromRow
+
+instance FromRow Inspection where
+	fromRow = do
+		tm <- field
+		opts <- field
+		case (tm, opts) of
+			(Nothing, Nothing) -> return InspectionNone
+			(_, Just opts') -> InspectionAt (maybe 0 fromInteger tm) <$>
+				maybe (fail "Error parsing inspection opts") return (fromJSON' opts')
+			(Just _, Nothing) -> fail "Error parsing inspection data, time is set, but flags are null"
+
+instance ToRow Inspection where
+	toRow InspectionNone = [SQLNull, SQLNull]
+	toRow (InspectionAt tm opts) = [
+		if tm == 0 then SQLNull else toField (floor tm :: Int),
+		toField $ toJSON opts]
