@@ -8,7 +8,7 @@ module HsDev.Database.Update (
 	UpdateM(..),
 	runUpdate,
 
-	postStatus, waiter, updater, loadCache, runTask, runTasks, runTasks_,
+	postStatus, waiter, updater, runTask, runTasks, runTasks_,
 
 	scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
@@ -69,7 +69,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (ordNub)
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase, withSqlTransaction)
+import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..), serverDatabase, withSqlTransaction)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -92,7 +92,6 @@ runUpdate uopts act = Log.scope "update" $ do
 	Log.sendLog Log.Debug $ "updated {} modules" ~~ length updatedMods
 	db <- askSession sessionDatabase
 	wait db
-	-- TODO: serverWriteCache modifiedDb
 	return r
 	where
 		act' = do
@@ -191,12 +190,6 @@ cleaner act = do
 	db <- askSession sessionDatabase
 	db' <- act
 	clear db $ return $!! db'
-
--- | Get data from cache without updating DB
-loadCache :: UpdateMonad m => (FilePath -> ExceptT String IO Database) -> m Database
-loadCache act = do
-	mdat <- serverReadCache act
-	return $ fromMaybe mempty mdat
 
 -- | Run one task
 runTask :: (Display t, UpdateMonad m, NFData a) => String -> t -> m a -> m a
@@ -546,7 +539,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 			updater $ fromModule im'
 		| otherwise = Log.sendLog Log.Trace $ "Types for {} already inferred" ~~ view inspectedKey im
 
--- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
+-- | Generic scan function. Removes obsolete modules and rescans changed modules.
 scan :: UpdateMonad m
 	=> Slice
 	-- ^ Get data from database

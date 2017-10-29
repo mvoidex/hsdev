@@ -37,7 +37,6 @@ library
     Data.Maybe.JustIf
     Data.LookupTable
     HsDev
-    HsDev.Cache
     HsDev.Client.Commands
     HsDev.Commands
     HsDev.Database

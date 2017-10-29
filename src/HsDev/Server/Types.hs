@@ -5,7 +5,7 @@ module HsDev.Server.Types (
 	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverDatabase, serverUpdateDB, serverSqlDatabase, withSqlTransaction, serverWriteCache, serverReadCache, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverDatabase, serverUpdateDB, serverSqlDatabase, withSqlTransaction, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -66,8 +66,6 @@ data SessionLog = SessionLog {
 data Session = Session {
 	sessionDatabase :: DB.Async Database,
 	sessionSqlDatabase :: SQL.Connection,
-	sessionWriteCache :: Database -> ServerM IO (),
-	sessionReadCache :: (FilePath -> ExceptT String IO Database) -> ServerM IO (Maybe Database),
 	sessionLog :: SessionLog,
 	sessionWatcher :: Watcher,
 #if mingw32_HOST_OS
@@ -211,20 +209,6 @@ withSqlTransaction fn = do
 	sess <- getSession
 	liftIO $ SQL.withTransaction conn $ withSession sess fn
 
--- | Server write cache
-serverWriteCache :: SessionMonad m => Database -> m ()
-serverWriteCache db = do
-	s <- getSession
-	write' <- askSession sessionWriteCache
-	liftIO $ withSession s $ write' db
-
--- | Server read cache
-serverReadCache :: SessionMonad m => (FilePath -> ExceptT String IO Database) -> m (Maybe Database)
-serverReadCache act = do
-	s <- getSession
-	read' <- askSession sessionReadCache
-	liftIO $ withSession s $ read' act
-
 -- | In ghc session
 inSessionGhc :: SessionMonad m => GhcM a -> m a
 inSessionGhc act = do
@@ -274,14 +258,12 @@ data ServerOpts = ServerOpts {
 	serverTimeout :: Int,
 	serverLog :: Maybe FilePath,
 	serverLogLevel :: String,
-	serverCache :: Maybe FilePath,
 	serverSqlDbFile :: Maybe FilePath,
-	serverLoad :: Bool,
 	serverSilent :: Bool }
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts def 0 Nothing "info" Nothing Nothing False False
+	def = ServerOpts def 0 Nothing "info" Nothing False
 
 -- | Silent server with no connection, useful for ghci
 silentOpts :: ServerOpts
@@ -315,9 +297,7 @@ instance FromCmd ServerOpts where
 		(timeoutArg <|> pure (serverTimeout def)) <*>
 		optional logArg <*>
 		(logLevelArg <|> pure (serverLogLevel def)) <*>
-		optional cacheArg <*>
 		optional sqlDbFileArg <*>
-		loadFlag <*>
 		serverSilentFlag
 
 instance FromCmd ClientOpts where
@@ -333,9 +313,7 @@ connectionArg :: Parser ConnectionPort
 timeoutArg :: Parser Int
 logArg :: Parser FilePath
 logLevelArg :: Parser String
-cacheArg :: Parser FilePath
 noFileFlag :: Parser Bool
-loadFlag :: Parser Bool
 prettyFlag :: Parser Bool
 serverSilentFlag :: Parser Bool
 stdinFlag :: Parser Bool
@@ -353,9 +331,7 @@ connectionArg = portArg <|> unixArg
 timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
 logArg = strOption (long "log" <> short 'l' <> metavar "file" <> help "log file")
 logLevelArg = strOption (long "log-level" <> metavar "level" <> help "log level: trace/debug/info/warning/error/fatal")
-cacheArg = strOption (long "cache" <> metavar "path" <> help "cache directory")
 noFileFlag = switch (long "no-file" <> help "don't use mmap files")
-loadFlag = switch (long "load" <> help "force load all data from cache on startup")
 prettyFlag = switch (long "pretty" <> help "pretty json output")
 serverSilentFlag = switch (long "silent" <> help "no stdout/stderr")
 stdinFlag = switch (long "stdin" <> help "pass data to stdin")
@@ -368,9 +344,7 @@ serverOptsArgs sopts = concat [
 	["--timeout", show $ serverTimeout sopts],
 	marg "--log" (serverLog sopts),
 	["--log-level", serverLogLevel sopts],
-	marg "--cache" (serverCache sopts),
 	marg "--sql" (serverSqlDbFile sopts),
-	["--load" | serverLoad sopts],
 	["--silent" | serverSilent sopts]]
 	where
 		marg :: String -> Maybe String -> [String]

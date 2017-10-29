@@ -6,7 +6,6 @@ module HsDev.Server.Base (
 	setupServer, shutdownServer,
 	startServer, startServer_, stopServer, withServer, withServer_, inServer, clientCommand, parseCommand, readCommand,
 	sendServer, sendServer_,
-	withCache, writeCache, readCache,
 	findPath,
 	processRequest, processClient, processClientSocket,
 
@@ -38,18 +37,15 @@ import qualified System.Log.Simple as Log
 import Network.Socket hiding (connect)
 import qualified Network.Socket.ByteString as Net (send)
 import qualified Network.Socket.ByteString.Lazy as Net (getContents)
-import System.Directory (removeDirectoryRecursive, createDirectoryIfMissing)
 import System.FilePath
-import Text.Format ((~~), (~%))
+import Text.Format ((~~))
 
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import System.Directory.Paths
 import qualified System.Directory.Watcher as Watcher
 
-import qualified HsDev.Cache as Cache
 import qualified HsDev.Client.Commands as Client
-import HsDev.Database
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Error
 import qualified HsDev.Database.Async as DB
@@ -85,26 +81,6 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 	db <- liftIO $ DB.newAsync
 	sqlDb <- liftIO $ SQLite.initialize (fromMaybe ":memory:" $ serverSqlDbFile sopts)
 	clientChan <- liftIO F.newChan
-	withCache sopts () $ \cdir -> do
-		Log.sendLog Log.Trace $ "Checking cache version in {}" ~~ cdir 
-		ver <- liftIO $ Cache.readVersion $ fromFilePath cdir `subPath` Cache.versionCache
-		Log.sendLog Log.Debug $ "Cache version: {}" ~~ strVersion ver
-		unless (sameVersion (cutVersion version) (cutVersion ver)) $ ignoreIO $ do
-			Log.sendLog Log.Info $ "Cache version ({cache}) is incompatible with hsdev version ({hsdev}), removing cache ({dir})" ~~
-				("cache" ~% strVersion ver) ~~
-				("hsdev" ~% strVersion version) ~~
-				("dir" ~% cdir)
-			-- drop cache
-			liftIO $ removeDirectoryRecursive cdir
-		Log.sendLog Log.Debug $ "Writing new cache version: {}" ~~ strVersion version
-		liftIO $ createDirectoryIfMissing True cdir
-		liftIO $ Cache.writeVersion $ fromFilePath cdir `subPath` Cache.versionCache
-	when (serverLoad sopts) $ withCache sopts () $ \cdir -> do
-		Log.sendLog Log.Info $ "Loading cache from {}" ~~ cdir
-		-- dbCache <- liftA merge <$> SC.load cdir
-		-- case dbCache of
-		-- 	Left err -> outputStr Log.Error $ "Failed to load cache: {}" ~~ err
-		-- 	Right dbCache' -> DB.update db (return dbCache')
 #if mingw32_HOST_OS
 	mmapPool <- Just <$> liftIO (createPool "hsdev")
 #endif
@@ -114,8 +90,6 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 		session = Session
 			db
 			sqlDb
-			(writeCache sopts)
-			(readCache sopts)
 			slog
 			watcher
 #if mingw32_HOST_OS
@@ -184,7 +158,6 @@ shutdownServer sopts = do
 	serverWait
 	Log.sendLog Log.Trace "accept thread stopped"
 	liftIO $ unlink (serverPort sopts)
-	askSession sessionDatabase >>= liftIO . DB.readAsync >>= writeCache sopts
 	Log.sendLog Log.Trace "waiting for clients..."
 	serverWaitClients
 	Log.sendLog Log.Info "server stopped"
@@ -230,27 +203,6 @@ sendServer_ srv = sendServer srv def
 
 chaner :: F.Chan Log.Message -> Consumer Log.Message
 chaner ch = return $ F.putChan ch
-
--- | Perform action on cache
-withCache :: Monad m => ServerOpts -> a -> (FilePath -> m a) -> m a
-withCache sopts v onCache = case serverCache sopts of
-	Nothing -> return v
-	Just cdir -> onCache cdir
-
-writeCache :: SessionMonad m => ServerOpts -> Database -> m ()
-writeCache sopts _ = withCache sopts () $ \cdir -> do
-	Log.sendLog Log.Info $ "writing cache to {}" ~~ cdir
-	Log.sendLog Log.Warning $ "not implemented {}" ~~ cdir
-
-readCache :: SessionMonad m => ServerOpts -> (FilePath -> ExceptT String IO Database) -> m (Maybe Database)
-readCache sopts act = do
-	s <- getSession
-	liftIO $ withSession s $ withCache sopts Nothing $ \fpath -> do
-		res <- liftIO $ runExceptT $ act fpath
-		either cacheErr cacheOk res
-	where
-		cacheErr e = Log.sendLog Log.Error ("Error reading cache: {}" ~~ e) >> return Nothing
-		cacheOk = return . Just
 
 findPath :: MonadIO m => CommandOptions -> FilePath -> m FilePath
 findPath copts f = liftIO $ canonicalize (normalise f') where
