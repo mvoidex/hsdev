@@ -54,7 +54,7 @@ initialize :: String -> IO Connection
 initialize p = do
 	conn <- open p
 	[(Only hasTables)] <- SQL.query_ conn "select count(*) > 0 from sqlite_master where type == 'table';"
-	when (not hasTables) $ mapM_ (SQL.execute_ conn) commands
+	when (not hasTables) $ withTransaction conn $ mapM_ (SQL.execute_ conn) commands
 	return conn
 
 purge :: SessionMonad m => m ()
