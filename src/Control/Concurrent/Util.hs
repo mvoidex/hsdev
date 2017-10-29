@@ -3,7 +3,6 @@ module Control.Concurrent.Util (
 	) where
 
 import Control.Concurrent
-import Control.Concurrent.MVar
 import Control.Concurrent.Async
 import Control.Monad
 import Control.Monad.IO.Class

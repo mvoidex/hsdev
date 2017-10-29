@@ -128,8 +128,10 @@ create table modules (
 	name text,
 	docs text,
 	fixities json, -- list of fixities
-	tag json,
-	inspection_error text
+	tag json, -- list of tags
+	inspection_error text,
+	inspection_time integer,
+	inspection_opts json -- list of flags
 );
 
 create unique index modules_id_index on modules (id);
@@ -179,3 +181,20 @@ create table names (
 	resolved_name text,
 	resolve_error text
 );
+
+create view sources_depends (
+	module_id,
+	module_file,
+	depends_id,
+	depends_file
+) as
+select m.id, m.file, im.id, im.file
+from modules as im, imports as i, modules as m, projects as p, projects_modules_scope as ps
+where
+	(m.cabal == p.cabal) and
+	(p.id == ps.project_id) and
+	(ps.module_id == im.id) and
+	(i.module_id == m.id) and
+	(im.name == i.module_name) and
+	(m.file is not null) and
+	(im.file is not null);

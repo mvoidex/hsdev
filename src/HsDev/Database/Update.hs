@@ -8,7 +8,7 @@ module HsDev.Database.Update (
 	UpdateM(..),
 	runUpdate,
 
-	postStatus, waiter, updater, loadCache, getCache, runTask, runTasks, runTasks_,
+	postStatus, waiter, updater, loadCache, runTask, runTasks, runTasks_,
 
 	scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
@@ -69,7 +69,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (ordNub)
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase, serverSqlDatabase, withSqlTransaction)
+import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase, withSqlTransaction)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -198,18 +198,6 @@ loadCache act = do
 	mdat <- serverReadCache act
 	return $ fromMaybe mempty mdat
 
--- | Load data from cache if not loaded yet and wait
-getCache :: UpdateMonad m => (FilePath -> ExceptT String IO Database) -> (Database -> Database) -> m Database
-getCache act check = do
-	dbval <- liftM check serverDatabase
-	if nullDatabase dbval
-		then do
-			db <- loadCache act
-			waiter $ updater db
-			return db
-		else
-			return dbval
-
 -- | Run one task
 runTask :: (Display t, UpdateMonad m, NFData a) => String -> t -> m a -> m a
 runTask action subj act = Log.scope "task" $ do
@@ -296,7 +284,7 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 				localDeps = filesSlice dependencies
 			aenv' = mconcat (map moduleAnalyzeEnv mods')
 
-		Log.scope "exp" $ do
+		sqlAenv' <- Log.scope "exp" $ do
 			let
 				noProjectDeps = SQLite.buildQuery $ SQLite.select_
 					["m.id"]
@@ -310,12 +298,13 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 				Nothing -> SQLite.loadModules noProjectDeps ()
 				Just proj -> SQLite.loadModules projectDeps (SQLite.Only $ proj ^. projectCabal)
 			Log.sendLog Log.Debug $ "sqlite dep modules: {0}, default: {1}" ~~ length sqlMods' ~~ length mods'
+			return $ mconcat (map moduleAnalyzeEnv sqlMods')
 
 		Log.sendLog Log.Trace $ "resolving environment: {} modules" ~~ length mods'
 		case order pmods of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
-				ms'' <- flip evalStateT aenv' $ runTasks (map inspect' ordered)
+				ms'' <- flip evalStateT sqlAenv' $ runTasks (map inspect' ordered)
 				db'' <- fmap mconcat $ forM ms'' $ \m -> do
 					let
 						mloc = m ^. moduleId . moduleLocation
@@ -400,7 +389,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 		(filter (`S.member` packageDbMods)) $
 		(inSessionGhc $ listModules opts pdbs packages')
 	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
-	scan (const $ return mempty) (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+	scan (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		docs <- inSessionGhc $ hdocsCabal pdbs opts
 		Log.sendLog Log.Trace "docs scanned"
@@ -426,7 +415,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 		(filter (`S.member` packageDbMods)) $
 		(inSessionGhc $ listModules opts pdbs packages')
 	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
-	scan (const $ return mempty) (packageDbStackSlice pdbs) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+	scan (packageDbStackSlice pdbs) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 
@@ -502,7 +491,7 @@ scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan (const $ return mempty) (standaloneSlice . slice inDir) standSrcs opts $ scanModules opts
+	scan (standaloneSlice . slice inDir) standSrcs opts $ scanModules opts
 	where
 		inDir = maybe False (dir `isParent`) . preview (sourcedModule . moduleLocation . moduleFile)
 
@@ -519,7 +508,7 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	runTasks_ [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan (const $ return mempty) (standaloneSlice . slice inFiles) standSrcs opts $ scanModules opts
+	scan (standaloneSlice . slice inFiles) standSrcs opts $ scanModules opts
 
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [InspectedModule] -> m ()
@@ -559,9 +548,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 
 -- | Generic scan function. Reads cache only if data is not already loaded, removes obsolete modules and rescans changed modules.
 scan :: UpdateMonad m
-	=> (FilePath -> ExceptT String IO Database)
-	-- ^ Read data from cache
-	-> Slice
+	=> Slice
 	-- ^ Get data from database
 	-> [S.ModuleToScan]
 	-- ^ Actual modules. Other modules will be removed from database
@@ -570,8 +557,8 @@ scan :: UpdateMonad m
 	-> ([S.ModuleToScan] -> m ())
 	-- ^ Function to update changed modules
 	-> m ()
-scan cache' part' mlocs opts act = Log.scope "scan" $ do
-	dbval <- getCache cache' (view part')
+scan part' mlocs opts act = Log.scope "scan" $ do
+	dbval <- liftM (view part') serverDatabase
 	let
 		obsolete = dbval ^. slice (\m -> view moduleLocation m `notElem` (mlocs ^.. each . _1))
 	changed <- liftIO $ S.changedModules dbval opts mlocs

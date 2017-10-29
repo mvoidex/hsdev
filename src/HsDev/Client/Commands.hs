@@ -113,7 +113,6 @@ runCommand (AddData fs) = toValue $ do
 			(v .:: "package-db") <*>
 			(v .:: "packages")
 		fromPackageDbInfo = uncurry fromPackageDb
-runCommand Dump = toValue serverDatabase
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
@@ -122,24 +121,22 @@ runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 		map (\(FileSource f mcts) -> Update.scanFileContents ghcs' f mcts) fs,
 		map (Update.scanProject ghcs') projs,
 		map (Update.scanDirectory ghcs') paths']
-runCommand (RefineDocs projs fs ms) = toValue $ do
+runCommand (RefineDocs projs fs) = toValue $ do
 	projects <- traverse findProject projs
 	dbval <- serverDatabase
 	let
 		filters = anyOf $ concat [
 			map inProject projects,
-			map inFile fs,
-			map inModule ms]
+			map inFile fs]
 		mods = dbval ^.. databaseModules . each . filtered (maybe False filters . preview inspected)
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs mods]
-runCommand (InferTypes projs fs ms) = toValue $ do
+runCommand (InferTypes projs fs) = toValue $ do
 	projects <- traverse findProject projs
 	dbval <- serverDatabase
 	let
 		filters = anyOf $ concat [
 			map inProject projects,
-			map inFile fs,
-			map inModule ms]
+			map inFile fs]
 		mods = dbval ^.. databaseModules . each . filtered (maybe False filters . preview inspected)
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes mods]
 runCommand (Remove projs cabal sboxes files) = toValue $ do

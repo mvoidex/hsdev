@@ -181,7 +181,7 @@ removeModule mid = scope "remove-module" $ do
 
 insertModule :: SessionMonad m => InspectedModule -> m ()
 insertModule im = scope "insert-module" $ do
-	execute "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tag, inspection_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+	execute "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tag, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
 		im ^? inspectedKey . moduleFile . path,
 		im ^? inspectedKey . moduleProject . _Just . projectCabal,
 		fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
@@ -193,7 +193,9 @@ insertModule im = scope "insert-module" $ do
 		im ^? inspected . moduleDocs,
 		fmap encode $ im ^? inspected . moduleFixities,
 		encode $ im ^. inspectionTags,
-		fmap show $ im ^? inspectionResult . _Left)
+		fmap show $ im ^? inspectionResult . _Left,
+		fmap (floor @_ @Int) $ im ^? inspection . inspectionAt,
+		fmap encode (im ^? inspection . inspectionOpts))
 
 insertModuleSymbols :: SessionMonad m => InspectedModule -> m ()
 insertModuleSymbols im = scope "insert-module-symbols" $ do

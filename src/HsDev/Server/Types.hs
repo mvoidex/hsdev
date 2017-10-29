@@ -405,7 +405,6 @@ data Command =
 	Listen (Maybe String) |
 	SetLogLevel String |
 	AddData { addedData :: [Path] } |
-	Dump |
 	Scan {
 		scanProjects :: [Path],
 		scanCabal :: Bool,
@@ -417,12 +416,10 @@ data Command =
 		scanInferTypes :: Bool } |
 	RefineDocs {
 		docsProjects :: [Path],
-		docsFiles :: [Path],
-		docsModules :: [Text] } |
+		docsFiles :: [Path] } |
 	InferTypes {
 		inferProjects :: [Path],
-		inferFiles :: [Path],
-		inferModules :: [Text] } |
+		inferFiles :: [Path] } |
 	Remove {
 		removeProjects :: [Path],
 		removeCabal :: Bool,
@@ -499,8 +496,8 @@ instance Paths Command where
 		pure ghcs <*>
 		pure docs <*>
 		pure infer
-	paths f (RefineDocs projs fs ms) = RefineDocs <$> traverse (paths f) projs <*> traverse (paths f) fs <*> pure ms
-	paths f (InferTypes projs fs ms) = InferTypes <$> traverse (paths f) projs <*> traverse (paths f) fs <*> pure ms
+	paths f (RefineDocs projs fs) = RefineDocs <$> traverse (paths f) projs <*> traverse (paths f) fs
+	paths f (InferTypes projs fs) = InferTypes <$> traverse (paths f) projs <*> traverse (paths f) fs
 	paths f (Remove projs c cs fs) = Remove <$> traverse (paths f) projs <*> pure c <*> traverse (paths f) cs <*> traverse (paths f) fs
 	paths _ RemoveAll = pure RemoveAll
 	paths f (InfoSymbol q t h l) = InfoSymbol <$> pure q <*> traverse (paths f) t <*> pure h <*> pure l
@@ -537,7 +534,6 @@ instance FromCmd Command where
 		cmd "listen" "listen server log" (Listen <$> optional logLevelArg),
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
 		cmd "add" "add info to database" (AddData <$> many fileArg),
-		cmd "dump" "dump database (debug)" (pure Dump),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
 			cabalFlag <*>
@@ -547,8 +543,8 @@ instance FromCmd Command where
 			ghcOpts <*>
 			docsFlag <*>
 			inferFlag,
-		cmd "docs" "scan docs" $ RefineDocs <$> many projectArg <*> many fileArg <*> many moduleArg,
-		cmd "infer" "infer types" $ InferTypes <$> many projectArg <*> many fileArg <*> many moduleArg,
+		cmd "docs" "scan docs" $ RefineDocs <$> many projectArg <*> many fileArg,
+		cmd "infer" "infer types" $ InferTypes <$> many projectArg <*> many fileArg,
 		cmd "remove" "remove modules info" $ Remove <$>
 			many projectArg <*>
 			cabalFlag <*>
@@ -672,7 +668,6 @@ instance ToJSON Command where
 	toJSON (Listen lev) = cmdJson "listen" ["level" .= lev]
 	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
 	toJSON (AddData fs) = cmdJson "add" ["files" .= fs]
-	toJSON Dump = cmdJson "dump" []
 	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
@@ -682,8 +677,8 @@ instance ToJSON Command where
 		"ghc-opts" .= ghcs,
 		"docs" .= docs',
 		"infer" .= infer']
-	toJSON (RefineDocs projs fs ms) = cmdJson "docs" ["projects" .= projs, "files" .= fs, "modules" .= ms]
-	toJSON (InferTypes projs fs ms) = cmdJson "infer" ["projects" .= projs, "files" .= fs, "modules" .= ms]
+	toJSON (RefineDocs projs fs) = cmdJson "docs" ["projects" .= projs, "files" .= fs]
+	toJSON (InferTypes projs fs) = cmdJson "infer" ["projects" .= projs, "files" .= fs]
 	toJSON (Remove projs cabal sboxes fs) = cmdJson "remove" ["projects" .= projs, "cabal" .= cabal, "sandboxes" .= sboxes, "files" .= fs]
 	toJSON RemoveAll = cmdJson "remove-all" []
 	toJSON InfoPackages = cmdJson "packages" []
@@ -722,7 +717,6 @@ instance FromJSON Command where
 		guardCmd "listen" v *> (Listen <$> v .::? "level"),
 		guardCmd "set-log" v *> (SetLogLevel <$> v .:: "level"),
 		guardCmd "add" v *> (AddData <$> v .:: "files"),
-		guardCmd "dump" v *> pure Dump,
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>
 			(v .:: "cabal" <|> pure False) <*>
@@ -732,8 +726,8 @@ instance FromJSON Command where
 			v .::?! "ghc-opts" <*>
 			(v .:: "docs" <|> pure False) <*>
 			(v .:: "infer" <|> pure False)),
-		guardCmd "docs" v *> (RefineDocs <$> v .::?! "projects" <*> v .::?! "files" <*> v .::?! "modules"),
-		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files" <*> v .::?! "modules"),
+		guardCmd "docs" v *> (RefineDocs <$> v .::?! "projects" <*> v .::?! "files"),
+		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files"),
 		guardCmd "remove" v *> (Remove <$>
 			v .::?! "projects" <*>
 			(v .:: "cabal" <|> pure False) <*>

@@ -11,7 +11,6 @@ module HsDev.Database.Update.Types (
 	) where
 
 import Control.Applicative
-import Control.Concurrent.MVar
 import qualified Control.Concurrent.Async as Async
 import Control.Lens (makeLenses)
 import Control.Monad.Base
