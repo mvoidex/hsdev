@@ -31,7 +31,7 @@ where_ :: [Text] -> Select
 where_ = select_ [] []
 
 buildQuery :: Select -> String
-buildQuery (Select cols tables conds) = "select {} from {} where {};"
+buildQuery (Select cols tables conds) = "select {} from {} where {}"
 	~~ T.intercalate ", " cols
 	~~ T.intercalate ", " tables
 	~~ T.intercalate " and " (map (\cond -> T.concat ["(", cond, ")"]) conds)

@@ -11,6 +11,8 @@ module HsDev.Database.Update.Types (
 	) where
 
 import Control.Applicative
+import Control.Concurrent.MVar
+import qualified Control.Concurrent.Async as Async
 import Control.Lens (makeLenses)
 import Control.Monad.Base
 import Control.Monad.Catch
@@ -23,8 +25,9 @@ import Data.Aeson
 import Data.Default
 import qualified System.Log.Simple as Log
 
+import Control.Concurrent.Util (sync)
 import qualified Control.Concurrent.FiniteChan as F
-import HsDev.Server.Types (ServerMonadBase, Session(..), CommandOptions(..), SessionMonad(..), askSession, CommandMonad(..), ClientM(..), ServerM(..))
+import HsDev.Server.Types (ServerMonadBase, Session(..), CommandOptions(..), SessionMonad(..), askSession, withSession, withSqlTransaction, CommandMonad(..), ClientM(..), ServerM(..))
 import HsDev.Symbols
 import HsDev.Types
 import HsDev.Util ((.::))
@@ -97,18 +100,25 @@ data UpdateState = UpdateState {
 
 makeLenses ''UpdateState
 
-withUpdateState :: ServerMonadBase m => UpdateOptions -> (UpdateState -> m a) -> m (a, [ServerM IO ()])
+withUpdateState :: SessionMonad m => UpdateOptions -> (UpdateState -> m a) -> m a
 withUpdateState uopts fn = bracket (liftIO F.newChan) (liftIO . F.closeChan) $ \ch -> do
+	session <- getSession
+	th <- liftIO $ Async.async $ withSession session $ withSqlTransaction $ Log.component "sqlite" $ do
+		Log.sendLog Log.Debug "update sql database under transaction"
+		cts <- liftIO $ F.readChan ch
+		sequence_ cts
+		Log.sendLog Log.Debug "sql database updated"
 	r <- fn (UpdateState uopts ch)
-	cts <- liftIO $ F.readChan ch
-	return (r, cts)
+	liftIO $ liftIO $ F.closeChan ch
+	liftIO $ Async.wait th
+	return r
 
 type UpdateMonad m = (CommandMonad m, MonadReader UpdateState m, MonadWriter [ModuleLocation] m)
 
 sendUpdateAction :: UpdateMonad m => ServerM IO () -> m ()
 sendUpdateAction act = do
 	ch <- asks _updateChan
-	liftIO $ F.putChan ch act
+	sync $ \done -> liftIO $ F.putChan ch (act `finally` liftIO done)
 
 newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateState (WriterT [ModuleLocation] (ClientM m)) a }
 	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask, Functor, MonadReader UpdateState, MonadWriter [ModuleLocation])

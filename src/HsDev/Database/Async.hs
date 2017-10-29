@@ -3,10 +3,10 @@ module HsDev.Database.Async (
 	module Data.Async
 	) where
 
-import Control.Concurrent.MVar
 import Control.Monad.IO.Class (MonadIO(..))
 import Control.DeepSeq (force)
 
+import Control.Concurrent.Util (sync)
 import Data.Async
 
 import HsDev.Database (Database)
@@ -23,8 +23,4 @@ clear db act = do
 
 -- | This function is used to ensure that all previous updates were applied
 wait :: MonadIO m => Async Database -> m ()
-wait db = liftIO $ do
-	waitVar <- newEmptyMVar
-	modifyAsync db (Action $ \d -> putMVar waitVar () >> return d)
-	-- FIXME: what if async process is dead?
-	takeMVar waitVar
+wait db = sync $ \done -> liftIO $ modifyAsync db (Action $ \d -> done >> return d)

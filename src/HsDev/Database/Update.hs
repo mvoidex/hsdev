@@ -69,7 +69,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (ordNub)
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase, withSqlTransaction)
+import HsDev.Server.Types (commandNotify, serverReadCache, inSessionGhc, FileSource(..), serverDatabase, serverSqlDatabase, withSqlTransaction)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -87,14 +87,11 @@ isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
 
 runUpdate :: ServerMonadBase m => UpdateOptions -> UpdateM m a -> ClientM m a
 runUpdate uopts act = Log.scope "update" $ do
-	((r, updatedMods), sqlActions) <- withUpdateState uopts $ \ust ->
+	(r, updatedMods) <- withUpdateState uopts $ \ust ->
 		runWriterT (runUpdateM act' `runReaderT` ust)
 	Log.sendLog Log.Debug $ "updated {} modules" ~~ length updatedMods
 	db <- askSession sessionDatabase
 	wait db
-	Log.sendLog Log.Debug "updating sql database under transaction"
-	withSqlTransaction $ Log.component "sqlite" $ sequence_ sqlActions
-	Log.sendLog Log.Debug "sql database updated"
 	-- TODO: serverWriteCache modifiedDb
 	return r
 	where
@@ -288,6 +285,7 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 			sendUpdateAction $ Log.scope "scan-modules/preloaded" $ SQLite.updateModule inspectedMod
 			return $ fromModule inspectedMod
 		updater db'
+
 		let
 			pmods = map fst ploaded
 			dbval' = dbval ^. maybe standaloneSlice projectSlice mproj
@@ -297,6 +295,22 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 				globalDeps = maybe (packageDbStackSlice userDb) projectDepsSlice mproj
 				localDeps = filesSlice dependencies
 			aenv' = mconcat (map moduleAnalyzeEnv mods')
+
+		Log.scope "exp" $ do
+			let
+				noProjectDeps = SQLite.buildQuery $ SQLite.select_
+					["m.id"]
+					["modules as m", "package_dbs as pdbs"]
+					["m.package_name == pdbs.package_name", "m.package_version == pdbs.package_version", "pdbs.package_db in ('user', 'global')"]
+				projectDeps = SQLite.buildQuery $ SQLite.select_
+					["ps.module_id"]
+					["projects_modules_scope as ps", "projects as p"]
+					["ps.project_id == p.id", "p.cabal == ?"]
+			sqlMods' <- case mproj of
+				Nothing -> SQLite.loadModules noProjectDeps ()
+				Just proj -> SQLite.loadModules projectDeps (SQLite.Only $ proj ^. projectCabal)
+			Log.sendLog Log.Debug $ "sqlite dep modules: {0}, default: {1}" ~~ length sqlMods' ~~ length mods'
+
 		Log.sendLog Log.Trace $ "resolving environment: {} modules" ~~ length mods'
 		case order pmods of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)

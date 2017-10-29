@@ -9,10 +9,10 @@ module HsDev.Database.SQLite (
 	lookupSymbol, insertLookupSymbol,
 	lastRow,
 
-	loadModule,
+	loadModules,
 
 	-- * Reexports
-	close,
+	module Database.SQLite.Simple,
 	module HsDev.Database.SQLite.Select
 	) where
 
@@ -35,7 +35,6 @@ import HsDev.Database.SQLite.Instances ()
 import HsDev.Database.SQLite.Schema
 import HsDev.Database.SQLite.Select
 import qualified HsDev.Display as Display
-import HsDev.Error
 import HsDev.PackageDb.Types
 import HsDev.Project.Types
 import HsDev.Symbols.Types
@@ -306,22 +305,19 @@ lastRow = do
 	[Only i] <- liftIO $ query_ conn "select last_insert_rowid();"
 	return i
 
-loadModule :: SessionMonad m => Int -> m Module
-loadModule mid = do
+loadModules :: (SessionMonad m, ToRow q) => String -> q -> m [Module]
+loadModules selectExpr args = do
 	conn <- serverSqlDatabase
-	m <- liftIO (query conn (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities"] [] ["mu.id == ?"])) (Only mid) :: IO [ModuleId :. (Maybe Text, Maybe Value)])
-	case m of
-		[] -> hsdevError $ SQLiteError $ "module with id = {} not found" ~~ mid
-		[mid' :. (mdocs, mfixities)] -> do
-			syms <- liftIO (query conn (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid) :: IO [Symbol])
-			return $ Module {
-				_moduleId = mid',
-				_moduleDocs = mdocs,
-				_moduleExports = syms,
-				_moduleFixities = fromMaybe [] (mfixities >>= fromJSON'),
-				_moduleScope = mempty,
-				_moduleSource = Nothing }
-		_ -> hsdevError $ SQLiteError $ "several modules with same id = {}" ~~ mid
+	ms <- liftIO (query conn (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString $ "mu.id in (" ++ selectExpr ++ ")"])) args :: IO [ModuleId :. (Maybe Text, Maybe Value, Int)])
+	forM ms $ \(mid' :. (mdocs, mfixities, mid)) -> do
+		syms <- liftIO (query conn (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid) :: IO [Symbol])
+		return $ Module {
+			_moduleId = mid',
+			_moduleDocs = mdocs,
+			_moduleExports = syms,
+			_moduleFixities = fromMaybe [] (mfixities >>= fromJSON'),
+			_moduleScope = mempty,
+			_moduleSource = Nothing }
 
 showPackageDb :: PackageDb -> String
 showPackageDb GlobalDb = "global"
