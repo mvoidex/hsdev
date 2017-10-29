@@ -254,9 +254,7 @@ readCache sopts act = do
 
 findPath :: MonadIO m => CommandOptions -> FilePath -> m FilePath
 findPath copts f = liftIO $ canonicalize (normalise f') where
-	f'
-		| isRelative f = commandOptionsRoot copts </> f
-		| otherwise = f
+	f' = absolutise (fromFilePath $ commandOptionsRoot copts) f
 
 -- | Process request, notifications can be sent during processing
 processRequest :: SessionMonad m => CommandOptions -> Command -> m Result

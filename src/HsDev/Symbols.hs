@@ -92,10 +92,11 @@ moduleOpts :: [PackageConfig] -> Module -> [String]
 moduleOpts pkgs m = case view (moduleId . moduleLocation) m of
 	FileModule file proj -> concat [
 		hidePackages,
-		targetOpts info']
+		targetOpts absInfo]
 		where
 			infos' = maybe [standaloneInfo pkgs m] (`fileTargets` file) proj
 			info' = over infoDepends (filter validDep) (mconcat $ selfInfo : infos')
+			absInfo = maybe id (absolutise . view projectPath) proj info'
 			selfInfo
 				| proj ^? _Just . projectName `elem` map Just (infos' ^.. each . infoDepends . each) = fromMaybe mempty $
 					proj ^? _Just . projectDescription . _Just . projectLibrary . _Just . libraryBuildInfo

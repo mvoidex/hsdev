@@ -75,7 +75,10 @@ canonicalize = paths canonicalizePath
 
 -- | Absolutise paths
 absolutise :: Paths a => Path -> a -> a
-absolutise parent = over paths ((parent ^. path) </>)
+absolutise parent = over paths addRoot where
+	addRoot p
+		| isRelative p = (parent ^. path) </> p
+		| otherwise = p
 
 -- | Relativise paths
 relativise :: Paths a => Path -> a -> a
