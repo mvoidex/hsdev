@@ -231,7 +231,6 @@ main = toolMain "hsdev-sqlite" "hsdev commands via sqlite" cmdP $ \(Opts cmd' db
 		SearchPrefix -> input `T.append` "%"
 		SearchInfix -> "%" `T.append` input `T.append` "%"
 		SearchSuffix -> "%" `T.append` input
-		SearchRegex -> error "Can't search for regex in sqlite"
 
 toValue :: (ToJSON a, Monad m) => m a -> m Value
 toValue = liftM toJSON

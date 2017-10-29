@@ -488,7 +488,7 @@ data TargetFilter =
 	TargetStandalone
 		deriving (Eq, Show)
 data SearchQuery = SearchQuery Text SearchType deriving (Show)
-data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix | SearchRegex deriving (Show)
+data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix deriving (Show)
 
 instance Paths Command where
 	paths f (Scan projs c cs fs ps ghcs docs infer) = Scan <$>
@@ -609,7 +609,6 @@ instance FromCmd TargetFilter where
 instance FromCmd SearchQuery where
 	cmdP = SearchQuery <$> (textArgument idm <|> pure "") <*> asum [
 		flag' SearchExact (long "exact"),
-		flag' SearchRegex (long "regex"),
 		flag' SearchInfix (long "infix"),
 		flag' SearchSuffix (long "suffix"),
 		pure SearchPrefix <* switch (long "prefix")]
@@ -820,7 +819,6 @@ instance ToJSON SearchType where
 	toJSON SearchPrefix = toJSON ("prefix" :: String)
 	toJSON SearchInfix = toJSON ("infix" :: String)
 	toJSON SearchSuffix = toJSON ("suffix" :: String)
-	toJSON SearchRegex = toJSON ("regex" :: String)
 
 instance FromJSON SearchType where
 	parseJSON v = do
@@ -830,5 +828,4 @@ instance FromJSON SearchType where
 			"prefix" -> return SearchPrefix
 			"infix" -> return SearchInfix
 			"suffix" -> return SearchInfix
-			"regex" -> return SearchRegex
 			_ -> empty

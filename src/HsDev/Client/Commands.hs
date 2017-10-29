@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings, FlexibleContexts, TypeOperators, TypeApplications #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module HsDev.Client.Commands (
@@ -23,7 +23,7 @@ import Data.Maybe
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Text (Text, pack, unpack)
-import qualified Data.Text as T (isInfixOf, isPrefixOf, isSuffixOf)
+import qualified Data.Text as T (append, isInfixOf, isPrefixOf, isSuffixOf)
 import System.Directory
 import System.FilePath
 import qualified System.Log.Simple as Log
@@ -38,7 +38,7 @@ import Text.Format
 import HsDev.Commands
 import HsDev.Error
 import qualified HsDev.Database.Async as DB
-import qualified HsDev.Database.SQLite as SQL
+import HsDev.Database.SQLite
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Sandbox hiding (findSandbox)
@@ -117,15 +117,15 @@ runCommand Dump = toValue serverDatabase
 runCommand DumpSqlite = toValue $ do
 	dbval <- serverDatabase
 	Log.sendLog Log.Debug "dropping sql database..."
-	withSqlTransaction SQL.purge
+	withSqlTransaction purge
 	Log.sendLog Log.Debug "dumping sql database..."
-	withSqlTransaction $ forM_ (M.toList $ view databasePackageDbs dbval) (uncurry SQL.insertPackageDb)
+	withSqlTransaction $ forM_ (M.toList $ view databasePackageDbs dbval) (uncurry insertPackageDb)
 	withSqlTransaction $ forM_ (M.toList $ view databaseProjectsInfos dbval) $ \(mproj, (pdbs, _)) -> case mproj of
-		Just proj -> SQL.insertProject proj (Just pdbs)
+		Just proj -> insertProject proj (Just pdbs)
 		Nothing -> return ()
 	withSqlTransaction $ do
-		forM_ (view databaseModules dbval) SQL.insertModule
-		forM_ (view databaseModules dbval) SQL.insertModuleSymbols
+		forM_ (view databaseModules dbval) insertModule
+		forM_ (view databaseModules dbval) insertModuleSymbols
 	Log.sendLog Log.Debug "sql database dumped"
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
@@ -200,108 +200,167 @@ runCommand RemoveAll = toValue $ do
 	w <- askSession sessionWatcher
 	wdirs <- liftIO $ readMVar (W.watcherDirs w)
 	liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir
-runCommand InfoPackages = toValue $ do
-	dbval <- serverDatabase
-	return $ ordNub (dbval ^.. packages)
-runCommand InfoProjects = toValue $ (toListOf $ databaseProjects . each) <$> serverDatabase
-runCommand InfoSandboxes = toValue $ (M.keys . view databasePackageDbs) <$> serverDatabase
+runCommand InfoPackages = toValue $
+	query_ @ModulePackage "select package_name, package_version from package_dbs;"
+runCommand InfoProjects = toValue $ do
+	ps <- query_ @(Only Int :. Project) "select p.id, p.name, p.cabal, p.version from projects as p;"
+	forM ps $ \(Only pid :. proj) -> do
+		libs <- query @_ @Library "select l.modules, b.depends, b.language, b.extensions, b.ghc_options, b.source_dirs, b.other_modules from libraries as l, build_infos as b where (l.project_id == ?) and (l.build_info_id == b.id);"
+			(Only pid)
+		exes <- query @_ @Executable "select e.name, e.path, b.depends, b.language, b.extensions, b.ghc_options, b.source_dirs, b.other_modules from executables as e, build_infos as b where (e.project_id == ?) and (e.build_info_id == b.id);"
+			(Only pid)
+		tsts <- query @_ @Test "select t.name, t.enabled, t.main, b.depends, b.language, b.extensions, b.ghc_options, b.source_dirs, b.other_modules from tests as t, build_infos as b where (t.project_id == ?) and (t.build_info_id == b.id);"
+			(Only pid)
+		return $
+			set (projectDescription . _Just . projectLibrary) (listToMaybe libs) .
+			set (projectDescription . _Just . projectExecutables) exes .
+			set (projectDescription . _Just . projectTests) tsts $
+			proj
+runCommand InfoSandboxes = toValue $ do
+	rs <- query_ @(Only PackageDb) "select distinct package_db from package_dbs;"
+	return [pdb | Only pdb <- rs]
 runCommand (InfoSymbol sq fs h _) = toValue $ do
-	dbval <- serverDatabase
-	filter' <- targetFilters fs
-	let
-		syms = ordNub $ dbval ^.. freshSlice . modules . filtered filter' . moduleSymbols . filtered (matchQuery sq)
-		formatted
-			| h = toJSON $ map (view symbolId) syms
-			| otherwise = toJSON syms
-	return formatted
+	rs <- query @_ @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like ?"])
+		(Only $ likePattern sq)
+	return rs
 runCommand (InfoModule sq fs h i) = toValue $ do
-	dbval <- serverDatabase
-	filter' <- targetFilters fs
-	let
-		ms = dbval ^.. freshSlice . modules . filtered filter' . filtered (matchQuery sq)
-		mlocs = map (view (moduleId . moduleLocation)) ms
-		ims = map (\mloc -> dbval ^?! databaseModules . ix mloc) mlocs
-		converted
-			| h && i = toJSON $ map (fmap shorten) ims
-			| h = toJSON $ map shorten ms
-			| i = toJSON ims
-			| otherwise = toJSON ms
-			where
-				shorten = view moduleId
-	return converted
+	rs <- query @_ @(Only Int :. ModuleId) (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like ?"])
+		(Only $ likePattern sq)
+	if h
+		then return (toJSON $ map (\(_ :. m) -> m) rs)
+		else liftM toJSON $ forM rs $ \(Only mid :. mheader) -> do
+			[(docs, fixities)] <- query @_ @(Maybe Text, Maybe Value) "select m.docs, m.fixities from modules as m where (m.id == ?);"
+				(Only mid)
+			let
+				fixities' = fromMaybe [] (fixities >>= fromJSON')
+			exports' <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+				["exports as e"]
+				["e.module_id == ?", "e.symbol_id == s.id"])
+				(Only mid)
+			return $ Module mheader docs exports' fixities' mempty Nothing
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $ do
-	dbval <- serverDatabase
-	liftIO $ hsdevLift $ lookupSymbol dbval fpath nm
+	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+		["projects as p", "projects_deps as pdeps", "modules as srcm"]
+		[
+			"p.id == pdeps.project_id",
+			"m.cabal == p.cabal or m.package_name == pdeps.package_name",
+			"p.cabal == srcm.cabal",
+			"srcm.file == ?",
+			"s.name == ?"])
+		(fpath ^. path, nm)
+	return rs
 runCommand (Whois nm fpath) = toValue $ do
-	dbval <- serverDatabase
-	liftIO $ hsdevLift $ whois dbval fpath nm
+	let
+		q = nameModule $ toName nm
+		ident = nameIdent $ toName nm
+	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+		["modules as srcm", "scopes as sc"]
+		[
+			"srcm.id == sc.module_id",
+			"s.id == sc.symbol_id",
+			"srcm.file == ?",
+			"sc.qualifier is ?",
+			"sc.name == ?"])
+		(fpath ^. path, q, ident)
+	return rs
 runCommand (Whoat l c fpath) = toValue $ do
-	dbval <- serverDatabase
-	m <- refineSourceModule fpath
-	p <- maybe (hsdevError $ InspectError $ "module doesn't have parsed info") return $ m ^. moduleSource
-	let
-		mname = p ^? P.names . filtered (inRegion' pos . view P.regionL) . P.resolvedName
-		pos = Position l c
-		inRegion' :: Position -> Region -> Bool
-		inRegion' p' (Region s e) = p' >= s && p' <= e
-	maybe (return []) (liftIO . hsdevLift . findSymbol dbval . Name.fromName) mname
+	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+		["names as n", "modules as srcm", "projects as p", "projects_modules_scope as msc"]
+		[
+			"srcm.id == n.module_id",
+			"m.name == n.resolved_module",
+			"s.name == n.resolved_name",
+			"p.cabal == srcm.cabal",
+			"p.id == msc.project_id",
+			"m.id == msc.module_id",
+			"srcm.file == ?",
+			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
+		(fpath ^. path, l, c)
+	return rs
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
-	dbval <- serverDatabase
-	ms <- liftIO $ hsdevLift $ scopeModules dbval fpath
-	return (ms ^.. each . moduleId . filtered (matchQuery sq))
+	pids <- query @_ @(Only Int) "select p.id from projects as p, modules as m where (m.cabal == p.cabal) and (m.file == ?);"
+		(Only $ fpath ^. path)
+	case pids of
+		[] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
+			["latest_packages as ps"]
+			[
+				"mu.package_name == ps.package_name",
+				"mu.package_version == ps.package_version",
+				"ps.package_db in ('user_db', 'global_db')",
+				"mu.name like ?"])
+			(Only $ likePattern sq)
+		[Only proj] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
+			["projects_modules_scope as msc"]
+			[
+				"msc.module_id == mu.id",
+				"msc.project_id == ?",
+				"mu.name like ?"])
+			(proj, likePattern sq)
+		_ -> fail "Impossible happened: several projects for one module"
 runCommand (ResolveScope sq fpath) = toValue $ do
-	dbval <- serverDatabase
-	ss <- liftIO $ hsdevLift $ scope dbval fpath
-	return (ordNub $ ss ^.. each . symbolId . filtered (matchQuery sq))
+	rs <- query @_ @SymbolId (toQuery $ qSymbolId `mappend` select_ []
+		["scopes as sc", "modules as srcm"]
+		[
+			"srcm.id == sc.module_id",
+			"sc.symbol_id == s.id",
+			"srcm.file == ?",
+			"s.name like ?"])
+		(fpath ^. path, likePattern sq)
+	return rs
 runCommand (FindUsages nm) = toValue $ do
-	dbval <- serverDatabase
-	syms <- liftIO $ hsdevLift $ findSymbol dbval nm
 	let
-		usages = do
-			m <- dbval ^.. sourcesSlice . modules
-			p <- m ^.. moduleSource . _Just
-			sym <- syms
-			let
-				symName = Name.qualName
-					(unpack $ sym ^. symbolId . symbolModule . moduleName)
-					(unpack $ sym ^. symbolId . symbolName)
-			usage' <- p ^.. P.names . P.usages symName
-			return $ symUsage (sym ^. briefSymbol) (m ^. moduleId) (usage' ^. P.pos)
-
-		symUsage sym mid pos = SymbolUsage {
-			_symbolUsed = sym,
-			_symbolUsedIn = mid,
-			_symbolUsedPosition = pos }
-	return usages
+		q = nameModule $ toName nm
+		ident = nameIdent $ toName nm
+	rs <- query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
+		["n.line", "n.column"]
+		["names as n"]
+		[
+			"m.name == n.resolved_module",
+			"s.name == n.resolved_name",
+			"mu.id == n.module_id",
+			"n.resolved_module == ? or ? is null",
+			"n.resolved_name == ?"])
+		(q, q, ident)
+	return rs
 runCommand (Complete input True fpath) = toValue $ do
-	dbval <- serverDatabase
-	liftIO $ hsdevLift $ wideCompletions dbval fpath input
+	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+		[
+			"projects_modules_scope as msc",
+			"projects as p",
+			"modules as srcm"]
+		[
+			"srcm.cabal == p.cabal",
+			"p.id == msc.project_id",
+			"msc.module_id == m.id",
+			"msrc.file == ?",
+			"s.name like ?"])
+		(fpath ^. path, input `T.append` "%", fpath ^. path, input `T.append` "%")
+	return rs
 runCommand (Complete input False fpath) = toValue $ do
-	dbval <- serverDatabase
-	liftIO $ hsdevLift $ completions dbval fpath input
+	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+		["completions as c", "modules as srcm"]
+		[
+			"c.module_id == srcm.id",
+			"c.symbol_id == s.id",
+			"srcm.file == ?",
+			"c.completion like ?"])
+		(fpath ^. path, input `T.append` "%")
+	return rs
 runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
 	liftIO $ hsdevLift $ Hayoo.hayoo hq (Just i)
 runCommand (CabalList packages') = toValue $ liftIO $ hsdevLift $ Cabal.cabalList $ map unpack packages'
-runCommand (UnresolvedSymbols fs) = toValue $ do
-	ms <- mapM refineSourceModule fs
-	let
-		unresolveds = do
-			m <- ms
-			p <- m ^.. moduleSource . _Just
-			usym <- p ^.. P.qnames . P.unresolveds
-			return $ symUsage (symByName $ Name.fromName $ void usym) (m ^. moduleId) (usym ^. P.pos)
-
-		symUsage sym mid pos = SymbolUsage {
-			_symbolUsed = sym,
-			_symbolUsedIn = mid,
-			_symbolUsedPosition = pos }
-
-		symByName nm = Symbol (SymbolId nm (ModuleId "" NoLocation)) Nothing Nothing (Function Nothing)
-	return unresolveds
+runCommand (UnresolvedSymbols fs) = toValue $ liftM concat $ forM fs $ \f -> do
+	rs <- query @_ @(Maybe String, String, Int, Int) "select n.qualifier, n.name, n.line, n.column from modules as m, names as n where (m.id == n.module_id) and (m.file == ?) and (n.resolve_error is not null);"
+		(Only $ f ^. path)
+	return $ map (\(m, nm, line, column) -> object [
+		"qualifier" .= m,
+		"name" .= nm,
+		"line" .= line,
+		"column" .= column]) rs
 runCommand (Lint fs) = toValue $ do
 	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
 runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $ do
@@ -437,6 +496,13 @@ targetFilter f = liftM (. view sourcedModule) $ case f of
 	TargetSourced -> return byFile
 	TargetStandalone -> return standalone
 
+likePattern :: SearchQuery -> Text
+likePattern (SearchQuery input stype) = case stype of
+	SearchExact -> input
+	SearchPrefix -> input `T.append` "%"
+	SearchInfix -> "%" `T.append` input `T.append` "%"
+	SearchSuffix -> "%" `T.append` input
+
 instance ToJSON Log.Message where
 	toJSON m = object [
 		"time" .= Log.messageTime m,
@@ -537,6 +603,5 @@ matchQuery (SearchQuery sq st) s = case st of
 	SearchPrefix -> sq `T.isPrefixOf` sn
 	SearchInfix -> sq `T.isInfixOf` sn
 	SearchSuffix -> sq `T.isSuffixOf` sn
-	SearchRegex -> unpack sn =~ unpack sq
 	where
 		sn = view sourcedName s
