@@ -27,6 +27,7 @@ import Text.Format
 
 import System.Directory.Paths
 
+import HsDev.Database.SQLite.Instances ()
 import HsDev.Database.SQLite.Schema
 import qualified HsDev.Display as Display
 import HsDev.PackageDb.Types

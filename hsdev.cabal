@@ -42,6 +42,7 @@ library
     HsDev.Database
     HsDev.Database.Async
     HsDev.Database.SQLite
+    HsDev.Database.SQLite.Instances
     HsDev.Database.SQLite.Schema
     HsDev.Database.Update
     HsDev.Database.Update.Types
