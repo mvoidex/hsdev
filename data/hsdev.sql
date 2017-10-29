@@ -85,7 +85,11 @@ where (m.package_name == pdbs.package_name) and (m.package_version == pdbs.packa
 union
 select p.id, m.id
 from projects as p, modules as m
-where (m.cabal == p.cabal);
+where (m.cabal == p.cabal)
+union
+select null, m.id
+from modules as m, package_dbs as ps
+where (m.package_name == ps.package_name) and (m.package_version == ps.package_version) and (ps.package_db in ('user', 'global'));
 
 create unique index build_infos_id_index on build_infos (id);
 

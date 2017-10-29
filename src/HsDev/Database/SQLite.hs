@@ -250,10 +250,10 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 			execute "insert into exports (module_id, symbol_id) values (?, ?);" (mid, sid)
 
 		insertScopeSymbol :: SessionMonad m => Int -> Symbol -> [Name] -> m ()
-		insertScopeSymbol mid sym names = scope "scope" $ do
+		insertScopeSymbol mid sym scopeNames = scope "scope" $ do
 			defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
 			sid <- insertLookupSymbol defMid sym
-			forM_ names $ \name -> execute "insert into scopes (module_id, qualifier, name, symbol_id) values (?, ?, ?, ?);" (
+			forM_ scopeNames $ \name -> execute "insert into scopes (module_id, qualifier, name, symbol_id) values (?, ?, ?, ?);" (
 				mid,
 				Name.nameModule name,
 				Name.nameIdent name,

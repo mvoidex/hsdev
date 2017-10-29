@@ -13,8 +13,9 @@ category:            Development
 build-type:          Simple
 cabal-version:       >=1.8
 extra-source-files:
-    tests/test-package/*.hs
-    tests/test-package/test-package.cabal
+  tests/test-package/*.hs
+  tests/test-package/test-package.cabal
+  data/hsdev.sql
 
 source-repository head
   type: git
@@ -44,6 +45,7 @@ library
     HsDev.Database.SQLite
     HsDev.Database.SQLite.Instances
     HsDev.Database.SQLite.Schema
+    HsDev.Database.SQLite.Schema.TH
     HsDev.Database.SQLite.Select
     HsDev.Database.Update
     HsDev.Database.Update.Types
