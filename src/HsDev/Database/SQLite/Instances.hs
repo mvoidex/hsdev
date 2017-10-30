@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.SQLite.Instances (
+	JSON(..)
 	) where
 
 import Control.Lens ((^.), (^?), _Just)
@@ -29,6 +30,18 @@ instance FromField Value where
 	fromField fld = case fieldData fld of
 		SQLText s -> either fail return . eitherDecode . L.fromStrict . T.encodeUtf8 $ s
 		SQLBlob s -> either fail return . eitherDecode . L.fromStrict $ s
+		_ -> fail "invalid json field type"
+
+data JSON a = JSON { getJSON :: a }
+	deriving (Eq, Ord, Read, Show)
+
+instance ToJSON a => ToField (JSON a) where
+	toField = SQLBlob . L.toStrict . encode . getJSON
+
+instance FromJSON a => FromField (JSON a) where
+	fromField fld = case fieldData fld of
+		SQLText s -> either fail (return . JSON) . eitherDecode . L.fromStrict . T.encodeUtf8 $ s
+		SQLBlob s -> either fail (return . JSON) . eitherDecode . L.fromStrict $ s
 		_ -> fail "invalid json field type"
 
 instance FromRow Position where
@@ -160,12 +173,20 @@ instance FromField Language where
 		SQLText txt -> parseDT "Language" (T.unpack txt)
 		_ -> fail "Can't parse language, invalid type"
 
+instance ToField PackageDb where
+	toField GlobalDb = toField ("global-db" :: String)
+	toField UserDb = toField ("user-db" :: String)
+	toField (PackageDb p) = toField ("package-db:" ++ T.unpack p)
+
 instance FromField PackageDb where
-	fromField fld = case fieldData fld of
-		SQLText "global" -> return GlobalDb
-		SQLText "user" -> return UserDb
-		SQLText txt -> return $ PackageDb txt
-		_ -> fail "Can't parse package-db, invalid type"
+	fromField fld = do
+		s <- fromField fld
+		case s of
+			"global-db" -> return GlobalDb
+			"user-db" -> return UserDb
+			_ -> case T.stripPrefix "package-db:" s of
+				Just p' -> return $ PackageDb p'
+				Nothing -> fail $ "Can't parse package-db, invalid string: " ++ T.unpack s
 
 instance FromRow SymbolUsage where
 	fromRow = SymbolUsage <$> fromRow <*> fromRow <*> fromRow

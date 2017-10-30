@@ -14,7 +14,9 @@ import Control.Monad (guard)
 import Control.Lens (makeLenses, each, (^.))
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
-import Data.List (tails, isSuffixOf)
+import Data.List (tails, isSuffixOf, stripPrefix)
+import qualified Data.Text as T
+import Data.String
 
 import System.Directory.Paths
 import HsDev.Util ((.::))
@@ -36,14 +38,15 @@ instance Show PackageDb where
 instance ToJSON PackageDb where
 	toJSON GlobalDb = "global-db"
 	toJSON UserDb = "user-db"
-	toJSON (PackageDb p) = object ["package-db" .= p]
+	toJSON (PackageDb p) = fromString $ "package-db:" ++ p ^. path
 
 instance FromJSON PackageDb where
 	parseJSON v = globalP v <|> userP v <|> dbP v where
 		globalP = withText "global-db" (\s -> guard (s == "global-db") >> return GlobalDb)
 		userP = withText "user-db" (\s -> guard (s == "user-db") >> return UserDb)
-		dbP = withObject "package-db" pathP where
-			pathP obj = PackageDb <$> obj .:: "package-db"
+		dbP = withText "package-db" $ \s -> case T.stripPrefix "package-db:" s of
+			Nothing -> fail ("Can't parse package-db: " ++ T.unpack s)
+			Just p' -> return $ PackageDb p'
 
 instance Paths PackageDb where
 	paths _ GlobalDb = pure GlobalDb

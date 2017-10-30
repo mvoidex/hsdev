@@ -100,31 +100,29 @@ runUpdate uopts act = Log.scope "update" $ do
 			(r, mlocs') <- listen act
 			db <- askSession sessionDatabase
 			wait db
-			dbval <- liftIO $ readAsync db
+			-- dbval <- liftIO $ readAsync db
+
+			dbs <- liftM S.unions $ forM mlocs' $ \mloc' -> do
+				mid <- SQLite.lookupModuleLocation mloc'
+				case mid of
+					Nothing -> return (S.empty :: S.Set PackageDb)
+					Just mid' -> liftM (S.fromList . map SQLite.fromOnly) $ SQLite.query (SQLite.toQuery $ SQLite.select_
+						["ps.package_db"]
+						["package_dbs as ps", "modules as m"]
+						["m.package_name == ps.package_name", "m.package_version == ps.package_version", "m.id == ?"]) (SQLite.Only mid')
+
+			-- If some sourced files depends on currently scanned package-dbs
+			-- We must resolve them and even rescan if there was errors scanning without
+			-- dependencies provided (lack of fixities can cause errors inspecting files)
+
+			-- sboxes = databaseSandboxes dbval
+			-- sboxOf :: Path -> Maybe Sandbox
+			-- sboxOf fpath = find (pathInSandbox fpath) sboxes
+			projsRows <- SQLite.query_ "select name, cabal, version, ifnull(package_db_stack, json('[]')) from projects;"
 			let
-				invertedIndex = M.map S.toList $ M.unionsWith S.union $ do
-					(pdb, pkgs) <- M.toList $ view databasePackageDbs dbval
-					pkg <- pkgs
-					mlocs <- dbval ^.. databasePackages . ix pkg
-					mloc <- mlocs
-					return $ M.singleton mloc (S.singleton pdb)
-				dbs = S.fromList $ concat $ mapMaybe (`M.lookup` invertedIndex) mlocs'
-				-- If some sourced files depends on currently scanned package-dbs
-				-- We must resolve them and even rescan if there was errors scanning without
-				-- dependencies provided (lack of fixities can cause errors inspecting files)
+				projs = [proj' | (proj' SQLite.:. (SQLite.Only (SQLite.JSON projPdbs))) <- projsRows,
+					not (S.null (S.fromList projPdbs `S.intersection` dbs))]
 
-				-- sboxes = databaseSandboxes dbval
-				-- sboxOf :: Path -> Maybe Sandbox
-				-- sboxOf fpath = find (pathInSandbox fpath) sboxes
-
-				projs = do
-					proj <- dbval ^.. databaseProjects . each
-					let
-						mpdbs = dbval ^? databaseProjectsInfos . at (Just proj) . _Just . _1
-						pdbs = maybe S.empty (S.fromList . packageDbs) mpdbs
-						-- projMods = S.fromList $ dbval ^.. projectSlice proj . modules . moduleId . moduleLocation
-					guard $ not $ S.null $ pdbs `S.intersection` dbs
-					return proj
 				stands = []
 				-- HOWTO?
 				-- stands = do
@@ -183,7 +181,7 @@ waiter act = do
 updater :: UpdateMonad m => Database -> m ()
 updater db' = do
 	db <- askSession sessionDatabase
-	update db $ return $!! db'
+	-- update db $ return $!! db'
 	tell $!! db' ^.. modules . moduleId . moduleLocation
 
 -- | Clear obsolete data from database
@@ -291,7 +289,7 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 				noProjectDeps = SQLite.buildQuery $ SQLite.select_
 					["m.id"]
 					["modules as m", "package_dbs as pdbs"]
-					["m.package_name == pdbs.package_name", "m.package_version == pdbs.package_version", "pdbs.package_db in ('user', 'global')"]
+					["m.package_name == pdbs.package_name", "m.package_version == pdbs.package_version", "pdbs.package_db in ('user-db', 'global-db')"]
 				projectDeps = SQLite.buildQuery $ SQLite.select_
 					["ps.module_id"]
 					["projects_modules_scope as ps", "projects as p"]

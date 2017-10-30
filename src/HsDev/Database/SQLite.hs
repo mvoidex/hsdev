@@ -15,7 +15,8 @@ module HsDev.Database.SQLite (
 
 	-- * Reexports
 	module Database.SQLite.Simple,
-	module HsDev.Database.SQLite.Select
+	module HsDev.Database.SQLite.Select,
+	module HsDev.Database.SQLite.Instances
 	) where
 
 import Control.Lens hiding ((.=))
@@ -38,7 +39,7 @@ import Text.Format
 
 import System.Directory.Paths
 
-import HsDev.Database.SQLite.Instances ()
+import HsDev.Database.SQLite.Instances
 import HsDev.Database.SQLite.Schema
 import HsDev.Database.SQLite.Select
 import qualified HsDev.Display as Display
@@ -95,13 +96,13 @@ updatePackageDb pdb pkgs = scope "update-package-db" $ do
 
 removePackageDb :: SessionMonad m => PackageDb -> m ()
 removePackageDb pdb = scope "remove-package-db" $
-	execute "delete from package_dbs where package_db == ?;" (Only $ showPackageDb pdb)
+	execute "delete from package_dbs where package_db == ?;" (Only pdb)
 
 insertPackageDb :: SessionMonad m => PackageDb -> [ModulePackage] -> m ()
 insertPackageDb pdb pkgs = scope "insert-package-db" $ forM_ pkgs $ \pkg -> do
 	execute
 		"insert into package_dbs (package_db, package_name, package_version) values (?, ?, ?);"
-		(showPackageDb pdb, pkg ^. packageName, pkg ^. packageVersion)
+		(pdb, pkg ^. packageName, pkg ^. packageVersion)
 
 updateProject :: SessionMonad m => Project -> Maybe PackageDbStack -> m ()
 updateProject proj pdbs = scope "update-project" $ do
@@ -131,7 +132,7 @@ insertProject proj pdbs = scope "insert-project" $ do
 		proj ^. projectName,
 		proj ^. projectCabal . path,
 		proj ^? projectDescription . _Just . projectVersion,
-		fmap (encode . map showPackageDb . packageDbs) pdbs)
+		fmap (encode . packageDbs) pdbs)
 	projId <- lastRow
 
 	forM_ (proj ^? projectDescription . _Just . projectLibrary . _Just) $ \lib -> do
@@ -419,11 +420,6 @@ loadProject cabal = scope "load-project" $ do
 		proj
 
 -- Util
-
-showPackageDb :: PackageDb -> String
-showPackageDb GlobalDb = "global"
-showPackageDb UserDb = "user"
-showPackageDb (PackageDb p) = p ^. path
 
 sqlFailure :: SessionMonad m => Text -> m a
 sqlFailure msg = do

@@ -293,7 +293,7 @@ runCommand (ResolveScopeModules sq fpath) = toValue $ do
 			[
 				"mu.package_name == ps.package_name",
 				"mu.package_version == ps.package_version",
-				"ps.package_db in ('user_db', 'global_db')",
+				"ps.package_db in ('user-db', 'global-db')",
 				"mu.name like ?"])
 			(Only $ likePattern sq)
 		[Only proj] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
