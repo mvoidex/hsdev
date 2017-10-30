@@ -37,7 +37,9 @@ import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Foldable (toList)
-import Data.List (intercalate)
+import Data.Function (on)
+import Data.List (intercalate, nubBy, sortBy)
+import Data.Ord
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
@@ -62,7 +64,8 @@ import qualified HsDev.Stack as S
 import HsDev.Symbols
 import HsDev.Symbols.Parsed (Parsed)
 import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
-import HsDev.Tools.Ghc.Types (inferTypes)
+import HsDev.Tools.Ghc.Types (inferTypes, fileTypes, typedType)
+import HsDev.Tools.Types
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
@@ -509,40 +512,48 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	scan (standaloneSlice . slice inFiles) standSrcs opts $ scanModules opts
 
 -- | Scan docs for inspected modules
-scanDocs :: UpdateMonad m => [InspectedModule] -> m ()
-scanDocs ims = do
-	-- w <- liftIO $ ghcWorker ["-haddock"] (return ())
-	-- w <- askSession sessionGhc
-	runTasks_ $ map scanDocs' ims
-	where
-		scanDocs' im
-			| not $ hasTag RefinedDocsTag im = runTask "scanning docs" (view inspectedKey im) $ Log.scope "docs" $ do
-				Log.sendLog Log.Trace $ "Scanning docs for {}" ~~  view inspectedKey im
-				im' <- (liftM (setTag RefinedDocsTag) $ S.scanModify doScan im)
-					<|> return im
-				Log.sendLog Log.Trace $ "Docs for {} updated: documented {} declarations" ~~
-					view inspectedKey im' ~~
-					length (im' ^.. inspectionResult . _Right . moduleSymbols . symbolDocs . _Just)
-				sendUpdateAction $ Log.scope "scan-docs" $ SQLite.updateModule im'
-				updater $ fromModule im'
-			| otherwise = Log.sendLog Log.Trace $ "Docs for {} already scanned" ~~ view inspectedKey im
-		doScan _ m = inSessionGhc $ do
+scanDocs :: UpdateMonad m => [Module] -> m ()
+scanDocs = runTasks_ . map scanDocs' where
+	scanDocs' m = runTask "scanning docs" (view (moduleId . moduleLocation) m) $ Log.scope "docs" $ do
+		mid <- SQLite.lookupModule (m ^. moduleId)
+		mid' <- maybe (hsdevError $ SQLiteError $ "module id not found") return mid
+		Log.sendLog Log.Trace $ "Scanning docs for {}" ~~ view (moduleId . moduleLocation) m
+		docsMap <- inSessionGhc $ do
 			opts' <- getModuleOpts [] m
 			haddockSession opts'
-			liftGhc $ inspectDocsGhc opts' m
+			liftGhc $ readDocs opts' (m ^?! moduleId . moduleLocation . moduleFile)
+		sendUpdateAction $ Log.scope "scan-docs" $ do
+			forM_ (maybe [] M.toList docsMap) $ \(nm, doc) -> do
+				SQLite.execute "update symbols set docs = ? where name == ? and module_id == ?;"
+					(doc, nm, mid')
+			SQLite.execute "update modules set tags = json_set(tags, '$.docs', 1) where id == ?;" (SQLite.Only mid')
 
-inferModTypes :: UpdateMonad m => [InspectedModule] -> m ()
+-- | Infer types for modules
+inferModTypes :: UpdateMonad m => [Module] -> m ()
 inferModTypes = runTasks_ . map inferModTypes' where
-	inferModTypes' im
-		| not $ hasTag InferredTypesTag im = runTask "inferring types" (view inspectedKey im) $ Log.scope "docs" $ do
-			Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view inspectedKey im
-			im' <- (liftM (setTag InferredTypesTag) $
-				S.scanModify (\opts m -> inSessionGhc (targetSession opts m >> inferTypes opts m Nothing)) im)
-				<|> return im
-			Log.sendLog Log.Trace $ "Types for {} inferred" ~~ view inspectedKey im
-			sendUpdateAction $ Log.scope "infer-types" $ SQLite.updateModule im'
-			updater $ fromModule im'
-		| otherwise = Log.sendLog Log.Trace $ "Types for {} already inferred" ~~ view inspectedKey im
+	inferModTypes' m = runTask "inferring types" (view (moduleId . moduleLocation) m) $ Log.scope "types" $ do
+		mid <- SQLite.lookupModule (m ^. moduleId)
+		mid' <- maybe (hsdevError $ SQLiteError $ "module id not found") return mid
+		Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view (moduleId . moduleLocation) m
+		types' <- inSessionGhc $ do
+			opts' <- getModuleOpts [] m
+			targetSession opts' m
+			fileTypes opts' m Nothing
+		let
+			sortedTypes' =
+				nubBy ((==) `on` (view (noteRegion . regionFrom))) $
+				sortBy (comparing $ view noteRegion) types'
+			typeMap = M.fromList [(t' ^. noteRegion . regionFrom, t' ^. note . typedType) | t' <- sortedTypes']
+
+		sendUpdateAction $ Log.scope "infer-types" $ do
+			points <- SQLite.query "select s.line, s.column from symbols as s where (s.module_id == ?) and (s.line is not null) and (s.column is not null);"
+				(SQLite.Only mid')
+			forM_ points $ \(l, c) -> case M.lookup (Position l c) typeMap of
+				Nothing -> return ()
+				Just t' -> SQLite.execute "update symbols set type = ? where (line == ?) and (column == ?) and (module_id == ?);"
+					(t', l, c, mid')
+			SQLite.execute "update modules set tags = json_set(tags, '$.types', 1) where id == ?;" (SQLite.Only mid')
+
 
 -- | Generic scan function. Removes obsolete modules and rescans changed modules.
 scan :: UpdateMonad m

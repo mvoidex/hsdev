@@ -3,7 +3,7 @@
 module HsDev.Inspect (
 	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded, preloadedImports, preload,
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
-	analyzeResolve, analyzePreloaded, inspectPreloaded, inspectDocs, inspectDocsGhc,
+	analyzeResolve, analyzePreloaded, inspectPreloaded, inspectDocs, readDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, sourceInspection, fileInspection, fileContentsInspection, installedInspection,
 	projectDirs, projectSources,
@@ -316,11 +316,16 @@ inspectDocs opts m = do
 		else liftM Just $ hdocs (view (moduleId . moduleLocation) m) opts
 	return $ maybe id addDocs docsMap m
 
+-- | Read docs for one module
+readDocs :: [String] -> Path -> Ghc (Maybe (Map String String))
+readDocs opts fpath = liftM (fmap (formatDocs . snd) . listToMaybe) $ hsdevLift $
+	readSourcesGhc opts [view path fpath]
+
 -- | Like @inspectDocs@, but in @Ghc@ monad
 inspectDocsGhc :: [String] -> Module -> Ghc Module
 inspectDocsGhc opts m = case view (moduleId . moduleLocation) m of
 	FileModule fpath _ -> do
-		docsMap <- liftM (fmap (formatDocs . snd) . listToMaybe) $ hsdevLift $ readSourcesGhc opts [view path fpath]
+		docsMap <- readDocs opts fpath
 		return $ maybe id addDocs docsMap m
 	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
 

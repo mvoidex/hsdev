@@ -16,6 +16,7 @@ import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Symbols.Location
+import HsDev.Symbols.Types
 
 class Display a where
 	display :: a -> String
@@ -37,6 +38,12 @@ instance Display ModuleLocation where
 	display (OtherLocation s) = view unpacked s
 	display NoLocation = "<no-location>"
 	displayType _ = "module"
+
+instance Display ModuleTag where
+	display InferredTypesTag = "types"
+	display RefinedDocsTag = "docs"
+	display OnlyHeaderTag = "header"
+	displayType _ = "module-tag"
 
 instance Display Project where
 	display = view (projectName . unpacked)

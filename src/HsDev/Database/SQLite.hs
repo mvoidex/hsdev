@@ -11,6 +11,7 @@ module HsDev.Database.SQLite (
 	lastRow,
 
 	loadModule, loadModules,
+	loadProject,
 
 	-- * Reexports
 	module Database.SQLite.Simple,
@@ -24,7 +25,9 @@ import Data.Aeson hiding (Error)
 import Data.Generics.Uniplate.Operations
 import Data.Maybe
 import Data.String
+import qualified Data.Set as S
 import Data.Text (Text)
+import qualified Data.Text as T
 import Database.SQLite.Simple hiding (query, query_, execute, execute_)
 import qualified Database.SQLite.Simple as SQL (query, query_, execute, execute_)
 import Distribution.Text (display)
@@ -44,7 +47,7 @@ import HsDev.PackageDb.Types
 import HsDev.Project.Types
 import HsDev.Symbols.Name
 import HsDev.Symbols.Parsed
-import HsDev.Symbols.Types
+import HsDev.Symbols.Types hiding (loadProject)
 import qualified HsDev.Symbols.Parsed as P
 import qualified HsDev.Symbols.Name as Name
 import HsDev.Server.Types
@@ -182,7 +185,7 @@ removeModule mid = scope "remove-module" $ do
 
 insertModule :: SessionMonad m => InspectedModule -> m ()
 insertModule im = scope "insert-module" $ do
-	execute "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tag, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+	execute "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
 		im ^? inspectedKey . moduleFile . path,
 		im ^? inspectedKey . moduleProject . _Just . projectCabal,
 		fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
@@ -193,10 +196,12 @@ insertModule im = scope "insert-module" $ do
 		msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
 		im ^? inspected . moduleDocs,
 		fmap encode $ im ^? inspected . moduleFixities,
-		encode $ im ^. inspectionTags,
+		encode $ asDict $ im ^. inspectionTags,
 		fmap show $ im ^? inspectionResult . _Left,
 		fmap (floor @_ @Int) $ im ^? inspection . inspectionAt,
 		fmap encode (im ^? inspection . inspectionOpts))
+		where
+			asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
 
 insertModuleSymbols :: SessionMonad m => InspectedModule -> m ()
 insertModuleSymbols im = scope "insert-module-symbols" $ do
@@ -355,12 +360,10 @@ lastRow = do
 	return i
 
 loadModule :: SessionMonad m => Int -> m Module
-loadModule mid = do
+loadModule mid = scope "load-module" $ do
 	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int)) (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString $ "mu.id == ?"])) (Only mid)
 	case ms of
-		[] -> do
-			sendLog Error $ "module with id {} not found" ~~ mid
-			hsdevError $ SQLiteError $ "module with id {} not found" ~~ mid
+		[] -> sqlFailure $ "module with id {} not found" ~~ mid
 		mods@((mid' :. (mdocs, mfixities, _)):_) -> do
 			when (length mods > 1) $ sendLog Warning $ "multiple modules with same id = {} found" ~~ mid
 			syms <- query @_ @Symbol (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid)
@@ -373,7 +376,7 @@ loadModule mid = do
 				_moduleSource = Nothing }
 
 loadModules :: (SessionMonad m, ToRow q) => String -> q -> m [Module]
-loadModules selectExpr args = do
+loadModules selectExpr args = scope "load-modules" $ do
 	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int)) (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString $ "mu.id in (" ++ selectExpr ++ ")"])) args
 	forM ms $ \(mid' :. (mdocs, mfixities, mid)) -> do
 		syms <- query @_ @Symbol (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid)
@@ -385,7 +388,44 @@ loadModules selectExpr args = do
 			_moduleScope = mempty,
 			_moduleSource = Nothing }
 
+loadProject :: SessionMonad m => Path -> m Project
+loadProject cabal = scope "load-project" $ do
+	projs <- query @_ @(Only Int :. Project) "select id, name, cabal, version from projects where cabal == ?;" (Only $ view path cabal)
+	(Only pid :. proj) <- case projs of
+		[] -> sqlFailure $ "project with cabal {} not found" ~~ view path cabal
+		_ -> do
+			when (length projs > 1) $ sendLog Warning $ "multiple projects with same cabal = {} found" ~~ view path cabal
+			return $ head projs
+
+	libs <- query (toQuery $ select_ ["lib.modules"] ["libraries as lib"] [] `mappend` qBuildInfo `mappend` where_ [
+		"lib.build_info_id == bi.id",
+		"lib.project_id == ?"])
+			(Only pid)
+
+	exes <- query (toQuery $ select_ ["exe.name", "exe.path"] ["executables as exe"] [] `mappend` qBuildInfo `mappend` where_ [
+		"exe.build_info_id == bi.id",
+		"exe.project_id == ?"])
+			(Only pid)
+
+	tests <- query (toQuery $ select_ ["tst.name", "tst.enabled", "tst.main"] ["tests as tst"] [] `mappend` qBuildInfo `mappend` where_ [
+		"tst.build_info_id == bi.id",
+		"tst.project_id == ?"])
+			(Only pid)
+
+	return $
+		set (projectDescription . _Just . projectLibrary) (listToMaybe libs) .
+		set (projectDescription . _Just . projectExecutables) exes .
+		set (projectDescription . _Just . projectTests) tests $
+		proj
+
+-- Util
+
 showPackageDb :: PackageDb -> String
 showPackageDb GlobalDb = "global"
 showPackageDb UserDb = "user"
 showPackageDb (PackageDb p) = p ^. path
+
+sqlFailure :: SessionMonad m => Text -> m a
+sqlFailure msg = do
+	sendLog Error msg
+	hsdevError $ SQLiteError $ T.unpack msg

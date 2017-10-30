@@ -116,7 +116,7 @@ workerSession ty opts = do
 	where
 		toKill (SessionConfig ty' opts') = or [
 			(ty == ty' && opts /= opts'),
-			(ty /= ty' && ty' `elem` [SessionTmp, SessionHaddock])]
+			(ty /= ty' && ty' `elem` [SessionTmp, SessionHaddock] && ty /= SessionTmp)]
 		initialize = case ty of
 			SessionGhci -> ghcRun opts (importModules preludeModules)
 			SessionGhc -> ghcRun opts (return ())

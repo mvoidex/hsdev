@@ -128,7 +128,7 @@ create table modules (
 	name text,
 	docs text,
 	fixities json, -- list of fixities
-	tag json, -- list of tags
+	tags json, -- dict of tags, value not used, tag is set if present
 	inspection_error text,
 	inspection_time integer,
 	inspection_opts json -- list of flags

@@ -37,7 +37,7 @@ import Text.Format
 import HsDev.Commands
 import HsDev.Error
 import qualified HsDev.Database.Async as DB
-import HsDev.Database.SQLite
+import HsDev.Database.SQLite as SQLite
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Sandbox hiding (findSandbox)
@@ -122,21 +122,29 @@ runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 		map (Update.scanDirectory ghcs') paths']
 runCommand (RefineDocs projs fs) = toValue $ do
 	projects <- traverse findProject projs
-	dbval <- serverDatabase
-	let
-		filters = anyOf $ concat [
-			map inProject projects,
-			map inFile fs]
-		mods = dbval ^.. databaseModules . each . filtered (maybe False filters . preview inspected)
+	mods <- withSqlTransaction $ do
+		projMods <- liftM concat $ forM projects $ \proj -> do
+			ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.docs') is null"
+				(Only $ proj ^. projectCabal)
+			p <- SQLite.loadProject (proj ^. projectCabal)
+			return $ set (each . moduleId . moduleLocation . moduleProject) (Just p) ms
+		fileMods <- liftM concat $ forM fs $ \f ->
+			loadModules "select id from modules where file == ? and json_extract(tags, '$.docs') is null"
+				(Only f)
+		return $ projMods ++ fileMods
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs mods]
 runCommand (InferTypes projs fs) = toValue $ do
 	projects <- traverse findProject projs
-	dbval <- serverDatabase
-	let
-		filters = anyOf $ concat [
-			map inProject projects,
-			map inFile fs]
-		mods = dbval ^.. databaseModules . each . filtered (maybe False filters . preview inspected)
+	mods <- withSqlTransaction $ do
+		projMods <- liftM concat $ forM projects $ \proj -> do
+			ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.types') is null"
+				(Only $ proj ^. projectCabal)
+			p <- SQLite.loadProject (proj ^. projectCabal)
+			return $ set (each . moduleId . moduleLocation . moduleProject) (Just p) ms
+		fileMods <- liftM concat $ forM fs $ \f ->
+			loadModules "select id from modules where file == ? and json_extract(tags, '$.types') is null"
+				(Only f)
+		return $ projMods ++ fileMods
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes mods]
 runCommand (Remove projs cabal sboxes files) = toValue $ do
 	db <- askSession sessionDatabase

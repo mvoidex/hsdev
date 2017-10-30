@@ -2,7 +2,7 @@
 
 module HsDev.Database.SQLite.Select (
 	Select(..), select_, where_, buildQuery, toQuery,
-	qSymbolId, qSymbol, qModuleId
+	qSymbolId, qSymbol, qModuleId, qBuildInfo
 	) where
 
 import Data.String
@@ -81,4 +81,17 @@ qModuleId = select_
 		"mu.package_version",
 		"mu.other_location"]
 	["modules as mu"]
+	[]
+
+qBuildInfo :: Select
+qBuildInfo = select_
+	[
+		"bi.depends",
+		"bi.language",
+		"bi.extensions",
+		"bi.ghc_options",
+		"bi.source_dirs",
+		"bi.other_modules"
+	]
+	["build_infos as bi"]
 	[]
