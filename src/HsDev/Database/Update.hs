@@ -457,14 +457,14 @@ scanProjectFile opts cabal = runTask "scanning" cabal $ do
 -- | Refine project info and update if necessary
 refineProjectInfo :: UpdateMonad m => Project -> m Project
 refineProjectInfo proj = do
-	dbval <- serverDatabase
-	case refineProject dbval proj of
-		Nothing -> runTask "scanning" (proj ^. projectCabal) $ do
+	[(SQLite.Only exist)] <- SQLite.query "select count(*) > 1 from projects where cabal == ?;" (SQLite.Only (proj ^. projectCabal))
+	if exist
+		then SQLite.loadProject (proj ^. projectCabal)
+		else runTask "scanning" (proj ^. projectCabal) $ do
 			proj' <- liftIO $ loadProject proj
 			sendUpdateAction $ Log.scope "refine-project-info" $ SQLite.updateProject proj' Nothing
 			updater $ fromProject proj'
 			return proj'
-		Just proj' -> return proj'
 
 -- | Get project info for module
 locateProjectInfo :: UpdateMonad m => Path -> m (Maybe Project)
