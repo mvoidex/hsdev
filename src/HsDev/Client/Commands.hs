@@ -148,24 +148,30 @@ runCommand (InferTypes projs fs) = toValue $ do
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes mods]
 runCommand (Remove projs cabal sboxes files) = toValue $ do
 	db <- askSession sessionDatabase
-	dbval <- serverDatabase
 	w <- askSession sessionWatcher
 	projects <- traverse findProject projs
 	sboxes' <- getSandboxes sboxes
 	forM_ projects $ \proj -> do
-		DB.clear db (return $ dbval ^. projectSlice proj)
+		withSqlTransaction $ do
+			ms <- liftM (map fromOnly) $ query "select id from modules where cabal == ?;" (Only $ proj ^. projectCabal)
+			SQLite.removeProject proj
+			mapM_ SQLite.removeModule ms
 		liftIO $ unwatchProject w proj
-	dbPDbs <- inSessionGhc $ mapM restorePackageDbStack $ M.keys $ view databasePackageDbs dbval
+
+	allPdbs <- liftM (map fromOnly) $ query_ @(Only PackageDb) "select package_db from package_dbs;"
+	dbPDbs <- inSessionGhc $ mapM restorePackageDbStack allPdbs
 	flip State.evalStateT dbPDbs $ do
 		when cabal $ removePackageDbStack userDb
 		forM_ sboxes' $ \sbox -> do
 			pdbs <- lift $ inSessionGhc $ sandboxPackageDbStack sbox
 			removePackageDbStack pdbs
+
 	forM_ files $ \file -> do
-		DB.clear db (return $ dbval ^. slice (inFile file))
-		let
-			mloc = dbval ^? databaseModules . atFile file . inspected . moduleId . moduleLocation
-		maybe (return ()) (liftIO . unwatchModule w) mloc
+		withSqlTransaction $ do
+			ms <- query @_ @(ModuleId :. Only Int) (toQuery $ qModuleId `mappend` select_ ["mu.id"] [] ["mu.file == ?"]) (Only file)
+			forM_ ms $ \(m :. Only i) -> do
+				SQLite.removeModule i
+				liftIO . unwatchModule w $ (m ^. moduleLocation)
 	where
 		-- We can safely remove package-db from db iff doesn't used by some of other package-dbs
 		-- For example, we can't remove global-db if there are any other package-dbs, because all of them uses global-db
@@ -176,12 +182,15 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 		-- Remove top of package-db stack if possible
 		removePackageDb' pdbs = do
 			db <- lift $ askSession sessionDatabase
-			dbval <- lift serverDatabase
 			w <- lift $ askSession sessionWatcher
 			can <- canRemove pdbs
 			when can $ do
 				State.modify (delete pdbs)
-				DB.clear db (return $ dbval ^. packageDbSlice (topPackageDb pdbs))
+				withSqlTransaction $ do
+					ms <- liftM (map fromOnly) $ query_
+						"select m.id from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version;"
+					removePackageDb (topPackageDb pdbs)
+					mapM_ SQLite.removeModule ms
 				liftIO $ unwatchPackageDb w $ topPackageDb pdbs
 		-- Remove package-db stack when possible
 		removePackageDbStack = mapM_ removePackageDb' . packageDbStacks
@@ -535,17 +544,28 @@ findSandbox fpath = do
 refineSourceFile :: CommandMonad m => Path -> m Path
 refineSourceFile fpath = do
 	fpath' <- findPath fpath
-	db' <- serverDatabase
-	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return $ do
-		m' <- db' ^? databaseModules . atFile fpath' . inspected
-		preview (moduleId . moduleLocation . moduleFile) m'
+	fs <- liftM (map fromOnly) $ query "select file from modules where file == ?;" (Only fpath')
+	case fs of
+		[] -> hsdevError (NotInspected $ FileModule fpath' Nothing)
+		(f:_) -> do
+			when (length fs > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ fpath'
+			return f
 
 -- | Get module by source
 refineSourceModule :: CommandMonad m => Path -> m Module
 refineSourceModule fpath = do
 	fpath' <- findPath fpath
-	db' <- serverDatabase
-	maybe (hsdevError (NotInspected $ FileModule fpath' Nothing)) return (db' ^? databaseModules . atFile fpath' . inspected)
+	ids <- query "select id, cabal from modules where file == ?;" (Only fpath')
+	case ids of
+		[] -> hsdevError (NotInspected $ FileModule fpath' Nothing)
+		((i, mcabal):_) -> do
+			when (length ids > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ fpath'
+			m <- SQLite.loadModule i
+			case mcabal of
+				Nothing -> return m
+				Just cabal' -> do
+					proj' <- SQLite.loadProject cabal'
+					return $ set (moduleId . moduleLocation . moduleProject) (Just proj') m
 
 -- | Set session by source
 setFileSourceSession :: CommandMonad m => [String] -> Path -> m Module
@@ -557,10 +577,9 @@ setFileSourceSession opts fpath = do
 -- | Ensure package exists
 refinePackage :: CommandMonad m => Text -> m Text
 refinePackage pkg = do
-	db' <- serverDatabase
-	if pkg `elem` ordNub (db' ^.. packages . packageName)
-		then return pkg
-		else hsdevError (PackageNotFound pkg)
+	[(Only exists)] <- query "select count(*) > 0 from package_dbs where package_name == ?;" (Only pkg)
+	when (not exists) $ hsdevError (PackageNotFound pkg)
+	return pkg
 
 -- | Get list of enumerated sandboxes
 getSandboxes :: CommandMonad m => [Path] -> m [Sandbox]
@@ -569,13 +588,11 @@ getSandboxes = traverse (findPath >=> findSandbox)
 -- | Find project by name or path
 findProject :: CommandMonad m => Text -> m Project
 findProject proj = do
-	db' <- serverDatabase
 	proj' <- liftM addCabal $ findPath proj
-	let
-		resultProj =
-			refineProject db' (project $ view path proj') <|>
-			find ((== proj) . view projectName) (M.elems $ view databaseProjects db')
-	maybe (hsdevError $ ProjectNotFound proj) return resultProj
+	ps <- liftM (map fromOnly) $ query "select cabal from projects where (cabal == ?) or (name == ?);" (view path proj', proj)
+	case ps of
+		[] -> hsdevError $ ProjectNotFound proj
+		_ -> SQLite.loadProject (head ps)
 	where
 		addCabal p
 			| takeExtension (view path p) == ".cabal" = p
