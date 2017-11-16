@@ -186,32 +186,32 @@ removeModule mid = scope "remove-module" $ do
 
 insertModule :: SessionMonad m => InspectedModule -> m ()
 insertModule im = scope "insert-module" $ do
-	execute "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+	execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
 		im ^? inspectedKey . moduleFile . path,
 		im ^? inspectedKey . moduleProject . _Just . projectCabal,
 		fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
 		im ^? inspectedKey . modulePackage . _Just . packageName,
 		im ^? inspectedKey . modulePackage . _Just . packageVersion,
+		im ^? inspectedKey . installedModuleName,
 		im ^? inspectedKey . otherLocationName)
 		:. (
 		msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
 		im ^? inspected . moduleDocs,
 		fmap encode $ im ^? inspected . moduleFixities,
 		encode $ asDict $ im ^. inspectionTags,
-		fmap show $ im ^? inspectionResult . _Left,
-		fmap (floor @_ @Int) $ im ^? inspection . inspectionAt,
-		fmap encode (im ^? inspection . inspectionOpts))
+		fmap show $ im ^? inspectionResult . _Left)
+		:.
+		fromMaybe InspectionNone (im ^? inspection)
 		where
 			asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
 
 insertModuleSymbols :: SessionMonad m => InspectedModule -> m ()
 insertModuleSymbols im = scope "insert-module-symbols" $ do
-	[Only mid] <- query "select id from modules where file is ? and package_name is ? and package_version is ? and other_location is ? and (name is ? or ? is null);" (
+	[Only mid] <- query "select id from modules where file is ? and package_name is ? and package_version is ? and other_location is ? and installed_name is ?;" (
 		im ^? inspectedKey . moduleFile . path,
 		im ^? inspectedKey . modulePackage . _Just . packageName,
 		im ^? inspectedKey . modulePackage . _Just . packageVersion,
 		im ^? inspectedKey . otherLocationName,
-		im ^? inspectedKey . installedModuleName,
 		im ^? inspectedKey . installedModuleName)
 	insertModuleImports mid
 	forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
@@ -286,23 +286,23 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 
 lookupModuleLocation :: SessionMonad m => ModuleLocation -> m (Maybe Int)
 lookupModuleLocation m = do
-	mids <- query "select id from modules where ((? is null) or (name == ?)) and file is ? and package_name is ? and package_version is ? and other_location is ?;" (
-		m ^? installedModuleName,
-		m ^? installedModuleName,
+	mids <- query "select id from modules where file is ? and package_name is ? and package_version is ? and installed_name is ? and other_location is ?;" (
 		m ^? moduleFile . path,
 		m ^? modulePackage . _Just . packageName,
 		m ^? modulePackage . _Just . packageVersion,
+		m ^? installedModuleName,
 		m ^? otherLocationName)
 	when (length mids > 1) $ sendLog Warning  $ "different modules with location: {}" ~~ Display.display m
 	return $ listToMaybe [mid | Only mid <- mids]
 
 lookupModule :: SessionMonad m => ModuleId -> m (Maybe Int)
 lookupModule m = do
-	mids <- query "select id from modules where name is ? and file is ? and package_name is ? and package_version is ? and other_location is ?;" (
+	mids <- query "select id from modules where name is ? and file is ? and package_name is ? and package_version is ? and installed_name is ? and other_location is ?;" (
 		m ^. moduleName,
 		m ^? moduleLocation . moduleFile . path,
 		m ^? moduleLocation . modulePackage . _Just . packageName,
 		m ^? moduleLocation . modulePackage . _Just . packageVersion,
+		m ^? moduleLocation . installedModuleName,
 		m ^? moduleLocation . otherLocationName)
 	when (length mids > 1) $ sendLog Warning  $ "different modules with same name and location: {}" ~~ (m ^. moduleName)
 	return $ listToMaybe [mid | Only mid <- mids]
@@ -313,12 +313,13 @@ insertLookupModule m = do
 	case modId of
 		Just mid -> return mid
 		Nothing -> do
-			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, other_location, name) values (?, ?, ?, ?, ?, ?, ?);" (
+			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name) values (?, ?, ?, ?, ?, ?, ?, ?);" (
 				m ^? moduleLocation . moduleFile . path,
 				m ^? moduleLocation . moduleProject . _Just . projectCabal,
 				fmap (encode . map (view path)) (m ^? moduleLocation . moduleInstallDirs),
 				m ^? moduleLocation . modulePackage . _Just . packageName,
 				m ^? moduleLocation . modulePackage . _Just . packageVersion,
+				m ^? moduleLocation . installedModuleName,
 				m ^? moduleLocation . otherLocationName,
 				m ^. moduleName)
 			lastRow

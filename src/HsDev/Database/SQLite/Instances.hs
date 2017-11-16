@@ -56,32 +56,36 @@ instance FromRow ModulePackage where
 instance ToRow ModulePackage where
 	toRow (ModulePackage name ver) = [toField name, toField ver]
 
-instance FromRow ModuleId where
+instance FromRow ModuleLocation where
 	fromRow = do
-		name <- field
 		file <- field
 		cabal <- field
 		dirs <- field
 		pname <- field
 		pver <- field
+		iname <- field
 		other <- field
 
-		mloc <- maybe (fail $ "Can't parse module location: {}" ~~ show (name, file, cabal, dirs, pname, pver, other)) return $ msum [
+		maybe (fail $ "Can't parse module location: {}" ~~ show (file, cabal, dirs, pname, pver, iname, other)) return $ msum [
 			FileModule <$> file <*> pure (project <$> cabal),
-			InstalledModule <$> (maybe (pure []) fromJSON' dirs) <*> pure (ModulePackage <$> pname <*> pver) <*> pure name,
+			InstalledModule <$> (maybe (pure []) fromJSON' dirs) <*> pure (ModulePackage <$> pname <*> pver) <*> iname,
 			OtherLocation <$> other]
 
-		return $ ModuleId name mloc
+instance ToRow ModuleLocation where
+	toRow mloc = [
+		toField $ mloc ^? moduleFile,
+		toField $ mloc ^? moduleProject . _Just . projectCabal,
+		toField $ fmap toJSON $ mloc ^? moduleInstallDirs,
+		toField $ mloc ^? modulePackage . _Just . packageName,
+		toField $ mloc ^? modulePackage . _Just . packageVersion,
+		toField $ mloc ^? installedModuleName,
+		toField $ mloc ^? otherLocationName]
+
+instance FromRow ModuleId where
+	fromRow = ModuleId <$> field <*> fromRow
 
 instance ToRow ModuleId where
-	toRow mid = [
-		toField $ mid ^. moduleName,
-		toField $ mid ^? moduleLocation . moduleFile,
-		toField $ mid ^? moduleLocation . moduleProject . _Just . projectCabal,
-		toField $ fmap toJSON $ mid ^? moduleLocation . moduleInstallDirs,
-		toField $ mid ^? moduleLocation . modulePackage . _Just . packageName,
-		toField $ mid ^? moduleLocation . modulePackage . _Just . packageVersion,
-		toField $ mid ^? moduleLocation . otherLocationName]
+	toRow mid = toField (mid ^. moduleName) : toRow (mid ^. moduleLocation)
 
 instance FromRow SymbolId where
 	fromRow = SymbolId <$> field <*> fromRow

@@ -2,7 +2,7 @@
 
 module HsDev.Database.SQLite.Select (
 	Select(..), select_, where_, buildQuery, toQuery,
-	qSymbolId, qSymbol, qModuleId, qBuildInfo
+	qSymbolId, qSymbol, qModuleLocation, qModuleId, qBuildInfo
 	) where
 
 import Data.String
@@ -50,6 +50,7 @@ qSymbolId = select_
 		"m.install_dirs",
 		"m.package_name",
 		"m.package_version",
+		"m.installed_name",
 		"m.other_location"]
 	["modules as m", "symbols as s"]
 	["m.id == s.module_id"]
@@ -70,6 +71,19 @@ qSymbol = qSymbolId `mappend` select_ cols [] [] where
 		"s.pat_type",
 		"s.pat_constructor"]
 
+qModuleLocation :: Select
+qModuleLocation = select_
+	[
+		"ml.file",
+		"ml.cabal",
+		"ml.install_dirs",
+		"ml.package_name",
+		"ml.package_version",
+		"ml.installed_name",
+		"ml.other_location"]
+	["modules as ml"]
+	[]
+
 qModuleId :: Select
 qModuleId = select_
 	[
@@ -79,6 +93,7 @@ qModuleId = select_
 		"mu.install_dirs",
 		"mu.package_name",
 		"mu.package_version",
+		"mu.installed_name",
 		"mu.other_location"]
 	["modules as mu"]
 	[]

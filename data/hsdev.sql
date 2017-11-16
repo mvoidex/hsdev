@@ -123,6 +123,7 @@ create table modules (
 	install_dirs json, -- list of paths
 	package_name text,
 	package_version text,
+	installed_name text, -- if not null, should be equal to name
 	other_location text,
 
 	name text,
