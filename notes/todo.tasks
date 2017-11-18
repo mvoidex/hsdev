@@ -6,3 +6,4 @@
  ☐ use `like` in sql queries correctly: escape '%'
 
  ☐ where does modules with no location comes from?
+ ☐ write command to drop all ghc's
