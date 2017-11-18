@@ -4,3 +4,5 @@
      remove old functions and complete drop usage of old db
    ☐ replace it with mapping from source to `Parsed` module @high
  ☐ use `like` in sql queries correctly: escape '%'
+
+ ☐ where does modules with no location comes from?

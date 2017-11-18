@@ -69,7 +69,8 @@ instance FromRow ModuleLocation where
 		maybe (fail $ "Can't parse module location: {}" ~~ show (file, cabal, dirs, pname, pver, iname, other)) return $ msum [
 			FileModule <$> file <*> pure (project <$> cabal),
 			InstalledModule <$> (maybe (pure []) fromJSON' dirs) <*> pure (ModulePackage <$> pname <*> pver) <*> iname,
-			OtherLocation <$> other]
+			OtherLocation <$> other,
+			pure NoLocation]
 
 instance ToRow ModuleLocation where
 	toRow mloc = [
