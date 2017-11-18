@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, MultiParamTypeClasses, RankNTypes #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, MultiParamTypeClasses, RankNTypes, TypeOperators #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.Update (
@@ -44,6 +44,7 @@ import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
 import Data.Text (Text)
+import qualified Data.Text as T
 import qualified Language.Haskell.Exts as H
 import qualified Language.Haskell.Names as N
 import System.FilePath
@@ -183,13 +184,6 @@ updater db' = do
 	db <- askSession sessionDatabase
 	-- update db $ return $!! db'
 	tell $!! db' ^.. modules . moduleId . moduleLocation
-
--- | Clear obsolete data from database
-cleaner :: UpdateMonad m => m Database -> m ()
-cleaner act = do
-	db <- askSession sessionDatabase
-	db' <- act
-	clear db $ return $!! db'
 
 -- | Run one task
 runTask :: (Display t, UpdateMonad m, NFData a) => String -> t -> m a -> m a
@@ -389,7 +383,9 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 		(filter (`S.member` packageDbMods)) $
 		(inSessionGhc $ listModules opts pdbs packages')
 	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
-	scan (packageDbSlice (topPackageDb pdbs)) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+	let
+		packageDbMods' = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only (topPackageDb pdbs))
+	scan packageDbMods' ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		docs <- inSessionGhc $ hdocsCabal pdbs opts
 		Log.sendLog Log.Trace "docs scanned"
@@ -415,7 +411,9 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 		(filter (`S.member` packageDbMods)) $
 		(inSessionGhc $ listModules opts pdbs packages')
 	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
-	scan (packageDbStackSlice pdbs) ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+	let
+		packageDbStackMods = liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only pdb)
+	scan packageDbStackMods ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 
@@ -491,23 +489,20 @@ scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan (standaloneSlice . slice inDir) standSrcs opts $ scanModules opts
-	where
-		inDir = maybe False (dir `isParent`) . preview (sourcedModule . moduleLocation . moduleFile)
+	let
+		standaloneMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.cabal is null and m.file is not null and m.file like ?;" (SQLite.Only $ dir `T.append` "%")
+	scan standaloneMods standSrcs opts $ scanModules opts
 
 scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()
 scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	projs <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select cabal from projects;"
 	pdbs <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select package_db from package_dbs;"
-	files <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select m.file from modules as m where m.file is not null and m.cabal is null;"
 	let
-		srcs = standSrcs ^.. each . _1 . moduleFile
-		inSrcs src = src `elem` srcs && src `notElem` files
-		inFiles = maybe False inSrcs . preview (sourcedModule . moduleLocation . moduleFile)
+		filesMods = SQLite.query_ "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal is null;"
 	runTasks_ [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan (standaloneSlice . slice inFiles) standSrcs opts $ scanModules opts
+	scan filesMods standSrcs opts $ scanModules opts
 
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [Module] -> m ()
@@ -552,24 +547,23 @@ inferModTypes = runTasks_ . map inferModTypes' where
 					(t', l, c, mid')
 			SQLite.execute "update modules set tags = json_set(tags, '$.types', 1) where id == ?;" (SQLite.Only mid')
 
-
--- | Generic scan function. Removes obsolete modules and rescans changed modules.
+-- | Generic scan function. Removed obsolete modules and calls callback on changed modules.
 scan :: UpdateMonad m
-	=> Slice
-	-- ^ Get data from database
+	=> m [(SQLite.Only Int) SQLite.:. ModuleLocation SQLite.:. Inspection]
+	-- ^ Get affected modules, obsolete will be removed, changed will be updated
 	-> [S.ModuleToScan]
-	-- ^ Actual modules. Other modules will be removed from database
+	-- ^ Actual modules, other will be removed
 	-> [String]
 	-- ^ Extra scan options
 	-> ([S.ModuleToScan] -> m ())
-	-- ^ Function to update changed modules
+	-- ^ Update function
 	-> m ()
 scan part' mlocs opts act = Log.scope "scan" $ do
-	dbval <- liftM (view part') serverDatabase
+	mlocs' <- liftM (M.fromList . map (\((SQLite.Only mid) SQLite.:. (m SQLite.:. i)) -> (m, (mid, i)))) part'
 	let
-		obsolete = dbval ^. slice (\m -> view moduleLocation m `notElem` (mlocs ^.. each . _1))
-	changed <- liftIO $ S.changedModules dbval opts mlocs
-	cleaner $ return obsolete
+		obsolete = M.withoutKeys mlocs' (S.fromList $ map (^. _1) mlocs)
+	changed <- liftIO $ S.changedModules (M.map snd mlocs') opts mlocs
+	sendUpdateAction $ Log.scope "scan/remove-obsolete" $ forM_ (M.elems obsolete) $ SQLite.removeModule . fst
 	act changed
 
 processEvent :: ([(Watched, Event)] -> IO ()) -> MVar (A.Async ()) -> MVar [(Watched, Event)] -> Watched -> Event -> ClientM IO ()

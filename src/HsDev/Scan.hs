@@ -8,7 +8,8 @@ module HsDev.Scan (
 
 	-- * Scan
 	scanProjectFile,
-	scanModify, upToDate, changedModule, changedModules,
+	scanModify,
+	upToDate, changedModules,
 
 	-- * Reexportss
 	module HsDev.Database,
@@ -21,6 +22,8 @@ import Control.Lens hiding ((%=))
 import Control.Monad.Except
 import Data.Async
 import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.List (intercalate)
 import Data.Text (Text)
 import Data.Text.Lens (unpacked)
@@ -195,19 +198,16 @@ scanModify f im = traverse f' im where
 	f' m = f (toListOf (inspection . inspectionOpts . each . unpacked) im) m
 
 -- | Is inspected module up to date?
-upToDate :: [String] -> InspectedModule -> IO Bool
-upToDate opts im = case view inspectedKey im of
-	FileModule f _ -> liftM (== view inspection im) $ fileInspection f opts
-	InstalledModule _ _ _ -> return $ view inspection im == InspectionAt 0 (map fromString opts)
-	_ -> return False
-
--- | Is module new or recently changed
-changedModule :: Database -> [String] -> ModuleLocation -> IO Bool
-changedModule db opts m = maybe (return True) (liftM not . liftIO . upToDate opts) m' where
-	m' = db ^? databaseModules . ix m
+upToDate :: ModuleLocation -> [String] -> Inspection -> IO Bool
+upToDate mloc opts insp = do
+	insp' <- moduleInspection mloc opts
+	return $ fresh insp insp'
 
 -- | Returns new (to scan) and changed (to rescan) modules
-changedModules :: Database -> [String] -> [ModuleToScan] -> IO [ModuleToScan]
-changedModules db opts = filterM $ \m -> if isJust (m ^. _3)
+changedModules :: Map ModuleLocation Inspection -> [String] -> [ModuleToScan] -> IO [ModuleToScan]
+changedModules inspMap opts = filterM $ \m -> if isJust (m ^. _3)
 	then return True
-	else changedModule db (opts ++ (m ^. _2)) (m ^. _1)
+	else maybe
+		(return True)
+		(upToDate (m ^. _1) (opts ++ (m ^. _2)))
+		(M.lookup (m ^. _1) inspMap)

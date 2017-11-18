@@ -1,0 +1,6 @@
+ ☐ remove using `Database` @high
+   ☐ removed from `Update` module @high
+     partially done - replaced scan function and functions in `Scan` module
+     remove old functions and complete drop usage of old db
+   ☐ replace it with mapping from source to `Parsed` module @high
+ ☐ use `like` in sql queries correctly: escape '%'
