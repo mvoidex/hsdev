@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances, TypeOperators, TypeApplications, OverloadedStrings #-}
 
 module HsDev.Scan (
 	-- * Enumerate functions
@@ -21,7 +21,7 @@ import Control.DeepSeq
 import Control.Lens hiding ((%=))
 import Control.Monad.Except
 import Data.Async
-import Data.Maybe (catMaybes, fromMaybe, isJust)
+import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.List (intercalate)
@@ -34,6 +34,8 @@ import System.Directory
 import Text.Format
 
 import HsDev.Error
+import qualified HsDev.Database.SQLite as SQLite
+import HsDev.Database.SQLite.Select
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.Server.Types (FileSource(..), Session(..), askSession, CommandMonad(..), inSessionGhc)
 import HsDev.Sandbox
@@ -126,11 +128,11 @@ instance EnumContents FileSource where
 -- | Enum rescannable (i.e. already scanned) file
 enumRescan :: CommandMonad m => FilePath -> m ScanContents
 enumRescan fpath = do
-	dbval <- askSession sessionDatabase >>= liftIO . readAsync
+	ms <- SQLite.query @_ @(ModuleLocation SQLite.:. Inspection)
+		(toQuery $ qModuleLocation `mappend` select_ ["ml.inspection_time", "ml.inspection_opts"] [] [] `mappend` where_ ["ml.file == ?"]) (SQLite.Only fpath)
 	return $ fromMaybe mempty $ do
-		m <- dbval ^? databaseModules . atFile (fromFilePath fpath)
-		loc <- m ^? inspected . moduleId . moduleLocation
-		return $ ScanContents [(loc, m ^.. inspection . inspectionOpts . each . unpacked, Nothing)] [] []
+		(mloc SQLite.:. insp) <- listToMaybe ms
+		return $ ScanContents [(mloc, insp ^.. inspectionOpts . each . unpacked, Nothing)] [] []
 
 -- | Enum file dependent
 enumDependent :: CommandMonad m => FilePath -> m ScanContents
