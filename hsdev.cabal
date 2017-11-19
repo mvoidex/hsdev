@@ -38,7 +38,6 @@ library
     Data.LookupTable
     HsDev
     HsDev.Client.Commands
-    HsDev.Commands
     HsDev.Database
     HsDev.Database.Async
     HsDev.Database.SQLite

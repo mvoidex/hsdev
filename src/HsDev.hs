@@ -6,7 +6,6 @@ module HsDev (
 	module HsDev.Server.Base,
 	module HsDev.Server.Commands,
 	module HsDev.Client.Commands,
-	module HsDev.Commands,
 	module HsDev.Database,
 	module HsDev.Inspect,
 	module HsDev.Project,
@@ -24,7 +23,6 @@ import HsDev.Error
 import HsDev.Server.Base
 import HsDev.Server.Commands
 import HsDev.Client.Commands
-import HsDev.Commands
 import HsDev.Database
 import HsDev.Inspect
 import HsDev.Project
