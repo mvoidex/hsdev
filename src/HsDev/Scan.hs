@@ -20,8 +20,7 @@ module HsDev.Scan (
 import Control.DeepSeq
 import Control.Lens hiding ((%=))
 import Control.Monad.Except
-import Data.Async
-import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
+import Data.Maybe (catMaybes, isJust, maybeToList)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.List (intercalate)
@@ -32,12 +31,13 @@ import Data.String (IsString, fromString)
 import qualified Data.Set as S
 import System.Directory
 import Text.Format
+import qualified System.Log.Simple as Log
 
 import HsDev.Error
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Database.SQLite.Select
 import HsDev.Scan.Browse (browsePackages)
-import HsDev.Server.Types (FileSource(..), Session(..), askSession, CommandMonad(..), inSessionGhc)
+import HsDev.Server.Types (FileSource(..), CommandMonad(..), inSessionGhc, serverDatabase)
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
@@ -127,23 +127,43 @@ instance EnumContents FileSource where
 
 -- | Enum rescannable (i.e. already scanned) file
 enumRescan :: CommandMonad m => FilePath -> m ScanContents
-enumRescan fpath = do
+enumRescan fpath = Log.scope "enum-rescan" $ do
 	ms <- SQLite.query @_ @(ModuleLocation SQLite.:. Inspection)
 		(toQuery $ qModuleLocation `mappend` select_ ["ml.inspection_time", "ml.inspection_opts"] [] [] `mappend` where_ ["ml.file == ?"]) (SQLite.Only fpath)
-	return $ fromMaybe mempty $ do
-		(mloc SQLite.:. insp) <- listToMaybe ms
-		return $ ScanContents [(mloc, insp ^.. inspectionOpts . each . unpacked, Nothing)] [] []
+	case ms of
+		[] -> do
+			Log.sendLog Log.Warning $ "file {} not found" ~~ fpath
+			return mempty
+		((mloc SQLite.:. insp):_) -> do
+			when (length ms > 1) $ Log.sendLog Log.Warning $ "several modules with file == {} found, taking first one" ~~ fpath
+			return $ ScanContents [(mloc, insp ^.. inspectionOpts . each . unpacked, Nothing)] [] []
 
 -- | Enum file dependent
 enumDependent :: CommandMonad m => FilePath -> m ScanContents
-enumDependent fpath = do
-	dbval <- askSession sessionDatabase >>= liftIO . readAsync
-	let
-		mproj = dbval ^? databaseModules . atFile (fromFilePath fpath) . inspected . moduleId . moduleLocation . moduleProject . _Just
-		dbslice = dbval ^. maybe standaloneSlice projectSlice mproj
-		rdeps = sourceRDeps dbslice
-		dependent = rdeps ^. ix (fromFilePath fpath)
-	liftM mconcat $ mapM (enumRescan . view path) dependent
+enumDependent fpath = Log.scope "enum-dependent" $ do
+	ms <- SQLite.query @_ @ModuleId
+		(toQuery $ qModuleId `mappend` where_ ["mu.file == ?"]) (SQLite.Only fpath)
+	case ms of
+		[] -> do
+			Log.sendLog Log.Warning $ "file {} not found" ~~ fpath
+			return mempty
+		(mid:_) -> do
+			when (length ms > 1) $ Log.sendLog Log.Warning $ "several modules with file == {} found, taking first one" ~~ fpath
+			let
+				mcabal = mid ^? moduleLocation . moduleProject . _Just . projectCabal
+			mproj <- traverse SQLite.loadProject mcabal
+			mids <- SQLite.query @_ @ModuleId
+				(toQuery $ qModuleId `mappend` where_ ["mu.file is not null and mu.cabal is ?"]) (SQLite.Only mcabal)
+			-- Just to get parsed
+			dbval <- serverDatabase
+			let
+				sourceMap = M.fromList $ do
+					mid' <- mids
+					f <- maybeToList $ mid' ^? moduleLocation . moduleFile
+					return (f, (mid', dbval ^? databaseModules . atFile f . inspected . moduleSource . _Just, mproj))
+				rdeps = sourceRDeps sourceMap
+				dependent = rdeps ^. ix (fromFilePath fpath)
+			liftM mconcat $ mapM (enumRescan . view path) dependent
 
 -- | Enum project sources
 enumProject :: CommandMonad m => Project -> m ScanContents
