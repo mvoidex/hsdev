@@ -2,7 +2,7 @@
    ☐ removed from `Update` module @high
      partially done - replaced scan function and functions in `Scan` module
      remove old functions and complete drop usage of old db
-   ☐ remove from `Scan` module (`enum...` functions) @high
+   ✔ remove from `Scan` module (`enum...` functions) @high @done (17-11-20 17:44)
    ☐ replace it with mapping from source to `Parsed` module @high
  ☐ use `like` in sql queries correctly: escape '%'
 
