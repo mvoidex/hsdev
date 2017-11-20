@@ -29,7 +29,6 @@ library
     Control.Concurrent.FiniteChan
     Control.Concurrent.Worker
     Control.Concurrent.Util
-    Data.Async
     Data.Deps
     Data.Group
     Data.Help
@@ -38,8 +37,6 @@ library
     Data.LookupTable
     HsDev
     HsDev.Client.Commands
-    HsDev.Database
-    HsDev.Database.Async
     HsDev.Database.SQLite
     HsDev.Database.SQLite.Instances
     HsDev.Database.SQLite.Schema

@@ -25,7 +25,7 @@ module HsDev.Database.Update (
 import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Async as A
 import Control.Concurrent.MVar
-import Control.Concurrent.Lifted (fork)
+-- import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
 import Control.Exception (ErrorCall, evaluate, displayException)
 import Control.Lens hiding ((.=))
@@ -36,7 +36,6 @@ import Control.Monad.Writer
 import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
 import Data.Aeson.Types
-import Data.Foldable (toList)
 import Data.Function (on)
 import Data.List (intercalate, nubBy, sortBy)
 import Data.Ord
@@ -52,9 +51,7 @@ import qualified System.Log.Simple as Log
 
 import Data.LookupTable
 import HsDev.Error
-import HsDev.Database
 import qualified HsDev.Database.SQLite as SQLite
-import HsDev.Database.Async hiding (Event)
 import HsDev.Display
 import HsDev.Inspect
 import HsDev.Inspect.Order

@@ -12,7 +12,6 @@ module HsDev.Scan (
 	upToDate, changedModules,
 
 	-- * Reexportss
-	module HsDev.Database,
 	module HsDev.Symbols.Types,
 	module Control.Monad.Except,
 	) where
@@ -42,7 +41,6 @@ import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
 import HsDev.Symbols.Types
-import HsDev.Database
 import HsDev.Display
 import HsDev.Inspect
 import HsDev.Util

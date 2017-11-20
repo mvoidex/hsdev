@@ -48,7 +48,6 @@ import qualified System.Directory.Watcher as Watcher
 import qualified HsDev.Client.Commands as Client
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Error
-import qualified HsDev.Database.Async as DB
 import qualified HsDev.Database.Update as Update
 import HsDev.Inspect (getDefines)
 import HsDev.Tools.Ghc.Worker

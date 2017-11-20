@@ -14,12 +14,11 @@ import Control.Monad (guard)
 import Control.Lens (makeLenses, each, (^.))
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
-import Data.List (tails, isSuffixOf, stripPrefix)
+import Data.List (tails, isSuffixOf)
 import qualified Data.Text as T
 import Data.String
 
 import System.Directory.Paths
-import HsDev.Util ((.::))
 
 data PackageDb = GlobalDb | UserDb | PackageDb { _packageDb :: Path } deriving (Eq, Ord)
 

@@ -32,11 +32,8 @@ import Text.Read (readMaybe)
 
 import qualified System.Directory.Watcher as W
 import System.Directory.Paths
-import qualified Data.Async as A
 import Text.Format
-import HsDev.Database
 import HsDev.Error
-import qualified HsDev.Database.Async as DB
 import HsDev.Database.SQLite as SQLite
 import HsDev.Server.Message as M
 import HsDev.Server.Types
