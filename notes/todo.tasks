@@ -1,10 +1,18 @@
+todo:
  ☐ remove using `Database` @high
-   ☐ removed from `Update` module @high
+   ✔ removed from `Update` module @high @done (17-11-20 20:32)
      partially done - replaced scan function and functions in `Scan` module
      remove old functions and complete drop usage of old db
    ✔ remove from `Scan` module (`enum...` functions) @high @done (17-11-20 17:44)
-   ☐ replace it with mapping from source to `Parsed` module @high
- ☐ use `like` in sql queries correctly: escape '%'
+   ✔ replace it with mapping from source to `Parsed` module @high @done (17-11-20 20:32)
+   ✔ remove it from filters in `Commands` module @done (17-11-20 21:00)
+   ☐ completely remove `Database` module
+ ☐ use `like` in sql queries correctly: escape '%' @high
 
+ ☐ `hsdev start --sql hsdev.db` won't get any `Parsed` for sources
+ ☐ fix scanning docs and inferring types in `Update` module
+
+other:
+ ☐ can we drop `Parsed` too? @low
  ☐ where does modules with no location comes from?
  ☐ write command to drop all ghc's

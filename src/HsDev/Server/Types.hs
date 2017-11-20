@@ -2,10 +2,10 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Types (
-	ServerMonadBase,
+	ServerMonadBase, ParsedSources,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverDatabase, serverUpdateDB, serverSqlDatabase, withSqlTransaction, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverSources, serverUpdateSources, serverSqlDatabase, withSqlTransaction, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -14,7 +14,7 @@ module HsDev.Server.Types (
 	) where
 
 import Control.Applicative
-import Control.Concurrent.Worker
+import Control.Concurrent.MVar
 import qualified Control.Concurrent.FiniteChan as F
 import Control.Lens (view, set)
 import Control.Monad.Base
@@ -29,6 +29,7 @@ import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Default
+import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
 import Data.Foldable (asum)
 import Data.Text (Text)
@@ -37,13 +38,13 @@ import qualified Database.SQLite.Simple as SQL
 import Options.Applicative
 import System.Log.Simple as Log
 
+import Control.Concurrent.Worker
 import System.Directory.Paths
 import Text.Format (Formattable(..))
 
-import HsDev.Database
-import qualified HsDev.Database.Async as DB
 import HsDev.Error (hsdevError)
 import HsDev.Symbols
+import HsDev.Symbols.Parsed (Parsed)
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
 import HsDev.Tools.Ghc.Worker (GhcWorker, GhcM)
@@ -58,13 +59,15 @@ import System.Win32.FileMapping.NamePool (Pool)
 
 type ServerMonadBase m = (MonadIO m, MonadMask m, MonadBaseControl IO m, Alternative m, MonadPlus m)
 
+type ParsedSources = Map Path Parsed
+
 data SessionLog = SessionLog {
 	sessionLogger :: Log,
 	sessionListenLog :: IO [Log.Message],
 	sessionLogWait :: IO () }
 
 data Session = Session {
-	sessionDatabase :: DB.Async Database,
+	sessionSources :: MVar ParsedSources,
 	sessionSqlDatabase :: SQL.Connection,
 	sessionLog :: SessionLog,
 	sessionWatcher :: Watcher,
@@ -190,13 +193,15 @@ serverWaitClients = do
 	clientChan <- askSession sessionClients
 	liftIO (F.stopChan clientChan) >>= sequence_ . map liftIO
 
--- | Get database
-serverDatabase :: SessionMonad m => m Database
-serverDatabase = askSession sessionDatabase >>= liftIO . DB.readAsync
+-- | Get parsed sources
+serverSources :: SessionMonad m => m ParsedSources
+serverSources = askSession sessionSources >>= liftIO . readMVar
 
--- | Update database
-serverUpdateDB :: SessionMonad m => Database -> m ()
-serverUpdateDB db = askSession sessionDatabase >>= (`DB.update` return db)
+-- | Update parsed sources
+serverUpdateSources :: SessionMonad m => (ParsedSources -> ParsedSources) -> m ()
+serverUpdateSources fn = do
+	mvar <- askSession sessionSources
+	liftIO $ modifyMVar_ mvar (return . fn)
 
 -- | Get sql connection
 serverSqlDatabase :: SessionMonad m => m SQL.Connection
@@ -378,7 +383,6 @@ data Command =
 	Ping |
 	Listen (Maybe String) |
 	SetLogLevel String |
-	AddData { addedData :: [Path] } |
 	Scan {
 		scanProjects :: [Path],
 		scanCabal :: Bool,
@@ -507,7 +511,6 @@ instance FromCmd Command where
 		cmd "ping" "ping server" (pure Ping),
 		cmd "listen" "listen server log" (Listen <$> optional logLevelArg),
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
-		cmd "add" "add info to database" (AddData <$> many fileArg),
 		cmd "scan" "scan sources" $ Scan <$>
 			many projectArg <*>
 			cabalFlag <*>
@@ -641,7 +644,6 @@ instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
 	toJSON (Listen lev) = cmdJson "listen" ["level" .= lev]
 	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
-	toJSON (AddData fs) = cmdJson "add" ["files" .= fs]
 	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
@@ -690,7 +692,6 @@ instance FromJSON Command where
 		guardCmd "ping" v *> pure Ping,
 		guardCmd "listen" v *> (Listen <$> v .::? "level"),
 		guardCmd "set-log" v *> (SetLogLevel <$> v .:: "level"),
-		guardCmd "add" v *> (AddData <$> v .:: "files"),
 		guardCmd "scan" v *> (Scan <$>
 			v .::?! "projects" <*>
 			(v .:: "cabal" <|> pure False) <*>

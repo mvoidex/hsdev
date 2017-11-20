@@ -8,7 +8,7 @@ module HsDev.Database.Update (
 	UpdateM(..),
 	runUpdate,
 
-	postStatus, waiter, updater, runTask, runTasks, runTasks_,
+	postStatus, updater, runTask, runTasks, runTasks_,
 
 	scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
@@ -72,7 +72,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (ordNub, fromJSON')
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..), serverDatabase, withSqlTransaction)
+import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..), serverSources, serverUpdateSources, withSqlTransaction)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -93,15 +93,10 @@ runUpdate uopts act = Log.scope "update" $ do
 	(r, updatedMods) <- withUpdateState uopts $ \ust ->
 		runWriterT (runUpdateM act' `runReaderT` ust)
 	Log.sendLog Log.Debug $ "updated {} modules" ~~ length updatedMods
-	db <- askSession sessionDatabase
-	wait db
 	return r
 	where
 		act' = do
 			(r, mlocs') <- listen act
-			db <- askSession sessionDatabase
-			wait db
-			-- dbval <- liftIO $ readAsync db
 
 			dbs <- liftM S.unions $ forM mlocs' $ \mloc' -> do
 				mid <- SQLite.lookupModuleLocation mloc'
@@ -138,28 +133,30 @@ runUpdate uopts act = Log.scope "update" $ do
 			(_, rlocs') <- listen $ runTasks_ (scanModules [] stands : [scanProject [] (proj ^. projectCabal) | proj <- projs])
 			let
 				ulocs' = filter (isJust . preview moduleFile) (ordNub $ mlocs' ++ rlocs')
-				getMods :: (MonadIO m) => m [InspectedModule]
-				getMods = do
-					db' <- liftIO $ readAsync db
-					return $ filter ((`elem` ulocs') . view inspectedKey) $ toList $ view databaseModules db'
+				-- getMods :: (MonadIO m) => m [InspectedModule]
+				-- getMods = do
+				-- 	db' <- liftIO $ readAsync db
+				-- 	return $ filter ((`elem` ulocs') . view inspectedKey) $ toList $ view databaseModules db'
+
+			-- FIXME: Now it's broken since `Database` is not used anymore
 			when (view updateDocs uopts) $ do
 				Log.sendLog Log.Trace "forking inspecting source docs"
-				void $ fork (getMods >>= waiter . mapM_ scanDocs_)
+				Log.sendLog Log.Warning "not implemented"
+				-- void $ fork (getMods >>= waiter . mapM_ scanDocs_)
 			when (view updateInfer uopts) $ do
 				Log.sendLog Log.Trace "forking inferring types"
-				void $ fork (getMods >>= waiter . mapM_ inferModTypes_)
+				Log.sendLog Log.Warning "not implemented"
+				-- void $ fork (getMods >>= waiter . mapM_ inferModTypes_)
 			return r
 		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
 		scanDocs_ im = do
 			im' <- (S.scanModify (\opts -> inSessionGhc . liftGhc . inspectDocsGhc opts) im) <|> return im
 			sendUpdateAction $ Log.scope "scan-docs" $ SQLite.updateModule im'
-			updater $ fromModule im'
 		inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
 		inferModTypes_ im = do
 			-- TODO: locate sandbox
 			im' <- (S.scanModify infer' im) <|> return im
 			sendUpdateAction $ Log.scope "infer-types" $ SQLite.updateModule im'
-			updater $ fromModule im'
 		infer' :: UpdateMonad m => [String] -> Module -> m Module
 		infer' opts m = case preview (moduleId . moduleLocation . moduleFile) m of
 			Nothing -> return m
@@ -171,19 +168,9 @@ runUpdate uopts act = Log.scope "update" $ do
 postStatus :: UpdateMonad m => Task -> m ()
 postStatus t = childTask t onStatus
 
--- | Wait DB to complete actions
-waiter :: UpdateMonad m => m () -> m ()
-waiter act = do
-	db <- askSession sessionDatabase
-	act
-	wait db
-
--- | Update task result to database
-updater :: UpdateMonad m => Database -> m ()
-updater db' = do
-	db <- askSession sessionDatabase
-	-- update db $ return $!! db'
-	tell $!! db' ^.. modules . moduleId . moduleLocation
+-- | Mark module as updated
+updater :: UpdateMonad m => [ModuleLocation] -> m ()
+updater mlocs = tell $!! mlocs
 
 -- | Run one task
 runTask :: (Display t, UpdateMonad m, NFData a) => String -> t -> m a -> m a
@@ -216,14 +203,14 @@ runTasks_ = void . runTasks
 
 -- | Scan modules
 scanModules :: UpdateMonad m => [String] -> [S.ModuleToScan] -> m ()
-scanModules opts ms = mapM_ (uncurry scanModules') grouped where
+scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') grouped where
 	scanModules' mproj ms' = do
 		pdbs <- maybe (return userDb) (inSessionGhc . getProjectPackageDbStack) mproj
 		case mproj of
 			Just proj -> sendUpdateAction $ Log.scope "scan-modules" $ SQLite.updateProject proj (Just pdbs)
 			Nothing -> return ()
-		waiter $ updater $ fromProjectInfo mproj pdbs (ms' ^.. each . _1)
-		dbval <- serverDatabase
+		updater $ ms' ^.. each . _1
+		srcs <- serverSources
 		defines <- askSession sessionDefines
 		-- Make table of already scanned and up to date modules
 		let
@@ -247,7 +234,9 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 								else return Nothing
 
 			findParsedSource :: ModuleLocation -> Maybe Parsed
-			findParsedSource mloc' = dbval ^? databaseModules . ix mloc' . inspected . moduleSource . _Just
+			findParsedSource mloc' = do
+				mfile' <- mloc' ^? moduleFile
+				srcs ^? ix mfile'
 
 		alreadyScanned <- liftM (M.fromList . catMaybes) $ traverse isActual ms'
 
@@ -265,15 +254,15 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 					Just m' -> return (Preloaded (m' ^. moduleId) H.defaultParseMode (fmap dropScope $ m' ^?! moduleSource . _Just) mempty, False)
 
 		ploaded <- runTasks (map pload ms')
-		db' <- fmap mconcat $ forM (map fst $ filter snd ploaded) $ \p -> do
+		mlocs' <- forM (map fst $ filter snd ploaded) $ \p -> do
 			let
 				mloc = p ^. preloadedId . moduleLocation
 			insp <- liftIO $ inspectionInfos ^?! ix mloc
 			let
 				inspectedMod = Inspected insp mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
 			sendUpdateAction $ Log.scope "scan-modules/preloaded" $ SQLite.updateModule inspectedMod
-			return $ fromModule inspectedMod
-		updater db'
+			return mloc
+		updater mlocs'
 
 		let
 			pmods = map fst ploaded
@@ -298,15 +287,17 @@ scanModules opts ms = mapM_ (uncurry scanModules') grouped where
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
 				ms'' <- flip evalStateT sqlAenv' $ runTasks (map inspect' ordered)
-				db'' <- fmap mconcat $ forM ms'' $ \m -> do
+				mlocs'' <- forM ms'' $ \m -> do
 					let
 						mloc = m ^. moduleId . moduleLocation
 					insp <- liftIO $ inspectionInfos ^?! ix mloc
 					let
 						inspectedMod = Inspected insp mloc mempty (Right m)
 					sendUpdateAction $ Log.scope "scan-modules/resolved" $ SQLite.updateModule inspectedMod
-					return $ fromModule inspectedMod
-				updater db''
+					Log.scope "update-sources" $ do
+						void $ traverse (serverUpdateSources . uncurry M.insert) ((,) <$> (mloc ^? moduleFile) <*> (m ^. moduleSource))
+					return mloc
+				updater mlocs''
 				where
 					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
 						aenv <- get
@@ -394,9 +385,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 		sendUpdateAction $ Log.scope "scan-package-db" $ do
 			mapM_ SQLite.updateModule ms'
 			SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
-		updater $ mconcat [
-			mconcat $ map fromModule ms',
-			fromPackageDbState (topPackageDb pdbs) pdbState]
+		updater $ ms' ^.. each . inspectedKey
 
 -- | Scan top of package-db stack, usable for rescan
 scanPackageDbStack :: UpdateMonad m => [String] -> PackageDbStack -> m ()
@@ -438,16 +427,13 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 			mapM_ SQLite.updateModule ms'
 			sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
 
-		updater $ mconcat [
-			mconcat $ map fromModule ms',
-			mconcat [fromPackageDbState pdb pdbState | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]]
+		updater $ ms' ^.. each . inspectedKey
 
 -- | Scan project file
 scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project
 scanProjectFile opts cabal = runTask "scanning" cabal $ do
 	proj <- S.scanProjectFile opts cabal
 	sendUpdateAction $ Log.scope "scan-project-file" $ SQLite.updateProject proj Nothing
-	updater $ fromProject proj
 	return proj
 
 -- | Refine project info and update if necessary
@@ -459,7 +445,6 @@ refineProjectInfo proj = do
 		else runTask "scanning" (proj ^. projectCabal) $ do
 			proj' <- liftIO $ loadProject proj
 			sendUpdateAction $ Log.scope "refine-project-info" $ SQLite.updateProject proj' Nothing
-			updater $ fromProject proj'
 			return proj'
 
 -- | Get project info for module

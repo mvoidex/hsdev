@@ -37,7 +37,7 @@ import HsDev.Error
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Database.SQLite.Select
 import HsDev.Scan.Browse (browsePackages)
-import HsDev.Server.Types (FileSource(..), CommandMonad(..), inSessionGhc, serverDatabase)
+import HsDev.Server.Types (FileSource(..), CommandMonad(..), inSessionGhc, serverSources)
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
@@ -154,13 +154,12 @@ enumDependent fpath = Log.scope "enum-dependent" $ do
 			mproj <- traverse SQLite.loadProject mcabal
 			mids <- SQLite.query @_ @ModuleId
 				(toQuery $ qModuleId `mappend` where_ ["mu.file is not null and mu.cabal is ?"]) (SQLite.Only mcabal)
-			-- Just to get parsed
-			dbval <- serverDatabase
+			srcs <- serverSources
 			let
 				sourceMap = M.fromList $ do
 					mid' <- mids
 					f <- maybeToList $ mid' ^? moduleLocation . moduleFile
-					return (f, (mid', dbval ^? databaseModules . atFile f . inspected . moduleSource . _Just, mproj))
+					return (f, (mid', srcs ^? ix f, mproj))
 				rdeps = sourceRDeps sourceMap
 				dependent = rdeps ^. ix (fromFilePath fpath)
 			liftM mconcat $ mapM (enumRescan . view path) dependent

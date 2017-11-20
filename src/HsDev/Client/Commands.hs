@@ -84,34 +84,6 @@ runCommand (SetLogLevel l) = case Log.level (pack l) of
 		lev' <- serverSetLogLevel lev
 		Log.sendLog Log.Debug $ "log level changed from '{}' to '{}'" ~~ show lev' ~~ show lev
 		Log.sendLog Log.Info $ "log level updated to: {}" ~~ show lev
-runCommand (AddData fs) = toValue $ do
-	forM_ fs $ \f -> do
-		commandNotify (Notification $ object ["message" .= ("adding data" :: String), "file" .= f])
-		cts <- liftIO $ L.readFile (view path f)
-		case eitherDecode cts of
-			Left e -> hsdevError $ OtherError e
-			Right v -> do
-				let
-					parsed = msum [
-						fromJSON' v,
-						fmap fromModule $ fromJSON' v,
-						fmap (mconcat . map fromModule) $ fromJSON' v,
-						fmap fromProject $ fromJSON' v,
-						fmap (mconcat . map fromProject) $ fromJSON' v,
-						do
-							vs <- fromJSON' v
-							pkgsDbs <- mapM (AT.parseMaybe parsePackageDbInfo) vs
-							return . mconcat . map fromPackageDbInfo $ pkgsDbs]
-				case parsed of
-					Nothing -> hsdevError $ OtherError "unknown format"
-					Just db -> serverUpdateDB db
-	where
-		-- Temporary for test: get package-db info as list of {'package-db': <...>, 'packages': [<...>]}
-		parsePackageDbInfo :: A.Value -> AT.Parser (PackageDb, [ModulePackage])
-		parsePackageDbInfo = A.withObject "package-db-info" $ \v -> (,) <$>
-			(v .:: "package-db") <*>
-			(v .:: "packages")
-		fromPackageDbInfo = uncurry fromPackageDb
 runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
@@ -147,7 +119,6 @@ runCommand (InferTypes projs fs) = toValue $ do
 		return $ projMods ++ fileMods
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes mods]
 runCommand (Remove projs cabal sboxes files) = toValue $ do
-	db <- askSession sessionDatabase
 	w <- askSession sessionWatcher
 	projects <- traverse findProject projs
 	sboxes' <- getSandboxes sboxes
@@ -181,7 +152,6 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 			return $ null $ filter (pdbs `isSubStack`) $ delete pdbs from'
 		-- Remove top of package-db stack if possible
 		removePackageDb' pdbs = do
-			db <- lift $ askSession sessionDatabase
 			w <- lift $ askSession sessionWatcher
 			can <- canRemove pdbs
 			when can $ do
@@ -195,8 +165,7 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 		-- Remove package-db stack when possible
 		removePackageDbStack = mapM_ removePackageDb' . packageDbStacks
 runCommand RemoveAll = toValue $ do
-	db <- askSession sessionDatabase
-	liftIO $ A.modifyAsync db A.Clear
+	withSqlTransaction SQLite.purge
 	w <- askSession sessionWatcher
 	wdirs <- liftIO $ readMVar (W.watcherDirs w)
 	liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir
@@ -417,7 +386,7 @@ runCommand (Rename nm newName fpath) = toValue $ do
 	sym <- maybe (hsdevError $ OtherError $ "symbol not found") return $
 		m ^? exportedSymbols . filtered ((== nm) . view sourcedName) -- FIXME: use not exported symbols
 
-	dbval <- serverDatabase
+	srcs <- serverSources
 	let
 		defRefacts = do
 			p <- m ^.. moduleSource . _Just
@@ -428,15 +397,14 @@ runCommand (Rename nm newName fpath) = toValue $ do
 				Tools._noteLevel = Nothing,
 				Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion $ def' ^. P.regionL) newName) }
 		refacts = do
-			m' <- dbval ^.. sourcesSlice . modules
-			p <- m' ^.. moduleSource . _Just
+			(f, p) <- M.toList srcs
 			let
 				symName = Name.qualName
 					(unpack $ sym ^. symbolId . symbolModule . moduleName)
 					(unpack $ sym ^. symbolId . symbolName)
 			usage' <- p ^.. P.names . P.usages symName
 			return $ Tools.Note {
-				Tools._noteSource = m' ^. moduleId . moduleLocation,
+				Tools._noteSource = FileModule f Nothing,
 				Tools._noteRegion = usage' ^. P.regionL,
 				Tools._noteLevel = Nothing,
 				Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion $ usage' ^. P.regionL) newName) }
@@ -467,38 +435,35 @@ runCommand Flags = toValue $ return ["-f" ++ prefix ++ f |
 runCommand (Link hold) = toValue $ commandLink >> when hold commandHold
 runCommand Exit = toValue serverExit
 
-targetFilters :: (CommandMonad m, Sourced a) => [TargetFilter] -> m (a -> Bool)
-targetFilters fs = do
-	fs_ <- mapM targetFilter fs
-	return $ foldr (liftM2 (&&)) (const True) fs_
+-- TODO: Implement `targetFilter` for sql
 
-targetFilter :: (CommandMonad m, Sourced a) => TargetFilter -> m (a -> Bool)
-targetFilter f = liftM (. view sourcedModule) $ case f of
-	TargetProject proj -> liftM inProject $ findProject proj
-	TargetFile file -> liftM inFile $ refineSourceFile file
-	TargetModule mname -> return $ inModule mname
-	TargetPackageDb pdb -> do
-		dbval <- serverDatabase
-		let
-			pkgs = dbval ^. databasePackageDbs . ix pdb
-			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
-		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
-	TargetCabal -> do
-		dbval <- serverDatabase
-		let
-			pkgs = concat $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs userDb]
-			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
-		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
-	TargetSandbox sbox -> do
-		dbval <- serverDatabase
-		pdbs <- findSandbox sbox >>= inSessionGhc . sandboxPackageDbStack
-		let
-			pkgs = concat [dbval ^. databasePackageDbs . ix pdb | pdb <- packageDbs pdbs]
-			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
-		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
-	TargetPackage pkg -> liftM (inPackage . mkPackage) $ refinePackage pkg
-	TargetSourced -> return byFile
-	TargetStandalone -> return standalone
+-- targetFilter :: (CommandMonad m, Sourced a) => TargetFilter -> m (a -> Bool)
+-- targetFilter f = liftM (. view sourcedModule) $ case f of
+-- 	TargetProject proj -> liftM inProject $ findProject proj
+-- 	TargetFile file -> liftM inFile $ refineSourceFile file
+-- 	TargetModule mname -> return $ inModule mname
+-- 	TargetPackageDb pdb -> do
+-- 		dbval <- serverDatabase
+-- 		let
+-- 			pkgs = dbval ^. databasePackageDbs . ix pdb
+-- 			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
+-- 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
+-- 	TargetCabal -> do
+-- 		dbval <- serverDatabase
+-- 		let
+-- 			pkgs = concat $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs userDb]
+-- 			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
+-- 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
+-- 	TargetSandbox sbox -> do
+-- 		dbval <- serverDatabase
+-- 		pdbs <- findSandbox sbox >>= inSessionGhc . sandboxPackageDbStack
+-- 		let
+-- 			pkgs = concat [dbval ^. databasePackageDbs . ix pdb | pdb <- packageDbs pdbs]
+-- 			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
+-- 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
+-- 	TargetPackage pkg -> liftM (inPackage . mkPackage) $ refinePackage pkg
+-- 	TargetSourced -> return byFile
+-- 	TargetStandalone -> return standalone
 
 likePattern :: SearchQuery -> Text
 likePattern (SearchQuery input stype) = case stype of

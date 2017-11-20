@@ -39,7 +39,6 @@ buildQuery (Select cols tables conds) = "select {} from {} where {}"
 toQuery :: Select -> Query
 toQuery = fromString . buildQuery
 
-
 qSymbolId :: Select
 qSymbolId = select_
 	[
