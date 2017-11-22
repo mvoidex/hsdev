@@ -6,8 +6,12 @@ todo:
    ✔ remove from `Scan` module (`enum...` functions) @high @done (17-11-20 17:44)
    ✔ replace it with mapping from source to `Parsed` module @high @done (17-11-20 20:32)
    ✔ remove it from filters in `Commands` module @done (17-11-20 21:00)
-   ☐ completely remove `Database` module
+   ✔ completely remove `Database` module @done (17-11-22 21:25)
  ☐ use `like` in sql queries correctly: escape '%' @high
+ ☐ add bindings to `names` table
+ ☐ resolved names region includes qualifier, but shouldn't @bug
+ ☐ rewrite `rename` command using sql tables
+ ☐ if update fails, client won't disconnect @bug
 
  ☐ `hsdev start --sql hsdev.db` won't get any `Parsed` for sources
  ☐ fix scanning docs and inferring types in `Update` module
