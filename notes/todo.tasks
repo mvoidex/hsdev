@@ -7,13 +7,14 @@ todo:
    ✔ replace it with mapping from source to `Parsed` module @high @done (17-11-20 20:32)
    ✔ remove it from filters in `Commands` module @done (17-11-20 21:00)
    ✔ completely remove `Database` module @done (17-11-22 21:25)
- ☐ use `like` in sql queries correctly: escape '%' @high
  ✔ add bindings to `names` table @done (17-11-29 20:09)
- ☐ rewrite `rename` command using sql tables
+ ✔ rewrite `rename` command using sql tables @done (17-11-29 20:50)
  ☐ `hsdev start --sql hsdev.db` won't get any `Parsed` for sources
  ☐ fix scanning docs and inferring types in `Update` module
 
 next:
+ ☐ use `like` in sql queries correctly: escape '%' @high
+ ☐ `rename` doesn't take scope into account, so it will rename symbols in modules with same name @bug
  ☐ resolved names region includes qualifier, but shouldn't @bug
  ☐ add `go to definition` for local symbols using `names` table
  ☐ if update fails, client won't disconnect @bug

@@ -50,6 +50,12 @@ instance FromRow Position where
 instance ToRow Position where
 	toRow (Position l c) = [toField l, toField c]
 
+instance FromRow Region where
+	fromRow = Region <$> fromRow <*> fromRow
+
+instance ToRow Region where
+	toRow (Region f t) = toRow f ++ toRow t
+
 instance FromRow ModulePackage where
 	fromRow = ModulePackage <$> field <*> (fromMaybe T.empty <$> field)
 

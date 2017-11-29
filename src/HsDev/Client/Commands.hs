@@ -380,33 +380,29 @@ runCommand (Refactor ns rest isPure) = toValue $ do
 	liftM concat $ mapM runFix files
 runCommand (Rename nm newName fpath) = toValue $ do
 	m <- refineSourceModule fpath
-	sym <- maybe (hsdevError $ OtherError $ "symbol not found") return $
-		m ^? exportedSymbols . filtered ((== nm) . view sourcedName) -- FIXME: use not exported symbols
-
-	srcs <- serverSources
 	let
-		defRefacts = do
-			p <- m ^.. moduleSource . _Just
-			def' <- p ^.. P.names . P.binders . filtered ((== nm) . Name.fromName_ . void)
-			return $ Tools.Note {
-				Tools._noteSource = m ^. moduleId . moduleLocation,
-				Tools._noteRegion = def' ^. P.regionL,
-				Tools._noteLevel = Nothing,
-				Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion $ def' ^. P.regionL) newName) }
-		refacts = do
-			(f, p) <- M.toList srcs
-			let
-				symName = Name.qualName
-					(unpack $ sym ^. symbolId . symbolModule . moduleName)
-					(unpack $ sym ^. symbolId . symbolName)
-			usage' <- p ^.. P.names . P.usages symName
-			return $ Tools.Note {
-				Tools._noteSource = FileModule f Nothing,
-				Tools._noteRegion = usage' ^. P.regionL,
-				Tools._noteLevel = Nothing,
-				Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion $ usage' ^. P.regionL) newName) }
+		mname = m ^. moduleId . moduleName
+		makeNote mloc r = Tools.Note {
+			Tools._noteSource = mloc,
+			Tools._noteRegion = r,
+			Tools._noteLevel = Nothing,
+			Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion r) newName) }
 
-	return $ defRefacts ++ refacts
+	defRenames <- do
+		-- FIXME: Doesn't take scope into account. If you have modules with same names in different project, it will rename symbols from both
+		defRegions <- query @_ @Region "select n.line, n.column, n.line_to, n.column_to from names as n, modules as m where m.id == n.module_id and m.name == ? and n.name == ? and def_line is not null;" (
+			mname,
+			nm)
+		return $ map (makeNote (m ^. moduleId . moduleLocation)) defRegions
+
+	usageRenames <- do
+		-- FIXME: Same as above: doesn't take scope into account
+		usageRegions <- query @_ @(Only Path :. Region) "select m.file, n.line, n.column, n.line_to, n.column_to from names as n, modules as m where n.module_id == m.id and m.file is not null and n.resolved_module == ? and n.resolved_name == ?;" (
+			mname,
+			nm)
+		return $ map (\(Only p :. r) -> makeNote (FileModule p Nothing) r) usageRegions
+
+	return $ defRenames ++ usageRenames
 runCommand (GhcEval exprs mfile) = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] [] False False) (maybeToList mfile)
 	ghcw <- askSession sessionGhc
