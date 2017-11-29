@@ -263,7 +263,7 @@ data ServerOpts = ServerOpts {
 	serverTimeout :: Int,
 	serverLog :: Maybe FilePath,
 	serverLogLevel :: String,
-	serverSqlDbFile :: Maybe FilePath,
+	serverDbFile :: Maybe FilePath,
 	serverSilent :: Bool }
 		deriving (Show)
 
@@ -302,7 +302,7 @@ instance FromCmd ServerOpts where
 		(timeoutArg <|> pure (serverTimeout def)) <*>
 		optional logArg <*>
 		(logLevelArg <|> pure (serverLogLevel def)) <*>
-		optional sqlDbFileArg <*>
+		optional dbFileArg <*>
 		serverSilentFlag
 
 instance FromCmd ClientOpts where
@@ -323,7 +323,7 @@ prettyFlag :: Parser Bool
 serverSilentFlag :: Parser Bool
 stdinFlag :: Parser Bool
 silentFlag :: Parser Bool
-sqlDbFileArg :: Parser FilePath
+dbFileArg :: Parser FilePath
 
 portArg = NetworkPort <$> option auto (long "port" <> metavar "number" <> help "connection port")
 #if mingw32_HOST_OS
@@ -341,7 +341,7 @@ prettyFlag = switch (long "pretty" <> help "pretty json output")
 serverSilentFlag = switch (long "silent" <> help "no stdout/stderr")
 stdinFlag = switch (long "stdin" <> help "pass data to stdin")
 silentFlag = switch (long "silent" <> help "supress notifications")
-sqlDbFileArg = strOption (long "sql" <> metavar "path" <> help "path to sql database")
+dbFileArg = strOption (long "db" <> metavar "path" <> help "path to sql database")
 
 serverOptsArgs :: ServerOpts -> [String]
 serverOptsArgs sopts = concat [
@@ -349,7 +349,7 @@ serverOptsArgs sopts = concat [
 	["--timeout", show $ serverTimeout sopts],
 	marg "--log" (serverLog sopts),
 	["--log-level", serverLogLevel sopts],
-	marg "--sql" (serverSqlDbFile sopts),
+	marg "--db" (serverDbFile sopts),
 	["--silent" | serverSilent sopts]]
 	where
 		marg :: String -> Maybe String -> [String]
