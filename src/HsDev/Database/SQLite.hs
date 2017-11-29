@@ -59,7 +59,17 @@ initialize :: String -> IO Connection
 initialize p = do
 	conn <- open p
 	[Only hasTables] <- SQL.query_ conn "select count(*) > 0 from sqlite_master where type == 'table';"
-	when (not hasTables) $ withTransaction conn $ mapM_ (SQL.execute_ conn) commands
+	goodVersion <- if hasTables
+		then do
+			[Only equalVersion] <- SQL.query conn "select sum(value == ?) > 0 from hsdev where option == 'version';" (Only $ toJSON version)
+			return equalVersion
+		else return True
+	when (not goodVersion) $ do
+		-- TODO: Completely drop schema to reinitialize
+		hsdevError $ OtherError "Not implemented: dropping schema of db"
+	when (not hasTables || not goodVersion) $ withTransaction conn $ do
+		mapM_ (SQL.execute_ conn) commands
+		SQL.execute @(Text, Value) conn "insert into hsdev values (?, ?);" ("version", toJSON version)
 	return conn
 
 purge :: SessionMonad m => m ()

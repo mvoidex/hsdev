@@ -1,5 +1,10 @@
 pragma case_sensitive_like = true;
 
+create table hsdev (
+	option text,
+	value json
+);
+
 create table package_dbs (
 	package_db text, -- global, user or path
 	package_name text,
