@@ -58,7 +58,7 @@ import HsDev.Util
 initialize :: String -> IO Connection
 initialize p = do
 	conn <- open p
-	[(Only hasTables)] <- SQL.query_ conn "select count(*) > 0 from sqlite_master where type == 'table';"
+	[Only hasTables] <- SQL.query_ conn "select count(*) > 0 from sqlite_master where type == 'table';"
 	when (not hasTables) $ withTransaction conn $ mapM_ (SQL.execute_ conn) commands
 	return conn
 
@@ -216,7 +216,8 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 	insertModuleImports mid
 	forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
 	forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
-	forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedName mid)
+	forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedQName mid)
+	forM_ (im ^.. inspected . moduleSource . _Just . P.names) (insertResolvedName mid)
 	where
 		insertModuleImports :: SessionMonad m => Int -> m ()
 		insertModuleImports mid = scope "insert-module-imports" $ do
@@ -268,7 +269,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 				Name.nameIdent name,
 				sid)
 
-		insertResolvedName mid qname = scope "names" $ do
+		insertResolvedQName mid qname = scope "names" $ do
 			execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
 				mid,
 				Name.nameModule $ void qname,
@@ -283,6 +284,33 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 				(qname ^? P.resolvedName) >>= Name.nameModule,
 				Name.nameIdent <$> (qname ^? P.resolvedName),
 				P.resolveError qname)
+
+		insertResolvedName mid name = scope "names" $ do
+			hasName' <- hasResolved mid name
+			when (not hasName') $ do
+				execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+					mid,
+					Nothing :: Maybe Text,
+					Name.fromName_ $ void name,
+					name ^. P.pos . positionLine,
+					name ^. P.pos . positionColumn,
+					name ^. P.regionL . regionTo . positionLine,
+					name ^. P.regionL . regionTo . positionColumn)
+					:. (
+					name ^? P.defPos . positionLine,
+					name ^? P.defPos . positionColumn,
+					(name ^? P.resolvedName) >>= Name.nameModule,
+					Name.nameIdent <$> (name ^? P.resolvedName),
+					P.resolveError name)
+
+		hasResolved mid n = do
+			[Only hasName] <- query "select count(*) > 0 from names where module_id == ? and line == ? and column == ? and line_to == ? and column_to == ?;" (
+				mid,
+				n ^. regionL . regionFrom . positionLine,
+				n ^. regionL . regionFrom . positionColumn,
+				n ^. regionL . regionTo . positionLine,
+				n ^. regionL . regionTo . positionColumn)
+			return hasName
 
 lookupModuleLocation :: SessionMonad m => ModuleLocation -> m (Maybe Int)
 lookupModuleLocation m = do
