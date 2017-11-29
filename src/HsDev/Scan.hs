@@ -19,7 +19,8 @@ module HsDev.Scan (
 import Control.DeepSeq
 import Control.Lens hiding ((%=))
 import Control.Monad.Except
-import Data.Maybe (catMaybes, isJust, maybeToList)
+import Data.Deps
+import Data.Maybe (catMaybes, isJust, maybeToList, listToMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.List (intercalate)
@@ -36,7 +37,7 @@ import HsDev.Error
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Database.SQLite.Select
 import HsDev.Scan.Browse (browsePackages)
-import HsDev.Server.Types (FileSource(..), CommandMonad(..), inSessionGhc, serverSources)
+import HsDev.Server.Types (FileSource(..), CommandMonad(..), inSessionGhc)
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Resolve
@@ -149,16 +150,12 @@ enumDependent fpath = Log.scope "enum-dependent" $ do
 			when (length ms > 1) $ Log.sendLog Log.Warning $ "several modules with file == {} found, taking first one" ~~ fpath
 			let
 				mcabal = mid ^? moduleLocation . moduleProject . _Just . projectCabal
-			mproj <- traverse SQLite.loadProject mcabal
-			mids <- SQLite.query @_ @ModuleId
-				(toQuery $ qModuleId `mappend` where_ ["mu.file is not null and mu.cabal is ?"]) (SQLite.Only mcabal)
-			srcs <- serverSources
+				getProjId = fmap SQLite.fromOnly . listToMaybe
+			mprojId <- liftM getProjId $ SQLite.query @_ @(SQLite.Only Int) "select id from projects where cabal == ? limit 1;" (SQLite.Only mcabal)
+			depList <- SQLite.query @_ @(Path, Path) "select d.module_file, d.depends_file from sources_depends as d, projects_modules_scope as ps where ps.project_id is ? and ps.module_id == d.module_id;"
+				(SQLite.Only mprojId)
 			let
-				sourceMap = M.fromList $ do
-					mid' <- mids
-					f <- maybeToList $ mid' ^? moduleLocation . moduleFile
-					return (f, (mid', srcs ^? ix f, mproj))
-				rdeps = sourceRDeps sourceMap
+				rdeps = inverse . either (const mempty) id . flatten . mconcat . map (uncurry dep) $ depList
 				dependent = rdeps ^. ix (fromFilePath fpath)
 			liftM mconcat $ mapM (enumRescan . view path) dependent
 

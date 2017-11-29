@@ -1,5 +1,5 @@
 todo:
- ☐ remove using `Database` @high
+ ✔ remove using `Database` @high @done (17-11-29 21:11)
    ✔ removed from `Update` module @high @done (17-11-20 20:32)
      partially done - replaced scan function and functions in `Scan` module
      remove old functions and complete drop usage of old db
@@ -9,7 +9,6 @@ todo:
    ✔ completely remove `Database` module @done (17-11-22 21:25)
  ✔ add bindings to `names` table @done (17-11-29 20:09)
  ✔ rewrite `rename` command using sql tables @done (17-11-29 20:50)
- ☐ `hsdev start --sql hsdev.db` won't get any `Parsed` for sources
  ☐ fix scanning docs and inferring types in `Update` module
 
 next:
