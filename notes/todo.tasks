@@ -9,15 +9,17 @@ todo:
    ✔ completely remove `Database` module @done (17-11-22 21:25)
  ☐ use `like` in sql queries correctly: escape '%' @high
  ✔ add bindings to `names` table @done (17-11-29 20:09)
- ☐ resolved names region includes qualifier, but shouldn't @bug
  ☐ rewrite `rename` command using sql tables
- ☐ if update fails, client won't disconnect @bug
- ☐ table `sources_depends` incorrect for standalone modules as long as lookup is based on directory structure, but it is not used; maybe add column `module_root` to `modules`?
-
  ☐ `hsdev start --sql hsdev.db` won't get any `Parsed` for sources
  ☐ fix scanning docs and inferring types in `Update` module
 
-other:
+next:
+ ☐ resolved names region includes qualifier, but shouldn't @bug
+ ☐ add `go to definition` for local symbols using `names` table
+ ☐ if update fails, client won't disconnect @bug
+ ☐ table `sources_depends` incorrect for standalone modules as long as lookup is based on directory structure, but it is not used; maybe add column `module_root` to `modules`?
+
+notes:
  ☐ can we drop `Parsed` too? @low
  ☐ where does modules with no location comes from?
  ☐ write command to drop all ghc's
