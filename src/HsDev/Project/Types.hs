@@ -137,8 +137,8 @@ instance Target Library where
 instance Show Library where
 	show l = unlines $
 		["library", "\tmodules:"] ++
-		(map (tab 2 . intercalate ".") $ _libraryModules l) ++
-		(map (tab 1) . lines . show $ _libraryBuildInfo l)
+		map (tab 2 . intercalate ".") (_libraryModules l) ++
+            (map (tab 1) . lines . show $ _libraryBuildInfo l)
 
 instance ToJSON Library where
 	toJSON l = object [
@@ -243,7 +243,7 @@ instance Show Info where
 		opts
 			| null (_infoGHCOptions i) = []
 			| otherwise = "ghc-options:" : map (tab 1) (_infoGHCOptions i)
-		sources = "source-dirs:" : (map (tab 1) $ _infoSourceDirs i)
+		sources = "source-dirs:" : map (tab 1) (_infoSourceDirs i)
 
 instance ToJSON Info where
 	toJSON i = object [
