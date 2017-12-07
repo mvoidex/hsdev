@@ -13,4 +13,4 @@ extra-deps:
 - hsdev-0.2.3.2
 - simple-log-0.8.5
 - text-region-0.2.0.0
-resolver: lts-6.31
+resolver: lts-6.35
