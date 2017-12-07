@@ -72,7 +72,9 @@ instance Paths Project where
 -- | Make project by .cabal file
 project :: FilePath -> Project
 project file = Project {
-	_projectName = takeBaseName (takeDirectory cabal),
+	-- Should not be the directory of the cabal, s/b the base name of the cabal file.
+    -- _projectName = takeBaseName (takeDirectory cabal),
+    _projectName = dropExtension (takeBaseName cabal),
 	_projectPath = takeDirectory cabal,
 	_projectCabal = cabal,
 	_projectDescription = Nothing }
