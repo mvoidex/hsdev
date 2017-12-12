@@ -53,6 +53,8 @@ import HsDev.Inspect (getDefines)
 import HsDev.Tools.Ghc.Worker
 import HsDev.Server.Types
 import HsDev.Server.Message
+import HsDev.Symbols.Location (ModuleLocation(..))
+import qualified HsDev.Watcher as W
 import HsDev.Util
 
 #if mingw32_HOST_OS
@@ -107,7 +109,19 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 		tasksVar <- newMVar []
 		Update.onEvent watcher $ \w e -> withSession session $
 			void $ Client.runClient def $ Update.processEvent (withSession session . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar w e
-	liftIO $ runReaderT (runServerM act) session
+	liftIO $ runReaderT (runServerM $ watchDb >> act) session
+
+-- | Set initial watch: package-dbs, projects and standalone sources
+watchDb :: SessionMonad m => m ()
+watchDb = do
+	w <- askSession sessionWatcher
+	-- TODO: Implement watching package-dbs
+	cabals <- SQLite.query_ "select cabal from projects;"
+	projects <- mapM (SQLite.loadProject . SQLite.fromOnly) cabals
+	liftIO $ mapM_ (\proj -> W.watchProject w proj []) projects
+
+	files <- SQLite.query_ "select file from modules where file is not null and cabal is null;"
+	liftIO $ mapM_ (\(SQLite.Only f) -> W.watchModule w (FileModule f Nothing)) files
 
 type Server = Worker (ServerM IO)
 
