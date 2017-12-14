@@ -5,7 +5,10 @@ module HsDev.Database.SQLite (
 	query, query_, execute, execute_,
 	updatePackageDb, removePackageDb, insertPackageDb,
 	updateProject, removeProject, insertProject, insertBuildInfo,
-	updateModule, removeModule, insertModule, insertModuleSymbols,
+	updateModule,
+	removeModule, removeModuleSymbols,
+	insertModule, insertModuleSymbols,
+	upsertModule,
 	lookupModuleLocation, lookupModule, insertLookupModule,
 	lookupSymbol, insertLookupSymbol,
 	lastRow,
@@ -174,25 +177,24 @@ insertBuildInfo info = scope "insert-build-info" $ do
 updateModule :: SessionMonad m => InspectedModule -> m ()
 updateModule im = scope "update-module" $ do
 	sendLog Trace $ "update module: {}" ~~ Display.display (im ^. inspectedKey)
-	mmid <- lookupModuleLocation (im ^. inspectedKey)
-	case mmid of
-		Just mid -> removeModule mid
-		Nothing -> return ()
-	insertModule im
+	_ <- upsertModule im
 	insertModuleSymbols im
 
 removeModule :: SessionMonad m => Int -> m ()
 removeModule mid = scope "remove-module" $ do
-	sids <- query @_ @(Only Int) "select id from symbols where module_id == ?;" (Only mid)
-	forM_ sids $ \sid -> do
-		execute "delete from exports where symbol_id == ?;" sid
-		execute "delete from scopes where symbol_id == ?;" sid
-	execute "delete from symbols where module_id == ?;" (Only mid)
 	execute "delete from imports where module_id == ?;" (Only mid)
 	execute "delete from exports where module_id == ?;" (Only mid)
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
 	execute "delete from modules where id == ?;" (Only mid)
+
+removeModuleSymbols :: SessionMonad m => Int -> m ()
+removeModuleSymbols mid = scope "remove-module-symbols" $ do
+	sids <- query @_ @(Only Int) "select id from symbols where module_id == ?;" (Only mid)
+	forM_ sids $ \sid -> do
+		execute "delete from exports where symbol_id == ?;" sid
+		execute "delete from scopes where symbol_id == ?;" sid
+	execute "delete from symbols where module_id == ?;" (Only mid)
 
 insertModule :: SessionMonad m => InspectedModule -> m ()
 insertModule im = scope "insert-module" $ do
@@ -215,6 +217,37 @@ insertModule im = scope "insert-module" $ do
 		where
 			asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
 
+upsertModule :: SessionMonad m => InspectedModule -> m Int
+upsertModule im = scope "upsert-module" $ do
+	mmid <- lookupModuleLocation (im ^. inspectedKey)
+	case mmid of
+		Just mid -> do
+			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
+				(moduleData :. (Only mid))
+			return mid
+		Nothing -> do
+			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				moduleData
+			lastRow
+	where
+		moduleData = (
+			im ^? inspectedKey . moduleFile . path,
+			im ^? inspectedKey . moduleProject . _Just . projectCabal,
+			fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
+			im ^? inspectedKey . modulePackage . _Just . packageName,
+			im ^? inspectedKey . modulePackage . _Just . packageVersion,
+			im ^? inspectedKey . installedModuleName,
+			im ^? inspectedKey . otherLocationName)
+			:. (
+			msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
+			im ^? inspected . moduleDocs,
+			fmap encode $ im ^? inspected . moduleFixities,
+			encode $ asDict $ im ^. inspectionTags,
+			fmap show $ im ^? inspectionResult . _Left)
+			:.
+			fromMaybe InspectionNone (im ^? inspection)
+		asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
+
 insertModuleSymbols :: SessionMonad m => InspectedModule -> m ()
 insertModuleSymbols im = scope "insert-module-symbols" $ do
 	[Only mid] <- query "select id from modules where file is ? and package_name is ? and package_version is ? and other_location is ? and installed_name is ?;" (
@@ -223,6 +256,10 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		im ^? inspectedKey . modulePackage . _Just . packageVersion,
 		im ^? inspectedKey . otherLocationName,
 		im ^? inspectedKey . installedModuleName)
+	execute "delete from imports where module_id == ?;" (Only mid)
+	execute "delete from exports where module_id == ?;" (Only mid)
+	execute "delete from scopes where module_id == ?;" (Only mid)
+	execute "delete from names where module_id == ?;" (Only mid)
 	insertModuleImports mid
 	forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
 	forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
