@@ -150,10 +150,8 @@ enumDependent fpath = Log.scope "enum-dependent" $ do
 			when (length ms > 1) $ Log.sendLog Log.Warning $ "several modules with file == {} found, taking first one" ~~ fpath
 			let
 				mcabal = mid ^? moduleLocation . moduleProject . _Just . projectCabal
-				getProjId = fmap SQLite.fromOnly . listToMaybe
-			mprojId <- liftM getProjId $ SQLite.query @_ @(SQLite.Only Int) "select id from projects where cabal == ? limit 1;" (SQLite.Only mcabal)
-			depList <- SQLite.query @_ @(Path, Path) "select d.module_file, d.depends_file from sources_depends as d, projects_modules_scope as ps where ps.project_id is ? and ps.module_id == d.module_id;"
-				(SQLite.Only mprojId)
+			depList <- SQLite.query @_ @(Path, Path) "select d.module_file, d.depends_file from sources_depends as d projects_modules_scope as ps where ps.cabal is ? and ps.module_id == d.module_id;"
+				(SQLite.Only mcabal)
 			let
 				rdeps = inverse . either (const mempty) id . flatten . mconcat . map (uncurry dep) $ depList
 				dependent = rdeps ^. ix (fromFilePath fpath)

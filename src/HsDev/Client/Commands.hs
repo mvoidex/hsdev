@@ -238,20 +238,19 @@ runCommand (Whois nm fpath) = toValue $ do
 	return rs
 runCommand (Whoat l c fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["names as n", "modules as srcm", "projects as p", "projects_modules_scope as msc"]
+		["names as n", "modules as srcm", "projects_modules_scope as msc"]
 		[
 			"srcm.id == n.module_id",
 			"m.name == n.resolved_module",
 			"s.name == n.resolved_name",
-			"p.cabal == srcm.cabal",
-			"p.id == msc.project_id",
+			"msc.cabal is srcm.cabal",
 			"m.id == msc.module_id",
 			"srcm.file == ?",
 			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
 		(fpath ^. path, l, c)
 	return rs
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
-	pids <- query @_ @(Only Int) "select p.id from projects as p, modules as m where (m.cabal == p.cabal) and (m.file == ?);"
+	pids <- query @_ @(Only Int) "select m.cabal from modules as m where (m.file == ?);"
 		(Only $ fpath ^. path)
 	case pids of
 		[] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
@@ -266,7 +265,7 @@ runCommand (ResolveScopeModules sq fpath) = toValue $ do
 			["projects_modules_scope as msc"]
 			[
 				"msc.module_id == mu.id",
-				"msc.project_id == ?",
+				"msc.cabal is ?",
 				"mu.name like ?"])
 			(proj, likePattern sq)
 		_ -> fail "Impossible happened: several projects for one module"
@@ -299,11 +298,9 @@ runCommand (Complete input True fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
 		[
 			"projects_modules_scope as msc",
-			"projects as p",
 			"modules as srcm"]
 		[
-			"srcm.cabal == p.cabal",
-			"p.id == msc.project_id",
+			"msc.cabal is srcm.cabal",
 			"msc.module_id == m.id",
 			"msrc.file == ?",
 			"s.name like ?"])

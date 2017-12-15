@@ -72,29 +72,29 @@ create table build_infos(
 );
 
 create view projects_deps (
-	project_id,
+	cabal,
 	package_name,
 	package_version
 ) as
-select distinct p.id, deps.value, ps.package_version
+select distinct p.cabal, deps.value, ps.package_version
 from projects as p, build_infos as b, json_each(b.depends) as deps, targets as t, latest_packages as ps
 where (p.id == t.project_id) and (b.id == t.build_info_id) and (deps.value <> p.name) and (ps.package_name == deps.value);
 
 create view projects_modules_scope (
-	project_id,
+	cabal,
 	module_id
 ) as
-select pdbs.project_id, m.id
+select pdbs.cabal, m.id
 from projects_deps as pdbs, modules as m
 where (m.package_name == pdbs.package_name) and (m.package_version == pdbs.package_version)
 union
-select p.id, m.id
+select p.cabal, m.id
 from projects as p, modules as m
 where (m.cabal == p.cabal)
 union
 select null, m.id
 from modules as m, package_dbs as ps
-where (m.package_name == ps.package_name) and (m.package_version == ps.package_version) and (ps.package_db in ('user', 'global'));
+where (m.package_name == ps.package_name) and (m.package_version == ps.package_version) and (ps.package_db in ('user-db', 'global-db'));
 
 create unique index build_infos_id_index on build_infos (id);
 

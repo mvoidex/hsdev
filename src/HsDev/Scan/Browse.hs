@@ -2,13 +2,13 @@ module HsDev.Scan.Browse (
 	-- * List all packages
 	browsePackages, browsePackagesDeps,
 	-- * Scan cabal modules
-	listModules, browseModules,
+	listModules, browseModulesGrouped, browseModules,
 	-- * Helpers
 	withPackages, withPackages_,
 	readPackage, readPackageConfig, ghcPackageDb, ghcModuleLocation,
 	packageDbCandidate, packageDbCandidate_,
 	packageConfigs, packageDbModules, lookupModule_,
-	modulesPackages,
+	modulesPackages, modulesPackagesGroups,
 
 	module Control.Monad.Except
 	) where
@@ -17,7 +17,8 @@ import Control.Arrow
 import Control.Lens (preview, _Just)
 import Control.Monad.Catch (MonadCatch, catch, SomeException)
 import Control.Monad.Except
-import Data.List (isPrefixOf)
+import Data.Function (on)
+import Data.List (isPrefixOf, groupBy, sort)
 import Data.Maybe
 import Data.String (fromString)
 import Data.Text (Text)
@@ -79,10 +80,19 @@ browsePackagesDeps opts dbs = do
 -- otherwise hidden packages won't be loaded
 listModules :: [String] -> PackageDbStack -> [ModulePackage] -> GhcM [ModuleLocation]
 listModules opts dbs pkgs = do
-	tmpSession (packageDbStackOpts dbs ++ opts ++ ["-package " ++ show p | p <- pkgs])
+	tmpSession (packageDbStackOpts dbs ++ opts ++ packagesOpts)
 	ms <- packageDbModules
 	return [ghcModuleLocation p m | (p, m) <- ms]
+	where
+		packagesOpts = ["-package " ++ show p | p <- pkgs]
 
+-- | Like @browseModules@, but groups modules by package and inspects each package separately
+-- Trying to fix error: when there are several same packages (of different version), only @Module@ from
+-- one of them can be lookuped and therefore modules from different version packages won't be actually inspected
+browseModulesGrouped :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
+browseModulesGrouped opts dbs = liftM concat . mapM (browseModules opts dbs) . map snd . modulesPackagesGroups
+
+-- | Inspect installed modules
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
 	tmpSession (packageDbStackOpts dbs ++ opts ++ packagesOpts)
@@ -90,13 +100,13 @@ browseModules opts dbs mlocs = do
 	midTbl <- newLookupTable
 	sidTbl <- newLookupTable
 	let
-		lookupModuleId p' m' = lookupTable m' (ghcModuleId p' m') midTbl
+		lookupModuleId p' m' = lookupTable (ghcModuleLocation p' m') (ghcModuleId p' m') midTbl
 	liftM catMaybes $ sequence [browseModule' lookupModuleId (cacheInTableM sidTbl) p m | (p, m) <- ms, ghcModuleLocation p m `S.member` mlocs']
 	where
 		browseModule' :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
 		browseModule' modId' sym' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m)
 		mlocs' = S.fromList mlocs
-		packagesOpts = ["-package " ++ show p | p <- modulesPackages mlocs]
+		packagesOpts = "-hide-all-packages" : ["-package " ++ show p | p <- modulesPackages mlocs]
 
 browseModule :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM Module
 browseModule modId lookSym package' m = do
@@ -285,3 +295,7 @@ lookupModule_ d mn = case GHC.lookupModuleWithSuggestions d mn Nothing of
 -- | Get modules packages
 modulesPackages :: [ModuleLocation] -> [ModulePackage]
 modulesPackages = ordNub . mapMaybe (preview (modulePackage . _Just))
+
+-- | Group modules by packages
+modulesPackagesGroups :: [ModuleLocation] -> [(ModulePackage, [ModuleLocation])]
+modulesPackagesGroups = map (first head . unzip) . groupBy ((==) `on` fst) . sort . mapMaybe (\m -> (,) <$> preview (modulePackage . _Just) m <*> pure m)
