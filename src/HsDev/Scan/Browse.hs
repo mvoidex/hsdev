@@ -95,7 +95,10 @@ browseModulesGrouped opts dbs = liftM concat . mapM (browseModules opts dbs) . m
 -- | Inspect installed modules
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
-	tmpSession (packageDbStackOpts dbs ++ opts ++ packagesOpts)
+	tmpSession (packageDbStackOpts dbs ++ opts)
+	-- we set package flags separately in order not to drop previous temporary session with consecutive call to this function
+	setPackagesOpts
+
 	ms <- packageDbModules
 	midTbl <- newLookupTable
 	sidTbl <- newLookupTable
@@ -107,6 +110,11 @@ browseModules opts dbs mlocs = do
 		browseModule' modId' sym' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m)
 		mlocs' = S.fromList mlocs
 		packagesOpts = "-hide-all-packages" : ["-package " ++ show p | p <- modulesPackages mlocs]
+		setPackagesOpts = void $ do
+			fs <- GHC.getSessionDynFlags
+			(fs', _, _) <- GHC.parseDynamicFlags (fs { GHC.packageFlags = [] }) (map GHC.noLoc packagesOpts)
+			(fs'', _) <- GHC.liftIO $ GHC.initPackages fs'
+			GHC.setSessionDynFlags fs''
 
 browseModule :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM Module
 browseModule modId lookSym package' m = do
