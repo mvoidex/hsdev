@@ -195,10 +195,9 @@ create view sources_depends (
 	depends_file
 ) as
 select m.id, m.file, im.id, im.file
-from modules as im, imports as i, modules as m, projects as p, projects_modules_scope as ps
+from modules as im, imports as i, modules as m, projects_modules_scope as ps
 where
-	(m.cabal == p.cabal) and
-	(p.id == ps.project_id) and
+	(m.cabal is ps.cabal) and
 	(ps.module_id == im.id) and
 	(i.module_id == m.id) and
 	(im.name == i.module_name) and
