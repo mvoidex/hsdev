@@ -10,6 +10,7 @@ todo:
  ✔ add bindings to `names` table @done (17-11-29 20:09)
  ✔ rewrite `rename` command using sql tables @done (17-11-29 20:50)
  ☐ fix scanning docs and inferring types in `Update` module
+ ☐ replace `browseModules` with `browseModulesGroups`
 
 next:
  ☐ use `like` in sql queries correctly: escape '%' @high

@@ -25,7 +25,6 @@ module HsDev.Database.Update (
 import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Async as A
 import Control.Concurrent.MVar
--- import Control.Concurrent.Lifted (fork)
 import Control.DeepSeq
 import Control.Exception (ErrorCall, evaluate, displayException)
 import Control.Lens hiding ((.=))
@@ -33,9 +32,10 @@ import Control.Monad.Catch (catch, handle, MonadThrow)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
-import Control.Monad.State (get, modify, evalStateT)
+import Control.Monad.State (get, modify, evalStateT, evalState)
 import Data.Aeson
 import Data.Aeson.Types
+import Data.Either (rights)
 import Data.Function (on)
 import Data.List (intercalate, nubBy, sortBy)
 import Data.Ord
@@ -61,6 +61,7 @@ import HsDev.Sandbox
 import qualified HsDev.Stack as S
 import HsDev.Symbols
 import HsDev.Symbols.Parsed (Parsed)
+import qualified HsDev.Symbols.Parsed as P (names)
 import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
 import HsDev.Tools.Ghc.Types (inferTypes, fileTypes, typedType)
 import HsDev.Tools.Types
@@ -277,6 +278,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		case order pmods of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
+				Log.sendLog Log.Debug $ "default resolving started"
 				ms'' <- flip evalStateT sqlAenv' $ runTasks (map inspect' ordered)
 				mlocs'' <- forM ms'' $ \m -> do
 					let

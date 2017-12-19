@@ -142,6 +142,7 @@ create table modules (
 
 create unique index modules_id_index on modules (id);
 create index modules_name_index on modules (name);
+create index modules_file_index on modules (file);
 
 create table imports (
 	module_id integer,
@@ -152,10 +153,14 @@ create table imports (
 	import_list json -- list of import specs
 );
 
+create index imports_module_id_index on imports (module_id);
+
 create table exports (
 	module_id integer,
 	symbol_id integer
 );
+
+create index exports_module_id_index on exports (module_id);
 
 create table scopes (
 	module_id integer,
@@ -163,6 +168,8 @@ create table scopes (
 	name text,
 	symbol_id integer
 );
+
+create index scopes_module_id_index on scopes (module_id);
 
 create view completions (
 	module_id,
@@ -187,6 +194,8 @@ create table names (
 	resolved_name text,
 	resolve_error text
 );
+
+create index names_module_id_index on names (module_id);
 
 create view sources_depends (
 	module_id,

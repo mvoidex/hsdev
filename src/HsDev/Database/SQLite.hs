@@ -2,7 +2,7 @@
 
 module HsDev.Database.SQLite (
 	initialize, purge,
-	query, query_, execute, execute_,
+	query, query_, queryNamed, execute, execute_, executeNamed,
 	updatePackageDb, removePackageDb, insertPackageDb,
 	updateProject, removeProject, insertProject, insertBuildInfo,
 	updateModule,
@@ -32,8 +32,8 @@ import Data.String
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.SQLite.Simple hiding (query, query_, execute, execute_)
-import qualified Database.SQLite.Simple as SQL (query, query_, execute, execute_)
+import Database.SQLite.Simple hiding (query, query_, queryNamed, execute, execute_, executeNamed)
+import qualified Database.SQLite.Simple as SQL (query, query_, queryNamed, execute, execute_, executeNamed)
 import Distribution.Text (display)
 import Language.Haskell.Exts.Syntax hiding (Name, Module)
 import Language.Haskell.Extension ()
@@ -91,6 +91,11 @@ query_ q' = do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.query_ conn q'
 
+queryNamed :: (FromRow r, SessionMonad m) => Query -> [NamedParam] -> m [r]
+queryNamed q' ps' = do
+	conn <- serverSqlDatabase
+	liftIO $ SQL.queryNamed conn q' ps'
+
 execute :: (ToRow q, SessionMonad m) => Query -> q -> m ()
 execute q' params = do
 	conn <- serverSqlDatabase
@@ -100,6 +105,11 @@ execute_ :: SessionMonad m => Query -> m ()
 execute_ q' = do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.execute_ conn q'
+
+executeNamed :: SessionMonad m => Query -> [NamedParam] -> m ()
+executeNamed q' ps' = do
+	conn <- serverSqlDatabase
+	liftIO $ SQL.executeNamed conn q' ps'
 
 updatePackageDb :: SessionMonad m => PackageDb -> [ModulePackage] -> m ()
 updatePackageDb pdb pkgs = scope "update-package-db" $ do
@@ -250,21 +260,22 @@ upsertModule im = scope "upsert-module" $ do
 
 insertModuleSymbols :: SessionMonad m => InspectedModule -> m ()
 insertModuleSymbols im = scope "insert-module-symbols" $ do
-	[Only mid] <- query "select id from modules where file is ? and package_name is ? and package_version is ? and other_location is ? and installed_name is ?;" (
-		im ^? inspectedKey . moduleFile . path,
-		im ^? inspectedKey . modulePackage . _Just . packageName,
-		im ^? inspectedKey . modulePackage . _Just . packageVersion,
-		im ^? inspectedKey . otherLocationName,
-		im ^? inspectedKey . installedModuleName)
+	[Only mid] <- queryNamed "select id from modules where ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((other_location is null and :other_location is null) or other_location = :other_location) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name);" [
+		":file" := im ^? inspectedKey . moduleFile . path,
+		":package_name" := im ^? inspectedKey . modulePackage . _Just . packageName,
+		":package_version" := im ^? inspectedKey . modulePackage . _Just . packageVersion,
+		":other_location" := im ^? inspectedKey . otherLocationName,
+		":installed_name" := im ^? inspectedKey . installedModuleName]
 	execute "delete from imports where module_id == ?;" (Only mid)
 	execute "delete from exports where module_id == ?;" (Only mid)
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
 	insertModuleImports mid
-	forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
-	forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
-	forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedQName mid)
-	forM_ (im ^.. inspected . moduleSource . _Just . P.names) (insertResolvedName mid)
+	scope "exports" $ forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
+	scope "scopes" $ forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
+	scope "names" $ do
+		forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedQName mid)
+		forM_ (im ^.. inspected . moduleSource . _Just . P.names) (insertResolvedName mid)
 	where
 		insertModuleImports :: SessionMonad m => Int -> m ()
 		insertModuleImports mid = scope "insert-module-imports" $ do
@@ -301,13 +312,13 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 				str' = id
 
 		insertExportSymbol :: SessionMonad m => Int -> Symbol -> m ()
-		insertExportSymbol mid sym = scope "export" $ do
+		insertExportSymbol mid sym = do
 			defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
 			sid <- insertLookupSymbol defMid sym
 			execute "insert into exports (module_id, symbol_id) values (?, ?);" (mid, sid)
 
 		insertScopeSymbol :: SessionMonad m => Int -> Symbol -> [Name] -> m ()
-		insertScopeSymbol mid sym scopeNames = scope "scope" $ do
+		insertScopeSymbol mid sym scopeNames = do
 			defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
 			sid <- insertLookupSymbol defMid sym
 			forM_ scopeNames $ \name -> execute "insert into scopes (module_id, qualifier, name, symbol_id) values (?, ?, ?, ?);" (
@@ -316,7 +327,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 				Name.nameIdent name,
 				sid)
 
-		insertResolvedQName mid qname = scope "names" $ do
+		insertResolvedQName mid qname = do
 			execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
 				mid,
 				Name.nameModule $ void qname,
@@ -332,7 +343,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 				Name.nameIdent <$> (qname ^? P.resolvedName),
 				P.resolveError qname)
 
-		insertResolvedName mid name = scope "names" $ do
+		insertResolvedName mid name = do
 			hasName' <- hasResolved mid name
 			when (not hasName') $ do
 				execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
@@ -361,24 +372,24 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 
 lookupModuleLocation :: SessionMonad m => ModuleLocation -> m (Maybe Int)
 lookupModuleLocation m = do
-	mids <- query "select id from modules where file is ? and package_name is ? and package_version is ? and installed_name is ? and other_location is ?;" (
-		m ^? moduleFile . path,
-		m ^? modulePackage . _Just . packageName,
-		m ^? modulePackage . _Just . packageVersion,
-		m ^? installedModuleName,
-		m ^? otherLocationName)
+	mids <- queryNamed "select id from modules where ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name) and ((other_location is null and :other_location is null) or other_location = :other_location);" [
+		":file" := m ^? moduleFile . path,
+		":package_name" := m ^? modulePackage . _Just . packageName,
+		":package_version" := m ^? modulePackage . _Just . packageVersion,
+		":installed_name" := m ^? installedModuleName,
+		":other_location" := m ^? otherLocationName]
 	when (length mids > 1) $ sendLog Warning  $ "different modules with location: {}" ~~ Display.display m
 	return $ listToMaybe [mid | Only mid <- mids]
 
 lookupModule :: SessionMonad m => ModuleId -> m (Maybe Int)
 lookupModule m = do
-	mids <- query "select id from modules where name is ? and file is ? and package_name is ? and package_version is ? and installed_name is ? and other_location is ?;" (
-		m ^. moduleName,
-		m ^? moduleLocation . moduleFile . path,
-		m ^? moduleLocation . modulePackage . _Just . packageName,
-		m ^? moduleLocation . modulePackage . _Just . packageVersion,
-		m ^? moduleLocation . installedModuleName,
-		m ^? moduleLocation . otherLocationName)
+	mids <- queryNamed "select id from modules where ((name is null and :name is null) or name = :name) and ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name) and ((other_location is null and :other_location is null) or other_location = :other_location);" [
+		":name" := m ^. moduleName,
+		":file" := m ^? moduleLocation . moduleFile . path,
+		":package_name" := m ^? moduleLocation . modulePackage . _Just . packageName,
+		":package_version" := m ^? moduleLocation . modulePackage . _Just . packageVersion,
+		":installed_name" := m ^? moduleLocation . installedModuleName,
+		":other_location" := m ^? moduleLocation . otherLocationName]
 	when (length mids > 1) $ sendLog Warning  $ "different modules with same name and location: {}" ~~ (m ^. moduleName)
 	return $ listToMaybe [mid | Only mid <- mids]
 
@@ -401,9 +412,9 @@ insertLookupModule m = do
 
 lookupSymbol :: SessionMonad m => Int -> Symbol -> m (Maybe Int)
 lookupSymbol mid sym = do
-	sids <- query "select id from symbols where name is ? and module_id is ?;" (
-		sym ^. symbolId . symbolName,
-		mid)
+	sids <- queryNamed "select id from symbols where ((name is null and :name is null) or name = :name) and module_id = :module_id;" [
+		":name" := sym ^. symbolId . symbolName,
+		":module_id" := mid]
 	when (length sids > 1) $ sendLog Warning $ "different symbols with same module id: {}.{}" ~~ show mid ~~ (sym ^. symbolId . symbolName)
 	return $ listToMaybe [sid | Only sid <- sids]
 
