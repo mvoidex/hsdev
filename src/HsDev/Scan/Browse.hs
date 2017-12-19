@@ -2,7 +2,7 @@ module HsDev.Scan.Browse (
 	-- * List all packages
 	browsePackages, browsePackagesDeps,
 	-- * Scan cabal modules
-	listModules, browseModulesGrouped, browseModules,
+	listModules, browseModules, browseModules',
 	-- * Helpers
 	withPackages, withPackages_,
 	readPackage, readPackageConfig, ghcPackageDb, ghcModuleLocation,
@@ -89,13 +89,14 @@ listModules opts dbs pkgs = do
 -- | Like @browseModules@, but groups modules by package and inspects each package separately
 -- Trying to fix error: when there are several same packages (of different version), only @Module@ from
 -- one of them can be lookuped and therefore modules from different version packages won't be actually inspected
-browseModulesGrouped :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
-browseModulesGrouped opts dbs = liftM concat . mapM (browseModules opts dbs) . map snd . modulesPackagesGroups
-
--- | Inspect installed modules
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
 	tmpSession (packageDbStackOpts dbs ++ opts)
+	liftM concat . mapM (browseModules' opts dbs) . map snd . modulesPackagesGroups $ mlocs
+
+-- | Inspect installed modules, doesn't set session!
+browseModules' :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
+browseModules' opts dbs mlocs = do
 	-- we set package flags separately in order not to drop previous temporary session with consecutive call to this function
 	setPackagesOpts
 

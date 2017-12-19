@@ -370,7 +370,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 	let
 		packageDbMods' = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only (topPackageDb pdbs))
 	scan packageDbMods' ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- inSessionGhc $ browseModulesGrouped opts pdbs (mlocs' ^.. each . _1)
+		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		docs <- inSessionGhc $ hdocsCabal pdbs opts
 		Log.sendLog Log.Trace "docs scanned"
 		docsTbl <- newLookupTable
@@ -396,7 +396,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 	let
 		packageDbStackMods = liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only pdb)
 	scan packageDbStackMods ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- inSessionGhc $ browseModulesGrouped opts pdbs (mlocs' ^.. each . _1)
+		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 		Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 
 		-- BUG: I don't know why, but these steps leads to segfault on my PC:
