@@ -186,7 +186,6 @@ insertBuildInfo info = scope "insert-build-info" $ do
 
 updateModule :: SessionMonad m => InspectedModule -> m ()
 updateModule im = scope "update-module" $ do
-	sendLog Trace $ "update module: {}" ~~ Display.display (im ^. inspectedKey)
 	_ <- upsertModule im
 	insertModuleSymbols im
 
