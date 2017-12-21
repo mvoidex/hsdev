@@ -20,6 +20,7 @@ import Control.Monad.State
 import Data.Array (assocs)
 import Data.List (unfoldr, intercalate)
 import Data.Maybe (fromMaybe, listToMaybe)
+import Data.String
 import System.Exit
 import System.Process
 import Text.Regex.PCRE ((=~), MatchResult(..))
@@ -87,11 +88,11 @@ splitRx pat = unfoldr split' . Just where
 replaceRx :: String -> String -> String -> String
 replaceRx pat w = intercalate w . splitRx pat
 
-at :: (Int -> Maybe String) -> Int -> String
+at :: (Int -> Maybe a) -> Int -> a
 at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
 
-at_ :: (Int -> Maybe String) -> Int -> String
-at_ g = fromMaybe "" . g
+at_ :: IsString s => (Int -> Maybe s) -> Int -> s
+at_ g = fromMaybe (fromString "") . g
 
 inspect :: MonadCatch m => ModuleLocation -> m Inspection -> m Module -> m InspectedModule
 inspect mloc insp act = execStateT inspect' (notInspected mloc) where

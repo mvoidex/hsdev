@@ -27,7 +27,7 @@ It also doesn't require much work to integrate with some editor:
 ## Usage
 
 Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will store information.
-Then you can connect to server and send requests (see [requests/responses](MESSAGES.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
+Then you can connect to server and send requests (see [requests/responses](API.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
 Scan sources, installed modules and you're ready to request various information: scope, completions, info about symbols etc.
 
 Typical usage is:
@@ -57,11 +57,11 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `scan` — scan installed modules, cabal projects and files
 * `docs`, `infer` — scan docs or infer types for sources
 * `remove`, `remove-all` — unload data
-* `modules`, `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
-* `resolve` — resolve scope symbols and exports for sources module, it takes reexports, export and import lists into account
+* `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
 * `symbol`, `module`, `project` — find symbol, module or project
 * `lookup`, `whois` — find project-visible or imported symbol
 * `scope`, `scope modules` — get modules or declarations, accessible from file
+* `usages` — find usages of symbol
 * `complete` — get completions for file and input
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
@@ -69,7 +69,9 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `types` — get types for all source spans
 * `flags`, `langs` — list ghc flags and language extensions
 * `ghc eval` — evaluate expression
-* `autofix show`, `autofix fix` — commands to fix some warnings and apply `hlint` suggestions, see description below
+* `autofixes` — get suggestions to fix some warnings and errors
+* `rename` — get regions to rename some symbol
+* `refactor` — apply suggestions/renames from previous commands
 
 #### TODO: Detailed commands description with examples
 
@@ -80,44 +82,45 @@ Scans sources, projects, directories, sandboxes and installed modules. After sca
 PS> hsdev scan --cabal --path path/to/projects --project path/to/some/project --file File.hs
 </pre>
 
-#### Resolve
-
-Resolve source module scope, taking into account reexports and import/export lists. When flag `--exports` set, resolve only exported declarations.
-<pre>
-PS> hsdev resolve --file .\src\HsDev\Cabal.hs --exports | json | % { $_.declarations.name }
-Cabal
-Sandbox
-cabalOpt
-findPackageDb
-getSandbox
-isPackageDb
-locateSandbox
-sandbox
-searchSandbox
-</pre>
-
-#### Whois
+#### Whois/whoat
 
 Get information for symbol in context of source file. Understand qualified names and also names qualified with module shortcut (`import ... as`), note `M.` qualified for `map`:
 <pre>
-PS> hsdev whois M.map --file .\src\HsDev\Symbols\Resolve.hs | json | % { $_.declaration.decl.type }
-(a -> b) -> Map k a -> Map k b
+PS> dev whois M.lookup --file .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+lookup :: Ord k => k -> Map k a -> Maybe a
+PS> hsdev whoat 375 39 --file .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+catMaybes :: [Maybe a] -> [a]
 </pre>
 
-#### AutoFix
+#### Usages
 
-Autofix commands used to assist for automatic fix of some warnings and hints from `hlint`. `autofix show` command parses `check` and `lint` command output, and returns `corrections` — data with regions and suggestions to fix. `autofix fix` command perform fix of selected corrections and also updates positions of other corrections, such that they stay relevant. These updated corrections can be used to pass them to `autofix fix` again.
+Returns all places where symbol is used
+<pre>
+PS> hsdev usages Data.Map.toList | json | % { $_.in.name, $_.at.line, $_.at.column -join ':' }
+Data.Deps:33:90
+Data.Deps:57:62
+HsDev.Client.Commands:192:18
+HsDev.Database:75:16
+HsDev.Database:76:17
+...
+</pre>
+
+#### AutoFixes/Rename/Refactor
+
+Autofix commands used to assist for automatic fix of some warnings and hints from `hlint`. `autofixes` command parses `check` and `lint` command output, and returns `corrections` — data with regions and suggestions to fix. `refactor` command perform fix of selected corrections and also updates positions of other corrections, such that they stay relevant. These updated corrections can be used to pass them to `refactor` again.
 Example of interactive command, based on this command in SublimeHaskell:
 ![autofix](https://raw.githubusercontent.com/SublimeHaskell/SublimeHaskell/hsdev/Commands/AutoFix.gif)
 
+Rename generates corrections to rename symbol
+
 <pre>
 # Get corrections
-PS> $corrs = hsdev check-lint ..\haskell\Test.hs | hsdev autofix show --stdin
+PS> $corrs = hsdev check-lint ..\haskell\Test.hs | hsdev autofixes --stdin
 # Apply first correction, other corrections passed as --rest param to update their positions
 # Result is updated --rest corrections, which can be used again
-PS> $corrs2 = ($corrs | jq '[.[1]]' -c -r) | hsdev autofix fix --pure --rest (escape ($corrs | jq '.[1:5]' -c -r)) --stdin
+PS> $corrs2 = ($corrs | jq '[.[1]]' -c -r) | hsdev refactor --pure --rest (escape ($corrs | jq '.[1:5]' -c -r)) --stdin
 # One more
-PS> $corrs2 | hsdev autofix fix --stdin --pure
+PS> $corrs2 | hsdev refactor --stdin --pure
 </pre>
 
 
@@ -130,7 +133,7 @@ PS> hsdev scan --cabal
 {}
 PS> hsdev scan --project hsdev
 {}
-PS> hsdev modules --project hsdev | json | % { $_.result.name } | select -first 3
+PS> hsdev module --project hsdev --header | json | % { $_.result.name } | select -first 3
 Data.Async
 Data.Group
 HsDev

@@ -3,7 +3,7 @@
 module HsDev.Tools.Hayoo (
 	-- * Types
 	HayooResult(..), HayooSymbol(..),
-	hayooAsDeclaration,
+	hayooAsSymbol,
 	-- * Search help online
 	hayoo,
 	-- * Utils
@@ -15,13 +15,16 @@ module HsDev.Tools.Hayoo (
 
 import Control.Arrow
 import Control.Applicative
+import Control.Lens (lens)
 import Control.Monad.Except
 
 import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Either
+import Data.Maybe (listToMaybe, fromJust)
 import Network.HTTP
 import Data.String (fromString)
+import qualified Data.Text as T (unpack, unlines)
 
 import HsDev.Symbols
 import HsDev.Tools.Base (replaceRx)
@@ -58,19 +61,21 @@ instance FromJSON HayooResult where
 		(v .:: "count") <*>
 		((rights . map hayooValue) <$> (v .:: "result"))
 
-instance Symbol HayooSymbol where
-	symbolName = fromString . hayooName
-	symbolQualifiedName f = fromString $ case hayooModules f of
-		[] -> hayooName f
-		(m:_) -> m ++ "." ++ hayooName f
-	symbolDocs = Just . fromString . hayooDescription
-	symbolLocation r = Location (ModuleSource $ Just $ resultUri r) Nothing
+instance Sourced HayooSymbol where
+	sourcedName = lens g' s' where
+		g' = fromString . hayooName
+		s' sym n = sym { hayooName = T.unpack n }
+	sourcedModule = lens g' s' where
+		g' h = ModuleId nm (OtherLocation $ fromString $ resultUri h) where
+			nm = maybe mempty fromString $ listToMaybe $ hayooModules h
+		s' h _ = h
+	sourcedDocs f h = (\d' -> h { hayooDescription = T.unpack d' }) <$> f (fromString $ hayooDescription h)
 
 instance Documented HayooSymbol where
 	brief f
-		| hayooType f == "function" = hayooName f ++ " :: " ++ hayooSignature f
-		| otherwise = hayooType f ++ " " ++ hayooName f
-	detailed f = unlines $ defaultDetailed f ++ online where
+		| hayooType f == "function" = fromString $ hayooName f ++ " :: " ++ hayooSignature f
+		| otherwise = fromString $ hayooType f ++ " " ++ hayooName f
+	detailed f = T.unlines $ defaultDetailed f ++ map fromString online where
 		online = [
 			"", "Hayoo online documentation", "",
 			"Package: " ++ hayooPackage f,
@@ -92,20 +97,18 @@ instance FromJSON HayooSymbol where
 instance FromJSON HayooValue where
 	parseJSON v = HayooValue <$> ((Right <$> parseJSON v) <|> pure (Left v))
 
--- | 'HayooFunction' as 'Declaration'
-hayooAsDeclaration :: HayooSymbol -> Maybe ModuleDeclaration
-hayooAsDeclaration f
-	| hayooType f `elem` ["function", "type", "newtype", "data", "class"] = Just ModuleDeclaration {
-		_declarationModuleId = ModuleId {
-			_moduleIdName = fromString $ head $ hayooModules f,
-			_moduleIdLocation = ModuleSource (Just $ resultUri f) },
-		_moduleDeclaration = Declaration {
-			_declarationName = fromString $ hayooName f,
-			_declarationDefined = Nothing,
-			_declarationImported = Nothing,
-			_declarationDocs = Just (fromString $ addOnline $ untagDescription $ hayooDescription f),
-			_declarationPosition = Nothing,
-			_declaration = declInfo } }
+-- | 'HayooFunction' as 'Symbol'
+hayooAsSymbol :: HayooSymbol -> Maybe Symbol
+hayooAsSymbol f
+	| hayooType f `elem` ["function", "type", "newtype", "data", "class"] = Just Symbol {
+		_symbolId = SymbolId {
+			_symbolName = fromString $ hayooName f,
+			_symbolModule = ModuleId {
+				_moduleName = fromString $ head $ hayooModules f,
+				_moduleLocation = OtherLocation (fromString $ resultUri f) } },
+		_symbolDocs = Just (fromString $ addOnline $ untagDescription $ hayooDescription f),
+		_symbolPosition = Nothing,
+		_symbolInfo = info }
 	| otherwise = Nothing
 	where
 		-- Add other info
@@ -116,10 +119,11 @@ hayooAsDeclaration f
 			"Package: " ++ hayooPackage f,
 			"Hackage URL: " ++ resultUri f]
 
-		declInfo
-			| hayooType f == "function" = Function (Just $ fromString $ hayooSignature f) [] Nothing
-			| hayooType f `elem` ["type", "newtype", "data", "class"] = declarationTypeCtor (hayooType f) $ TypeInfo Nothing [] Nothing []
+		info
+			| hayooType f == "function" = Function (Just $ fromString $ hayooSignature f)
+			| hayooType f `elem` ["type", "newtype", "data", "class"] = (fromJust $ lookup (hayooType f) ctors) [] []
 			| otherwise = error "Impossible"
+		ctors = [("type", Type), ("newtype", NewType), ("data", Data), ("class", Class)]
 
 -- | Search hayoo
 hayoo :: String -> Maybe Int -> ExceptT String IO HayooResult

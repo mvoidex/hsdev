@@ -10,6 +10,7 @@ import System.Directory
 import HsDev.Tools.ClearImports (clearImports)
 import HsDev.Symbols (locateSourceDir)
 import HsDev.Project (entity)
+import System.Directory.Paths
 
 import Tool
 
@@ -28,8 +29,8 @@ opts = Opts <$>
 
 main :: IO ()
 main = toolMain "hsclearimports" "clears imports in haskell source" opts $ \opts' -> do
-	file <- canonicalizePath (optsFile opts')
-	mroot <- liftM (fmap $ view entity) $ locateSourceDir file
+	file <- canonicalize (optsFile opts')
+	mroot <- liftM (fmap $ view (entity . path)) $ locateSourceDir file
 	cur <- getCurrentDirectory
 	flip finally (setCurrentDirectory cur) $ do
 		maybe (return ()) setCurrentDirectory mroot

@@ -2,7 +2,7 @@
 
 module HsDev.Error (
 	hsdevError, hsdevOtherError, hsdevLift, hsdevLiftWith, hsdevCatch, hsdevExcept, hsdevLiftIO, hsdevLiftIOWith, hsdevIgnore,
-	hsdevHandle, hsdevLog,
+	hsdevHandle, hsdevLog, hsdevOnError,
 
 	module HsDev.Types
 	) where
@@ -61,3 +61,7 @@ hsdevHandle h act = hsdevCatch act >>= either h return
 hsdevLog :: MonadLog m => Level -> m a -> m a
 hsdevLog lev act = hsdevCatch act >>= either logError return where
 	logError e = sendLog lev (fromString $ show e) >> hsdevError e
+
+-- | Act on exception and throw again
+hsdevOnError :: MonadCatch m => (HsDevError -> m b) -> m a -> m a
+hsdevOnError h = hsdevHandle (\e -> h e >> hsdevError e)

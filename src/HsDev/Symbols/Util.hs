@@ -1,191 +1,92 @@
 module HsDev.Symbols.Util (
-	projectOf, packageDbOf, packageOf,
-	inProject, inDepsOfTarget, inDepsOfFile, inDepsOfProject, inPackageDb, inPackageDbStack, inPackage, inVersion, inFile, inModuleSource, inModule, byFile, installed, standalone,
-	imports, qualifier, moduleImported, visible, inScope,
-	newestPackage,
-	sourceModule, visibleModule, preferredModule, uniqueModules,
+	withName, inProject, inTarget, inDepsOfTarget, inDepsOfFile, inDepsOfProject,
+	inPackage, inFile, inOtherLocation, inModule,
+	byFile, installed, standalone,
+	latestPackages, newestPackage,
 	allOf, anyOf
 	) where
 
-import Control.Arrow ((***), (&&&), first)
-import Control.Lens (view)
-import Control.Monad (liftM)
+import Control.Lens (preview, view, _Just, (^..), (^.), each)
 import Data.Function (on)
 import Data.Maybe
-import Data.List (maximumBy, groupBy, sortBy, partition)
+import Data.List (maximumBy, groupBy, sortBy)
 import Data.Ord (comparing)
-import Data.String (fromString)
-import System.FilePath (normalise)
+import Data.Text (Text)
+import qualified Data.Text as T
 
 import HsDev.Symbols
 import HsDev.Util (ordNub)
+import System.Directory.Paths
 
--- | Get module project
-projectOf :: ModuleId -> Maybe Project
-projectOf m = case view moduleIdLocation m of
-	FileModule _ proj -> proj
-	_ -> Nothing
-
--- | Get module cabal
-packageDbOf :: ModuleId -> Maybe PackageDb
-packageDbOf m = case view moduleIdLocation m of
-	InstalledModule c _ _ -> Just c
-	_ -> Nothing
-
--- | Get module package
-packageOf :: ModuleId -> Maybe ModulePackage
-packageOf m = case view moduleIdLocation m of
-	InstalledModule _ package' _ -> package'
-	_ -> Nothing
+-- | Check is sourced has name
+withName :: Sourced a => Text -> a -> Bool
+withName nm = (== nm) . view sourcedName
 
 -- | Check if module in project
-inProject :: Project -> ModuleId -> Bool
-inProject p m = projectOf m == Just p
+inProject :: Sourced s => Project -> s -> Bool
+inProject p m = preview (sourcedModule . moduleLocation . moduleProject . _Just) m == Just p
+
+-- | Check if module in target
+inTarget :: Sourced s => Info -> s -> Bool
+inTarget i = maybe False (`fileInTarget` i) . preview (sourcedModule . moduleLocation . moduleFile)
 
 -- | Check if module in deps of project target
-inDepsOfTarget :: Info -> ModuleId -> Bool
-inDepsOfTarget i m = any (`inPackage` m) $ view infoDepends i
+inDepsOfTarget :: Sourced s => Project -> Info -> s -> Bool
+inDepsOfTarget p i = anyPackage $ view infoDepends i where
+	anyPackage :: Sourced s => [Text] -> s -> Bool
+	anyPackage = fmap or . mapM (inPackage . mkPackage) . filter (/= (p ^. projectName))
 
 -- | Check if module in deps of source
-inDepsOfFile :: Project -> FilePath -> ModuleId -> Bool
-inDepsOfFile p f m = any (`inDepsOfTarget` m) (fileTargets p f)
+inDepsOfFile :: Sourced s => Project -> Path -> s -> Bool
+inDepsOfFile p f m = any (\i -> inDepsOfTarget p i m) (fileTargets p f)
 
--- | Check if module in deps of project
-inDepsOfProject :: Project -> ModuleId -> Bool
-inDepsOfProject = maybe (const False) (anyPackage . ordNub . concatMap (view infoDepends) . infos) . view projectDescription where
-	anyPackage :: [String] -> ModuleId -> Bool
-	anyPackage = liftM or . mapM inPackage
-
--- | Check if module in package-db
-inPackageDb :: PackageDb -> ModuleId -> Bool
-inPackageDb c m = case view moduleIdLocation m of
-	InstalledModule d _ _ -> d == c
-	_ -> False
-
--- | Check if module in one of sandboxes
-inPackageDbStack :: PackageDbStack -> ModuleId -> Bool
-inPackageDbStack dbs m = case view moduleIdLocation m of
-	InstalledModule d _ _ -> d `elem` packageDbs dbs
-	_ -> False
+-- | Check if module in deps of project, ignoring self package
+inDepsOfProject :: Sourced s => Project -> s -> Bool
+inDepsOfProject p = anyPackage $ ordNub (p ^.. projectDescription . _Just . infos . infoDepends . each) where
+	anyPackage :: Sourced s => [Text] -> s -> Bool
+	anyPackage = fmap or . mapM (inPackage . mkPackage) . filter (/= (p ^. projectName))
 
 -- | Check if module in package
-inPackage :: String -> ModuleId -> Bool
-inPackage p m = case view moduleIdLocation m of
-	InstalledModule _ package' _ -> Just p == fmap (view packageName) package'
-	_ -> False
-
-inVersion :: String -> ModuleId -> Bool
-inVersion v m = case view moduleIdLocation m of
-	InstalledModule _ package' _ -> Just v == fmap (view packageVersion) package'
-	_ -> False
+inPackage :: Sourced s => ModulePackage -> s -> Bool
+inPackage p m = maybe False (equalTo p) $ preview (sourcedModule . moduleLocation . modulePackage . _Just) m where
+	equalTo mp@(ModulePackage n v) r
+		| T.null v = n == view packageName r
+		| otherwise = mp == r
 
 -- | Check if module in file
-inFile :: FilePath -> ModuleId -> Bool
-inFile fpath m = case view moduleIdLocation m of
-	FileModule f _ -> f == normalise fpath
-	_ -> False
+inFile :: Sourced s => Path -> s -> Bool
+inFile fpath m = preview (sourcedModule . moduleLocation . moduleFile) m == Just (normPath fpath)
 
 -- | Check if module in source
-inModuleSource :: Maybe String -> ModuleId -> Bool
-inModuleSource src m = case view moduleIdLocation m of
-	ModuleSource src' -> src' == src
-	_ -> False
+inOtherLocation :: Sourced s => Text -> s -> Bool
+inOtherLocation src m = preview (sourcedModule . moduleLocation . otherLocationName) m == Just src
 
 -- | Check if declaration is in module
-inModule :: String -> ModuleId -> Bool
-inModule mname m = fromString mname == view moduleIdName m
+inModule :: Sourced s => Text -> s -> Bool
+inModule mname m = mname == view sourcedModuleName m
 
 -- | Check if module defined in file
-byFile :: ModuleId -> Bool
-byFile m = case view moduleIdLocation m of
-	FileModule _ _ -> True
-	_ -> False
+byFile :: Sourced s => s -> Bool
+byFile = isJust . preview (sourcedModule . moduleLocation . moduleFile)
 
 -- | Check if module got from cabal database
-installed :: ModuleId -> Bool
-installed m = case view moduleIdLocation m of
-	InstalledModule _ _ _ -> True
-	_ -> False
+installed :: Sourced s => s -> Bool
+installed = isJust . preview (sourcedModule . moduleLocation . installedModuleName)
 
 -- | Check if module is standalone
-standalone :: ModuleId -> Bool
-standalone m = case view moduleIdLocation m of
-	FileModule _ Nothing -> True
-	_ -> False
+standalone :: Sourced s => s -> Bool
+standalone m = preview (sourcedModule . moduleLocation . moduleProject) m == Just Nothing
 
--- | Get list of imports
-imports :: Module -> [Import]
-imports = view moduleImports
-
--- | Get list of imports, which can be accessed with specified qualifier or unqualified
-qualifier :: Module -> Maybe String -> [Import]
-qualifier m q = filter (importQualifier (fmap fromString q)) $
-	import_ (fromString "Prelude") :
-	import_ (view moduleName m) :
-	imports m
-
--- | Check if module imported via imports specified
-moduleImported :: ModuleId -> [Import] -> Bool
-moduleImported m = any (\i -> view moduleIdName m == view importModuleName i)
-
--- | Check if module visible from this module within this project
-visible :: Project -> ModuleId -> ModuleId -> Bool
-visible p (ModuleId _ (FileModule src _)) m =
-	inProject p m || any (`inPackage` m) deps || maybe False ((`elem` deps) . view projectName) (projectOf m)
-	where
-		deps = concatMap (view infoDepends) $ fileTargets p src
-visible _ _ _ = False
-
--- | Check if module is in scope with qualifier
-inScope :: Module -> Maybe String -> ModuleId -> Bool
-inScope this q m = m `moduleImported` qualifier this q
+latestPackages :: [ModulePackage] -> [ModulePackage]
+latestPackages =
+	map (maximumBy (comparing (view packageVersion))) .
+	groupBy ((==) `on` view packageName) .
+	sortBy (comparing (view packageName))
 
 -- | Select symbols with last package version
-newestPackage :: Symbol a => [a] -> [a]
-newestPackage =
-	uncurry (++) .
-	((selectNewest . groupPackages) *** map snd) .
-	partition (isJust . fst) .
-	map ((mpackage . symbolModuleLocation) &&& id)
-	where
-		mpackage (InstalledModule _ (Just p) _) = Just p
-		mpackage _ = Nothing
-		pname = fmap (view packageName) . fst
-		pver = fmap (view packageVersion) . fst
-		groupPackages :: [(Maybe ModulePackage, a)] -> [(Maybe ModulePackage, [a])]
-		groupPackages = map (first head . unzip) . groupBy ((==) `on` fst) . sortBy (comparing fst)
-		selectNewest :: [(Maybe ModulePackage, [a])] -> [a]
-		selectNewest =
-			concatMap (snd . maximumBy (comparing pver)) .
-			groupBy ((==) `on` pname) .
-			sortBy (comparing pname)
-
--- | Select module, defined by sources
-sourceModule :: Maybe Project -> [Module] -> Maybe Module
-sourceModule proj ms = listToMaybe $ maybe (const []) (filter . (. view moduleId) . inProject) proj ms ++ filter (byFile . view moduleId) ms
-
--- | Select module, visible in project or cabal
--- TODO: PackageDbStack?
-visibleModule :: PackageDb -> Maybe Project -> [Module] -> Maybe Module
-visibleModule d proj ms = listToMaybe $ maybe (const []) (filter . (. view moduleId) . inProject) proj ms ++ filter (inPackageDb d . view moduleId) ms
-
--- | Select preferred visible module
--- TODO: PackageDbStack?
-preferredModule :: PackageDb -> Maybe Project -> [ModuleId] -> Maybe ModuleId
-preferredModule d proj ms = listToMaybe $ concatMap (`filter` ms) order where
-	order = [
-		maybe (const False) inProject proj,
-		byFile,
-		inPackageDb d,
-		const True]
-
--- | Remove duplicate modules, leave only `preferredModule`
--- TODO: PackageDbStack?
-uniqueModules :: PackageDb -> Maybe Project -> [ModuleId] -> [ModuleId]
-uniqueModules d proj =
-	mapMaybe (preferredModule d proj) .
-	groupBy ((==) `on` view moduleIdName) .
-	sortBy (comparing (view moduleIdName))
+newestPackage :: Sourced s => [s] -> [s]
+newestPackage v = filter (maybe True (`elem` pkgs) . preview (sourcedModule . moduleLocation . modulePackage . _Just)) v where
+	pkgs = latestPackages (v ^.. each . sourcedModule . moduleLocation . modulePackage . _Just)
 
 -- | Select value, satisfying to all predicates
 allOf :: [a -> Bool] -> a -> Bool

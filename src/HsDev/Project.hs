@@ -1,13 +1,13 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE OverloadedStrings, CPP #-}
 
 module HsDev.Project (
 	module HsDev.Project.Types,
 
-	infoSourceDirsDef,
+	infoSourceDirsDef, targetFiles,
 	analyzeCabal,
 	readProject, loadProject,
 	withExtensions,
-	infos, inTarget, fileTarget, fileTargets, findSourceDir, sourceDirs,
+	fileInTarget, fileTarget, fileTargets, findSourceDir, sourceDirs,
 	targetOpts,
 
 	-- * Helpers
@@ -16,26 +16,30 @@ module HsDev.Project (
 	) where
 
 import Control.Arrow
-import Control.Lens (Simple, Lens, view, lens)
+import Control.Lens hiding ((.=), (%=), (<.>), set')
 import Control.Monad.Except
 import Data.List
 import Data.Maybe
+import Data.Text (Text, pack, unpack)
+import Data.Text.Lens (unpacked)
 import Distribution.Compiler (CompilerFlavor(GHC))
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
+import qualified Distribution.ModuleName as PD (toFilePath)
 import Distribution.PackageDescription.Parse
 import Distribution.ModuleName (components)
 import Distribution.Text (display)
 import Language.Haskell.Extension
 import System.FilePath
 
+import System.Directory.Paths
 import HsDev.Project.Compat
 import HsDev.Project.Types
 import HsDev.Error
 import HsDev.Util
 
 -- | infoSourceDirs lens with default
-infoSourceDirsDef :: Simple Lens Info [FilePath]
+infoSourceDirsDef :: Lens' Info [Path]
 infoSourceDirsDef = lens get' set' where
 	get' i = case _infoSourceDirs i of
 		[] -> ["."]
@@ -43,28 +47,38 @@ infoSourceDirsDef = lens get' set' where
 	set' i ["."] = i { _infoSourceDirs = [] }
 	set' i dirs = i { _infoSourceDirs = dirs }
 
+-- | Get all source file names of target without prepending them with source-dirs
+targetFiles :: Target t => t -> [Path]
+targetFiles target' = targetModules target' ++ map toFile (target' ^.. buildInfo . infoOtherModules . each) where
+	toFile ps = fromFilePath (joinPath (ps ^.. each . unpacked) <.> "hs")
+
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
 analyzeCabal source = case liftM flattenDescr $ parsePackageDesc source of
 	ParseOk _ r -> Right ProjectDescription {
-		_projectVersion = showVer $ P.pkgVersion $ PD.package r,
+		_projectVersion = pack $ showVer $ P.pkgVersion $ PD.package r,
 		_projectLibrary = fmap toLibrary $ PD.library r,
 		_projectExecutables = fmap toExecutable $ PD.executables r,
 		_projectTests = fmap toTest $ PD.testSuites r }
 	ParseFailed e -> Left $ "Parse failed: " ++ show e
 	where
-		toLibrary lib = Library (map components $ PD.exposedModules lib) (toInfo $ PD.libBuildInfo lib)
-		toExecutable exe = Executable (componentName $ PD.exeName exe) (PD.modulePath exe) (toInfo $ PD.buildInfo exe)
-		toTest test = Test (componentName $ PD.testName test) (testSuiteEnabled test) (toInfo $ PD.testBuildInfo test)
+		toLibrary lib = Library (map (map pack . components) $ PD.exposedModules lib) (toInfo $ PD.libBuildInfo lib)
+		toExecutable exe = Executable (componentName $ PD.exeName exe) (fromFilePath $ PD.modulePath exe) (toInfo $ PD.buildInfo exe)
+		toTest test = Test (componentName $ PD.testName test) (testSuiteEnabled test) (fmap fromFilePath mainFile) (toInfo $ PD.testBuildInfo test) where
+			mainFile = case PD.testInterface test of
+				PD.TestSuiteExeV10 _ fpath -> Just fpath
+				PD.TestSuiteLibV09 _ mname -> Just $ PD.toFilePath mname
+				_ -> Nothing
 		toInfo info = Info {
 			_infoDepends = map pkgName (PD.targetBuildDepends info),
 			_infoLanguage = PD.defaultLanguage info,
 			_infoExtensions = PD.defaultExtensions info ++ PD.otherExtensions info ++ PD.oldExtensions info,
-			_infoGHCOptions = fromMaybe [] $ lookup GHC (PD.options info),
-			_infoSourceDirs = PD.hsSourceDirs info }
+			_infoGHCOptions = maybe [] (map pack) $ lookup GHC (PD.options info),
+			_infoSourceDirs = map pack $ PD.hsSourceDirs info,
+			_infoOtherModules = map (map pack . components) (PD.otherModules info) }
 
-		pkgName :: P.Dependency -> String
-		pkgName (P.Dependency dep _) = P.unPackageName dep
+		pkgName :: P.Dependency -> Text
+		pkgName (P.Dependency dep _) = pack $ P.unPackageName dep
 
 		flattenDescr :: PD.GenericPackageDescription -> PD.PackageDescription
 		flattenDescr gpkg = pkg {
@@ -98,7 +112,7 @@ readProject file = do
 loadProject :: Project -> IO Project
 loadProject p
 	| isJust (_projectDescription p) = return p
-	| otherwise = readProject (_projectCabal p)
+	| otherwise = readProject (_projectCabal p ^. path)
 
 -- | Extensions for target
 withExtensions :: a -> Info -> Extensions a
@@ -107,48 +121,41 @@ withExtensions x i = Extensions {
 	_ghcOptions = _infoGHCOptions i,
 	_entity = x }
 
--- | Returns build targets infos
-infos :: ProjectDescription -> [Info]
-infos p =
-	maybe [] (return . _libraryBuildInfo) (_projectLibrary p) ++
-	map _executableBuildInfo (_projectExecutables p) ++
-	map _testBuildInfo (_projectTests p)
-
 -- | Check if source related to target, source must be relative to project directory
-inTarget :: FilePath -> Info -> Bool
-inTarget src info = any (`isParent` src) $ view infoSourceDirsDef info
+fileInTarget :: Path -> Info -> Bool
+fileInTarget src info = any (`isParent` src) $ view infoSourceDirsDef info
 
 -- | Get first target for source file
-fileTarget :: Project -> FilePath -> Maybe Info
+fileTarget :: Project -> Path -> Maybe Info
 fileTarget p f = listToMaybe $ fileTargets p f
 
 -- | Get possible targets for source file
 -- There can be many candidates in case of module related to several executables or tests
-fileTargets :: Project -> FilePath -> [Info]
-fileTargets p f = case filter ((`isSuffixOf` f') . normalise . _executablePath) exes of
-	[] -> filter (f' `inTarget`) $ maybe [] infos $ _projectDescription p
+fileTargets :: Project -> Path -> [Info]
+fileTargets p f = case filter ((`isParent` f') . view executablePath) exes of
+	[] -> filter (f' `fileInTarget`) (p ^.. projectDescription . _Just . infos)
 	exes' -> map _executableBuildInfo exes'
 	where
-		f' = makeRelative (_projectPath p) f
-		exes = maybe [] _projectExecutables $ _projectDescription p
+		f' = relPathTo (_projectPath p) f
+		exes = p ^. projectDescription . _Just . projectExecutables
 
 -- | Finds source dir file belongs to
-findSourceDir :: Project -> FilePath -> Maybe (Extensions FilePath)
+findSourceDir :: Project -> Path -> Maybe (Extensions Path)
 findSourceDir p f = do
 	info <- listToMaybe $ fileTargets p f
-	fmap (`withExtensions` info) $ listToMaybe $ filter (`isParent` f) $ map (_projectPath p </>) $ view infoSourceDirsDef info
+	fmap (`withExtensions` info) $ listToMaybe $ filter (`isParent` f) $ map (_projectPath p `subPath`) (info ^. infoSourceDirsDef)
 
 -- | Returns source dirs for library, executables and tests
-sourceDirs :: ProjectDescription -> [Extensions FilePath]
-sourceDirs = ordNub . concatMap dirs . infos where
-	dirs i = map (`withExtensions` i) $ view infoSourceDirsDef i
+sourceDirs :: ProjectDescription -> [Extensions Path]
+sourceDirs = ordNub . concatMap dirs . toListOf infos where
+	dirs i = map (`withExtensions` i) (i ^. infoSourceDirsDef)
 
 -- | Get options for specific target
 targetOpts :: Info -> [String]
 targetOpts info' = concat [
-	["-i" ++ s | s <- _infoSourceDirs info'],
+	["-i" ++ unpack s | s <- _infoSourceDirs info'],
 	extensionsOpts $ withExtensions () info',
-	["-package " ++ p | p <- _infoDepends info']]
+	["-package " ++ unpack p | p <- _infoDepends info']]
 
 -- | Extension as flag name
 showExtension :: Extension -> String
@@ -164,4 +171,4 @@ extensionFlag = ("-X" ++)
 
 -- | Extensions as opts to GHC
 extensionsOpts :: Extensions a -> [String]
-extensionsOpts e = map (extensionFlag . showExtension) (_extensions e) ++ _ghcOptions e
+extensionsOpts e = map (extensionFlag . showExtension) (_extensions e) ++ map unpack (_ghcOptions e)

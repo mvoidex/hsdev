@@ -5,15 +5,14 @@ module HsDev.Util (
 	withCurrentDirectory,
 	directoryContents,
 	traverseDirectory, searchPath,
-	isParent,
 	haskellSource,
 	cabalFile,
 	-- * String utils
 	tab, tabs, trim, split,
 	-- * Other utils
-	ordNub, uniqueBy, mapBy,
+	ordNub, ordUnion, uniqueBy, mapBy,
 	-- * Helper
-	(.::), (.::?), (.::?!), objectUnion, jsonUnion, noNulls,
+	(.::), (.::?), (.::?!), objectUnion, jsonUnion, noNulls, fromJSON',
 	-- * Exceptions
 	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
 	eitherT,
@@ -30,6 +29,8 @@ module HsDev.Util (
 	withHelp, cmd, parseArgs,
 	-- * Version stuff
 	version, cutVersion, sameVersion, strVersion,
+	-- * Parse
+	parseDT,
 
 	-- * Reexportss
 	module Control.Monad.Except,
@@ -40,14 +41,15 @@ import Control.Applicative
 import Control.Arrow (second, left, (&&&))
 import Control.Exception
 import Control.Concurrent.Async
+import Control.DeepSeq
 import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Catch as C
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
-import Data.List (isPrefixOf, unfoldr, intercalate)
-import qualified Data.Map as M
+import Data.List (unfoldr, intercalate)
+import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Monoid ((<>))
 import qualified Data.Set as Set
@@ -56,12 +58,16 @@ import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Text (Text)
+import qualified Data.Text.IO as ST
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
+import Distribution.Text (simpleParse)
+import qualified Distribution.Text (Text)
 import Options.Applicative
 import qualified System.Directory as Dir
 import System.FilePath
 import System.IO
+import Text.Format
 import Text.Read (readMaybe)
 
 #if !MIN_VERSION_directory(1,2,6)
@@ -112,8 +118,8 @@ directoryContents p = handle ignore $ do
 
 -- | Collect all file names in directory recursively
 traverseDirectory :: FilePath -> IO [FilePath]
-traverseDirectory path = handle onError $ do
-	cts <- directoryContents path
+traverseDirectory p = handle onError $ do
+	cts <- directoryContents p
 	liftM concat $ forM cts $ \c -> do
 		isDir <- Dir.doesDirectoryExist c
 		if isDir
@@ -125,21 +131,14 @@ traverseDirectory path = handle onError $ do
 
 -- | Search something up
 searchPath :: (MonadIO m, MonadPlus m) => FilePath -> (FilePath -> m a) -> m a
-searchPath path f = do
-	path' <- liftIO $ Dir.canonicalizePath path
-	isDir <- liftIO $ Dir.doesDirectoryExist path'
-	search' (if isDir then path' else takeDirectory path')
+searchPath p f = do
+	p' <- liftIO $ Dir.canonicalizePath p
+	isDir <- liftIO $ Dir.doesDirectoryExist p'
+	search' (if isDir then p' else takeDirectory p')
 	where
 		search' dir
 			| isDrive dir = f dir
 			| otherwise = f dir `mplus` search' (takeDirectory dir)
-
--- | Is one path parent of another
-isParent :: FilePath -> FilePath -> Bool
-isParent dir file = norm dir `isPrefixOf` norm file where
-	norm = dropDot . splitDirectories . normalise
-	dropDot ("." : chs) = chs
-	dropDot chs = chs
 
 -- | Is haskell source?
 haskellSource :: FilePath -> Bool
@@ -174,6 +173,9 @@ ordNub = go Set.empty where
 		| x `Set.member` s = go s xs
 		| otherwise = x : go (Set.insert x s) xs
 
+ordUnion :: Ord a => [a] -> [a] -> [a]
+ordUnion l r = ordNub $ l ++ r
+
 uniqueBy :: Ord b => (a -> b) -> [a] -> [a]
 uniqueBy f = M.elems . mapBy f
 
@@ -207,7 +209,13 @@ jsonUnion x y = objectUnion (toJSON x) (toJSON y)
 noNulls :: [A.Pair] -> [A.Pair]
 noNulls = filter (not . isNull . snd) where
 	isNull Null = True
-	isNull v = v == A.emptyArray || v == A.emptyObject
+	isNull v = v == A.emptyArray || v == A.emptyObject || v == A.String ""
+
+-- | Try convert json to value
+fromJSON' :: FromJSON a => Value -> Maybe a
+fromJSON' v = case fromJSON v of
+	A.Success r -> Just r
+	_ -> Nothing
 
 -- | Lift IO exception to ExceptT
 liftException :: C.MonadCatch m => m a -> ExceptT String m a
@@ -251,16 +259,16 @@ toUtf8 :: String -> ByteString
 toUtf8 = T.encodeUtf8 . T.pack
 
 -- | Read file in UTF8
-readFileUtf8 :: FilePath -> IO String
+readFileUtf8 :: FilePath -> IO Text
 readFileUtf8 f = withFile f ReadMode $ \h -> do
 	hSetEncoding h utf8
-	cts <- hGetContents h
-	length cts `seq` return cts
+	cts <- ST.hGetContents h
+	cts `deepseq` return cts
 
-writeFileUtf8 :: FilePath -> String -> IO ()
+writeFileUtf8 :: FilePath -> Text -> IO ()
 writeFileUtf8 f cts = withFile f WriteMode $ \h -> do
 	hSetEncoding h utf8
-	hPutStr h cts
+	ST.hPutStr h cts
 
 hGetLineBS :: Handle -> IO ByteString
 hGetLineBS = fmap L.fromStrict . B.hGetLine
@@ -338,3 +346,8 @@ sameVersion l r = fromMaybe False $ liftA2 (==) l r
 strVersion :: Maybe [Int] -> String
 strVersion Nothing = "unknown"
 strVersion (Just vers) = intercalate "." $ map show vers
+
+-- | Parse Distribution.Text
+parseDT :: Monad m => Distribution.Text.Text a => String -> String -> m a
+parseDT typeName v = maybe err return (simpleParse v) where
+	err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v

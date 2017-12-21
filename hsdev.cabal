@@ -1,5 +1,5 @@
 name:                hsdev
-version:             0.2.5.1
+version:             0.3.0.0
 synopsis:            Haskell development library
 description:
   Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
@@ -13,8 +13,9 @@ category:            Development
 build-type:          Simple
 cabal-version:       >=1.8
 extra-source-files:
-    tests/test-package/*.hs
-    tests/test-package/test-package.cabal
+  tests/test-package/*.hs
+  tests/test-package/test-package.cabal
+  data/hsdev.sql
 
 source-repository head
   type: git
@@ -28,25 +29,27 @@ library
     Control.Concurrent.FiniteChan
     Control.Concurrent.Worker
     Control.Concurrent.Util
-    Data.Async
     Data.Deps
     Data.Group
     Data.Help
     Data.Lisp
     Data.Maybe.JustIf
+    Data.LookupTable
     HsDev
-    HsDev.Cache
-    HsDev.Cache.Structured
     HsDev.Client.Commands
-    HsDev.Commands
-    HsDev.Database
-    HsDev.Database.Async
+    HsDev.Database.SQLite
+    HsDev.Database.SQLite.Instances
+    HsDev.Database.SQLite.Schema
+    HsDev.Database.SQLite.Schema.TH
+    HsDev.Database.SQLite.Select
     HsDev.Database.Update
     HsDev.Database.Update.Types
     HsDev.Display
     HsDev.Error
     HsDev.Inspect
+    HsDev.Inspect.Order
     HsDev.PackageDb
+    HsDev.PackageDb.Types
     HsDev.Project
     HsDev.Project.Compat
     HsDev.Project.Types
@@ -55,14 +58,18 @@ library
     HsDev.Server.Base
     HsDev.Server.Commands
     HsDev.Server.Message
+    HsDev.Server.Message.Lisp
     HsDev.Server.Types
     HsDev.Sandbox
     HsDev.Stack
     HsDev.Symbols
+    HsDev.Symbols.Name
     HsDev.Symbols.Class
+    HsDev.Symbols.HaskellNames
     HsDev.Symbols.Location
     HsDev.Symbols.Documented
     HsDev.Symbols.Resolve
+    HsDev.Symbols.Parsed
     HsDev.Symbols.Types
     HsDev.Symbols.Util
     HsDev.Tools.AutoFix
@@ -73,12 +80,13 @@ library
     HsDev.Tools.Ghc.Compat
     HsDev.Tools.Ghc.MGhc
     HsDev.Tools.Ghc.Prelude
+    HsDev.Tools.Ghc.Session
     HsDev.Tools.Ghc.Types
     HsDev.Tools.Ghc.Worker
-    HsDev.Tools.Ghc.Session
     HsDev.Tools.Hayoo
     HsDev.Tools.HDocs
     HsDev.Tools.HLint
+    HsDev.Tools.Refact
     HsDev.Tools.Types
     HsDev.Types
     HsDev.Util
@@ -127,7 +135,7 @@ library
     attoparsec >= 0.11.0,
     bytestring >= 0.10.0,
     Cabal >= 1.22.0,
-    containers >= 0.5.0,
+    containers >= 0.5,
     cpphs >= 1.19.0,
     data-default >= 0.5.0,
     deepseq >= 1.4.0,
@@ -136,9 +144,10 @@ library
     fsnotify >= 0.2.1,
     ghc-paths >= 0.1.0,
     ghc-syb-utils >= 0.2.3,
+    haskell-names >= 0.9.0 && < 0.10.0,
     haskell-src-exts >= 1.18.0 && < 1.20.0,
-    hdocs >= 0.5.0,
-    hformat == 0.3.*,
+    hdocs >= 0.5.1,
+    hformat >= 0.3.0,
     hlint >= 1.9.13 && < 2.1,
     HTTP >= 4000.2.0,
     lens >= 4.8,
@@ -153,10 +162,12 @@ library
     regex-pcre-builtin >= 0.94,
     scientific >= 0.3,
     simple-log == 0.9.*,
+    direct-sqlite >= 2.3.21,
+    sqlite-simple,
     syb >= 0.5.1,
     template-haskell,
     text >= 1.2.0,
-    text-region == 0.3.*,
+    text-region >= 0.3,
     time >= 1.5.0,
     transformers >= 0.4.0,
     transformers-base >= 0.4.0,
@@ -175,7 +186,7 @@ executable hsdev
     aeson >= 0.7.0,
     aeson-pretty >= 0.7.0,
     bytestring >= 0.10.0,
-    containers >= 0.5.0,
+    containers >= 0.5,
     deepseq >= 1.4.0,
     directory,
     exceptions >= 0.6.0,
@@ -201,10 +212,11 @@ executable hsinspect
     aeson >= 0.7.0,
     aeson-pretty >= 0.7.0,
     bytestring >= 0.10.0,
-    containers >= 0.5.0,
+    containers >= 0.5,
     data-default >= 0.5.0,
     directory,
     filepath >= 1.4.0,
+    lens >= 4.8,
     mtl >= 2.2.0,
     optparse-applicative >= 0.11,
     text >= 1.2.0,
@@ -224,51 +236,12 @@ executable hsclearimports
     aeson >= 0.7.0,
     aeson-pretty >= 0.7.0,
     bytestring >= 0.10.0,
-    containers >= 0.5.0,
+    containers >= 0.5,
     data-default >= 0.5.0,
     directory,
+    haskell-names >= 0.9.0 && < 0.10.0,
     haskell-src-exts >= 1.18.0 && < 1.20.0,
     lens >= 4.8,
-    mtl >= 2.2.0,
-    optparse-applicative >= 0.11,
-    text >= 1.2.0,
-    transformers >= 0.4.0,
-    unordered-containers >= 0.2.0
-
-executable hscabal
-  main-is: hscabal.hs
-  hs-source-dirs: tools
-  ghc-options: -Wall -fno-warn-tabs
-  other-modules:
-    Tool
-  build-depends:
-    base >= 4.7 && < 5,
-    hsdev,
-    aeson >= 0.7.0,
-    aeson-pretty >= 0.7.0,
-    bytestring >= 0.10.0,
-    containers >= 0.5.0,
-    data-default >= 0.5.0,
-    mtl >= 2.2.0,
-    optparse-applicative >= 0.11,
-    text >= 1.2.0,
-    transformers >= 0.4.0,
-    unordered-containers >= 0.2.0
-
-executable hshayoo
-  main-is: hshayoo.hs
-  hs-source-dirs: tools
-  ghc-options: -Wall -fno-warn-tabs
-  other-modules:
-    Tool
-  build-depends:
-    base >= 4.7 && < 5,
-    hsdev,
-    aeson >= 0.7.0,
-    aeson-pretty >= 0.7.0,
-    bytestring >= 0.10.0,
-    containers >= 0.5.0,
-    data-default >= 0.5.0,
     mtl >= 2.2.0,
     optparse-applicative >= 0.11,
     text >= 1.2.0,

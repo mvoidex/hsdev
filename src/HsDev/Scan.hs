@@ -1,44 +1,56 @@
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleInstances, TypeOperators, TypeApplications, OverloadedStrings #-}
 
 module HsDev.Scan (
 	-- * Enumerate functions
 	CompileFlag, ModuleToScan, ProjectToScan, PackageDbToScan, ScanContents(..),
 	EnumContents(..),
-	enumProject, enumSandbox, enumDirectory,
+	enumRescan, enumDependent, enumProject, enumSandbox, enumDirectory,
 
 	-- * Scan
 	scanProjectFile,
-	scanModule, scanModify, upToDate, rescanModule, changedModule, changedModules,
+	scanModify,
+	upToDate, changedModules,
 
 	-- * Reexportss
-	module HsDev.Database,
 	module HsDev.Symbols.Types,
 	module Control.Monad.Except,
 	) where
 
 import Control.DeepSeq
-import Control.Lens (view, preview, set, over, each, _Right, _1, _2, _3, (^.), (^..))
+import Control.Lens hiding ((%=))
 import Control.Monad.Except
-import Data.Maybe (catMaybes, fromMaybe, isJust, listToMaybe)
+import Data.Deps
+import Data.Maybe (catMaybes, isJust, maybeToList, listToMaybe)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.List (intercalate)
+import Data.Text (Text)
+import Data.Text.Lens (unpacked)
+import qualified Data.Text as T
+import Data.String (IsString, fromString)
+import qualified Data.Set as S
 import System.Directory
 import Text.Format
+import qualified System.Log.Simple as Log
 
 import HsDev.Error
-import HsDev.Scan.Browse (browsePackages, browseModules)
-import HsDev.Server.Types (FileSource(..), CommandMonad(..))
+import qualified HsDev.Database.SQLite as SQLite
+import HsDev.Database.SQLite.Select
+import HsDev.Scan.Browse (browsePackages)
+import HsDev.Server.Types (FileSource(..), CommandMonad(..), inSessionGhc)
 import HsDev.Sandbox
 import HsDev.Symbols
+import HsDev.Symbols.Resolve
 import HsDev.Symbols.Types
-import HsDev.Database
 import HsDev.Display
 import HsDev.Inspect
 import HsDev.Util
+import System.Directory.Paths
 
 -- | Compile flags
 type CompileFlag = String
 -- | Module with flags ready to scan
-type ModuleToScan = (ModuleLocation, [CompileFlag], Maybe String)
+type ModuleToScan = (ModuleLocation, [CompileFlag], Maybe Text)
 -- | Project ready to scan
 type ProjectToScan = (Project, [ModuleToScan])
 -- | Package-db sandbox to scan (top of stack)
@@ -64,9 +76,11 @@ instance Formattable ScanContents where
 	formattable (ScanContents ms ps cs) = formattable str where
 		str :: String
 		str = format "modules: {}, projects: {}, package-dbs: {}"
-			~~ (intercalate ", " $ ms ^.. each . _1 . moduleFile)
-			~~ (intercalate ", " $ ps ^.. each . _1 . projectPath)
-			~~ (intercalate ", " $ map (display . topPackageDb) $ cs ^.. each)
+			~~ (T.intercalate comma $ ms ^.. each . _1 . moduleFile)
+			~~ (T.intercalate comma $ ps ^.. each . _1 . projectPath)
+			~~ (intercalate comma $ map (display . topPackageDb) $ cs ^.. each)
+		comma :: IsString s => s
+		comma = fromString ", "
 
 class EnumContents a where
 	enumContents :: CommandMonad m => a -> m ScanContents
@@ -86,41 +100,77 @@ instance EnumContents PackageDbStack where
 instance EnumContents Sandbox where
 	enumContents = enumSandbox
 
-instance {-# OVERLAPPING #-} EnumContents a => EnumContents [a] where
+instance {-# OVERLAPPABLE #-} EnumContents a => EnumContents [a] where
 	enumContents = liftM mconcat . tries . map enumContents
 
-instance {-# OVERLAPS #-} EnumContents FilePath where
+instance {-# OVERLAPPING #-} EnumContents FilePath where
 	enumContents f
 		| haskellSource f = hsdevLiftIO $ do
 			mproj <- liftIO $ locateProject f
 			case mproj of
-				Nothing -> enumContents $ FileModule f Nothing
+				Nothing -> enumContents $ FileModule (fromFilePath f) Nothing
 				Just proj -> do
 					ScanContents _ [(_, mods)] _ <- enumContents proj
-					return $ ScanContents (filter ((== Just f) . preview (_1 . moduleFile)) mods) [] []
+					return $ ScanContents (filter ((== Just f) . preview (_1 . moduleFile . path)) mods) [] []
 		| otherwise = enumDirectory f
+
+instance {-# OVERLAPPING #-} EnumContents Path where
+	enumContents = enumContents . view path
 
 instance EnumContents FileSource where
 	enumContents (FileSource f mcts)
-		| haskellSource f = do
+		| haskellSource (view path f) = do
 			ScanContents [(m, opts, _)] _ _ <- enumContents f
 			return $ ScanContents [(m, opts, mcts)] [] []
 		| otherwise = return mempty
+
+-- | Enum rescannable (i.e. already scanned) file
+enumRescan :: CommandMonad m => FilePath -> m ScanContents
+enumRescan fpath = Log.scope "enum-rescan" $ do
+	ms <- SQLite.query @_ @(ModuleLocation SQLite.:. Inspection)
+		(toQuery $ qModuleLocation `mappend` select_ ["ml.inspection_time", "ml.inspection_opts"] [] [] `mappend` where_ ["ml.file == ?"]) (SQLite.Only fpath)
+	case ms of
+		[] -> do
+			Log.sendLog Log.Warning $ "file {} not found" ~~ fpath
+			return mempty
+		((mloc SQLite.:. insp):_) -> do
+			when (length ms > 1) $ Log.sendLog Log.Warning $ "several modules with file == {} found, taking first one" ~~ fpath
+			return $ ScanContents [(mloc, insp ^.. inspectionOpts . each . unpacked, Nothing)] [] []
+
+-- | Enum file dependent
+enumDependent :: CommandMonad m => FilePath -> m ScanContents
+enumDependent fpath = Log.scope "enum-dependent" $ do
+	ms <- SQLite.query @_ @ModuleId
+		(toQuery $ qModuleId `mappend` where_ ["mu.file == ?"]) (SQLite.Only fpath)
+	case ms of
+		[] -> do
+			Log.sendLog Log.Warning $ "file {} not found" ~~ fpath
+			return mempty
+		(mid:_) -> do
+			when (length ms > 1) $ Log.sendLog Log.Warning $ "several modules with file == {} found, taking first one" ~~ fpath
+			let
+				mcabal = mid ^? moduleLocation . moduleProject . _Just . projectCabal
+			depList <- SQLite.query @_ @(Path, Path) "select d.module_file, d.depends_file from sources_depends as d, projects_modules_scope as ps where ps.cabal is ? and ps.module_id == d.module_id;"
+				(SQLite.Only mcabal)
+			let
+				rdeps = inverse . either (const mempty) id . flatten . mconcat . map (uncurry dep) $ depList
+				dependent = rdeps ^. ix (fromFilePath fpath)
+			liftM mconcat $ mapM (enumRescan . view path) dependent
 
 -- | Enum project sources
 enumProject :: CommandMonad m => Project -> m ScanContents
 enumProject p = hsdevLiftIO $ do
 	p' <- liftIO $ loadProject p
-	pdbs <- searchPackageDbStack (view projectPath p')
-	pkgs <- liftM (map $ view (package . packageName)) $ browsePackages [] pdbs
+	pdbs <- inSessionGhc $ searchPackageDbStack (view projectPath p')
+	pkgs <- inSessionGhc $ liftM (S.fromList . map (view (package . packageName))) $ browsePackages [] pdbs
 	let
-		projOpts :: FilePath -> [String]
-		projOpts f = concatMap makeOpts $ fileTargets p' f where
+		projOpts :: Path -> [Text]
+		projOpts f = map fromString $ concatMap makeOpts $ fileTargets p' f where
 			makeOpts :: Info -> [String]
 			makeOpts i = concat [
 				["-hide-all-packages"],
-				["-package " ++ view projectName p'],
-				["-package " ++ dep | dep <- view infoDepends i, dep `elem` pkgs]]
+				["-package " ++ view (projectName . path) p'],
+				["-package " ++ T.unpack dep | dep <- view infoDepends i, dep `S.member` pkgs]]
 	srcs <- liftIO $ projectSources p'
 	let
 		mlocs = over each (\src -> over ghcOptions (++ projOpts (view entity src)) . over entity (\f -> FileModule f (Just p')) $ src) srcs
@@ -129,7 +179,7 @@ enumProject p = hsdevLiftIO $ do
 
 -- | Enum sandbox
 enumSandbox :: CommandMonad m => Sandbox -> m ScanContents
-enumSandbox = sandboxPackageDbStack >=> enumContents
+enumSandbox = (inSessionGhc . sandboxPackageDbStack) >=> enumContents
 
 -- | Enum directory modules
 enumDirectory :: CommandMonad m => FilePath -> m ScanContents
@@ -139,71 +189,39 @@ enumDirectory dir = hsdevLiftIO $ do
 		projects = filter cabalFile cts
 		sources = filter haskellSource cts
 	dirs <- liftIO $ filterM doesDirectoryExist cts
-	sboxes <- liftM catMaybes $ triesMap (liftIO . findSandbox) dirs
+	sboxes <- liftM catMaybes $ triesMap (liftIO . findSandbox . fromFilePath) dirs
 	pdbs <- mapM enumSandbox sboxes
 	projs <- liftM mconcat $ triesMap (enumProject . project) projects
 	let
 		projPaths = map (view projectPath . fst) $ projectsToScan projs
-		standalone = map (`FileModule` Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) sources
+		standalone = map (`FileModule` Nothing) $ filter (\s -> not (any (`isParent` s) projPaths)) $ map fromFilePath sources
 	return $ mconcat [
 		ScanContents [(s, [], Nothing) | s <- standalone] [] [],
 		projs,
 		mconcat pdbs]
 
 -- | Scan project file
-scanProjectFile :: CommandMonad m => [String] -> FilePath -> m Project
+scanProjectFile :: CommandMonad m => [String] -> Path -> m Project
 scanProjectFile _ f = hsdevLiftIO $ do
-	proj <- (liftIO $ locateProject f) >>= maybe (hsdevError $ FileNotFound f) return
+	proj <- (liftIO $ locateProject (view path f)) >>= maybe (hsdevError $ FileNotFound f) return
 	liftIO $ loadProject proj
 
--- | Scan module
-scanModule :: CommandMonad m => [(String, String)] -> [String] -> ModuleLocation -> Maybe String -> m InspectedModule
-scanModule defines opts (FileModule f p) mcts = hsdevLiftIO $ liftM setProj $ liftIO $ inspectFile defines opts f mcts where
-	setProj =
-		set (inspectedId . moduleProject) p .
-		set (inspectionResult . _Right . moduleLocation . moduleProject) p
-scanModule _ opts mloc@(InstalledModule c _ n) _ = hsdevLiftIO $ do
-	pdbs <- getDbs c
-	ims <- browseModules opts pdbs [mloc]
-	maybe (hsdevError $ BrowseNoModuleInfo n) return $ listToMaybe ims
-	where
-		getDbs :: CommandMonad m => PackageDb -> m PackageDbStack
-		getDbs = maybe (return userDb) searchPackageDbStack . preview packageDb
-scanModule _ _ (ModuleSource _) _ = hsdevError $ InspectError "Can inspect only modules in file or cabal"
-
 -- | Scan additional info and modify scanned module
-scanModify :: CommandMonad m => ([String] -> PackageDbStack -> Module -> m Module) -> InspectedModule -> m InspectedModule
+scanModify :: CommandMonad m => ([String] -> Module -> m Module) -> InspectedModule -> m InspectedModule
 scanModify f im = traverse f' im where
-	f' m = do
-		pdbs <- case view moduleLocation m of
-			-- TODO: Get actual sandbox stack
-			FileModule fpath _ -> searchPackageDbStack fpath
-			InstalledModule pdb _ _ -> maybe (return userDb) searchPackageDbStack $ preview packageDb pdb
-			_ -> return userDb
-		f (fromMaybe [] $ preview (inspection . inspectionOpts) im) pdbs m
+	f' m = f (toListOf (inspection . inspectionOpts . each . unpacked) im) m
 
 -- | Is inspected module up to date?
-upToDate :: [String] -> InspectedModule -> IO Bool
-upToDate opts im = case view inspectedId im of
-	FileModule f _ -> liftM (== view inspection im) $ fileInspection f opts
-	InstalledModule _ _ _ -> return $ view inspection im == InspectionAt 0 opts
-	_ -> return False
-
--- | Rescan inspected module
-rescanModule :: CommandMonad m => [(String, String)] -> [String] -> InspectedModule -> m (Maybe InspectedModule)
-rescanModule defines opts im = do
-	up <- liftIO $ upToDate opts im
-	if up
-		then return Nothing
-		else fmap Just $ scanModule defines opts (view inspectedId im) Nothing
-
--- | Is module new or recently changed
-changedModule :: Database -> [String] -> ModuleLocation -> IO Bool
-changedModule db opts m = maybe (return True) (liftM not . liftIO . upToDate opts) m' where
-	m' = lookupInspected m db
+upToDate :: ModuleLocation -> [String] -> Inspection -> IO Bool
+upToDate mloc opts insp = do
+	insp' <- moduleInspection mloc opts
+	return $ fresh insp insp'
 
 -- | Returns new (to scan) and changed (to rescan) modules
-changedModules :: Database -> [String] -> [ModuleToScan] -> IO [ModuleToScan]
-changedModules db opts = filterM $ \m -> if isJust (m ^. _3)
+changedModules :: Map ModuleLocation Inspection -> [String] -> [ModuleToScan] -> IO [ModuleToScan]
+changedModules inspMap opts = filterM $ \m -> if isJust (m ^. _3)
 	then return True
-	else changedModule db (opts ++ (m ^. _2)) (m ^. _1)
+	else maybe
+		(return True)
+		(upToDate (m ^. _1) (opts ++ (m ^. _2)))
+		(M.lookup (m ^. _1) inspMap)

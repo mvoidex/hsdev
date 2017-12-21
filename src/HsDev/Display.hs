@@ -6,14 +6,17 @@ module HsDev.Display (
 	) where
 
 import Control.Lens (view)
-import Data.Maybe (fromMaybe)
+import Data.List (intercalate)
+import Data.Text.Lens (unpacked)
 
 import Text.Format
 
+import System.Directory.Paths
 import HsDev.PackageDb
 import HsDev.Project
 import HsDev.Sandbox
 import HsDev.Symbols.Location
+import HsDev.Symbols.Types
 
 class Display a where
 	display :: a -> String
@@ -22,21 +25,32 @@ class Display a where
 instance Display PackageDb where
 	display GlobalDb = "global-db"
 	display UserDb = "user-db"
-	display (PackageDb p) = "package-db " ++ p
+	display (PackageDb p) = "package-db " ++ display p
 	displayType _ = "package-db"
 
+instance Display PackageDbStack where
+	display = intercalate "/" . map display . packageDbs
+	displayType _ = "package-db-stack"
+
 instance Display ModuleLocation where
-	display (FileModule f _) = f
-	display (InstalledModule _ _ n) = n
-	display (ModuleSource s) = fromMaybe "" s
+	display (FileModule f _) = display f
+	display (InstalledModule _ _ n) = view unpacked n
+	display (OtherLocation s) = view unpacked s
+	display NoLocation = "<no-location>"
 	displayType _ = "module"
 
+instance Display ModuleTag where
+	display InferredTypesTag = "types"
+	display RefinedDocsTag = "docs"
+	display OnlyHeaderTag = "header"
+	displayType _ = "module-tag"
+
 instance Display Project where
-	display = view projectName
+	display = view (projectName . unpacked)
 	displayType _ = "project"
 
 instance Display Sandbox where
-	display (Sandbox _ fpath) = fpath
+	display (Sandbox _ fpath) = display fpath
 	displayType (Sandbox CabalSandbox _) = "cabal-sandbox"
 	displayType (Sandbox StackWork _) = "stack-work"
 
@@ -44,7 +58,14 @@ instance Display FilePath where
 	display = id
 	displayType _ = "path"
 
+instance Display Path where
+	display = view path
+	displayType _ = "path"
+
 instance Formattable PackageDb where
+	formattable = formattable . display
+
+instance Formattable PackageDbStack where
 	formattable = formattable . display
 
 instance Formattable ModuleLocation where
@@ -53,3 +74,5 @@ instance Formattable ModuleLocation where
 instance Formattable Project where
 	formattable = formattable . display
 
+instance Formattable Sandbox where
+	formattable = formattable . display

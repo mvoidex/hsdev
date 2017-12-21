@@ -3,10 +3,10 @@
 
 module HsDev.Tools.Ghc.Worker (
 	-- * Workers
-	SessionTarget(..),
+	SessionType(..), SessionConfig(..),
 	GhcM, GhcWorker, MGhcT(..), runGhcM,
 	ghcWorker,
-	workerSession,
+	workerSession, ghcSession, ghciSession, haddockSession, tmpSession,
 
 	-- * Initializers and actions
 	ghcRun,
@@ -14,6 +14,7 @@ module HsDev.Tools.Ghc.Worker (
 	importModules, preludeModules,
 	evaluate,
 	clearTargets, makeTarget, loadTargets,
+	loadInteractive, reload,
 	-- * Utils
 	listPackages, spanRegion,
 	withCurrentDirectory,
@@ -26,16 +27,20 @@ module HsDev.Tools.Ghc.Worker (
 	module Control.Concurrent.Worker
 	) where
 
+import Control.Lens (view, over)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Catch
 import Data.Dynamic
-import Data.List (intercalate)
 import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
 import Data.Version (showVersion)
+import Data.String (fromString)
+import Data.Text (Text)
+import qualified Data.Text as T
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
+import System.FilePath
 import qualified  System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Read (readMaybe)
@@ -58,29 +63,23 @@ import HsDev.Tools.Ghc.Compat hiding (setLogAction)
 import qualified HsDev.Tools.Ghc.Compat as C (setLogAction)
 import HsDev.Tools.Ghc.MGhc
 
-data SessionTarget =
-	SessionGhci |
-	SessionGhc [String]
+data SessionType = SessionGhci | SessionGhc | SessionHaddock | SessionTmp deriving (Eq, Ord)
+data SessionConfig = SessionConfig SessionType [String] deriving (Eq, Ord)
 
-instance Show SessionTarget where
+instance Show SessionType where
 	show SessionGhci = "ghci"
-	show (SessionGhc opts) = "ghc " ++ intercalate ", " opts
+	show SessionGhc = "ghc"
+	show SessionHaddock = "haddock"
+	show SessionTmp = "tmp"
 
-instance Formattable SessionTarget
+instance Show SessionConfig where
+	show (SessionConfig t opts) = unwords (show t : opts)
 
-instance Eq SessionTarget where
-	SessionGhci == SessionGhci = True
-	SessionGhc lopts == SessionGhc ropts = lopts == ropts
-	_ == _ = False
+instance Formattable SessionConfig
 
-instance Ord SessionTarget where
-	compare l r = compare (isGhci l) (isGhci r) where
-		isGhci SessionGhci = True
-		isGhci _ = False
+type GhcM a = MGhcT SessionConfig (LogT IO) a
 
-type GhcM a = MGhcT SessionTarget (LogT IO) a
-
-type GhcWorker = Worker (MGhcT SessionTarget (LogT IO))
+type GhcWorker = Worker (MGhcT SessionConfig (LogT IO))
 
 instance (Monad m, GhcMonad m) => GhcMonad (ReaderT r m) where
 	getSession = lift getSession
@@ -106,20 +105,39 @@ ghcWorker = do
 	liftIO $ startWorker (withLog l . runGhcM (Just libdir)) id (Log.scope "ghc")
 
 -- | Create session with options
-workerSession :: SessionTarget -> GhcM ()
-workerSession SessionGhci = do
-	Log.sendLog Log.Trace $ "session: {}" ~~ SessionGhci
-	switchSession_ SessionGhci $ Just $ ghcRun [] (importModules preludeModules)
-workerSession s@(SessionGhc opts) = do
-	ms <- findSessionBy isGhcSession
-	forM_ ms $ \s'@(SessionGhc opts') -> when (opts /= opts') $ do
+workerSession :: SessionType -> [String] -> GhcM ()
+workerSession ty opts = do
+	ms <- findSessionBy toKill
+	forM_ ms $ \s' -> do
 		Log.sendLog Log.Trace $ "killing session: {}" ~~ s'
 		deleteSession s'
-	Log.sendLog Log.Trace $ "session: {}" ~~ s
-	switchSession_ s $ Just $ ghcRun opts (return ())
+	Log.sendLog Log.Trace $ "session: {}" ~~ SessionConfig ty opts
+	switchSession_ (SessionConfig ty opts) $ Just $ initialize
 	where
-		isGhcSession (SessionGhc _) = True
-		isGhcSession _ = False
+		toKill (SessionConfig ty' opts') = or [
+			(ty == ty' && opts /= opts'),
+			(ty /= ty' && ty' `elem` [SessionTmp, SessionHaddock] && ty /= SessionTmp)]
+		initialize = case ty of
+			SessionGhci -> ghcRun opts (importModules preludeModules)
+			SessionGhc -> ghcRun opts (return ())
+			SessionTmp -> ghcRun opts (return ())
+			SessionHaddock -> ghcRun ("-haddock" : opts) (return ())
+
+-- | Get ghc session
+ghcSession :: [String] -> GhcM ()
+ghcSession = workerSession SessionGhc
+
+-- | Get ghci session
+ghciSession :: GhcM ()
+ghciSession = workerSession SessionGhci []
+
+-- | Get haddock session with flags
+haddockSession :: [String] -> GhcM ()
+haddockSession opts = workerSession SessionHaddock opts
+
+-- | Get haddock session with flags
+tmpSession :: [String] -> GhcM ()
+tmpSession opts = workerSession SessionTmp opts
 
 -- | Run ghc
 ghcRun :: GhcMonad m => [String] -> m a -> m a
@@ -148,11 +166,12 @@ modifyFlags f = do
 	let
 		fs' = f fs
 	_ <- setSessionDynFlags fs'
-	_ <- liftIO $ initPackages fs'
+	-- _ <- liftIO $ initPackages fs'
 	return ()
 
 -- | Add options without reinit session
 addCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
+addCmdOpts [] = return ()
 addCmdOpts opts = do
 	Log.sendLog Log.Trace $ "setting ghc options: {}" ~~ unwords opts
 	fs <- getSessionDynFlags
@@ -191,16 +210,36 @@ clearTargets :: GhcMonad m => m ()
 clearTargets = loadTargets []
 
 -- | Make target with its source code optional
-makeTarget :: GhcMonad m => String -> Maybe String -> m Target
-makeTarget name Nothing = guessTarget name Nothing
+makeTarget :: GhcMonad m => Text -> Maybe Text -> m Target
+makeTarget name Nothing = guessTarget (T.unpack name) Nothing
 makeTarget name (Just cts) = do
-	t <- guessTarget name Nothing
+	t <- guessTarget (T.unpack name) Nothing
 	tm <- liftIO getCurrentTime
-	return t { targetContents = Just (stringToStringBuffer cts, tm) }
+	return t { targetContents = Just (stringToStringBuffer $ T.unpack cts, tm) }
 
 -- | Load all targets
 loadTargets :: GhcMonad m => [Target] -> m ()
 loadTargets ts = setTargets ts >> load LoadAllTargets >> return ()
+
+-- | Load and set interactive context
+loadInteractive :: GhcMonad m => Path -> Maybe Text -> m ()
+loadInteractive fpath mcts = do
+	fpath' <- liftIO $ canonicalize fpath
+	withCurrentDirectory (view path $ takeDir fpath') $ do
+		t <- makeTarget (over path takeFileName fpath') mcts
+		loadTargets [t]
+		g <- getModuleGraph
+		setContext [IIModule (ms_mod_name m) | m <- g]
+
+-- | Reload targets
+reload :: GhcMonad m => m ()
+reload = do
+	ts <- getTargets
+	ctx <- getContext
+	setContext []
+	clearTargets
+	setTargets ts
+	setContext ctx
 
 -- | Get list of installed packages
 listPackages :: GhcMonad m => m [ModulePackage]
@@ -225,12 +264,12 @@ logToChan :: Chan (Note OutputMessage) -> LogAction
 logToChan ch fs sev src msg
 	| Just sev' <- checkSev sev = do
 		src' <- canonicalize srcMod
-		putChan ch $ Note {
+		putChan ch Note {
 			_noteSource = src',
 			_noteRegion = spanRegion src,
 			_noteLevel = Just sev',
 			_note = OutputMessage {
-				_message = showSDoc fs msg,
+				_message = fromString $ showSDoc fs msg,
 				_messageSuggestion = Nothing } }
 	| otherwise = return ()
 	where
@@ -239,8 +278,8 @@ logToChan ch fs sev src msg
 		checkSev SevFatal = Just Error
 		checkSev _ = Nothing
 		srcMod = case src of
-			RealSrcSpan s' -> FileModule (unpackFS $ srcSpanFile s') Nothing
-			_ -> ModuleSource Nothing
+			RealSrcSpan s' -> FileModule (fromFilePath $ unpackFS $ srcSpanFile s') Nothing
+			_ -> NoLocation
 
 -- | Don't log ghc warnings and errors
 logToNull :: LogAction

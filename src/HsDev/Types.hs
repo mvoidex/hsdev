@@ -9,18 +9,20 @@ import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Aeson.Types (Pair, Parser)
 import Data.Typeable
+import Data.Text (Text)
 import Text.Format
 
 import HsDev.Symbols.Location
+import System.Directory.Paths
 
 -- | hsdev exception type
 data HsDevError =
 	ModuleNotSource ModuleLocation |
 	BrowseNoModuleInfo String |
-	FileNotFound FilePath |
+	FileNotFound Path |
 	ToolNotFound String |
-	ProjectNotFound String |
-	PackageNotFound String |
+	ProjectNotFound Text |
+	PackageNotFound Text |
 	ToolError String String |
 	NotInspected ModuleLocation |
 	InspectError String |
@@ -29,6 +31,7 @@ data HsDevError =
 	GhcError String |
 	RequestError String String |
 	ResponseError String String |
+	SQLiteError String |
 	OtherError String
 		deriving (Typeable)
 
@@ -47,6 +50,7 @@ instance NFData HsDevError where
 	rnf (GhcError e) = rnf e
 	rnf (RequestError e r) = rnf e `seq` rnf r
 	rnf (ResponseError e r) = rnf e `seq` rnf r
+	rnf (SQLiteError e) = rnf e
 	rnf (OtherError e) = rnf e
 
 instance Show HsDevError where
@@ -64,6 +68,7 @@ instance Show HsDevError where
 	show (GhcError e) = format "ghc exception: {}" ~~ e
 	show (RequestError e r) = format "request error: {}, request: {}" ~~ e ~~ r
 	show (ResponseError e r) = format "response error: {}, response: {}" ~~ e ~~ r
+	show (SQLiteError e) = format "sqlite error: {}" ~~ e
 	show (OtherError e) = e
 
 instance Formattable HsDevError where
@@ -86,6 +91,7 @@ instance ToJSON HsDevError where
 	toJSON (GhcError e) = jsonErr "ghc error" ["msg" .= e]
 	toJSON (RequestError e r) = jsonErr "request error" ["msg" .= e, "request" .= r]
 	toJSON (ResponseError e r) = jsonErr "response error" ["msg" .= e, "response" .= r]
+	toJSON (SQLiteError e) = jsonErr "sqlite error" ["msg" .= e]
 	toJSON (OtherError e) = jsonErr "other error" ["msg" .= e]
 
 instance FromJSON HsDevError where
@@ -106,6 +112,7 @@ instance FromJSON HsDevError where
 			"ghc error" -> GhcError <$> v .: "msg"
 			"request error" -> RequestError <$> v .: "msg" <*> v .: "request"
 			"response error" -> ResponseError <$> v .: "msg" <*> v .: "response"
+			"sqlite error" -> SQLiteError <$> v .: "msg"
 			"other error" -> OtherError <$> v .: "msg"
 			_ -> fail "invalid error"
 
