@@ -539,7 +539,7 @@ scan :: UpdateMonad m
 scan part' mlocs opts act = Log.scope "scan" $ do
 	mlocs' <- liftM (M.fromList . map (\((SQLite.Only mid) SQLite.:. (m SQLite.:. i)) -> (m, (mid, i)))) part'
 	let
-		obsolete = M.withoutKeys mlocs' (S.fromList $ map (^. _1) mlocs)
+		obsolete = M.filterWithKey (\k _ -> k `S.notMember` (S.fromList $ map (^. _1) mlocs)) mlocs'
 	changed <- liftIO $ S.changedModules (M.map snd mlocs') opts mlocs
 	sendUpdateAction $ Log.scope "scan/remove-obsolete" $ forM_ (M.elems obsolete) $ SQLite.removeModule . fst
 	act changed
