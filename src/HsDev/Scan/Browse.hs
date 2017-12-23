@@ -92,11 +92,11 @@ listModules opts dbs pkgs = do
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
 	tmpSession (packageDbStackOpts dbs ++ opts)
-	liftM concat . mapM (browseModules' opts dbs) . map snd . modulesPackagesGroups $ mlocs
+	liftM concat . mapM (browseModules' opts) . map snd . modulesPackagesGroups $ mlocs
 
 -- | Inspect installed modules, doesn't set session!
-browseModules' :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
-browseModules' opts dbs mlocs = do
+browseModules' :: [String] -> [ModuleLocation] -> GhcM [InspectedModule]
+browseModules' opts mlocs = do
 	-- we set package flags separately in order not to drop previous temporary session with consecutive call to this function
 	setPackagesOpts
 

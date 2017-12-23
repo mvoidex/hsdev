@@ -20,7 +20,7 @@ import Control.DeepSeq
 import Control.Lens hiding ((%=))
 import Control.Monad.Except
 import Data.Deps
-import Data.Maybe (catMaybes, isJust, maybeToList, listToMaybe)
+import Data.Maybe (catMaybes, isJust)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.List (intercalate)
@@ -40,7 +40,6 @@ import HsDev.Scan.Browse (browsePackages)
 import HsDev.Server.Types (FileSource(..), CommandMonad(..), inSessionGhc)
 import HsDev.Sandbox
 import HsDev.Symbols
-import HsDev.Symbols.Resolve
 import HsDev.Symbols.Types
 import HsDev.Display
 import HsDev.Inspect
@@ -170,7 +169,7 @@ enumProject p = hsdevLiftIO $ do
 			makeOpts i = concat [
 				["-hide-all-packages"],
 				["-package " ++ view (projectName . path) p'],
-				["-package " ++ T.unpack dep | dep <- view infoDepends i, dep `S.member` pkgs]]
+				["-package " ++ T.unpack dep' | dep' <- view infoDepends i, dep' `S.member` pkgs]]
 	srcs <- liftIO $ projectSources p'
 	let
 		mlocs = over each (\src -> over ghcOptions (++ projOpts (view entity src)) . over entity (\f -> FileModule f (Just p')) $ src) srcs

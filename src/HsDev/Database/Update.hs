@@ -22,7 +22,6 @@ module HsDev.Database.Update (
 	module Control.Monad.Except
 	) where
 
-import Control.Applicative ((<|>))
 import qualified Control.Concurrent.Async as A
 import Control.Concurrent.MVar
 import Control.DeepSeq
@@ -32,12 +31,11 @@ import Control.Monad.Catch (catch, handle, MonadThrow)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
-import Control.Monad.State (get, modify, evalStateT, evalState)
+import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
 import Data.Aeson.Types
-import Data.Either (rights)
 import Data.Function (on)
-import Data.List (intercalate, nubBy, sortBy)
+import Data.List (nubBy, sortBy)
 import Data.Ord
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
@@ -61,9 +59,8 @@ import HsDev.Sandbox
 import qualified HsDev.Stack as S
 import HsDev.Symbols
 import HsDev.Symbols.Parsed (Parsed)
-import qualified HsDev.Symbols.Parsed as P (names)
 import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
-import HsDev.Tools.Ghc.Types (inferTypes, fileTypes, typedType)
+import HsDev.Tools.Ghc.Types (fileTypes, typedType)
 import HsDev.Tools.Types
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
@@ -94,16 +91,17 @@ runUpdate uopts act = Log.scope "update" $ do
 	return r
 	where
 		act' = do
-			(r, mlocs') <- listen act
+			(r, _) <- listen act
+			-- (r, mlocs') <- listen act
 
-			dbs <- liftM S.unions $ forM mlocs' $ \mloc' -> do
-				mid <- SQLite.lookupModuleLocation mloc'
-				case mid of
-					Nothing -> return (S.empty :: S.Set PackageDb)
-					Just mid' -> liftM (S.fromList . map SQLite.fromOnly) $ SQLite.query (SQLite.toQuery $ SQLite.select_
-						["ps.package_db"]
-						["package_dbs as ps", "modules as m"]
-						["m.package_name == ps.package_name", "m.package_version == ps.package_version", "m.id == ?"]) (SQLite.Only mid')
+			-- dbs <- liftM S.unions $ forM mlocs' $ \mloc' -> do
+			-- 	mid <- SQLite.lookupModuleLocation mloc'
+			-- 	case mid of
+			-- 		Nothing -> return (S.empty :: S.Set PackageDb)
+			-- 		Just mid' -> liftM (S.fromList . map SQLite.fromOnly) $ SQLite.query (SQLite.toQuery $ SQLite.select_
+			-- 			["ps.package_db"]
+			-- 			["package_dbs as ps", "modules as m"]
+			-- 			["m.package_name == ps.package_name", "m.package_version == ps.package_version", "m.id == ?"]) (SQLite.Only mid')
 
 			-- If some sourced files depends on currently scanned package-dbs
 			-- We must resolve them and even rescan if there was errors scanning without
@@ -112,29 +110,29 @@ runUpdate uopts act = Log.scope "update" $ do
 			-- sboxes = databaseSandboxes dbval
 			-- sboxOf :: Path -> Maybe Sandbox
 			-- sboxOf fpath = find (pathInSandbox fpath) sboxes
-			projsRows <- SQLite.query_ "select name, cabal, version, ifnull(package_db_stack, json('[]')) from projects;"
-			let
-				projs = [proj' | (proj' SQLite.:. (SQLite.Only (SQLite.JSON projPdbs))) <- projsRows,
-					not (S.null (S.fromList projPdbs `S.intersection` dbs))]
+			-- projsRows <- SQLite.query_ "select name, cabal, version, ifnull(package_db_stack, json('[]')) from projects;"
+			-- let
+			-- 	projs = [proj' | (proj' SQLite.:. (SQLite.Only (SQLite.JSON projPdbs))) <- projsRows,
+			-- 		not (S.null (S.fromList projPdbs `S.intersection` dbs))]
 
-				stands = []
-				-- HOWTO?
-				-- stands = do
-				-- 	sloc <- dbval ^.. standaloneSlice . modules . moduleId . moduleLocation
-				-- 	guard $ sboxUpdated $ sboxOf (sloc ^?! moduleFile)
-				-- 	guard (notElem sloc mlocs')
-				-- 	return (sloc, dbval ^.. databaseModules . ix sloc . inspection . inspectionOpts . each . unpacked, Nothing)
+			-- 	stands = []
+			-- 	-- HOWTO?
+			-- 	-- stands = do
+			-- 	-- 	sloc <- dbval ^.. standaloneSlice . modules . moduleId . moduleLocation
+			-- 	-- 	guard $ sboxUpdated $ sboxOf (sloc ^?! moduleFile)
+			-- 	-- 	guard (notElem sloc mlocs')
+			-- 	-- 	return (sloc, dbval ^.. databaseModules . ix sloc . inspection . inspectionOpts . each . unpacked, Nothing)
 
-			Log.sendLog Log.Trace $ "updated package-dbs: {}, have to rescan {} projects and {} files"
-				~~ intercalate ", " (map display $ S.toList dbs)
-				~~ length projs ~~ length stands
-			(_, rlocs') <- listen $ runTasks_ (scanModules [] stands : [scanProject [] (proj ^. projectCabal) | proj <- projs])
-			let
-				ulocs' = filter (isJust . preview moduleFile) (ordNub $ mlocs' ++ rlocs')
-				-- getMods :: (MonadIO m) => m [InspectedModule]
-				-- getMods = do
-				-- 	db' <- liftIO $ readAsync db
-				-- 	return $ filter ((`elem` ulocs') . view inspectedKey) $ toList $ view databaseModules db'
+			-- Log.sendLog Log.Trace $ "updated package-dbs: {}, have to rescan {} projects and {} files"
+			-- 	~~ intercalate ", " (map display $ S.toList dbs)
+			-- 	~~ length projs ~~ length stands
+			-- (_, rlocs') <- listen $ runTasks_ (scanModules [] stands : [scanProject [] (proj ^. projectCabal) | proj <- projs])
+			-- let
+			-- 	ulocs' = filter (isJust . preview moduleFile) (ordNub $ mlocs' ++ rlocs')
+			-- 	getMods :: (MonadIO m) => m [InspectedModule]
+			-- 	getMods = do
+			-- 		db' <- liftIO $ readAsync db
+			-- 		return $ filter ((`elem` ulocs') . view inspectedKey) $ toList $ view databaseModules db'
 
 			-- FIXME: Now it's broken since `Database` is not used anymore
 			when (view updateDocs uopts) $ do
@@ -146,21 +144,21 @@ runUpdate uopts act = Log.scope "update" $ do
 				Log.sendLog Log.Warning "not implemented"
 				-- void $ fork (getMods >>= waiter . mapM_ inferModTypes_)
 			return r
-		scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
-		scanDocs_ im = do
-			im' <- (S.scanModify (\opts -> inSessionGhc . liftGhc . inspectDocsGhc opts) im) <|> return im
-			sendUpdateAction $ Log.scope "scan-docs" $ SQLite.updateModule im'
-		inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
-		inferModTypes_ im = do
-			-- TODO: locate sandbox
-			im' <- (S.scanModify infer' im) <|> return im
-			sendUpdateAction $ Log.scope "infer-types" $ SQLite.updateModule im'
-		infer' :: UpdateMonad m => [String] -> Module -> m Module
-		infer' opts m = case preview (moduleId . moduleLocation . moduleFile) m of
-			Nothing -> return m
-			Just _ -> inSessionGhc $ do
-				targetSession opts m
-				inferTypes opts m Nothing
+		-- scanDocs_ :: UpdateMonad m => InspectedModule -> m ()
+		-- scanDocs_ im = do
+		-- 	im' <- (S.scanModify (\opts -> inSessionGhc . liftGhc . inspectDocsGhc opts) im) <|> return im
+		-- 	sendUpdateAction $ Log.scope "scan-docs" $ SQLite.updateModule im'
+		-- inferModTypes_ :: UpdateMonad m => InspectedModule -> m ()
+		-- inferModTypes_ im = do
+		-- 	-- TODO: locate sandbox
+		-- 	im' <- (S.scanModify infer' im) <|> return im
+		-- 	sendUpdateAction $ Log.scope "infer-types" $ SQLite.updateModule im'
+		-- infer' :: UpdateMonad m => [String] -> Module -> m Module
+		-- infer' opts m = case preview (moduleId . moduleLocation . moduleFile) m of
+		-- 	Nothing -> return m
+		-- 	Just _ -> inSessionGhc $ do
+		-- 		targetSession opts m
+		-- 		inferTypes opts m Nothing
 
 -- | Post status
 postStatus :: UpdateMonad m => Task -> m ()

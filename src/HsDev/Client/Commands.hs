@@ -5,7 +5,6 @@ module HsDev.Client.Commands (
 	runClient, runCommand
 	) where
 
-import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Exception (displayException)
 import Control.Lens hiding ((%=), (.=), anyOf, (<.>))
@@ -15,15 +14,11 @@ import Control.Monad.Reader
 import qualified Control.Monad.State as State
 import Control.Monad.Catch (try, catch, bracket, SomeException(..))
 import Data.Aeson hiding (Result, Error)
-import qualified Data.Aeson as A
-import qualified Data.Aeson.Types as AT
-import qualified Data.ByteString.Lazy.Char8 as L
 import Data.List
 import Data.Maybe
 import qualified Data.Map.Strict as M
-import qualified Data.Set as S
 import Data.Text (Text, pack, unpack)
-import qualified Data.Text as T (append, isInfixOf, isPrefixOf, isSuffixOf)
+import qualified Data.Text as T (append)
 import System.Directory
 import System.FilePath
 import qualified System.Log.Simple as Log
@@ -40,9 +35,6 @@ import HsDev.Server.Types
 import HsDev.Sandbox hiding (findSandbox)
 import qualified HsDev.Sandbox as S (findSandbox)
 import HsDev.Symbols
-import HsDev.Symbols.Util
-import qualified HsDev.Symbols.Parsed as P
-import qualified HsDev.Symbols.Name as Name
 import qualified HsDev.Tools.AutoFix as AutoFix
 import qualified HsDev.Tools.Cabal as Cabal
 import HsDev.Tools.Ghc.Session
@@ -185,15 +177,15 @@ runCommand InfoProjects = toValue $ do
 runCommand InfoSandboxes = toValue $ do
 	rs <- query_ @(Only PackageDb) "select distinct package_db from package_dbs;"
 	return [pdb | Only pdb <- rs]
-runCommand (InfoSymbol sq fs True _) = toValue $ do
+runCommand (InfoSymbol sq _ True _) = toValue $ do
 	rs <- query @_ @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like ?"])
 		(Only $ likePattern sq)
 	return rs
-runCommand (InfoSymbol sq fs False _) = toValue $ do
+runCommand (InfoSymbol sq _ False _) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like ?"])
 		(Only $ likePattern sq)
 	return rs
-runCommand (InfoModule sq fs h i) = toValue $ do
+runCommand (InfoModule sq _ h _) = toValue $ do
 	rs <- query @_ @(Only Int :. ModuleId) (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like ?"])
 		(Only $ likePattern sq)
 	if h
@@ -514,15 +506,15 @@ findSandbox fpath = do
 	maybe (hsdevError $ FileNotFound fpath') return sbox
 
 -- | Get source file
-refineSourceFile :: CommandMonad m => Path -> m Path
-refineSourceFile fpath = do
-	fpath' <- findPath fpath
-	fs <- liftM (map fromOnly) $ query "select file from modules where file == ?;" (Only fpath')
-	case fs of
-		[] -> hsdevError (NotInspected $ FileModule fpath' Nothing)
-		(f:_) -> do
-			when (length fs > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ fpath'
-			return f
+-- refineSourceFile :: CommandMonad m => Path -> m Path
+-- refineSourceFile fpath = do
+-- 	fpath' <- findPath fpath
+-- 	fs <- liftM (map fromOnly) $ query "select file from modules where file == ?;" (Only fpath')
+-- 	case fs of
+-- 		[] -> hsdevError (NotInspected $ FileModule fpath' Nothing)
+-- 		(f:_) -> do
+-- 			when (length fs > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ fpath'
+-- 			return f
 
 -- | Get module by source
 refineSourceModule :: CommandMonad m => Path -> m Module
@@ -548,11 +540,11 @@ setFileSourceSession opts fpath = do
 	return m
 
 -- | Ensure package exists
-refinePackage :: CommandMonad m => Text -> m Text
-refinePackage pkg = do
-	[(Only exists)] <- query "select count(*) > 0 from package_dbs where package_name == ?;" (Only pkg)
-	when (not exists) $ hsdevError (PackageNotFound pkg)
-	return pkg
+-- refinePackage :: CommandMonad m => Text -> m Text
+-- refinePackage pkg = do
+-- 	[(Only exists)] <- query "select count(*) > 0 from package_dbs where package_name == ?;" (Only pkg)
+-- 	when (not exists) $ hsdevError (PackageNotFound pkg)
+-- 	return pkg
 
 -- | Get list of enumerated sandboxes
 getSandboxes :: CommandMonad m => [Path] -> m [Sandbox]
@@ -580,13 +572,3 @@ updateProcess uopts acts = mapM_ (Update.runUpdate uopts . runAct) acts where
 -- | Ensure file is up to date
 -- ensureUpToDate :: ServerMonadBase m => Update.UpdateOptions -> [FileSource] -> ClientM m ()
 -- ensureUpToDate uopts fs = updateProcess uopts [Update.scanFileContents (view Update.updateGhcOpts uopts) f mcts | FileSource f mcts <- fs]
-
--- | Check matching search query
-matchQuery :: Sourced a => SearchQuery -> a -> Bool
-matchQuery (SearchQuery sq st) s = case st of
-	SearchExact -> sq == sn
-	SearchPrefix -> sq `T.isPrefixOf` sn
-	SearchInfix -> sq `T.isInfixOf` sn
-	SearchSuffix -> sq `T.isSuffixOf` sn
-	where
-		sn = view sourcedName s
