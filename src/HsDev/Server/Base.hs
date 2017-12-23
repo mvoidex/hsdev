@@ -9,7 +9,7 @@ module HsDev.Server.Base (
 	findPath,
 	processRequest, processClient, processClientSocket,
 
-	mmap, unMmap, makeSocket, sockAddr,
+	unMmap, makeSocket, sockAddr,
 
 	module HsDev.Server.Types,
 	module HsDev.Server.Message
@@ -61,6 +61,8 @@ import HsDev.Util
 import Data.Aeson.Types hiding (Result, Error)
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
+#else
+import System.Posix.Files (removeLink)
 #endif
 
 -- | Inits log chan and returns functions (print message, wait channel)
