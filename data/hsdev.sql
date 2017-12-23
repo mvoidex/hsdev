@@ -197,6 +197,32 @@ create table names (
 
 create index names_module_id_index on names (module_id);
 
+create view definitions (
+	module_id,
+	name,
+	line,
+	column,
+	line_to,
+	column_to,
+	def_module_id,
+	def_line,
+	def_column,
+	local
+) as
+select module_id, name, line, column, line_to, column_to, module_id, def_line, def_column, 1
+from names
+where def_line is not null and def_column is not null
+union
+select n.module_id, n.resolved_name, n.line, n.column, n.line_to, n.column_to, s.module_id, s.line, s.column, 0
+from names as n, modules as srcm, modules as m, projects_modules_scope as ps, symbols as s
+where
+	(n.module_id == srcm.id) and
+	(srcm.cabal == ps.cabal) and
+	(m.id == ps.module_id) and
+	(m.name == n.resolved_module) and
+	(s.module_id == m.id) and
+	(s.name == n.resolved_name);
+
 create view sources_depends (
 	module_id,
 	module_file,

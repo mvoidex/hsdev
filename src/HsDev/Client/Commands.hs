@@ -248,7 +248,25 @@ runCommand (Whoat l c fpath) = toValue $ do
 			"srcm.file == ?",
 			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
 		(fpath ^. path, l, c)
-	return rs
+	locals <- do
+		defs <- query @_ @(ModuleId :. (Text, Int, Int)) (toQuery $ qModuleId `mappend` select_
+			["n.name", "n.def_line", "n.def_column"]
+			["names as n"]
+			[
+				"mu.id == n.module_id",
+				"n.def_line is not null",
+				"n.def_column is not null",
+				"mu.file == ?",
+				"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
+			(fpath ^. path, l, c)
+		return [
+			Symbol {
+				_symbolId = SymbolId nm mid,
+				_symbolDocs = Nothing,
+				_symbolPosition = Just (Position defLine defColumn),
+				_symbolInfo = infoOf Function
+			} | (mid :. (nm, defLine, defColumn)) <- defs]
+	return $ rs ++ locals
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
 	pids <- query @_ @(Only Int) "select m.cabal from modules as m where (m.file == ?);"
 		(Only $ fpath ^. path)
