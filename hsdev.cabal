@@ -15,6 +15,7 @@ cabal-version:       >=1.8
 extra-source-files:
   tests/test-package/*.hs
   tests/test-package/test-package.cabal
+  tests/data/base.sql
   data/hsdev.sql
 
 source-repository head

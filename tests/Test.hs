@@ -9,12 +9,14 @@ import Control.Exception (displayException)
 import Data.Aeson hiding (Error)
 import Data.Aeson.Lens
 import Data.Default
+import Data.String (fromString)
 import qualified Data.Set as S
 import System.FilePath
 import System.Directory
 import Test.Hspec
 
 import HsDev
+import HsDev.Database.SQLite
 
 send :: Server -> [String] -> IO (Maybe Value)
 send srv args = do
@@ -37,8 +39,8 @@ main = hspec $ do
 		dir <- runIO getCurrentDirectory
 		s <- runIO $ startServer (def { serverSilent = True })
 		it "should load data" $ do
-			void $ send s ["add", "--file", dir </> "tests/data/modules.json"]
-			void $ send s ["add", "--file", dir </> "tests/data/package-dbs.json"]
+			inserts <- liftM lines $ readFile (dir </> "tests/data/base.sql")
+			inServer s $ mapM_ (execute_ . fromString) inserts
 		it "should scan project" $ do
 			void $ send s ["scan", "--project", dir </> "tests/test-package"]
 		it "should resolve export list" $ do

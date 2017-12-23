@@ -64,7 +64,7 @@ initialize p = do
 	[Only hasTables] <- SQL.query_ conn "select count(*) > 0 from sqlite_master where type == 'table';"
 	goodVersion <- if hasTables
 		then do
-			[Only equalVersion] <- SQL.query conn "select sum(value == ?) > 0 from hsdev where option == 'version';" (Only $ toJSON version)
+			[Only equalVersion] <- SQL.query conn "select sum(json(value) == json(?)) > 0 from hsdev where option == 'version';" (Only $ toJSON version)
 			return equalVersion
 		else return True
 	when (not goodVersion) $ do
