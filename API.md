@@ -65,8 +65,7 @@ Args:
   * `sandboxes` — list of `sandbox path`s, where path may be one of:
     - `<path>/.cabal-sandbox` — cabal sandbox
     - `<path>/.stack-work` — stack sandbox
-  * `files` — list of `source-file` objects to scan:
-    - `{"file":<file>,"contents":<contents>}`
+  * `files` — list of `source-file` objects to scan
   * `paths` — list of directories to scan
   * `ghc-opts` — additional ghc options
   * `docs` — also get docs for sources (may be slow, you can do this by separate command)
@@ -272,8 +271,7 @@ Lint/check source, infer types
 
 Command: `lint`/`check`/`check-lint`/`types`  
 Args:
-  * `files` — list of files
-  * `contents` — list of `content` objects
+  * `files` — list of `source-file` objects
   * `ghc-opts` — list of additional ghc options (not applied for `lint` command)
   * `clear` (except `lint`) — set to clear targets before running command
 Response: list of `note output-message` objects
@@ -316,7 +314,7 @@ Evaluate expression
 Command: `ghc eval`  
 Args:
   * `exprs` — list of expressions
-  * `file` — optional file source context
+  * `file` — optional `file-source` context
 Response: list of results, where result if one of:
   * `<result>` — string with result
   * `{"fail":<msg>}` — error message
@@ -501,6 +499,14 @@ Fields:
   * `name` — name
   * `line` — line
   * `column` — column
+
+#### Source-file
+
+Source file
+Fields:
+  * `file` — path to file
+  * `contents` — optional contents of file
+
 
 #### Note
 
