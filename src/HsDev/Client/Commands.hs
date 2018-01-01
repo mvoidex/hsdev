@@ -230,13 +230,12 @@ runCommand (Whois nm fpath) = toValue $ do
 	return rs
 runCommand (Whoat l c fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["names as n", "modules as srcm", "projects_modules_scope as msc"]
+		["names as n", "modules as srcm"]
 		[
 			"srcm.id == n.module_id",
 			"m.name == n.resolved_module",
 			"s.name == n.resolved_name",
-			"msc.cabal is srcm.cabal",
-			"m.id == msc.module_id",
+			"m.id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
 			"srcm.file == ?",
 			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
 		(fpath ^. path, l, c)
@@ -306,12 +305,9 @@ runCommand (FindUsages nm) = toValue $ do
 	return rs
 runCommand (Complete input True fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+		["modules as srcm"]
 		[
-			"projects_modules_scope as msc",
-			"modules as srcm"]
-		[
-			"msc.cabal is srcm.cabal",
-			"msc.module_id == m.id",
+			"m.id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
 			"msrc.file == ?",
 			"s.name like ?"])
 		(fpath ^. path, input `T.append` "%", fpath ^. path, input `T.append` "%")
