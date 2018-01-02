@@ -368,7 +368,7 @@ fresh :: Inspection -> Inspection -> Bool
 fresh InspectionNone InspectionNone = True
 fresh InspectionNone _ = False
 fresh _ InspectionNone = True
-fresh (InspectionAt tm opts) (InspectionAt tm' opts') = tm' - tm < 0.01
+fresh (InspectionAt tm _) (InspectionAt tm' _) = tm' - tm < 0.01
 
 -- | Inspected entity
 data Inspected k t a = Inspected {

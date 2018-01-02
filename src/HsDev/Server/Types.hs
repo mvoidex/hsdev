@@ -624,10 +624,6 @@ inspectionFlag = switch (long "inspection" <> short 'i' <> help "return inspecti
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = textOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
 packageArg = textOption (long "package" <> metavar "name" <> help "module package")
-packageDbArg =
-	flag' GlobalDb (long "global-db" <> help "global package-db") <|>
-	flag' UserDb (long "user-db" <> help "user package-db") <|>
-	(PackageDb <$> textOption (long "package-db" <> metavar "path" <> help "custom package-db"))
 pathArg f = textOption (long "path" <> metavar "path" <> short 'p' <> f)
 projectArg = textOption (long "project" <> long "proj" <> metavar "project")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
