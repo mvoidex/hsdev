@@ -360,22 +360,27 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 		packages' = M.keys pdbState
 	Log.sendLog Log.Trace $ "package-db state: {} modules" ~~ length packageDbMods
 	watch (\w -> watchPackageDb w pdbs opts)
-	mlocs <- liftM
-		(filter (`S.member` packageDbMods)) $
-		(inSessionGhc $ listModules opts pdbs packages')
-	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
-	let
-		packageDbMods' = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only (topPackageDb pdbs))
-	scan packageDbMods' ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
-		docs <- inSessionGhc $ hdocsCabal pdbs opts
-		Log.sendLog Log.Trace "docs scanned"
-		docsTbl <- newLookupTable
-		ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
-		sendUpdateAction $ Log.scope "scan-package-db" $ do
-			mapM_ SQLite.updateModule ms'
-			SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
-		updater $ ms' ^.. each . inspectedKey
+
+	pkgs <- SQLite.query "select package_name, package_version from package_dbs where package_db == ?;" (SQLite.Only $ topPackageDb pdbs)
+	if S.fromList packages' == S.fromList pkgs
+		then Log.sendLog Log.Trace $ "nothing changes, all packages the same"
+		else do
+			mlocs <- liftM
+				(filter (`S.member` packageDbMods)) $
+				(inSessionGhc $ listModules opts pdbs packages')
+			Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
+			let
+				packageDbMods' = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only (topPackageDb pdbs))
+			scan packageDbMods' ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
+				docs <- inSessionGhc $ hdocsCabal pdbs opts
+				Log.sendLog Log.Trace "docs scanned"
+				docsTbl <- newLookupTable
+				ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
+				sendUpdateAction $ Log.scope "scan-package-db" $ do
+					mapM_ SQLite.updateModule ms'
+					SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
+				updater $ ms' ^.. each . inspectedKey
 
 -- | Scan top of package-db stack, usable for rescan
 scanPackageDbStack :: UpdateMonad m => [String] -> PackageDbStack -> m ()
@@ -386,38 +391,43 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 		packages' = ordNub $ concatMap M.keys pdbStates
 	Log.sendLog Log.Trace $ "package-db-stack state: {} modules" ~~ length packageDbMods
 	watch (\w -> watchPackageDbStack w pdbs opts)
-	mlocs <- liftM
-		(filter (`S.member` packageDbMods)) $
-		(inSessionGhc $ listModules opts pdbs packages')
-	Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
-	let
-		packageDbStackMods = liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only pdb)
-	scan packageDbStackMods ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
-		ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
-		Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 
-		-- BUG: I don't know why, but these steps leads to segfault on my PC:
-		-- > hsdev scan --cabal --project .
-		-- > hsdev check -f .\src\HsDev\Client\Commands.hs
-		-- But it works if docs are scanned, it also works from ghci
-		
-		-- needDocs <- asks (view updateDocs)
-		-- ms' <- if needDocs
-		-- 	then do
-		-- 		docs <- inSessionGhc $ hdocsCabal pdbs opts
-		-- 		return $ map (fmap $ setDocs' docs) ms
-		-- 	else return ms
+	pkgs <- liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select package_name, package_version from package_dbs where package_db == ?;" (SQLite.Only pdb)
+	if S.fromList packages' == S.fromList pkgs
+		then Log.sendLog Log.Trace $ "nothing changes, all packages the same"
+		else do
+			mlocs <- liftM
+				(filter (`S.member` packageDbMods)) $
+				(inSessionGhc $ listModules opts pdbs packages')
+			Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
+			let
+				packageDbStackMods = liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only pdb)
+			scan packageDbStackMods ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
+				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 
-		docs <- inSessionGhc $ hdocsCabal pdbs opts
-		Log.sendLog Log.Trace "docs scanned"
-		docsTbl <- newLookupTable
-		ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
+				-- BUG: I don't know why, but these steps leads to segfault on my PC:
+				-- > hsdev scan --cabal --project .
+				-- > hsdev check -f .\src\HsDev\Client\Commands.hs
+				-- But it works if docs are scanned, it also works from ghci
+				
+				-- needDocs <- asks (view updateDocs)
+				-- ms' <- if needDocs
+				-- 	then do
+				-- 		docs <- inSessionGhc $ hdocsCabal pdbs opts
+				-- 		return $ map (fmap $ setDocs' docs) ms
+				-- 	else return ms
 
-		sendUpdateAction $ Log.scope "scan-package-db-stack" $ do
-			mapM_ SQLite.updateModule ms'
-			sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
+				docs <- inSessionGhc $ hdocsCabal pdbs opts
+				Log.sendLog Log.Trace "docs scanned"
+				docsTbl <- newLookupTable
+				ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
 
-		updater $ ms' ^.. each . inspectedKey
+				sendUpdateAction $ Log.scope "scan-package-db-stack" $ do
+					mapM_ SQLite.updateModule ms'
+					sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
+
+				updater $ ms' ^.. each . inspectedKey
 
 -- | Scan project file
 scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project
