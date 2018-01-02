@@ -454,10 +454,8 @@ data TargetFilter =
 	TargetProject Text |
 	TargetFile Path |
 	TargetModule Text |
-	TargetPackageDb PackageDb |
-	TargetCabal |
-	TargetSandbox Path |
 	TargetPackage Text |
+	TargetInstalled |
 	TargetSourced |
 	TargetStandalone
 		deriving (Eq, Show)
@@ -502,8 +500,6 @@ instance Paths FileSource where
 
 instance Paths TargetFilter where
 	paths f (TargetFile fpath) = TargetFile <$> paths f fpath
-	paths f (TargetPackageDb pdb) = TargetPackageDb <$> paths f pdb
-	paths f (TargetSandbox c) = TargetSandbox <$> paths f c
 	paths _ t = pure t
 
 instance FromCmd Command where
@@ -570,10 +566,8 @@ instance FromCmd TargetFilter where
 		TargetProject <$> projectArg,
 		TargetFile <$> fileArg,
 		TargetModule <$> moduleArg,
-		TargetPackageDb <$> packageDbArg,
-		flag' TargetCabal (long "cabal"),
-		TargetSandbox <$> sandboxArg,
 		TargetPackage <$> packageArg,
+		flag' TargetInstalled (long "installed"),
 		flag' TargetSourced (long "src"),
 		flag' TargetStandalone (long "stand")]
 
@@ -749,10 +743,8 @@ instance ToJSON TargetFilter where
 	toJSON (TargetProject pname) = object ["project" .= pname]
 	toJSON (TargetFile fpath) = object ["file" .= fpath]
 	toJSON (TargetModule mname) = object ["module" .= mname]
-	toJSON (TargetPackageDb pdb) = object ["db" .= pdb]
-	toJSON TargetCabal = toJSON ("cabal" :: String)
-	toJSON (TargetSandbox sbox) = object ["sandbox" .= sbox]
 	toJSON (TargetPackage pname) = object ["package" .= pname]
+	toJSON TargetInstalled = toJSON ("installed" :: String)
 	toJSON TargetSourced = toJSON ("sourced" :: String)
 	toJSON TargetStandalone = toJSON ("standalone" :: String)
 
@@ -762,13 +754,11 @@ instance FromJSON TargetFilter where
 			TargetProject <$> v .:: "project",
 			TargetFile <$> v .:: "file",
 			TargetModule <$> v .:: "module",
-			TargetPackageDb <$> v .:: "db",
-			TargetSandbox <$> v .:: "sandbox",
 			TargetPackage <$> v .:: "package"]
 		str' = do
 			s <- parseJSON j :: A.Parser String
 			case s of
-				"cabal" -> return TargetCabal
+				"installed" -> return TargetInstalled
 				"sourced" -> return TargetSourced
 				"standalone" -> return TargetStandalone
 				_ -> empty

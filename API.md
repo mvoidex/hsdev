@@ -119,14 +119,8 @@ Args:
     - `{"project":<project .cabal or name>}`
     - `{"file":<source file>}`
     - `{"module":<module name>}`
-    - `{"deps":<dependent project/source>}`
-    - `{"cabal":<"true" or "false">` — restrict to global and user package-db
-    - `{"sandbox":<sandbox path>}`
-    - `{"db":<package-db>}` — restrict to specific package-db, where `<package-db>` is one of
-      + `"global-db"` — global package-db
-      + `"user-db"` — user package-db
-      + `{"package-db":<path to package-db>}` — specific package-db
     - `{"package":<package name>}`
+    - `"installed"` — search for installed modules
     - `"sources"` — search for sourced
     - `"standalone"` — search for standalone (project-free)
   * `locals` — search in local declarations (default is `false`)

@@ -5,6 +5,7 @@ module HsDev.Client.Commands (
 	runClient, runCommand
 	) where
 
+import Control.Arrow (second)
 import Control.Concurrent.MVar
 import Control.Exception (displayException)
 import Control.Lens hiding ((%=), (.=), anyOf, (<.>))
@@ -177,17 +178,23 @@ runCommand InfoProjects = toValue $ do
 runCommand InfoSandboxes = toValue $ do
 	rs <- query_ @(Only PackageDb) "select distinct package_db from package_dbs;"
 	return [pdb | Only pdb <- rs]
-runCommand (InfoSymbol sq _ True _) = toValue $ do
-	rs <- query @_ @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like ? escape '\\'"])
-		(Only $ likePattern sq)
+runCommand (InfoSymbol sq filters True _) = toValue $ do
+	let
+		(conds, params) = targetFilters "m" filters
+	rs <- queryNamed @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like :pattern escape '\\'"] `mappend` where_ conds)
+		([":pattern" := likePattern sq] ++ params)
 	return rs
-runCommand (InfoSymbol sq _ False _) = toValue $ do
-	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like ? escape '\\'"])
-		(Only $ likePattern sq)
+runCommand (InfoSymbol sq filters False _) = toValue $ do
+	let
+		(conds, params) = targetFilters "m" filters
+	rs <- queryNamed @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like :pattern escape '\\'"] `mappend` where_ conds)
+		([":pattern" := likePattern sq] ++ params)
 	return rs
-runCommand (InfoModule sq _ h _) = toValue $ do
-	rs <- query @_ @(Only Int :. ModuleId) (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like ? escape '\\'"])
-		(Only $ likePattern sq)
+runCommand (InfoModule sq filters h _) = toValue $ do
+	let
+		(conds, params) = targetFilters "mu" filters
+	rs <- queryNamed @(Only Int :. ModuleId) (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like :pattern escape '\\'"] `mappend` where_ conds)
+		([":pattern" := likePattern sq] ++ params)
 	if h
 		then return (toJSON $ map (\(_ :. m) -> m) rs)
 		else liftM toJSON $ forM rs $ \(Only mid :. mheader) -> do
@@ -205,11 +212,10 @@ runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (vi
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["projects as p", "projects_deps as pdeps", "modules as srcm"]
+		["projects_deps as pdeps", "modules as srcm"]
 		[
-			"p.id == pdeps.project_id",
-			"m.cabal == p.cabal or m.package_name == pdeps.package_name",
-			"p.cabal == srcm.cabal",
+			"m.cabal == pdeps.cabal or m.package_name == pdeps.package_name",
+			"pdeps.cabal is srcm.cabal",
 			"srcm.file == ?",
 			"s.name == ?"])
 		(fpath ^. path, nm)
@@ -433,33 +439,19 @@ runCommand Exit = toValue serverExit
 
 -- TODO: Implement `targetFilter` for sql
 
--- targetFilter :: (CommandMonad m, Sourced a) => TargetFilter -> m (a -> Bool)
--- targetFilter f = liftM (. view sourcedModule) $ case f of
--- 	TargetProject proj -> liftM inProject $ findProject proj
--- 	TargetFile file -> liftM inFile $ refineSourceFile file
--- 	TargetModule mname -> return $ inModule mname
--- 	TargetPackageDb pdb -> do
--- 		dbval <- serverDatabase
--- 		let
--- 			pkgs = dbval ^. databasePackageDbs . ix pdb
--- 			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
--- 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
--- 	TargetCabal -> do
--- 		dbval <- serverDatabase
--- 		let
--- 			pkgs = concat $ catMaybes [dbval ^? databasePackageDbs . ix pdb | pdb <- packageDbs userDb]
--- 			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
--- 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
--- 	TargetSandbox sbox -> do
--- 		dbval <- serverDatabase
--- 		pdbs <- findSandbox sbox >>= inSessionGhc . sandboxPackageDbStack
--- 		let
--- 			pkgs = concat [dbval ^. databasePackageDbs . ix pdb | pdb <- packageDbs pdbs]
--- 			mlocs = S.fromList $ concat $ catMaybes [M.lookup pkg (view databasePackages dbval) | pkg <- pkgs]
--- 		return $ \m -> S.member (m ^. sourcedModule . moduleLocation) mlocs
--- 	TargetPackage pkg -> liftM (inPackage . mkPackage) $ refinePackage pkg
--- 	TargetSourced -> return byFile
--- 	TargetStandalone -> return standalone
+targetFilter :: Text -> TargetFilter -> (Text, [NamedParam])
+targetFilter table (TargetProject proj) = (
+	"{t}.cabal in (select cabal from projects where name == :project_name" ~~ ("t" ~% table),
+	[":project_name" := proj])
+targetFilter table (TargetFile f) = ("{t}.file == :file" ~~ ("t" ~% table), [":file" := f])
+targetFilter table (TargetModule nm) = ("{t}.name == :module_name" ~~ ("t" ~% table), [":module_name" := nm])
+targetFilter table (TargetPackage nm) = ("{t}.package_name == :package_name" ~~ ("t" ~% table), [":package_name" := nm])
+targetFilter table TargetInstalled = ("{t}.package_name is not null" ~~ ("t" ~% table), [])
+targetFilter table TargetSourced = ("{t}.file is not null" ~~ ("t" ~% table), [])
+targetFilter table TargetStandalone = ("{t}.file is not null and {t}.cabal is null" ~~ ("t" ~% table), [])
+
+targetFilters :: Text -> [TargetFilter] -> ([Text], [NamedParam])
+targetFilters table = second concat . unzip . map (targetFilter table)
 
 likePattern :: SearchQuery -> Text
 likePattern (SearchQuery input stype) = case stype of

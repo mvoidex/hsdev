@@ -67,6 +67,7 @@ import HsDev.Util
 initialize :: String -> IO Connection
 initialize p = do
 	conn <- open p
+	SQL.execute_ conn "pragma case_sensitive_like = true;"
 	[Only hasTables] <- SQL.query_ conn "select count(*) > 0 from sqlite_master where type == 'table';"
 	goodVersion <- if hasTables
 		then do
