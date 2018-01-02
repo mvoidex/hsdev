@@ -109,7 +109,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 		emptyTask <- async $ return ()
 		updaterTask <- newMVar emptyTask
 		tasksVar <- newMVar []
-		Update.onEvent watcher $ \w e -> withSession session $
+		Update.onEvent_ watcher $ \w e -> withSession session $
 			void $ Client.runClient def $ Update.processEvent (withSession session . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar w e
 	liftIO $ runReaderT (runServerM $ watchDb >> act) session
 

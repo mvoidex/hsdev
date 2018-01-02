@@ -7,7 +7,9 @@ module System.Directory.Watcher (
 	watchDir, watchDir_, unwatchDir, isWatchingDir,
 	watchTree, watchTree_, unwatchTree, isWatchingTree,
 	-- * Working with events
-	readEvent, events, onEvent
+	readEvent, events, mergeEvents, onEvent, onEvent_,
+	-- * Internal
+	mergeConsumeEvent
 	) where
 
 import Control.Lens (makeLenses)
@@ -15,10 +17,14 @@ import Control.Arrow
 import Control.Concurrent.MVar
 import Control.Concurrent.Chan
 import Control.Monad
+import Control.Monad.State
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
-import Data.Maybe (isJust)
+import qualified Data.Set as S
+import Data.Maybe (isJust, isNothing, maybeToList)
+import Data.Ratio ((%))
 import Data.String (fromString)
+import Data.Time.Clock (NominalDiffTime)
 import Data.Time.Clock.POSIX
 import System.FilePath (takeDirectory, isDrive)
 import System.Directory
@@ -32,6 +38,7 @@ data Event = Event {
 	_eventType :: EventType,
 	_eventPath :: FilePath,
 	_eventTime :: POSIXTime }
+		deriving (Eq, Ord, Show)
 
 makeLenses ''Event
 
@@ -123,9 +130,40 @@ readEvent = readChan . watcherChan
 events :: Watcher a -> IO [(a, Event)]
 events = getChanContents . watcherChan
 
+-- | Merge same events with slightly different time
+mergeEvents :: NominalDiffTime -> [(a, Event)] -> [(a, Event)]
+mergeEvents tolerance = uncurry concat' . flip runState (M.empty, M.empty) . mapM (mergeConsumeEvent tolerance) where
+	concat' :: [[(a, Event)]] -> (Map (EventType, FilePath) (POSIXTime, POSIXTime), Map POSIXTime (a, Event)) -> [(a, Event)]
+	concat' evs ~(_, queueTail) = concat evs ++ M.elems queueTail
+
+mergeConsumeEvent :: NominalDiffTime -> (a, Event) -> State (Map (EventType, FilePath) (POSIXTime, POSIXTime), Map POSIXTime (a, Event)) [(a, Event)]
+mergeConsumeEvent tolerance (v, e) = do
+	(events', queue') <- get
+	let
+		needMerge = isNothing $ do
+			(pushTime', _) <- M.lookup (eventKey e) events'
+			guard (_eventTime e - pushTime' >= tolerance)
+		pushTime = maybe (_eventTime e) fst $ M.lookup (eventKey e) events'
+		newPushTime
+			| needMerge = pushTime
+			| otherwise = _eventTime e
+
+		insertEvent = M.insert (eventKey e) (newPushTime, _eventTime e)
+		insertTime = M.insert newPushTime (v, e)
+		(old, bound, new) = M.splitLookup (_eventTime e - tolerance) (insertTime queue')
+		removeOld = flip M.restrictKeys (S.fromList $ map (eventKey . snd) $ M.elems new)
+	put (insertEvent $ removeOld events', new)
+	return $ M.elems old ++ maybeToList bound
+	where
+		eventKey ev = (_eventType ev, _eventPath ev)
+
 -- | Process all events
-onEvent :: Watcher a -> (a -> Event -> IO ()) -> IO ()
-onEvent w act = events w >>= mapM_ (uncurry act)
+onEvent :: Watcher a -> NominalDiffTime -> (a -> Event -> IO ()) -> IO ()
+onEvent w tolerance act = events w >>= mapM_ (uncurry act) . mergeEvents tolerance
+
+-- | Process all events
+onEvent_ :: Watcher a -> (a -> Event -> IO ()) -> IO ()
+onEvent_ w = onEvent w (fromRational (1 % 5))
 
 fromEvent :: FS.Event -> Event
 fromEvent e = Event t (FS.eventPath e) (utcTimeToPOSIXSeconds $ FS.eventTime e) where
