@@ -265,7 +265,7 @@ runCommand (Whoat l c fpath) = toValue $ do
 			} | (mid :. (nm, defLine, defColumn)) <- defs]
 	return $ rs ++ locals
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
-	pids <- query @_ @(Only Int) "select m.cabal from modules as m where (m.file == ?);"
+	pids <- query @_ @(Only Path) "select m.cabal from modules as m where (m.file == ?);"
 		(Only $ fpath ^. path)
 	case pids of
 		[] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
