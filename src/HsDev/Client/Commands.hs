@@ -178,15 +178,15 @@ runCommand InfoSandboxes = toValue $ do
 	rs <- query_ @(Only PackageDb) "select distinct package_db from package_dbs;"
 	return [pdb | Only pdb <- rs]
 runCommand (InfoSymbol sq _ True _) = toValue $ do
-	rs <- query @_ @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like ?"])
+	rs <- query @_ @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like ? escape '\'"])
 		(Only $ likePattern sq)
 	return rs
 runCommand (InfoSymbol sq _ False _) = toValue $ do
-	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like ?"])
+	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like ? escape '\'"])
 		(Only $ likePattern sq)
 	return rs
 runCommand (InfoModule sq _ h _) = toValue $ do
-	rs <- query @_ @(Only Int :. ModuleId) (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like ?"])
+	rs <- query @_ @(Only Int :. ModuleId) (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like ? escape '\'"])
 		(Only $ likePattern sq)
 	if h
 		then return (toJSON $ map (\(_ :. m) -> m) rs)
@@ -268,14 +268,14 @@ runCommand (ResolveScopeModules sq fpath) = toValue $ do
 				"mu.package_name == ps.package_name",
 				"mu.package_version == ps.package_version",
 				"ps.package_db in ('user-db', 'global-db')",
-				"mu.name like ?"])
+				"mu.name like ? escape '\'"])
 			(Only $ likePattern sq)
 		[Only proj] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
 			["projects_modules_scope as msc"]
 			[
 				"msc.module_id == mu.id",
 				"msc.cabal is ?",
-				"mu.name like ?"])
+				"mu.name like ? escape '\'"])
 			(proj, likePattern sq)
 		_ -> fail "Impossible happened: several projects for one module"
 runCommand (ResolveScope sq fpath) = toValue $ do
@@ -285,7 +285,7 @@ runCommand (ResolveScope sq fpath) = toValue $ do
 			"srcm.id == sc.module_id",
 			"sc.symbol_id == s.id",
 			"srcm.file == ?",
-			"s.name like ?"])
+			"s.name like ? escape '\'"])
 		(fpath ^. path, likePattern sq)
 	return rs
 runCommand (FindUsages nm) = toValue $ do
@@ -309,8 +309,8 @@ runCommand (Complete input True fpath) = toValue $ do
 		[
 			"m.id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
 			"msrc.file == ?",
-			"s.name like ?"])
-		(fpath ^. path, input `T.append` "%", fpath ^. path, input `T.append` "%")
+			"s.name like ? escape '\'"])
+		(fpath ^. path, likePattern (SearchQuery input SearchPrefix), fpath ^. path, likePattern (SearchQuery input SearchPrefix))
 	return rs
 runCommand (Complete input False fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
@@ -319,8 +319,8 @@ runCommand (Complete input False fpath) = toValue $ do
 			"c.module_id == srcm.id",
 			"c.symbol_id == s.id",
 			"srcm.file == ?",
-			"c.completion like ?"])
-		(fpath ^. path, input `T.append` "%")
+			"c.completion like ? escape '\'"])
+		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))
 	return rs
 runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
@@ -463,10 +463,12 @@ runCommand Exit = toValue serverExit
 
 likePattern :: SearchQuery -> Text
 likePattern (SearchQuery input stype) = case stype of
-	SearchExact -> input
-	SearchPrefix -> input `T.append` "%"
-	SearchInfix -> "%" `T.append` input `T.append` "%"
-	SearchSuffix -> "%" `T.append` input
+	SearchExact -> escapedInput
+	SearchPrefix -> escapedInput `T.append` "%"
+	SearchInfix -> "%" `T.append` escapedInput `T.append` "%"
+	SearchSuffix -> "%" `T.append` escapedInput
+	where
+		escapedInput = escapeLike input
 
 instance ToJSON Log.Message where
 	toJSON m = object [

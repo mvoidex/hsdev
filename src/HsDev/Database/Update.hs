@@ -465,7 +465,7 @@ scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	let
-		standaloneMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.cabal is null and m.file is not null and m.file like ?;" (SQLite.Only $ dir `T.append` "%")
+		standaloneMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.cabal is null and m.file is not null and m.file like ?;" (SQLite.Only $ SQLite.escapeLike dir `T.append` "%")
 	scan standaloneMods standSrcs opts $ scanModules opts
 
 scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()

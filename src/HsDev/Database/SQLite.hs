@@ -17,6 +17,9 @@ module HsDev.Database.SQLite (
 	loadModule, loadModules,
 	loadProject,
 
+	-- * Utils
+	escapeLike,
+
 	-- * Reexports
 	module Database.SQLite.Simple,
 	module HsDev.Database.SQLite.Select,
@@ -610,6 +613,9 @@ loadProject cabal = scope "load-project" $ do
 		set (projectDescription . _Just . projectExecutables) exes .
 		set (projectDescription . _Just . projectTests) tests $
 		proj
+
+escapeLike :: Text -> Text
+escapeLike = T.replace "\\" "\\\\" . T.replace "%" "\\%" . T.replace "_" "\\_"
 
 -- Util
 
