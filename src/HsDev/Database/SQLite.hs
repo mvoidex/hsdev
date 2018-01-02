@@ -2,7 +2,8 @@
 
 module HsDev.Database.SQLite (
 	initialize, purge,
-	query, query_, queryNamed, execute, execute_, executeNamed,
+	query, query_, queryNamed, execute, execute_, executeMany, executeNamed,
+	withTemporaryTable,
 	updatePackageDb, removePackageDb, insertPackageDb,
 	updateProject, removeProject, insertProject, insertBuildInfo,
 	updateModule,
@@ -24,16 +25,18 @@ module HsDev.Database.SQLite (
 
 import Control.Lens hiding ((.=))
 import Control.Monad
+import Control.Monad.Catch
 import Control.Monad.IO.Class
 import Data.Aeson hiding (Error)
 import Data.Generics.Uniplate.Operations
+import Data.List (intercalate)
 import Data.Maybe
 import Data.String
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.SQLite.Simple hiding (query, query_, queryNamed, execute, execute_, executeNamed)
-import qualified Database.SQLite.Simple as SQL (query, query_, queryNamed, execute, execute_, executeNamed)
+import Database.SQLite.Simple hiding (query, query_, queryNamed, execute, execute_, executeNamed, executeMany)
+import qualified Database.SQLite.Simple as SQL (query, query_, queryNamed, execute, execute_, executeNamed, executeMany)
 import Distribution.Text (display)
 import Language.Haskell.Exts.Syntax hiding (Name, Module)
 import Language.Haskell.Extension ()
@@ -106,10 +109,20 @@ execute_ q' = do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.execute_ conn q'
 
+executeMany :: (ToRow q, SessionMonad m) => Query -> [q] -> m ()
+executeMany q' params = do
+	conn <- serverSqlDatabase
+	liftIO $ SQL.executeMany conn q' params
+
 executeNamed :: SessionMonad m => Query -> [NamedParam] -> m ()
 executeNamed q' ps' = do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.executeNamed conn q' ps'
+
+withTemporaryTable :: SessionMonad m => String -> [String] -> m a -> m a
+withTemporaryTable tableName columns = bracket_ createTable dropTable where
+	createTable = execute_ $ fromString $ "create temporary table {} ({});" ~~ tableName ~~ (intercalate ", " columns)
+	dropTable = execute_ $ fromString $ "drop table {};" ~~ tableName
 
 updatePackageDb :: SessionMonad m => PackageDb -> [ModulePackage] -> m ()
 updatePackageDb pdb pkgs = scope "update-package-db" $ do
@@ -199,10 +212,8 @@ removeModule mid = scope "remove-module" $ do
 
 removeModuleSymbols :: SessionMonad m => Int -> m ()
 removeModuleSymbols mid = scope "remove-module-symbols" $ do
-	sids <- query @_ @(Only Int) "select id from symbols where module_id == ?;" (Only mid)
-	forM_ sids $ \sid -> do
-		execute "delete from exports where symbol_id == ?;" sid
-		execute "delete from scopes where symbol_id == ?;" sid
+	execute "delete from exports where symbol_id in (select id from symbols where module_id == ?);" (Only mid)
+	execute "delete from scopes where symbol_id in (select id from symbols where module_id == ?);" (Only mid)
 	execute "delete from symbols where module_id == ?;" (Only mid)
 
 insertModule :: SessionMonad m => InspectedModule -> m ()
@@ -228,17 +239,13 @@ insertModule im = scope "insert-module" $ do
 
 upsertModule :: SessionMonad m => InspectedModule -> m Int
 upsertModule im = scope "upsert-module" $ do
+	execute "insert or replace into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+		moduleData
 	mmid <- lookupModuleLocation (im ^. inspectedKey)
-	case mmid of
-		Just mid -> do
-			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
-				(moduleData :. (Only mid))
-			return mid
-		Nothing -> do
-			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-				moduleData
-			lastRow
+	maybe getIdError return mmid
 	where
+		getIdError = sqlFailure ("Unable to get module id by location: {}" ~~ (im ^. inspectedKey))
+
 		moduleData = (
 			im ^? inspectedKey . moduleFile . path,
 			im ^? inspectedKey . moduleProject . _Just . projectCabal,
@@ -270,11 +277,14 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
 	insertModuleImports mid
-	scope "exports" $ forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
-	scope "scopes" $ forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
-	scope "names" $ do
-		forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedQName mid)
-		forM_ (im ^.. inspected . moduleSource . _Just . P.names) (insertResolvedName mid)
+	insertExportSymbols mid (im ^.. inspected . moduleExports . each)
+	insertScopeSymbols mid (im ^.. inspected . scopeSymbols)
+	maybe (return ()) (insertResolvedNames mid) (im ^? inspected . moduleSource . _Just)
+	-- scope "exports" $ forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
+	-- scope "scopes" $ forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
+	-- scope "names" $ do
+	-- 	forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedQName mid)
+	-- 	forM_ (im ^.. inspected . moduleSource . _Just . P.names) (insertResolvedName mid)
 	where
 		insertModuleImports :: SessionMonad m => Int -> m ()
 		insertModuleImports mid = scope "insert-module-imports" $ do
@@ -283,14 +293,15 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 				Just psrc -> do
 					let
 						imps = childrenBi psrc :: [ImportDecl Ann]
-					forM_ imps $ \(ImportDecl _ mname qual _ _ _ alias specList) -> do
-						execute "insert into imports (module_id, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?);" (
+						importRow (ImportDecl _ mname qual _ _ _ alias specList) = (
 							mid,
 							getModuleName mname,
 							qual,
 							fmap getModuleName alias,
 							maybe False getHiding specList,
 							fmap makeImportList specList)
+					executeMany "insert into imports (module_id, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?);"
+						(map importRow imps)
 			where
 				getModuleName (ModuleName _ s) = s
 				getHiding (ImportSpecList _ h _) = h
@@ -310,42 +321,34 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 				str' :: String -> String
 				str' = id
 
-		insertExportSymbol :: SessionMonad m => Int -> Symbol -> m ()
-		insertExportSymbol mid sym = do
-			defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
-			sid <- insertLookupSymbol defMid sym
-			execute "insert into exports (module_id, symbol_id) values (?, ?);" (mid, sid)
+		insertExportSymbols :: SessionMonad m => Int -> [Symbol] -> m ()
+		insertExportSymbols _ [] = return ()
+		insertExportSymbols mid syms = scope "insert-export-symbols" $ withTemporaryTable "export_symbols" (symbolsColumns ++ idColumns) $ do
+			dumpSymbols "export_symbols" symbolsColumns syms
+			insertMissingModules "export_symbols"
+			insertMissingSymbols "export_symbols"
+			execute "insert into exports (module_id, symbol_id) select ?, symbol_id from export_symbols;" (Only mid)
 
-		insertScopeSymbol :: SessionMonad m => Int -> Symbol -> [Name] -> m ()
-		insertScopeSymbol mid sym scopeNames = do
-			defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
-			sid <- insertLookupSymbol defMid sym
-			forM_ scopeNames $ \name -> execute "insert into scopes (module_id, qualifier, name, symbol_id) values (?, ?, ?, ?);" (
-				mid,
-				Name.nameModule name,
-				Name.nameIdent name,
-				sid)
+		insertScopeSymbols :: SessionMonad m => Int -> [(Symbol, [Name])] -> m ()
+		insertScopeSymbols _ [] = return ()
+		insertScopeSymbols mid snames = scope "insert-scope-symbols" $ withTemporaryTable "scope_symbols" (symbolsColumns ++ scopeNameColumns ++ idColumns) $ do
+			dumpSymbols "scope_symbols" (symbolsColumns ++ scopeNameColumns)
+				[(s :. (Name.nameModule nm, Name.nameIdent nm)) | (s, nms) <- snames, nm <- nms]
+			insertMissingModules "scope_symbols"
+			insertMissingSymbols "scope_symbols"
+			execute "insert into scopes (module_id, qualifier, name, symbol_id) select ?, qualifier, ident, symbol_id from scope_symbols;" (Only mid)
 
-		insertResolvedQName mid qname = do
-			execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
-				mid,
-				Name.nameModule $ void qname,
-				Name.nameIdent $ void qname,
-				qname ^. P.pos . positionLine,
-				qname ^. P.pos . positionColumn,
-				qname ^. P.regionL . regionTo . positionLine,
-				qname ^. P.regionL . regionTo . positionColumn)
-				:. (
-				qname ^? P.defPos . positionLine,
-				qname ^? P.defPos . positionColumn,
-				(qname ^? P.resolvedName) >>= Name.nameModule,
-				Name.nameIdent <$> (qname ^? P.resolvedName),
-				P.resolveError qname)
-
-		insertResolvedName mid name = do
-			hasName' <- hasResolved mid name
-			when (not hasName') $ do
-				execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+		insertResolvedNames :: SessionMonad m => Int -> Parsed -> m ()
+		insertResolvedNames mid p = scope "insert-resolved-names" $ do
+			insertNames
+			replaceQNames
+			where
+				insertNames = executeMany insertQuery namesData
+				replaceQNames = executeMany insertQuery qnamesData
+				insertQuery = "insert or replace into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				namesData = map toData $ p ^.. P.names
+				qnamesData = map toQData $ p ^.. P.qnames
+				toData name = (
 					mid,
 					Nothing :: Maybe Text,
 					Name.fromName_ $ void name,
@@ -359,15 +362,118 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 					(name ^? P.resolvedName) >>= Name.nameModule,
 					Name.nameIdent <$> (name ^? P.resolvedName),
 					P.resolveError name)
+				toQData qname = (
+					mid,
+					Name.nameModule $ void qname,
+					Name.nameIdent $ void qname,
+					qname ^. P.pos . positionLine,
+					qname ^. P.pos . positionColumn,
+					qname ^. P.regionL . regionTo . positionLine,
+					qname ^. P.regionL . regionTo . positionColumn)
+					:. (
+					qname ^? P.defPos . positionLine,
+					qname ^? P.defPos . positionColumn,
+					(qname ^? P.resolvedName) >>= Name.nameModule,
+					Name.nameIdent <$> (qname ^? P.resolvedName),
+					P.resolveError qname)
 
-		hasResolved mid n = do
-			[Only hasName] <- query "select count(*) > 0 from names where module_id == ? and line == ? and column == ? and line_to == ? and column_to == ?;" (
-				mid,
-				n ^. regionL . regionFrom . positionLine,
-				n ^. regionL . regionFrom . positionColumn,
-				n ^. regionL . regionTo . positionLine,
-				n ^. regionL . regionTo . positionColumn)
-			return hasName
+		symbolsColumns :: [String]
+		symbolsColumns = [
+			"name", "module_name",
+			"file", "cabal", "install_dirs", "package_name", "package_version", "installed_name", "other_location",
+			"docs",
+			"line", "column",
+			"what", "type", "parent", "constructors", "args", "context", "associate", "pat_type", "pat_constructor"]
+
+		scopeNameColumns :: [String]
+		scopeNameColumns = ["qualifier", "ident"]
+
+		idColumns :: [String]
+		idColumns = ["module_id", "symbol_id"]
+
+		-- Dumps symbol data to temporary row and fills with 'module_id' and 'symbol_id' fields
+		dumpSymbols :: (SessionMonad m, ToRow q) => String -> [String] -> [q] -> m ()
+		dumpSymbols tableName columnNames rows = scope "dump-symbols" $ do
+			executeMany (fromString ("insert into {} ({}) values ({});" ~~ tableName ~~ intercalate ", " columnNames ~~ intercalate ", " (replicate (length columnNames) "?"))) (map toRow rows)
+			updateModuleIds tableName
+			updateSymbolIds tableName
+
+		updateModuleIds :: SessionMonad m => String -> m ()
+		updateModuleIds tableName =
+			execute_ (fromString ("update {table} set module_id = (select m.id from modules as m where ((m.name is null and {table}.module_name is null) or m.name = {table}.module_name) and ((m.file is null and {table}.file is null) or m.file = {table}.file) and ((m.package_name is null and {table}.package_name is null) or m.package_name = {table}.package_name) and ((m.package_version is null and {table}.package_version is null) or m.package_version = {table}.package_version) and ((m.installed_name is null and {table}.installed_name is null) or m.installed_name = {table}.installed_name) and ((m.other_location is null and {table}.other_location is null) or m.other_location = {table}.other_location));" ~~ ("table" ~% tableName)))
+
+		updateSymbolIds :: SessionMonad m => String -> m ()
+		updateSymbolIds tableName =
+			execute_ (fromString ("update {table} set symbol_id = (select s.id from symbols as s where s.name = {table}.name and s.module_id = {table}.module_id);" ~~ ("table" ~% tableName)))
+
+		insertMissingModules :: SessionMonad m => String -> m ()
+		insertMissingModules tableName = scope "insert-missing-modules" $ do
+			execute_ (fromString ("insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name) select distinct file, cabal, install_dirs, package_name, package_version, installed_name, other_location, module_name from {} where module_id is null;" ~~ tableName))
+			updateModuleIds tableName
+
+		insertMissingSymbols :: SessionMonad m => String -> m ()
+		insertMissingSymbols tableName = scope "insert-missing-symbols" $ do
+			execute_ (fromString ("insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select distinct name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor from {} where module_id is not null and symbol_id is null;" ~~ tableName))
+			updateSymbolIds tableName
+
+		-- insertExportSymbol :: SessionMonad m => Int -> Symbol -> m ()
+		-- insertExportSymbol mid sym = do
+		-- 	defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
+		-- 	sid <- insertLookupSymbol defMid sym
+		-- 	execute "insert into exports (module_id, symbol_id) values (?, ?);" (mid, sid)
+
+		-- insertScopeSymbol :: SessionMonad m => Int -> Symbol -> [Name] -> m ()
+		-- insertScopeSymbol mid sym scopeNames = do
+		-- 	defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
+		-- 	sid <- insertLookupSymbol defMid sym
+		-- 	forM_ scopeNames $ \name -> execute "insert into scopes (module_id, qualifier, name, symbol_id) values (?, ?, ?, ?);" (
+		-- 		mid,
+		-- 		Name.nameModule name,
+		-- 		Name.nameIdent name,
+		-- 		sid)
+
+		-- insertResolvedQName mid qname = do
+		-- 	execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+		-- 		mid,
+		-- 		Name.nameModule $ void qname,
+		-- 		Name.nameIdent $ void qname,
+		-- 		qname ^. P.pos . positionLine,
+		-- 		qname ^. P.pos . positionColumn,
+		-- 		qname ^. P.regionL . regionTo . positionLine,
+		-- 		qname ^. P.regionL . regionTo . positionColumn)
+		-- 		:. (
+		-- 		qname ^? P.defPos . positionLine,
+		-- 		qname ^? P.defPos . positionColumn,
+		-- 		(qname ^? P.resolvedName) >>= Name.nameModule,
+		-- 		Name.nameIdent <$> (qname ^? P.resolvedName),
+		-- 		P.resolveError qname)
+
+		-- insertResolvedName mid name = do
+		-- 	hasName' <- hasResolved mid name
+		-- 	when (not hasName') $ do
+		-- 		execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
+		-- 			mid,
+		-- 			Nothing :: Maybe Text,
+		-- 			Name.fromName_ $ void name,
+		-- 			name ^. P.pos . positionLine,
+		-- 			name ^. P.pos . positionColumn,
+		-- 			name ^. P.regionL . regionTo . positionLine,
+		-- 			name ^. P.regionL . regionTo . positionColumn)
+		-- 			:. (
+		-- 			name ^? P.defPos . positionLine,
+		-- 			name ^? P.defPos . positionColumn,
+		-- 			(name ^? P.resolvedName) >>= Name.nameModule,
+		-- 			Name.nameIdent <$> (name ^? P.resolvedName),
+		-- 			P.resolveError name)
+
+		-- hasResolved mid n = do
+		-- 	[Only hasName] <- query "select count(*) > 0 from names where module_id == ? and line == ? and column == ? and line_to == ? and column_to == ?;" (
+		-- 		mid,
+		-- 		n ^. regionL . regionFrom . positionLine,
+		-- 		n ^. regionL . regionFrom . positionColumn,
+		-- 		n ^. regionL . regionTo . positionLine,
+		-- 		n ^. regionL . regionTo . positionColumn)
+		-- 	return hasName
 
 lookupModuleLocation :: SessionMonad m => ModuleLocation -> m (Maybe Int)
 lookupModuleLocation m = do
@@ -409,17 +515,17 @@ insertLookupModule m = do
 				m ^. moduleName)
 			lastRow
 
-lookupSymbol :: SessionMonad m => Int -> Symbol -> m (Maybe Int)
+lookupSymbol :: SessionMonad m => Int -> SymbolId -> m (Maybe Int)
 lookupSymbol mid sym = do
-	sids <- queryNamed "select id from symbols where ((name is null and :name is null) or name = :name) and module_id = :module_id;" [
-		":name" := sym ^. symbolId . symbolName,
-		":module_id" := mid]
-	when (length sids > 1) $ sendLog Warning $ "different symbols with same module id: {}.{}" ~~ show mid ~~ (sym ^. symbolId . symbolName)
+	sids <- query "select id from symbols where name == ? and module_id == ?;" (
+		sym ^. symbolName,
+		mid)
+	when (length sids > 1) $ sendLog Warning $ "different symbols with same module id: {}.{}" ~~ show mid ~~ (sym ^. symbolName)
 	return $ listToMaybe [sid | Only sid <- sids]
 
 insertLookupSymbol :: SessionMonad m => Int -> Symbol -> m Int
 insertLookupSymbol mid sym = do
-	msid <- lookupSymbol mid sym
+	msid <- lookupSymbol mid (sym ^. symbolId)
 	case msid of
 		Just sid -> return sid
 		Nothing -> do

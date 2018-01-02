@@ -2,7 +2,8 @@ module Data.LookupTable (
 	LookupTable,
 	newLookupTable,
 	lookupTable, lookupTableM, cacheInTableM,
-	hasLookupTable
+	hasLookupTable,
+	cachedInTable
 	) where
 
 import Control.Monad.IO.Class
@@ -39,3 +40,7 @@ cacheInTableM tbl key mvalue = lookupTableM key mvalue tbl
 -- | Just check existable
 hasLookupTable :: (Ord k, MonadIO m) => k -> LookupTable k v -> m (Maybe v)
 hasLookupTable key tbl = liftIO $ withMVar tbl $ return . M.lookup key
+
+-- | Make function caching results in @LookupTable@
+cachedInTable :: (Ord k, MonadIO m) => LookupTable k v -> (k -> m v) -> k -> m v
+cachedInTable tbl fn key = cacheInTableM tbl key (fn key)

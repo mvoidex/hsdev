@@ -276,7 +276,6 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		case order pmods of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
-				Log.sendLog Log.Debug $ "default resolving started"
 				ms'' <- flip evalStateT sqlAenv' $ runTasks (map inspect' ordered)
 				mlocs'' <- forM ms'' $ \m -> do
 					let

@@ -142,7 +142,12 @@ create table modules (
 
 create unique index modules_id_index on modules (id);
 create index modules_name_index on modules (name);
-create index modules_file_index on modules (file);
+create unique index modules_file_index on modules (file) where file is not null;
+create unique index modules_installed_index on modules (package_name, package_version, installed_name) where
+	package_name is not null and
+	package_version is not null and
+	installed_name is not null;
+create unique index modules_other_locations_index on modules (other_location) where other_location is not null;
 
 create table imports (
 	module_id integer,
@@ -195,6 +200,7 @@ create table names (
 	resolve_error text
 );
 
+create unique index names_position_index on names (module_id, line, column, line_to, column_to);
 create index names_module_id_index on names (module_id);
 
 create view definitions (
