@@ -455,7 +455,9 @@ scanProject opts cabal = runTask "scanning" (project $ view path cabal) $ Log.sc
 	proj <- scanProjectFile opts cabal
 	watch (\w -> watchProject w proj opts)
 	S.ScanContents _ [(_, sources)] _ <- S.enumProject proj
-	scanModules opts sources
+	let
+		projMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal == ?;" (SQLite.Only $ proj ^. projectCabal)
+	scan projMods sources opts $ scanModules opts
 
 -- | Scan directory for source files and projects
 scanDirectory :: UpdateMonad m => [String] -> Path -> m ()

@@ -355,20 +355,20 @@ instance Monoid Inspection where
 instance ToJSON Inspection where
 	toJSON InspectionNone = object ["inspected" .= False]
 	toJSON (InspectionAt tm fs) = object [
-		"mtime" .= (floor tm :: Integer),
+		"mtime" .= (fromRational (toRational tm) :: Double),
 		"flags" .= fs]
 
 instance FromJSON Inspection where
 	parseJSON = withObject "inspection" $ \v ->
 		((const InspectionNone :: Bool -> Inspection) <$> v .:: "inspected") <|>
-		(InspectionAt <$> (fromInteger <$> v .:: "mtime") <*> (v .:: "flags"))
+		(InspectionAt <$> ((fromRational . (toRational :: Double -> Rational)) <$> v .:: "mtime") <*> (v .:: "flags"))
 
 -- | Is left @Inspection@ fresh comparing to right one
 fresh :: Inspection -> Inspection -> Bool
 fresh InspectionNone InspectionNone = True
 fresh InspectionNone _ = False
 fresh _ InspectionNone = True
-fresh (InspectionAt tm opts) (InspectionAt tm' opts') = S.fromList opts == S.fromList opts' && tm >= tm'
+fresh (InspectionAt tm opts) (InspectionAt tm' opts') = tm' - tm < 0.01
 
 -- | Inspected entity
 data Inspected k t a = Inspected {

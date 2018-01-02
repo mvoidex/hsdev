@@ -208,12 +208,12 @@ instance FromRow Inspection where
 		opts <- field
 		case (tm, opts) of
 			(Nothing, Nothing) -> return InspectionNone
-			(_, Just opts') -> InspectionAt (maybe 0 fromInteger tm) <$>
+			(_, Just opts') -> InspectionAt (maybe 0 (fromRational . (toRational :: Double -> Rational)) tm) <$>
 				maybe (fail "Error parsing inspection opts") return (fromJSON' opts')
 			(Just _, Nothing) -> fail "Error parsing inspection data, time is set, but flags are null"
 
 instance ToRow Inspection where
 	toRow InspectionNone = [SQLNull, SQLNull]
 	toRow (InspectionAt tm opts) = [
-		if tm == 0 then SQLNull else toField (floor tm :: Int),
+		if tm == 0 then SQLNull else toField (fromRational (toRational tm) :: Double),
 		toField $ toJSON opts]

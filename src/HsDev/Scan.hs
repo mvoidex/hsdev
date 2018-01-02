@@ -222,5 +222,5 @@ changedModules inspMap opts = filterM $ \m -> if isJust (m ^. _3)
 	then return True
 	else maybe
 		(return True)
-		(upToDate (m ^. _1) (opts ++ (m ^. _2)))
+		(liftM not . upToDate (m ^. _1) (opts ++ (m ^. _2)))
 		(M.lookup (m ^. _1) inspMap)
