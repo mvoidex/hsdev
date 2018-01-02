@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
-	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, definedSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleExports, moduleScope, moduleSource,
+	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, definedSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleImports, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
 	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
@@ -82,6 +82,7 @@ instance NFData l => NFData (QName l) where
 data Module = Module {
 	_moduleId :: ModuleId,
 	_moduleDocs :: Maybe Text,
+	_moduleImports :: [Text], -- list of module names imported
 	_moduleExports :: [Symbol], -- exported module symbols
 	_moduleFixities :: [Fixity], -- fixities of operators
 	_moduleScope :: Map Name [Symbol], -- symbols in scope, only for source modules
@@ -147,6 +148,7 @@ instance FromJSON Module where
 	parseJSON = withObject "module" $ \v -> Module <$>
 		v .:: "id" <*>
 		v .::? "docs" <*>
+		pure mempty <*>
 		v .::?! "exports" <*>
 		v .::?! "fixities" <*>
 		pure mempty <*>
@@ -161,7 +163,7 @@ instance NFData Fixity where
 	rnf (Fixity assoc pr n) = rnf assoc `seq` rnf pr `seq` rnf n
 
 instance NFData Module where
-	rnf (Module i d e fs s msrc) = msrc `seq` rnf i `seq` rnf d `seq` rnf e `seq` rnf fs `seq` rnf s
+	rnf (Module i d is e fs s msrc) = msrc `seq` rnf i `seq` rnf d `seq` rnf is `seq` rnf e `seq` rnf fs `seq` rnf s
 
 instance Eq Module where
 	l == r = _moduleId l == _moduleId r

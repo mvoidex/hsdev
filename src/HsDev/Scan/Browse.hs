@@ -131,6 +131,7 @@ browseModule modId lookSym package' m = do
 	return Module {
 		_moduleId = myModId,
 		_moduleDocs = Nothing,
+		_moduleImports = [],
 		_moduleExports = ds,
 		_moduleFixities = [Fixity (dirAssoc dir) pr (fixName oname) | (oname, (pr, dir)) <- map (second Compat.getFixity) (maybe [] GHC.mi_fixities (GHC.modInfoIface mi))],
 		_moduleScope = mempty,

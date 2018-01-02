@@ -41,7 +41,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.FilePath
-import qualified  System.Log.Simple as Log
+import qualified System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Read (readMaybe)
 import Text.Format hiding (withFlags)

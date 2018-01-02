@@ -1,7 +1,7 @@
 {-# LANGUAGE PatternSynonyms, ViewPatterns, OverloadedStrings #-}
 
 module HsDev.Symbols.Name (
-	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, namePrefix, fromName_, toName_, toModuleName_, fromName, toName,
+	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, namePrefix, fromName_, toName_, toModuleName_, fromModuleName_, fromName, toName,
 	) where
 
 import Control.Arrow
@@ -52,6 +52,9 @@ toName_ txt
 
 toModuleName_ :: Text -> ModuleName ()
 toModuleName_ = ModuleName () . T.unpack
+
+fromModuleName_ :: ModuleName () -> Text
+fromModuleName_ (ModuleName () m) = T.pack m
 
 toName :: Text -> Name
 toName "()" = Special () (UnitCon ())

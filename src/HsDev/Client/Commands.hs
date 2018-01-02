@@ -199,7 +199,7 @@ runCommand (InfoModule sq _ h _) = toValue $ do
 				["exports as e"]
 				["e.module_id == ?", "e.symbol_id == s.id"])
 				(Only mid)
-			return $ Module mheader docs exports' fixities' mempty Nothing
+			return $ Module mheader docs mempty exports' fixities' mempty Nothing
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'

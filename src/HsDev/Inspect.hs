@@ -49,6 +49,7 @@ import HDocs.Haddock
 import HsDev.Display ()
 import HsDev.Error
 import HsDev.Symbols
+import HsDev.Symbols.Name (fromModuleName_)
 import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable, symbolUniqId)
 import HsDev.Symbols.Parsed hiding (file)
 import qualified HsDev.Symbols.HaskellNames as HN
@@ -74,6 +75,7 @@ asModule = lens g' s' where
 	g' p = Module {
 		_moduleId = _preloadedId p,
 		_moduleDocs = Nothing,
+		_moduleImports = mempty,
 		_moduleExports = mempty,
 		_moduleFixities = mempty,
 		_moduleScope = mempty,
@@ -153,6 +155,7 @@ analyzeResolve :: AnalyzeEnv -> Module -> Module
 analyzeResolve (AnalyzeEnv env _ rtable) m = case m ^. moduleSource of
 	Nothing -> m
 	Just msrc -> over moduleSymbols (refineSymbol stbl) $ m {
+		_moduleImports = map (fromModuleName_ . void . H.importModule) idecls',
 		_moduleExports = map HN.fromSymbol $ N.exportedSymbols tbl msrc,
 		_moduleFixities = [Fixity (void assoc) (fromMaybe 0 pr) (fixName opName)
 			| H.InfixDecl _ assoc pr ops <- decls', opName <- map getOpName ops],
@@ -184,6 +187,7 @@ analyzePreloaded aenv@(AnalyzeEnv env gfixities _) p = case H.parseFileContentsW
 	H.ParseOk m -> Right $ analyzeResolve aenv $ Module {
 		_moduleId = _preloadedId p',
 		_moduleDocs = Nothing,
+		_moduleImports = mempty,
 		_moduleExports = mempty,
 		_moduleFixities = mempty,
 		_moduleScope = mempty,

@@ -563,9 +563,11 @@ loadModule mid = scope "load-module" $ do
 		mods@((mid' :. (mdocs, mfixities, _)):_) -> do
 			when (length mods > 1) $ sendLog Warning $ "multiple modules with same id = {} found" ~~ mid
 			syms <- query @_ @Symbol (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid)
+			inames <- query @_ @(Only Text) "select distinct module_name from imports where module_id == ?;" (Only mid)
 			return $ Module {
 				_moduleId = mid',
 				_moduleDocs = mdocs,
+				_moduleImports = map fromOnly inames,
 				_moduleExports = syms,
 				_moduleFixities = fromMaybe [] (mfixities >>= fromJSON'),
 				_moduleScope = mempty,
@@ -576,9 +578,11 @@ loadModules selectExpr args = scope "load-modules" $ do
 	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int)) (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString $ "mu.id in (" ++ selectExpr ++ ")"])) args
 	forM ms $ \(mid' :. (mdocs, mfixities, mid)) -> do
 		syms <- query @_ @Symbol (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid)
+		inames <- query @_ @(Only Text) "select distinct module_name from imports where module_id == ?;" (Only mid)
 		return $ Module {
 			_moduleId = mid',
 			_moduleDocs = mdocs,
+			_moduleImports = map fromOnly inames,
 			_moduleExports = syms,
 			_moduleFixities = fromMaybe [] (mfixities >>= fromJSON'),
 			_moduleScope = mempty,
