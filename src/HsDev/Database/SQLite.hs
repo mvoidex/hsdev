@@ -243,13 +243,17 @@ insertModule im = scope "insert-module" $ do
 
 upsertModule :: SessionMonad m => InspectedModule -> m Int
 upsertModule im = scope "upsert-module" $ do
-	execute "insert or replace into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-		moduleData
 	mmid <- lookupModuleLocation (im ^. inspectedKey)
-	maybe getIdError return mmid
+	case mmid of
+		Nothing -> do
+			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				moduleData
+			lastRow
+		Just mid' -> do
+			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
+				(moduleData :. Only mid')
+			return mid'
 	where
-		getIdError = sqlFailure ("Unable to get module id by location: {}" ~~ (im ^. inspectedKey))
-
 		moduleData = (
 			im ^? inspectedKey . moduleFile . path,
 			im ^? inspectedKey . moduleProject . _Just . projectCabal,

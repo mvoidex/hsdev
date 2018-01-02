@@ -265,17 +265,10 @@ runCommand (Whoat l c fpath) = toValue $ do
 			} | (mid :. (nm, defLine, defColumn)) <- defs]
 	return $ rs ++ locals
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
-	pids <- query @_ @(Only Path) "select m.cabal from modules as m where (m.file == ?);"
+	pids <- query @_ @(Only (Maybe Path)) "select m.cabal from modules as m where (m.file == ?);"
 		(Only $ fpath ^. path)
 	case pids of
-		[] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
-			["latest_packages as ps"]
-			[
-				"mu.package_name == ps.package_name",
-				"mu.package_version == ps.package_version",
-				"ps.package_db in ('user-db', 'global-db')",
-				"mu.name like ? escape '\\'"])
-			(Only $ likePattern sq)
+		[] -> hsdevError $ OtherError $ "module at {} not found" ~~ fpath
 		[Only proj] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
 			["projects_modules_scope as msc"]
 			[
