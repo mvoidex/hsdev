@@ -32,7 +32,8 @@ data HsDevError =
 	RequestError String String |
 	ResponseError String String |
 	SQLiteError String |
-	OtherError String
+	OtherError String |
+	UnhandledError String
 		deriving (Typeable)
 
 instance NFData HsDevError where
@@ -52,6 +53,7 @@ instance NFData HsDevError where
 	rnf (ResponseError e r) = rnf e `seq` rnf r
 	rnf (SQLiteError e) = rnf e
 	rnf (OtherError e) = rnf e
+	rnf (UnhandledError e) = rnf e
 
 instance Show HsDevError where
 	show (ModuleNotSource mloc) = format "module is not source: {}" ~~ show mloc
@@ -70,6 +72,7 @@ instance Show HsDevError where
 	show (ResponseError e r) = format "response error: {}, response: {}" ~~ e ~~ r
 	show (SQLiteError e) = format "sqlite error: {}" ~~ e
 	show (OtherError e) = e
+	show (UnhandledError e) = e
 
 instance Formattable HsDevError where
 
@@ -93,6 +96,7 @@ instance ToJSON HsDevError where
 	toJSON (ResponseError e r) = jsonErr "response error" ["msg" .= e, "response" .= r]
 	toJSON (SQLiteError e) = jsonErr "sqlite error" ["msg" .= e]
 	toJSON (OtherError e) = jsonErr "other error" ["msg" .= e]
+	toJSON (UnhandledError e) = jsonErr "unhandled error" ["msg" .= e]
 
 instance FromJSON HsDevError where
 	parseJSON = withObject "hsdev-error" $ \v -> do
@@ -114,6 +118,7 @@ instance FromJSON HsDevError where
 			"response error" -> ResponseError <$> v .: "msg" <*> v .: "response"
 			"sqlite error" -> SQLiteError <$> v .: "msg"
 			"other error" -> OtherError <$> v .: "msg"
+			"unhandled error" -> UnhandledError <$> v .: "msg"
 			_ -> fail "invalid error"
 
 instance Exception HsDevError

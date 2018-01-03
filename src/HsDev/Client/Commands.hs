@@ -54,9 +54,11 @@ import qualified HsDev.Database.Update as Update
 runClient :: (ToJSON a, ServerMonadBase m) => CommandOptions -> ClientM m a -> ServerM m Result
 runClient copts = mapServerM toResult . runClientM where
 	toResult :: (ToJSON a, ServerMonadBase m) => ReaderT CommandOptions m a -> m Result
-	toResult act = liftM (either Error (Result . toJSON)) $ runReaderT (try act) copts
+	toResult act = liftM errorToResult $ runReaderT (try (try act)) copts
 	mapServerM :: (m a -> n b) -> ServerM m a -> ServerM n b
 	mapServerM f = ServerM . mapReaderT f . runServerM
+	errorToResult :: ToJSON a => Either SomeException (Either HsDevError a) -> Result
+	errorToResult = either (Error . UnhandledError . displayException) (either Error (Result . toJSON))
 
 toValue :: (ToJSON a, Monad m) => m a -> m Value
 toValue = liftM toJSON

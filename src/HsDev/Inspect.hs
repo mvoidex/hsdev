@@ -113,10 +113,11 @@ preload name defines opts mloc (Just cts) = do
 			H.fixities = Nothing,
 			H.ignoreFunctionArity = False }
 	H.ModuleHeadAndImports l mpragmas mhead mimps <- parseOk $ fmap H.unNonGreedy $ H.parseWithMode pmode (T.unpack cts')
-	let
-		mname = case mhead of
-			Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> fromString nm
-			_ -> fromString "Main"
+	when (H.isNullSpan $ H.srcInfoSpan l) $ hsdevError $ InspectError
+		(format "Error parsing module head and imports, file {}" ~~ view path fpath)
+	mname <- case mhead of
+		Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> return $ fromString nm
+		_ -> hsdevError $ InspectError $ (format "Parsing module head and imports results in empty module name, file {}" ~~ view path fpath)
 	return $ Preloaded {
 		_preloadedId = ModuleId mname mloc,
 		_preloadedMode = pmode,
@@ -425,11 +426,16 @@ getDefines = E.handle onIO $ do
 
 preprocess :: [(String, String)] -> Path -> Text -> IO Text
 preprocess defines fpath cts = do
-	cts' <- E.catch (Cpphs.cppIfdef (view path fpath) defines [] Cpphs.defaultBoolOptions (T.unpack cts)) onIOError
+	cts' <- E.catch (Cpphs.cppIfdef (view path fpath) defines [] cppOpts (T.unpack cts)) onIOError
 	return $ T.unlines $ map (fromString . snd) cts'
 	where
 		onIOError :: E.IOException -> IO [(Cpphs.Posn, String)]
 		onIOError _ = return []
+
+		cppOpts = Cpphs.defaultBoolOptions {
+			Cpphs.locations = False,
+			Cpphs.hashline = False
+		}
 
 preprocess_ :: [(String, String)] -> [String] -> Path -> Text -> IO Text
 preprocess_ defines exts fpath cts
