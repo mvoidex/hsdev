@@ -151,7 +151,8 @@ mergeConsumeEvent tolerance (v, e) = do
 		insertEvent = M.insert (eventKey e) (newPushTime, _eventTime e)
 		insertTime = M.insert newPushTime (v, e)
 		(old, bound, new) = M.splitLookup (_eventTime e - tolerance) (insertTime queue')
-		removeOld = flip M.restrictKeys (S.fromList $ map (eventKey . snd) $ M.elems new)
+		actual = S.fromList $ map (eventKey . snd) $ M.elems new
+		removeOld = M.filterWithKey (\k _ -> k `S.member` actual)
 	put (insertEvent $ removeOld events', new)
 	return $ M.elems old ++ maybeToList bound
 	where

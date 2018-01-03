@@ -348,6 +348,6 @@ strVersion Nothing = "unknown"
 strVersion (Just vers) = intercalate "." $ map show vers
 
 -- | Parse Distribution.Text
-parseDT :: Monad m => Distribution.Text.Text a => String -> String -> m a
+parseDT :: (Monad m, Distribution.Text.Text a) => String -> String -> m a
 parseDT typeName v = maybe err return (simpleParse v) where
 	err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v

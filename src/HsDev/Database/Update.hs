@@ -263,7 +263,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		let
 			pmods = map fst ploaded
 
-		(sqlMods', sqlAenv') <- Log.scope "exp" $ do
+		(sqlMods', sqlAenv') <- do
 			let
 				mprojectDeps = SQLite.buildQuery $ SQLite.select_
 					["ps.module_id"]
