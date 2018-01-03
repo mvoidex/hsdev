@@ -212,11 +212,13 @@ runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (vi
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["projects_deps as pdeps", "modules as srcm"]
+		["projects_modules_scope as pms", "modules as srcm", "exports as e"]
 		[
-			"m.cabal == pdeps.cabal or m.package_name == pdeps.package_name",
-			"pdeps.cabal is srcm.cabal",
+			"pms.cabal is srcm.cabal",
 			"srcm.file == ?",
+			"pms.module_id == e.module_id",
+			"m.id == s.module_id",
+			"s.id == e.symbol_id",
 			"s.name == ?"])
 		(fpath ^. path, nm)
 	return rs

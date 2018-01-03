@@ -601,7 +601,6 @@ inferFlag :: Parser Bool
 inspectionFlag :: Parser Bool
 localsFlag :: Parser Bool
 moduleArg :: Parser Text
-packageDbArg :: Parser PackageDb
 packageArg :: Parser Text
 pathArg :: Mod OptionFields String -> Parser Path
 projectArg :: Parser Path
