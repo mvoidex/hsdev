@@ -436,8 +436,8 @@ runCommand Exit = toValue serverExit
 
 targetFilter :: Text -> TargetFilter -> (Text, [NamedParam])
 targetFilter table (TargetProject proj) = (
-	"{t}.cabal in (select cabal from projects where name == :project_name" ~~ ("t" ~% table),
-	[":project_name" := proj])
+	"{t}.cabal in (select cabal from projects where name == :project or cabal == :project" ~~ ("t" ~% table),
+	[":project" := proj])
 targetFilter table (TargetFile f) = ("{t}.file == :file" ~~ ("t" ~% table), [":file" := f])
 targetFilter table (TargetModule nm) = ("{t}.name == :module_name" ~~ ("t" ~% table), [":module_name" := nm])
 targetFilter table (TargetPackage nm) = ("{t}.package_name == :package_name" ~~ ("t" ~% table), [":package_name" := nm])

@@ -280,11 +280,11 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		":package_version" := im ^? inspectedKey . modulePackage . _Just . packageVersion,
 		":other_location" := im ^? inspectedKey . otherLocationName,
 		":installed_name" := im ^? inspectedKey . installedModuleName]
+	-- TODO: Delete obsolete symbols (note, that they can be referenced from another modules)
 	execute "delete from imports where module_id == ?;" (Only mid)
 	execute "delete from exports where module_id == ?;" (Only mid)
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
-	execute "delete from symbols where module_id == ?;" (Only mid)
 	insertModuleImports mid
 	insertExportSymbols mid (im ^.. inspected . moduleExports . each)
 	insertScopeSymbols mid (im ^.. inspected . scopeSymbols)
@@ -329,6 +329,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		insertExportSymbols _ [] = return ()
 		insertExportSymbols mid syms = scope "insert-export-symbols" $ withTemporaryTable "export_symbols" (symbolsColumns ++ idColumns) $ do
 			dumpSymbols "export_symbols" symbolsColumns syms
+			updateExistingSymbols "export_symbols"
 			insertMissingModules "export_symbols"
 			insertMissingSymbols "export_symbols"
 			execute "insert into exports (module_id, symbol_id) select ?, symbol_id from export_symbols;" (Only mid)
@@ -338,6 +339,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		insertScopeSymbols mid snames = scope "insert-scope-symbols" $ withTemporaryTable "scope_symbols" (symbolsColumns ++ scopeNameColumns ++ idColumns) $ do
 			dumpSymbols "scope_symbols" (symbolsColumns ++ scopeNameColumns)
 				[(s :. (Name.nameModule nm, Name.nameIdent nm)) | (s, nms) <- snames, nm <- nms]
+			updateExistingSymbols "scope_symbols"
 			insertMissingModules "scope_symbols"
 			insertMissingSymbols "scope_symbols"
 			execute "insert into scopes (module_id, qualifier, name, symbol_id) select ?, qualifier, ident, symbol_id from scope_symbols;" (Only mid)
@@ -409,6 +411,10 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		updateSymbolIds :: SessionMonad m => String -> m ()
 		updateSymbolIds tableName =
 			execute_ (fromString ("update {table} set symbol_id = (select s.id from symbols as s where s.name = {table}.name and s.module_id = {table}.module_id);" ~~ ("table" ~% tableName)))
+
+		updateExistingSymbols :: SessionMonad m => String -> m ()
+		updateExistingSymbols tableName = scope "update-existing-symbols" $ do
+			execute_ (fromString ("replace into symbols (id, name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select symbols.id, {table}.name, {table}.module_id, {table}.docs, {table}.line, {table}.column, {table}.what, {table}.type, {table}.parent, {table}.constructors, {table}.args, {table}.context, {table}.associate, {table}.pat_type, {table}.pat_constructor from {table} inner join symbols on (symbols.name == {table}.name) and (symbols.module_id == {table}.module_id);" ~~ ("table" ~% tableName)))
 
 		insertMissingModules :: SessionMonad m => String -> m ()
 		insertMissingModules tableName = scope "insert-missing-modules" $ do
