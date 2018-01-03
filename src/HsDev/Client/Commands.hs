@@ -79,7 +79,7 @@ runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
 		[Update.scanCabal ghcs' | cabal],
 		map (Update.scanSandbox ghcs') sboxes',
-		map (\(FileSource f mcts) -> Update.scanFileContents ghcs' f mcts) fs,
+		[Update.scanFiles (zip fs (repeat ghcs'))],
 		map (Update.scanProject ghcs') projs,
 		map (Update.scanDirectory ghcs') paths']
 runCommand (RefineDocs projs fs) = toValue $ do

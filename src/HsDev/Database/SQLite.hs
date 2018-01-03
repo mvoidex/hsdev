@@ -284,15 +284,11 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 	execute "delete from exports where module_id == ?;" (Only mid)
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
+	execute "delete from symbols where module_id == ?;" (Only mid)
 	insertModuleImports mid
 	insertExportSymbols mid (im ^.. inspected . moduleExports . each)
 	insertScopeSymbols mid (im ^.. inspected . scopeSymbols)
 	maybe (return ()) (insertResolvedNames mid) (im ^? inspected . moduleSource . _Just)
-	-- scope "exports" $ forM_ (im ^.. inspected . moduleExports . each) (insertExportSymbol mid)
-	-- scope "scopes" $ forM_ (im ^.. inspected . scopeSymbols) (uncurry $ insertScopeSymbol mid)
-	-- scope "names" $ do
-	-- 	forM_ (im ^.. inspected . moduleSource . _Just . P.qnames) (insertResolvedQName mid)
-	-- 	forM_ (im ^.. inspected . moduleSource . _Just . P.names) (insertResolvedName mid)
 	where
 		insertModuleImports :: SessionMonad m => Int -> m ()
 		insertModuleImports mid = scope "insert-module-imports" $ do
@@ -423,65 +419,6 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		insertMissingSymbols tableName = scope "insert-missing-symbols" $ do
 			execute_ (fromString ("insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select distinct name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor from {} where module_id is not null and symbol_id is null;" ~~ tableName))
 			updateSymbolIds tableName
-
-		-- insertExportSymbol :: SessionMonad m => Int -> Symbol -> m ()
-		-- insertExportSymbol mid sym = do
-		-- 	defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
-		-- 	sid <- insertLookupSymbol defMid sym
-		-- 	execute "insert into exports (module_id, symbol_id) values (?, ?);" (mid, sid)
-
-		-- insertScopeSymbol :: SessionMonad m => Int -> Symbol -> [Name] -> m ()
-		-- insertScopeSymbol mid sym scopeNames = do
-		-- 	defMid <- insertLookupModule (sym ^. symbolId . symbolModule)
-		-- 	sid <- insertLookupSymbol defMid sym
-		-- 	forM_ scopeNames $ \name -> execute "insert into scopes (module_id, qualifier, name, symbol_id) values (?, ?, ?, ?);" (
-		-- 		mid,
-		-- 		Name.nameModule name,
-		-- 		Name.nameIdent name,
-		-- 		sid)
-
-		-- insertResolvedQName mid qname = do
-		-- 	execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
-		-- 		mid,
-		-- 		Name.nameModule $ void qname,
-		-- 		Name.nameIdent $ void qname,
-		-- 		qname ^. P.pos . positionLine,
-		-- 		qname ^. P.pos . positionColumn,
-		-- 		qname ^. P.regionL . regionTo . positionLine,
-		-- 		qname ^. P.regionL . regionTo . positionColumn)
-		-- 		:. (
-		-- 		qname ^? P.defPos . positionLine,
-		-- 		qname ^? P.defPos . positionColumn,
-		-- 		(qname ^? P.resolvedName) >>= Name.nameModule,
-		-- 		Name.nameIdent <$> (qname ^? P.resolvedName),
-		-- 		P.resolveError qname)
-
-		-- insertResolvedName mid name = do
-		-- 	hasName' <- hasResolved mid name
-		-- 	when (not hasName') $ do
-		-- 		execute "insert into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
-		-- 			mid,
-		-- 			Nothing :: Maybe Text,
-		-- 			Name.fromName_ $ void name,
-		-- 			name ^. P.pos . positionLine,
-		-- 			name ^. P.pos . positionColumn,
-		-- 			name ^. P.regionL . regionTo . positionLine,
-		-- 			name ^. P.regionL . regionTo . positionColumn)
-		-- 			:. (
-		-- 			name ^? P.defPos . positionLine,
-		-- 			name ^? P.defPos . positionColumn,
-		-- 			(name ^? P.resolvedName) >>= Name.nameModule,
-		-- 			Name.nameIdent <$> (name ^? P.resolvedName),
-		-- 			P.resolveError name)
-
-		-- hasResolved mid n = do
-		-- 	[Only hasName] <- query "select count(*) > 0 from names where module_id == ? and line == ? and column == ? and line_to == ? and column_to == ?;" (
-		-- 		mid,
-		-- 		n ^. regionL . regionFrom . positionLine,
-		-- 		n ^. regionL . regionFrom . positionColumn,
-		-- 		n ^. regionL . regionTo . positionLine,
-		-- 		n ^. regionL . regionTo . positionColumn)
-		-- 	return hasName
 
 lookupModuleLocation :: SessionMonad m => ModuleLocation -> m (Maybe Int)
 lookupModuleLocation m = do

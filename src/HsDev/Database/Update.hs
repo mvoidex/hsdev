@@ -10,7 +10,7 @@ module HsDev.Database.Update (
 
 	postStatus, updater, runTask, runTasks, runTasks_,
 
-	scanModules, scanFile, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
+	scanModules, scanFile, scanFiles, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
 	scan,
 	processEvent, updateEvents, applyUpdates,
@@ -322,10 +322,13 @@ scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ h
 			else do
 				mproj <- locateProjectInfo fpath'
 				return $ FileModule fpath' mproj
-	mapM_ (watch . flip watchModule) mlocs
-	S.ScanContents dmods _ _ <- fmap mconcat $ mapM (S.enumDependent . view path) fpaths'
-	Log.sendLog Log.Trace $ "dependent modules: {}" ~~ length dmods
-	scanModules [] ([(mloc, opts, mcts) | (mloc, (FileSource _ mcts, opts)) <- zip mlocs fsrcs] ++ dmods)
+	let
+		filesMods = liftM concat $ forM fpaths' $ \fpath' -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file == ?;" (SQLite.Only fpath')
+	scan filesMods [(mloc, opts, mcts) | (mloc, (FileSource _ mcts, opts)) <- zip mlocs fsrcs] [] $ \mlocs' -> do
+		mapM_ (watch . flip watchModule) (map (view _1) mlocs')
+		S.ScanContents dmods _ _ <- fmap mconcat $ mapM (S.enumDependent . view (_1 . moduleFile . path)) mlocs'
+		Log.sendLog Log.Trace $ "dependent modules: {}" ~~ length dmods
+		scanModules [] (mlocs' ++ dmods)
 
 -- | Scan source file with contents and resolve dependent modules
 scanFileContents :: UpdateMonad m => [String] -> Path -> Maybe Text -> m ()
@@ -477,7 +480,7 @@ scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	let
-		standaloneMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.cabal is null and m.file is not null and m.file like ?;" (SQLite.Only $ SQLite.escapeLike dir `T.append` "%")
+		standaloneMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.cabal is null and m.file is not null and m.file like ? escape '\\';" (SQLite.Only $ SQLite.escapeLike dir `T.append` "%")
 	scan standaloneMods standSrcs opts $ scanModules opts
 
 scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()
