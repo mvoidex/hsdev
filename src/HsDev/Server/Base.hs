@@ -105,7 +105,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 			(waitQSem waitSem)
 			clientChan
 			defs
-	_ <- liftIO $ forkIO $ do
+	_ <- fork $ do
 		emptyTask <- async $ return ()
 		updaterTask <- newMVar emptyTask
 		tasksVar <- newMVar []
@@ -145,7 +145,7 @@ setupServer sopts = do
 				liftIO $ signalQSem q
 				(s', addr') <- liftIO $ accept s
 				Log.sendLog Log.Trace $ "accepted {}" ~~ show addr'
-				void $ liftIO $ forkIO $ withSession session $ Log.scope (T.pack $ show addr') $
+				fork $ withSession session $ Log.scope (T.pack $ show addr') $
 					logAsync (Log.sendLog Log.Fatal . fromString) $ logIO "exception: " (Log.sendLog Log.Error . fromString) $
 						flip finally (liftIO $ close s') $
 							bracket (liftIO newEmptyMVar) (liftIO . (`putMVar` ())) $ \done -> do
@@ -235,7 +235,7 @@ processClient :: SessionMonad m => String -> F.Chan ByteString -> (ByteString ->
 processClient name rchan send' = do
 	Log.sendLog Log.Info "connected"
 	respChan <- liftIO newChan
-	liftIO $ void $ forkIO $ getChanContents respChan >>= mapM_ (send' . encodeMessage)
+	fork $ getChanContents respChan >>= mapM_ (send' . encodeMessage)
 	linkVar <- liftIO $ newMVar $ return ()
 	s <- getSession
 	exit <- askSession sessionExit
@@ -259,7 +259,7 @@ processClient name rchan send' = do
 				Left em -> do
 					Log.sendLog Log.Warning $ "Invalid request {}" ~~ fromUtf8 req'
 					answer $ set msg (Message Nothing $ responseError $ RequestError "invalid request" $ fromUtf8 req') em
-				Right m -> void $ liftIO $ forkIO $ withSession s $ Log.scope (T.pack name) $ Log.scope "req" $
+				Right m -> fork $ withSession s $ Log.scope (T.pack name) $ Log.scope "req" $
 					Log.scope (T.pack $ fromMaybe "_" (view (msg . messageId) m)) $ do
 						resp' <- flip (traverseOf (msg . message)) m $ \(Request c cdir noFile tm silent) -> do
 							let
@@ -302,7 +302,7 @@ processClient name rchan send' = do
 processClientSocket :: SessionMonad m => String -> Socket -> m ()
 processClientSocket name s = do
 	recvChan <- liftIO F.newChan
-	liftIO $ void $ forkIO $ finally
+	fork $ finally
 		(Net.getContents s >>= mapM_ (F.putChan recvChan) . L.lines)
 		(F.closeChan recvChan)
 	processClient name recvChan (sendLine s)
