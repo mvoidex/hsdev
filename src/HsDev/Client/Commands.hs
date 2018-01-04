@@ -86,7 +86,7 @@ runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 		map (Update.scanDirectory ghcs') paths']
 runCommand (RefineDocs projs fs) = toValue $ do
 	projects <- traverse findProject projs
-	mods <- withSqlTransaction $ do
+	mods <- do
 		projMods <- liftM concat $ forM projects $ \proj -> do
 			ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.docs') is null"
 				(Only $ proj ^. projectCabal)
@@ -99,7 +99,7 @@ runCommand (RefineDocs projs fs) = toValue $ do
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs mods]
 runCommand (InferTypes projs fs) = toValue $ do
 	projects <- traverse findProject projs
-	mods <- withSqlTransaction $ do
+	mods <- do
 		projMods <- liftM concat $ forM projects $ \proj -> do
 			ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.types') is null"
 				(Only $ proj ^. projectCabal)
@@ -110,32 +110,8 @@ runCommand (InferTypes projs fs) = toValue $ do
 				(Only f)
 		return $ projMods ++ fileMods
 	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes mods]
-runCommand (Remove projs cabal sboxes files) = toValue $ do
-	w <- askSession sessionWatcher
-	projects <- traverse findProject projs
-	sboxes' <- getSandboxes sboxes
-	forM_ projects $ \proj -> do
-		withSqlTransaction $ do
-			ms <- liftM (map fromOnly) $ query "select id from modules where cabal == ?;" (Only $ proj ^. projectCabal)
-			SQLite.removeProject proj
-			mapM_ SQLite.removeModule ms
-		liftIO $ unwatchProject w proj
-
-	allPdbs <- liftM (map fromOnly) $ query_ @(Only PackageDb) "select package_db from package_dbs;"
-	dbPDbs <- inSessionGhc $ mapM restorePackageDbStack allPdbs
-	flip State.evalStateT dbPDbs $ do
-		when cabal $ removePackageDbStack userDb
-		forM_ sboxes' $ \sbox -> do
-			pdbs <- lift $ inSessionGhc $ sandboxPackageDbStack sbox
-			removePackageDbStack pdbs
-
-	forM_ files $ \file -> do
-		withSqlTransaction $ do
-			ms <- query @_ @(ModuleId :. Only Int) (toQuery $ qModuleId `mappend` select_ ["mu.id"] [] ["mu.file == ?"]) (Only file)
-			forM_ ms $ \(m :. Only i) -> do
-				SQLite.removeModule i
-				liftIO . unwatchModule w $ (m ^. moduleLocation)
-	where
+runCommand (Remove projs cabal sboxes files) = toValue $ withSqlConnection $ SQLite.transaction_ SQLite.Immediate $ do
+	let
 		-- We can safely remove package-db from db iff doesn't used by some of other package-dbs
 		-- For example, we can't remove global-db if there are any other package-dbs, because all of them uses global-db
 		-- We also can't remove stack snapshot package-db if there are some local package-db not yet removed
@@ -148,16 +124,37 @@ runCommand (Remove projs cabal sboxes files) = toValue $ do
 			can <- canRemove pdbs
 			when can $ do
 				State.modify (delete pdbs)
-				withSqlTransaction $ do
-					ms <- liftM (map fromOnly) $ query_
-						"select m.id from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version;"
-					removePackageDb (topPackageDb pdbs)
-					mapM_ SQLite.removeModule ms
+				ms <- liftM (map fromOnly) $ query_
+					"select m.id from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version;"
+				removePackageDb (topPackageDb pdbs)
+				mapM_ SQLite.removeModule ms
 				liftIO $ unwatchPackageDb w $ topPackageDb pdbs
 		-- Remove package-db stack when possible
 		removePackageDbStack = mapM_ removePackageDb' . packageDbStacks
+	w <- askSession sessionWatcher
+	projects <- traverse findProject projs
+	sboxes' <- getSandboxes sboxes
+	forM_ projects $ \proj -> do
+		ms <- liftM (map fromOnly) $ query "select id from modules where cabal == ?;" (Only $ proj ^. projectCabal)
+		SQLite.removeProject proj
+		mapM_ SQLite.removeModule ms
+		liftIO $ unwatchProject w proj
+
+	allPdbs <- liftM (map fromOnly) $ query_ @(Only PackageDb) "select package_db from package_dbs;"
+	dbPDbs <- inSessionGhc $ mapM restorePackageDbStack allPdbs
+	flip State.evalStateT dbPDbs $ do
+		when cabal $ removePackageDbStack userDb
+		forM_ sboxes' $ \sbox -> do
+			pdbs <- lift $ inSessionGhc $ sandboxPackageDbStack sbox
+			removePackageDbStack pdbs
+
+	forM_ files $ \file -> do
+		ms <- query @_ @(ModuleId :. Only Int) (toQuery $ qModuleId `mappend` select_ ["mu.id"] [] ["mu.file == ?"]) (Only file)
+		forM_ ms $ \(m :. Only i) -> do
+			SQLite.removeModule i
+			liftIO . unwatchModule w $ (m ^. moduleLocation)
 runCommand RemoveAll = toValue $ do
-	withSqlTransaction SQLite.purge
+	SQLite.purge
 	w <- askSession sessionWatcher
 	wdirs <- liftIO $ readMVar (W.watcherDirs w)
 	liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir

@@ -2,6 +2,7 @@
 
 module HsDev.Database.SQLite (
 	initialize, purge,
+	privateMemory, sharedMemory,
 	query, query_, queryNamed, execute, execute_, executeMany, executeNamed,
 	withTemporaryTable,
 	updatePackageDb, removePackageDb, insertPackageDb,
@@ -23,7 +24,8 @@ module HsDev.Database.SQLite (
 	-- * Reexports
 	module Database.SQLite.Simple,
 	module HsDev.Database.SQLite.Select,
-	module HsDev.Database.SQLite.Instances
+	module HsDev.Database.SQLite.Instances,
+	module HsDev.Database.SQLite.Transaction
 	) where
 
 import Control.Lens hiding ((.=))
@@ -38,8 +40,8 @@ import Data.String
 import qualified Data.Set as S
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.SQLite.Simple hiding (query, query_, queryNamed, execute, execute_, executeNamed, executeMany)
-import qualified Database.SQLite.Simple as SQL (query, query_, queryNamed, execute, execute_, executeNamed, executeMany)
+import Database.SQLite.Simple hiding (query, query_, queryNamed, execute, execute_, executeNamed, executeMany, withTransaction)
+import qualified Database.SQLite.Simple as SQL (query, query_, queryNamed, execute, execute_, executeNamed, executeMany, withTransaction)
 import Distribution.Text (display)
 import Language.Haskell.Exts.Syntax hiding (Name, Module)
 import Language.Haskell.Extension ()
@@ -51,6 +53,7 @@ import System.Directory.Paths
 import HsDev.Database.SQLite.Instances
 import HsDev.Database.SQLite.Schema
 import HsDev.Database.SQLite.Select
+import HsDev.Database.SQLite.Transaction
 import qualified HsDev.Display as Display
 import HsDev.Error
 import HsDev.PackageDb.Types
@@ -77,7 +80,7 @@ initialize p = do
 	when (not goodVersion) $ do
 		-- TODO: Completely drop schema to reinitialize
 		hsdevError $ OtherError "Not implemented: dropping schema of db"
-	when (not hasTables || not goodVersion) $ withTransaction conn $ do
+	when (not hasTables || not goodVersion) $ SQL.withTransaction conn $ do
 		mapM_ (SQL.execute_ conn) commands
 		SQL.execute @(Text, Value) conn "insert into hsdev values (?, ?);" ("version", toJSON version)
 	return conn
@@ -87,6 +90,14 @@ purge = do
 	tables <- query_ @(Only String) "select name from sqlite_master where type == 'table';"
 	forM_ tables $ \(Only table) ->
 		execute_ $ fromString $ "delete from {};" ~~ table
+
+-- | Private memory for db
+privateMemory :: String
+privateMemory = ":memory:"
+
+-- | Shared db in memory
+sharedMemory :: String
+sharedMemory = "file::memory:?cache=shared"
 
 query :: (ToRow q, FromRow r, SessionMonad m) => Query -> q -> m [r]
 query q' params = do

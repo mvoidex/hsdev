@@ -22,11 +22,13 @@ import Control.Monad.Writer
 import Control.Monad.Trans.Control
 import Data.Aeson
 import Data.Default
+import Text.Format ((~~))
 import qualified System.Log.Simple as Log
 
 import Control.Concurrent.Util (sync)
 import qualified Control.Concurrent.FiniteChan as F
-import HsDev.Server.Types (ServerMonadBase, Session(..), CommandOptions(..), SessionMonad(..), askSession, withSession, withSqlTransaction, CommandMonad(..), ClientM(..), ServerM(..))
+import HsDev.Database.SQLite
+import HsDev.Server.Types hiding (Command(..))
 import HsDev.Symbols
 import HsDev.Types
 import HsDev.Util ((.::))
@@ -102,15 +104,17 @@ makeLenses ''UpdateState
 withUpdateState :: SessionMonad m => UpdateOptions -> (UpdateState -> m a) -> m a
 withUpdateState uopts fn = bracket (liftIO F.newChan) (liftIO . F.closeChan) $ \ch -> do
 	session <- getSession
-	th <- liftIO $ Async.async $ withSession session $ withSqlTransaction $ Log.component "sqlite" $ do
-		Log.sendLog Log.Debug "update sql database under transaction"
+	th <- liftIO $ Async.async $ withSession session $ Log.component "sqlite" $ transaction_ Immediate $ do
+		Log.sendLog Log.Debug "updating sql database"
 		cts <- liftIO $ F.readChan ch
-		sequence_ cts
+		sequence_ $ map (handleAll logErr) cts
 		Log.sendLog Log.Debug "sql database updated"
 	r <- fn (UpdateState uopts ch)
 	liftIO $ liftIO $ F.closeChan ch
 	liftIO $ Async.wait th
 	return r
+	where
+		logErr e = Log.sendLog Log.Error ("exception in sql database updater: {}" ~~ displayException e)
 
 type UpdateMonad m = (CommandMonad m, MonadReader UpdateState m, MonadWriter [ModuleLocation] m)
 
@@ -131,6 +135,7 @@ instance (MonadIO m, MonadMask m) => Log.MonadLog (UpdateM m) where
 
 instance ServerMonadBase m => SessionMonad (UpdateM m) where
 	getSession = UpdateM $ lift $ lift getSession
+	localSession fn = UpdateM . hoist (hoist (localSession fn)) . runUpdateM
 
 instance ServerMonadBase m => CommandMonad (UpdateM m) where
 	getOptions = UpdateM $ lift $ lift getOptions

@@ -67,7 +67,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (ordNub, fromJSON')
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..), serverSources, serverUpdateSources, withSqlTransaction)
+import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..), serverSources, serverUpdateSources)
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -84,7 +84,7 @@ isStatus :: Value -> Bool
 isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
 
 runUpdate :: ServerMonadBase m => UpdateOptions -> UpdateM m a -> ClientM m a
-runUpdate uopts act = Log.scope "update" $ do
+runUpdate uopts act = Log.scope "update" $ withSqlConnection $ do
 	(r, updatedMods) <- withUpdateState uopts $ \ust ->
 		runWriterT (runUpdateM act' `runReaderT` ust)
 	Log.sendLog Log.Debug $ "updated {} modules" ~~ length updatedMods
@@ -506,9 +506,8 @@ scanDocs = runTasks_ . map scanDocs' where
 			haddockSession opts'
 			liftGhc $ readDocs opts' (m ^?! moduleId . moduleLocation . moduleFile)
 		sendUpdateAction $ Log.scope "scan-docs" $ do
-			forM_ (maybe [] M.toList docsMap) $ \(nm, doc) -> do
-				SQLite.execute "update symbols set docs = ? where name == ? and module_id == ?;"
-					(doc, nm, mid')
+			SQLite.executeMany "update symbols set docs = ? where name == ? and module_id == ?;"
+				[(doc, nm, mid') | (nm, doc) <- maybe [] M.toList docsMap]
 			SQLite.execute "update modules set tags = json_set(tags, '$.docs', 1) where id == ?;" (SQLite.Only mid')
 
 -- | Infer types for modules
@@ -531,10 +530,8 @@ inferModTypes = runTasks_ . map inferModTypes' where
 		sendUpdateAction $ Log.scope "infer-types" $ do
 			points <- SQLite.query "select s.line, s.column from symbols as s where (s.module_id == ?) and (s.line is not null) and (s.column is not null);"
 				(SQLite.Only mid')
-			forM_ points $ \(l, c) -> case M.lookup (Position l c) typeMap of
-				Nothing -> return ()
-				Just t' -> SQLite.execute "update symbols set type = ? where (line == ?) and (column == ?) and (module_id == ?);"
-					(t', l, c, mid')
+			SQLite.executeMany "update symbols set type = ? where (line == ?) and (column == ?) and (module_id == ?);"
+				[(t', l, c, mid') | (l, c) <- points, t' <- maybeToList (M.lookup (Position l c) typeMap)]
 			SQLite.execute "update modules set tags = json_set(tags, '$.types', 1) where id == ?;" (SQLite.Only mid')
 
 -- | Generic scan function. Removed obsolete modules and calls callback on changed modules.

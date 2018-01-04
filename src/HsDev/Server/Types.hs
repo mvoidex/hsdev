@@ -5,7 +5,8 @@ module HsDev.Server.Types (
 	ServerMonadBase, ParsedSources,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverSources, serverUpdateSources, serverSqlDatabase, withSqlTransaction, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverSources, serverUpdateSources,
+	serverSqlDatabase, openSqlConnection, closeSqlConnection, withSqlConnection, withSqlTransaction, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -43,7 +44,6 @@ import System.Directory.Paths
 import Text.Format (Formattable(..))
 
 import HsDev.Error (hsdevError)
-import HsDev.Symbols
 import HsDev.Symbols.Parsed (Parsed)
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
@@ -69,6 +69,7 @@ data SessionLog = SessionLog {
 data Session = Session {
 	sessionSources :: MVar ParsedSources,
 	sessionSqlDatabase :: SQL.Connection,
+	sessionSqlPath :: String,
 	sessionLog :: SessionLog,
 	sessionWatcher :: Watcher,
 #if mingw32_HOST_OS
@@ -82,6 +83,7 @@ data Session = Session {
 
 class (ServerMonadBase m, MonadLog m) => SessionMonad m where
 	getSession :: m Session
+	localSession :: (Session -> Session) -> m a -> m a
 
 askSession :: SessionMonad m => (Session -> a) -> m a
 askSession f = liftM f getSession
@@ -96,6 +98,7 @@ instance (MonadIO m, MonadMask m) => MonadLog (ServerM m) where
 
 instance ServerMonadBase m => SessionMonad (ServerM m) where
 	getSession = ask
+	localSession = local
 
 instance MonadBase b m => MonadBase b (ServerM m) where
 	liftBase = ServerM . liftBase
@@ -110,12 +113,15 @@ instance MFunctor ServerM where
 
 instance SessionMonad m => SessionMonad (ReaderT r m) where
 	getSession = lift getSession
+	localSession = mapReaderT . localSession
 
 instance (SessionMonad m, Monoid w) => SessionMonad (WriterT w m) where
 	getSession = lift getSession
+	localSession = mapWriterT . localSession
 
 instance SessionMonad m => SessionMonad (StateT s m) where
 	getSession = lift getSession
+	localSession = mapStateT . localSession
 
 data CommandOptions = CommandOptions {
 	commandOptionsRoot :: FilePath,
@@ -144,6 +150,7 @@ instance (MonadIO m, MonadMask m) => MonadLog (ClientM m) where
 
 instance ServerMonadBase m => SessionMonad (ClientM m) where
 	getSession = ClientM getSession
+	localSession fn = ClientM . localSession fn . runClientM
 
 instance ServerMonadBase m => CommandMonad (ClientM m) where
 	getOptions = ClientM $ lift ask
@@ -206,6 +213,21 @@ serverUpdateSources fn = do
 -- | Get sql connection
 serverSqlDatabase :: SessionMonad m => m SQL.Connection
 serverSqlDatabase = askSession sessionSqlDatabase
+
+-- | Open new sql connection
+openSqlConnection :: SessionMonad m => m SQL.Connection
+openSqlConnection = do
+	p <- askSession sessionSqlPath
+	liftIO $ SQL.open p
+
+-- | Close sql connection
+closeSqlConnection :: SessionMonad m => SQL.Connection -> m ()
+closeSqlConnection = liftIO . SQL.close
+
+-- | Locally opens new connection, updating @Session@
+withSqlConnection :: SessionMonad m => m a -> m a
+withSqlConnection act = bracket openSqlConnection closeSqlConnection $ \conn ->
+	localSession (\sess -> sess { sessionSqlDatabase = conn }) act
 
 -- | With sql transaction
 withSqlTransaction :: SessionMonad m => ServerM IO a -> m a

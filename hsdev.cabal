@@ -43,6 +43,7 @@ library
     HsDev.Database.SQLite.Schema
     HsDev.Database.SQLite.Schema.TH
     HsDev.Database.SQLite.Select
+    HsDev.Database.SQLite.Transaction
     HsDev.Database.Update
     HsDev.Database.Update.Types
     HsDev.Display
