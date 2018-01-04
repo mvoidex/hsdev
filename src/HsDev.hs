@@ -1,5 +1,6 @@
 module HsDev (
 	module Data.Default,
+	module System.Directory.Paths,
 
 	module HsDev.Types,
 	module HsDev.Error,
@@ -15,6 +16,7 @@ module HsDev (
 	) where
 
 import Data.Default
+import System.Directory.Paths
 
 import HsDev.Types
 import HsDev.Error
