@@ -99,28 +99,32 @@ privateMemory = ":memory:"
 sharedMemory :: String
 sharedMemory = "file::memory:?cache=shared"
 
+-- | Retries for simple queries
+retried :: (MonadIO m, MonadCatch m) => m a -> m a
+retried = retry def
+
 query :: (ToRow q, FromRow r, SessionMonad m) => Query -> q -> m [r]
-query q' params = do
+query q' params = retried $ do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.query conn q' params
 
 query_ :: (FromRow r, SessionMonad m) => Query -> m [r]
-query_ q' = do
+query_ q' = retried $ do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.query_ conn q'
 
 queryNamed :: (FromRow r, SessionMonad m) => Query -> [NamedParam] -> m [r]
-queryNamed q' ps' = do
+queryNamed q' ps' = retried $ do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.queryNamed conn q' ps'
 
 execute :: (ToRow q, SessionMonad m) => Query -> q -> m ()
-execute q' params = do
+execute q' params = retried $ do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.execute conn q' params
 
 execute_ :: SessionMonad m => Query -> m ()
-execute_ q' = do
+execute_ q' = retried $ do
 	conn <- serverSqlDatabase
 	liftIO $ SQL.execute_ conn q'
 

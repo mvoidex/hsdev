@@ -2,7 +2,7 @@
 
 module HsDev.Database.SQLite.Transaction (
 	TransactionType(..),
-	Retries(..), noRetry, retryForever, retryN,
+	Retries(..), def, noRetry, retryForever, retryN,
 
 	-- * Transactions
 	withTransaction, beginTransaction, commitTransaction, rollbackTransaction,
