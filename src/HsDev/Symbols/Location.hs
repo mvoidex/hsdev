@@ -100,7 +100,7 @@ instance FromJSON PackageConfig where
 -- | Location of module
 data ModuleLocation =
 	FileModule { _moduleFile :: Path, _moduleProject :: Maybe Project } |
-	InstalledModule { _moduleInstallDirs :: [Path], _modulePackage :: Maybe ModulePackage, _installedModuleName :: Text } |
+	InstalledModule { _moduleInstallDirs :: [Path], _modulePackage :: ModulePackage, _installedModuleName :: Text } |
 	OtherLocation { _otherLocationName :: Text } |
 	NoLocation
 
@@ -127,7 +127,7 @@ makeLenses ''ModuleLocation
 
 locationId :: ModuleLocation -> Text
 locationId (FileModule fpath _) = fpath
-locationId (InstalledModule dirs mpack nm) = T.intercalate ":" (take 1 dirs ++ [maybe "" (pack . show) mpack, nm])
+locationId (InstalledModule dirs mpack nm) = T.intercalate ":" (take 1 dirs ++ [pack (show mpack), nm])
 locationId (OtherLocation src) = src
 locationId NoLocation = "<no-location>"
 
@@ -142,14 +142,14 @@ instance Show ModuleLocation where
 
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object $ noNulls ["file" .= f, "project" .= fmap (view projectCabal) p]
-	toJSON (InstalledModule c p n) = object $ noNulls ["dirs" .= c, "package" .= fmap show p, "name" .= n]
+	toJSON (InstalledModule c p n) = object $ noNulls ["dirs" .= c, "package" .= show p, "name" .= n]
 	toJSON (OtherLocation s) = object ["source" .= s]
 	toJSON NoLocation = object []
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .::? "project"))) <|>
-		(InstalledModule <$> v .::?! "dirs" <*> ((v .::? "package") >>= traverse readPackage) <*> v .:: "name") <|>
+		(InstalledModule <$> v .::?! "dirs" <*> (readPackage =<< (v .:: "package")) <*> v .:: "name") <|>
 		(OtherLocation <$> v .:: "source") <|>
 		(pure NoLocation)
 		where

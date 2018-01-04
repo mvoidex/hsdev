@@ -435,7 +435,7 @@ instance Show InspectedModule where
 		showError :: HsDevError -> String
 		showError e = unlines $ ("\terror: " ++ show e) : case mi of
 			FileModule f p -> ["file: " ++ f ^. path, "project: " ++ maybe "" (view (projectPath . path)) p]
-			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ T.unpack n]
+			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ show p, "name: " ++ T.unpack n]
 			OtherLocation src -> ["other location: " ++ T.unpack src]
 			NoLocation -> ["no location"]
 

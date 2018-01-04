@@ -55,7 +55,7 @@ readPackageDb pdb = do
 			pname = ModulePackage
 				(pack . show . disp . pkgName $ sourcePackageId pinfo)
 				(pack . show . disp . pkgVersion $ sourcePackageId pinfo)
-			pmods = map (InstalledModule (map fromFilePath $ libraryDirs pinfo) (Just pname)) names
+			pmods = map (InstalledModule (map fromFilePath $ libraryDirs pinfo) pname) names
 			names = map (pack . show . disp) (exposedModules pinfo) ++ map (pack . show . disp) (hiddenModules pinfo)
 		subst Nothing f = f
 		subst (Just libdir) f = case splitPaths f of

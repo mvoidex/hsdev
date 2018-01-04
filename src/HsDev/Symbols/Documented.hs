@@ -34,17 +34,13 @@ instance Documented ModulePackage where
 
 instance Documented ModuleLocation where
 	brief (FileModule f _) = f
-	brief (InstalledModule _ mpkg n) = case mpkg of
-		Nothing -> n
-		Just pkg -> format "{} from {}" ~~ n ~~ brief pkg
+	brief (InstalledModule _ pkg n) = format "{} from {}" ~~ n ~~ brief pkg
 	brief (OtherLocation src) = src
 	brief NoLocation = "<no-location>"
 	detailed (FileModule f mproj) = case mproj of
 		Nothing -> f
 		Just proj -> format "{} in project {}" ~~ f ~~ brief proj
-	detailed (InstalledModule pdb mpkg n) = case mpkg of
-		Nothing -> format "{} ({})" ~~ n ~~ show pdb
-		Just pkg ->format  "{} from {} ({})" ~~ n ~~ brief pkg ~~ show pdb
+	detailed (InstalledModule pdb pkg n) = format "{} from {} ({})" ~~ n ~~ brief pkg ~~ show pdb
 	detailed l = brief l
 
 instance Documented Project where

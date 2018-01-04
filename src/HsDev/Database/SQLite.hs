@@ -246,8 +246,8 @@ upsertModule im = scope "upsert-module" $ do
 			im ^? inspectedKey . moduleFile . path,
 			im ^? inspectedKey . moduleProject . _Just . projectCabal,
 			fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
-			im ^? inspectedKey . modulePackage . _Just . packageName,
-			im ^? inspectedKey . modulePackage . _Just . packageVersion,
+			im ^? inspectedKey . modulePackage . packageName,
+			im ^? inspectedKey . modulePackage . packageVersion,
 			im ^? inspectedKey . installedModuleName,
 			im ^? inspectedKey . otherLocationName)
 			:. (
@@ -264,8 +264,8 @@ insertModuleSymbols :: SessionMonad m => InspectedModule -> m ()
 insertModuleSymbols im = scope "insert-module-symbols" $ do
 	[Only mid] <- queryNamed "select id from modules where ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((other_location is null and :other_location is null) or other_location = :other_location) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name);" [
 		":file" := im ^? inspectedKey . moduleFile . path,
-		":package_name" := im ^? inspectedKey . modulePackage . _Just . packageName,
-		":package_version" := im ^? inspectedKey . modulePackage . _Just . packageVersion,
+		":package_name" := im ^? inspectedKey . modulePackage . packageName,
+		":package_version" := im ^? inspectedKey . modulePackage . packageVersion,
 		":other_location" := im ^? inspectedKey . otherLocationName,
 		":installed_name" := im ^? inspectedKey . installedModuleName]
 	-- TODO: Delete obsolete symbols (note, that they can be referenced from another modules)
@@ -418,8 +418,8 @@ lookupModuleLocation :: SessionMonad m => ModuleLocation -> m (Maybe Int)
 lookupModuleLocation m = do
 	mids <- queryNamed "select id from modules where ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name) and ((other_location is null and :other_location is null) or other_location = :other_location);" [
 		":file" := m ^? moduleFile . path,
-		":package_name" := m ^? modulePackage . _Just . packageName,
-		":package_version" := m ^? modulePackage . _Just . packageVersion,
+		":package_name" := m ^? modulePackage . packageName,
+		":package_version" := m ^? modulePackage . packageVersion,
 		":installed_name" := m ^? installedModuleName,
 		":other_location" := m ^? otherLocationName]
 	when (length mids > 1) $ sendLog Warning  $ "different modules with location: {}" ~~ Display.display m
@@ -430,8 +430,8 @@ lookupModule m = do
 	mids <- queryNamed "select id from modules where ((name is null and :name is null) or name = :name) and ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name) and ((other_location is null and :other_location is null) or other_location = :other_location);" [
 		":name" := m ^. moduleName,
 		":file" := m ^? moduleLocation . moduleFile . path,
-		":package_name" := m ^? moduleLocation . modulePackage . _Just . packageName,
-		":package_version" := m ^? moduleLocation . modulePackage . _Just . packageVersion,
+		":package_name" := m ^? moduleLocation . modulePackage . packageName,
+		":package_version" := m ^? moduleLocation . modulePackage . packageVersion,
 		":installed_name" := m ^? moduleLocation . installedModuleName,
 		":other_location" := m ^? moduleLocation . otherLocationName]
 	when (length mids > 1) $ sendLog Warning  $ "different modules with same name and location: {}" ~~ (m ^. moduleName)

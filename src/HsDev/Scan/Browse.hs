@@ -13,7 +13,7 @@ module HsDev.Scan.Browse (
 	) where
 
 import Control.Arrow
-import Control.Lens (preview, _Just)
+import Control.Lens (preview)
 import Control.Monad.Catch (MonadCatch, catch, SomeException)
 import Control.Monad.Except
 import Data.Function (on)
@@ -213,7 +213,7 @@ readPackageConfig pc = PackageConfig
 	(GHC.exposed pc)
 
 ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> ModuleLocation
-ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (Just $ readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
+ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
 
 ghcModuleId :: GHC.PackageConfig -> GHC.Module -> ModuleId
 ghcModuleId p m = ModuleId (fromString mname') (ghcModuleLocation p m) where
@@ -281,8 +281,8 @@ lookupModule_ d mn = case GHC.lookupModuleWithSuggestions d mn Nothing of
 
 -- | Get modules packages
 modulesPackages :: [ModuleLocation] -> [ModulePackage]
-modulesPackages = ordNub . mapMaybe (preview (modulePackage . _Just))
+modulesPackages = ordNub . mapMaybe (preview modulePackage)
 
 -- | Group modules by packages
 modulesPackagesGroups :: [ModuleLocation] -> [(ModulePackage, [ModuleLocation])]
-modulesPackagesGroups = map (first head . unzip) . groupBy ((==) `on` fst) . sort . mapMaybe (\m -> (,) <$> preview (modulePackage . _Just) m <*> pure m)
+modulesPackagesGroups = map (first head . unzip) . groupBy ((==) `on` fst) . sort . mapMaybe (\m -> (,) <$> preview modulePackage m <*> pure m)
