@@ -17,7 +17,7 @@ module HsDev.Scan (
 	) where
 
 import Control.DeepSeq
-import Control.Lens hiding ((%=))
+import Control.Lens
 import Control.Monad.Except
 import Data.Deps
 import Data.Maybe (catMaybes, isJust)

@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), mkPackage, PackageConfig(..), ModuleLocation(..), moduleStandalone, locationId, noLocation,
+	ModulePackage(..), mkPackage, PackageConfig(..), ModuleLocation(..), locationId, noLocation,
 	ModuleId(..), moduleName, moduleLocation,
 	SymbolId(..), symbolName, symbolModule,
 	Position(..), Region(..), region, regionAt, regionLines, regionStr,
@@ -16,8 +16,6 @@ module HsDev.Symbols.Location (
 
 	sourceModuleRoot,
 	importPath,
-	moduleNameByFile,
-	packageOpt,
 	RecalcTabs(..),
 
 	module HsDev.PackageDb.Types
@@ -25,14 +23,12 @@ module HsDev.Symbols.Location (
 
 import Control.Applicative
 import Control.DeepSeq (NFData(..))
-import Control.Lens (makeLenses, preview, view, (^..), (^.), each, _Just, over)
-import Control.Monad (msum, mplus)
+import Control.Lens (makeLenses, view, over)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
-import Data.List (intercalate, findIndex, stripPrefix)
+import Data.List (findIndex)
 import Data.Maybe
 import Data.Text (Text, pack, unpack)
-import Data.Text.Lens (unpacked)
 import qualified Data.Text as T
 import System.FilePath
 import Text.Read (readMaybe)
@@ -40,7 +36,7 @@ import Text.Read (readMaybe)
 import System.Directory.Paths
 import HsDev.PackageDb.Types
 import HsDev.Project.Types
-import HsDev.Util ((.::), (.::?), (.::?!), objectUnion, ordNub, noNulls)
+import HsDev.Util ((.::), (.::?), (.::?!), objectUnion, noNulls)
 
 -- | Just package name and version without its location
 data ModulePackage = ModulePackage {
@@ -128,9 +124,6 @@ instance Ord ModuleLocation where
 		locNames NoLocation = []
 
 makeLenses ''ModuleLocation
-
-moduleStandalone :: ModuleLocation -> Bool
-moduleStandalone = (== Just Nothing) . preview moduleProject
 
 locationId :: ModuleLocation -> Text
 locationId (FileModule fpath _) = fpath
@@ -315,19 +308,6 @@ sourceModuleRoot mname = over paths $
 importPath :: Text -> Path
 importPath = fromFilePath . (`addExtension` "hs") . joinPath . map unpack . T.split (== '.')
 
--- | Get supposed module name by its file and project
-moduleNameByFile :: Path -> Maybe Project -> Text
-moduleNameByFile fpath Nothing = over path takeBaseName fpath
-moduleNameByFile fpath (Just proj) = maybe (over path takeBaseName fpath) (fromFilePath . intercalate ".") $ do
-	suff <- stripPrefix (splitDirectories (proj ^. projectPath . path)) (splitDirectories $ fpath ^. path)
-	-- try cut any of source-dirs
-	flip mplus (return suff) $ msum [
-		stripPrefix (splitDirectories $ dir ^. path) suff
-		| dir <- ordNub (proj ^.. projectDescription . _Just . infos . infoSourceDirs . each)]
-
-packageOpt :: Maybe ModulePackage -> [String]
-packageOpt = maybeToList . fmap (("-package " ++) . view (packageName . unpacked))
-
 -- | Recalc positions to interpret '\t' as one symbol instead of N
 class RecalcTabs a where
 	-- | Interpret '\t' as one symbol instead of N
@@ -349,7 +329,7 @@ instance RecalcTabs Position where
 		charSize _ = 1
 	calcTabs cts n (Position l c) = Position l c' where
 		line = listToMaybe $ drop (pred l) $ T.lines cts
-		c' = maybe c (succ . sum . map charSize . take (pred c) . unpack) $ line
+		c' = maybe c (succ . sum . map charSize . take (pred c) . unpack) line
 		charSize :: Char -> Int
 		charSize '\t' = n
 		charSize _ = 1

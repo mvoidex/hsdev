@@ -19,7 +19,7 @@ import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe)
 
 -- | Dependency map
-data Deps a = Deps {
+newtype Deps a = Deps {
 	_depsMap :: Map a [a] }
 
 depsMap :: Lens (Deps a) (Deps b) (Map a [a]) (Map b [b])

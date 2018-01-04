@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Tools.Ghc.Check (
-	checkFiles, check, checkFile, checkSource,
+	check,
 
 	Ghc,
 	module HsDev.Tools.Types,
@@ -33,17 +33,6 @@ import HsDev.Tools.Types
 import HsDev.Util (readFileUtf8, ordNub)
 import System.Directory.Paths
 
--- | Check files and collect warnings and errors
-checkFiles :: (MonadLog m, GhcMonad m) => [String] -> [Path] -> Maybe Project -> m [Note OutputMessage]
-checkFiles opts files _ = scope "check-files" $ do
-	ch <- liftIO newChan
-	withFlags $ do
-		modifyFlags $ C.setLogAction $ logToChan ch
-		addCmdOpts opts
-		mapM (`makeTarget` Nothing) files >>= loadTargets
-	notes <- liftIO $ stopChan ch
-	liftIO $ recalcNotesTabs notes
-
 -- | Check module source
 check :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe Text -> m [Note OutputMessage]
 check opts m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
@@ -62,14 +51,6 @@ check opts m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
 		notes <- liftIO $ stopChan ch
 		liftIO $ recalcNotesTabs notes
 	_ -> scope "check" $ hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
-
--- | Check module and collect warnings and errors
-checkFile :: (MonadLog m, GhcMonad m) => [String] -> Module -> m [Note OutputMessage]
-checkFile opts m = check opts m Nothing
-
--- | Check module and collect warnings and errors
-checkSource :: (MonadLog m, GhcMonad m) => [String] -> Module -> Text -> m [Note OutputMessage]
-checkSource opts m src = check opts m (Just src)
 
 -- Recalc tabs for notes
 recalcNotesTabs :: [Note OutputMessage] -> IO [Note OutputMessage]

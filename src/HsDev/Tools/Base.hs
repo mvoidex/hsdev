@@ -6,9 +6,6 @@ module HsDev.Tools.Base (
 	matchRx, splitRx, replaceRx,
 	at, at_,
 	inspect,
-	-- * Read parse utils
-	ReadM,
-	readParse, parseReads, parseRead,
 
 	module HsDev.Tools.Types
 	) where
@@ -19,7 +16,7 @@ import Control.Monad.Except
 import Control.Monad.State
 import Data.Array (assocs)
 import Data.List (unfoldr, intercalate)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe)
 import Data.String
 import System.Exit
 import System.Process
@@ -102,17 +99,3 @@ inspect mloc insp act = execStateT inspect' (notInspected mloc) where
 			modify (set inspection i)
 			lift act
 		modify (set inspectionResult r)
-
-type ReadM a = StateT String [] a
-
--- | Parse readable value
-readParse :: Read a => ReadM a
-readParse = StateT reads
-
--- | Run parser
-parseReads :: String -> ReadM a -> [a]
-parseReads = flip evalStateT
-
--- | Run parser and select first result
-parseRead :: String -> ReadM a -> Maybe a
-parseRead s = listToMaybe . parseReads s

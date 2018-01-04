@@ -2,14 +2,13 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
-	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, definedSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleImports, moduleExports, moduleScope, moduleSource,
+	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleImports, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
 	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, fresh, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
 	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
-	briefSymbol,
 
 	module HsDev.PackageDb.Types,
 	module HsDev.Project,
@@ -105,9 +104,6 @@ scopeSymbols :: Traversal' Module (Symbol, [Name])
 scopeSymbols f m = (\s -> m { _moduleScope = invMap s }) <$> traverse f (M.toList . invMap . M.toList $ _moduleScope m) where
 	invMap :: Ord b => [(a, [b])] -> Map b [a]
 	invMap es = M.unionsWith (++) [M.singleton v [k] | (k, vs) <- es, v <- vs]
-
-definedSymbols :: Traversal' Module Symbol
-definedSymbols f m = (moduleSymbols . filtered ((== _moduleId m) . _symbolModule . _symbolId)) f m
 
 fixitiesMap :: Lens' Module (Map Name Fixity)
 fixitiesMap = lens g' s' where
@@ -205,14 +201,6 @@ instance FromJSON Symbol where
 		v .::? "docs" <*>
 		v .::? "pos" <*>
 		v .:: "info"
-
--- | Get brief information for completions, without docs and position
-briefSymbol :: Lens' Symbol Symbol
-briefSymbol = lens to' from' where
-	to' :: Symbol -> Symbol
-	to' s = s { _symbolDocs = Nothing, _symbolPosition = Nothing }
-	from' :: Symbol -> Symbol -> Symbol
-	from' s ms = s { _symbolId = _symbolId ms, _symbolDocs = _symbolDocs ms, _symbolPosition = _symbolPosition ms }
 
 data SymbolInfo =
 	Function { _functionType :: Maybe Text } |

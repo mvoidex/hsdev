@@ -31,7 +31,6 @@ library
     Control.Concurrent.Worker
     Control.Concurrent.Util
     Data.Deps
-    Data.Group
     Data.Help
     Data.Lisp
     Data.Maybe.JustIf
@@ -73,7 +72,6 @@ library
     HsDev.Symbols.Resolve
     HsDev.Symbols.Parsed
     HsDev.Symbols.Types
-    HsDev.Symbols.Util
     HsDev.Tools.AutoFix
     HsDev.Tools.Base
     HsDev.Tools.Cabal

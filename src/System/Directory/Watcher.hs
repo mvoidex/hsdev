@@ -186,5 +186,5 @@ isWatchingTree' m dir
 	| otherwise = isWatchingTree' m (takeDirectory dir)
 
 isWatchingParents' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
-isWatchingParents' m dir = or (map (isWatchingTree' m) parents) where
+isWatchingParents' m dir = any (isWatchingTree' m) parents where
 	parents = takeWhile (not . isDrive) $ iterate takeDirectory dir

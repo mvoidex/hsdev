@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Project.Types (
-	Project(..), projectName, projectPath, projectCabal, projectDescription, project, absolutiseProjectPaths, relativiseProjectPaths,
+	Project(..), projectName, projectPath, projectCabal, projectDescription, project,
 	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests, infos,
 	Target(..),
 	Library(..), libraryModules, libraryBuildInfo,
@@ -13,7 +13,7 @@ module HsDev.Project.Types (
 	) where
 
 import Control.DeepSeq (NFData(..))
-import Control.Lens hiding ((%=), (.=), (<.>))
+import Control.Lens hiding ((.=), (<.>))
 import Data.Aeson
 import Data.Maybe
 import Data.Monoid
@@ -80,14 +80,6 @@ project file = Project {
 		cabal
 			| takeExtension file' == ".cabal" = file'
 			| otherwise = file' </> (takeBaseName file' <.> "cabal")
-
--- | Make paths absolute, not relative
-absolutiseProjectPaths :: Project -> Project
-absolutiseProjectPaths proj = absolutise (_projectPath proj) proj
-
--- | Make paths relative
-relativiseProjectPaths :: Project -> Project
-relativiseProjectPaths proj = relativise (_projectPath proj) proj
 
 data ProjectDescription = ProjectDescription {
 	_projectVersion :: Text,
@@ -244,7 +236,7 @@ instance Show Info where
 		opts
 			| null (_infoGHCOptions i) = []
 			| otherwise = "ghc-options:" : map (tab 1 . T.unpack) (_infoGHCOptions i)
-		sources = "source-dirs:" : (map (tab 1 . T.unpack) $ _infoSourceDirs i)
+		sources = "source-dirs:" : map (tab 1 . T.unpack) (_infoSourceDirs i)
 		otherMods = "other-modules:" : (map (tab 1 . T.unpack) . fmap (T.intercalate ".") $ _infoOtherModules i)
 
 instance ToJSON Info where

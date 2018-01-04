@@ -10,7 +10,6 @@ module HsDev (
 	module HsDev.Project,
 	module HsDev.Scan,
 	module HsDev.Symbols,
-	module HsDev.Symbols.Util,
 	module HsDev.Symbols.Resolve,
 	module HsDev.Util
 	) where
@@ -26,6 +25,5 @@ import HsDev.Inspect
 import HsDev.Project
 import HsDev.Scan
 import HsDev.Symbols
-import HsDev.Symbols.Util
 import HsDev.Symbols.Resolve
 import HsDev.Util

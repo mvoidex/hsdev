@@ -8,7 +8,7 @@ module HsDev.Client.Commands (
 import Control.Arrow (second)
 import Control.Concurrent.MVar
 import Control.Exception (displayException)
-import Control.Lens hiding ((%=), (.=), anyOf, (<.>))
+import Control.Lens hiding ((.=), (<.>))
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -549,7 +549,7 @@ findProject proj = do
 
 -- | Run DB update action
 updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()
-updateProcess uopts acts = mapM_ (Update.runUpdate uopts . runAct) acts where
+updateProcess uopts = mapM_ (Update.runUpdate uopts . runAct) where
 	runAct act = catch act onError
 	onError e = Log.sendLog Log.Error $ "{}" ~~ (e :: HsDevError)
 

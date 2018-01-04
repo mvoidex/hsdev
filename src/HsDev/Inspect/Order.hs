@@ -1,10 +1,8 @@
-{-# LANGUAGE TemplateHaskell #-}
-
 module HsDev.Inspect.Order (
 	order
 	) where
 
-import Control.Lens hiding ((%=))
+import Control.Lens
 import Data.List
 import Data.Maybe
 import Data.String

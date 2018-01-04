@@ -8,27 +8,24 @@ module HsDev.Util (
 	haskellSource,
 	cabalFile,
 	-- * String utils
-	tab, tabs, trim, split,
+	tab,
+	trim, split,
 	-- * Other utils
-	ordNub, ordUnion, uniqueBy, mapBy,
+	ordNub, uniqueBy, mapBy,
 	-- * Helper
-	(.::), (.::?), (.::?!), objectUnion, jsonUnion, noNulls, fromJSON',
+	(.::), (.::?), (.::?!), objectUnion, noNulls, fromJSON',
 	-- * Exceptions
-	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
-	eitherT,
-	liftThrow,
+	liftException, liftE, tries, triesMap, liftExceptionM, liftIOErrors,
 	-- * UTF-8
 	fromUtf8, toUtf8, readFileUtf8, writeFileUtf8,
 	-- * IO
-	hGetLineBS, logException, logIO, ignoreIO, logAsync,
-	-- * Async
-	liftAsync,
+	hGetLineBS, logIO, ignoreIO, logAsync,
 	-- * Command line
 	FromCmd(..),
-	cmdJson, withCmd, guardCmd,
+	cmdJson, guardCmd,
 	withHelp, cmd, parseArgs,
 	-- * Version stuff
-	version, cutVersion, sameVersion, strVersion,
+	version,
 	-- * Parse
 	parseDT,
 
@@ -37,10 +34,8 @@ module HsDev.Util (
 	MonadIO(..)
 	) where
 
-import Control.Applicative
 import Control.Arrow (second, left, (&&&))
 import Control.Exception
-import Control.Concurrent.Async
 import Control.DeepSeq
 import Control.Monad
 import Control.Monad.Except
@@ -48,7 +43,7 @@ import qualified Control.Monad.Catch as C
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
-import Data.List (unfoldr, intercalate)
+import Data.List (unfoldr)
 import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Monoid ((<>))
@@ -152,10 +147,6 @@ cabalFile f = takeExtension f == ".cabal"
 tab :: Int -> String -> String
 tab n s = replicate n '\t' ++ s
 
--- | Add N tabs to multiline
-tabs :: Int -> String -> String
-tabs n = unlines . map (tab n) . lines
-
 -- | Trim string
 trim :: String -> String
 trim = p . p where
@@ -172,9 +163,6 @@ ordNub = go Set.empty where
 	go s (x:xs)
 		| x `Set.member` s = go s xs
 		| otherwise = x : go (Set.insert x s) xs
-
-ordUnion :: Ord a => [a] -> [a] -> [a]
-ordUnion l r = ordNub $ l ++ r
 
 uniqueBy :: Ord b => (a -> b) -> [a] -> [a]
 uniqueBy f = M.elems . mapBy f
@@ -201,10 +189,6 @@ objectUnion (Object l) _ = Object l
 objectUnion _ (Object r) = Object r
 objectUnion _ _ = Null
 
--- | Union two JSON objects
-jsonUnion :: (ToJSON a, ToJSON b) => a -> b -> Value
-jsonUnion x y = objectUnion (toJSON x) (toJSON y)
-
 -- | No Nulls in JSON object
 noNulls :: [A.Pair] -> [A.Pair]
 noNulls = filter (not . isNull . snd) where
@@ -225,10 +209,6 @@ liftException = ExceptT . liftM (left $ \(SomeException e) -> displayException e
 liftE :: C.MonadCatch m => m a -> ExceptT String m a
 liftE = liftException
 
--- | @liftE@ for IO
-liftEIO :: (C.MonadCatch m, MonadIO m) => IO a -> ExceptT String m a
-liftEIO = liftE . liftIO
-
 -- | Run actions ignoring errors
 tries :: MonadPlus m => [m a] -> m [a]
 tries acts = liftM catMaybes $ sequence [liftM Just act `mplus` return Nothing | act <- acts]
@@ -244,13 +224,6 @@ liftExceptionM act = C.catch act onError where
 -- | Lift IO exceptions to ExceptT
 liftIOErrors :: C.MonadCatch m => ExceptT String m a -> ExceptT String m a
 liftIOErrors act = liftException (runExceptT act) >>= either throwError return
-
-eitherT :: MonadError String m => Either String a -> m a
-eitherT = either throwError return
-
--- | Throw error as exception
-liftThrow :: (Show e, MonadError e m, C.MonadCatch m) => m a -> m a
-liftThrow act = catchError act (C.throwM . userError . show)
 
 fromUtf8 :: ByteString -> String
 fromUtf8 = T.unpack . T.decodeUtf8
@@ -273,11 +246,6 @@ writeFileUtf8 f cts = withFile f WriteMode $ \h -> do
 hGetLineBS :: Handle -> IO ByteString
 hGetLineBS = fmap L.fromStrict . B.hGetLine
 
-logException :: String -> (String -> IO ()) -> IO () -> IO ()
-logException pre out = handle onErr where
-	onErr :: SomeException -> IO ()
-	onErr e = out $ pre ++ displayException e
-
 logIO :: C.MonadCatch m => String -> (String -> m ()) -> m () -> m ()
 logIO pre out = flip C.catch (onIO out) where
 	onIO :: (String -> a) -> IOException -> a
@@ -293,17 +261,11 @@ ignoreIO = C.handle ignore' where
 	ignore' :: Monad m => IOException -> m ()
 	ignore' _ = return ()
 
-liftAsync :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Async a) -> ExceptT String m a
-liftAsync = liftExceptionM . ExceptT . liftIO . liftM (left displayException) . join . liftM waitCatch
-
 class FromCmd a where
 	cmdP :: Parser a
 
 cmdJson :: String -> [A.Pair] -> Value
 cmdJson nm ps = object $ ("command" .= nm) : ps
-
-withCmd :: String -> (Object -> A.Parser a) -> Value -> A.Parser a
-withCmd nm fn = withObject ("command " ++ nm) $ \v -> guardCmd nm v *> fn v
 
 guardCmd :: String -> Object -> A.Parser ()
 guardCmd nm obj = do
@@ -333,19 +295,6 @@ parseArgs nm p = handle' . execParserPure (prefs mempty) (p { infoParser = withH
 -- | Get hsdev version as list of integers
 version :: Maybe [Int]
 version = mapM readMaybe $ split (== '.') $cabalVersion
-
--- | Cut version to contain only significant numbers (currently 3)
-cutVersion :: Maybe [Int] -> Maybe [Int]
-cutVersion = fmap (take 3)
-
--- | Check if version is the same
-sameVersion :: Maybe [Int] -> Maybe [Int] -> Bool
-sameVersion l r = fromMaybe False $ liftA2 (==) l r
-
--- | Version to string
-strVersion :: Maybe [Int] -> String
-strVersion Nothing = "unknown"
-strVersion (Just vers) = intercalate "." $ map show vers
 
 -- | Parse Distribution.Text
 parseDT :: (Monad m, Distribution.Text.Text a) => String -> String -> m a

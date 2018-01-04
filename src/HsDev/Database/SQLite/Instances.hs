@@ -32,7 +32,7 @@ instance FromField Value where
 		SQLBlob s -> either fail return . eitherDecode . L.fromStrict $ s
 		_ -> fail "invalid json field type"
 
-data JSON a = JSON { getJSON :: a }
+newtype JSON a = JSON { getJSON :: a }
 	deriving (Eq, Ord, Read, Show)
 
 instance ToJSON a => ToField (JSON a) where
@@ -74,7 +74,7 @@ instance FromRow ModuleLocation where
 
 		maybe (fail $ "Can't parse module location: {}" ~~ show (file, cabal, dirs, pname, pver, iname, other)) return $ msum [
 			FileModule <$> file <*> pure (project <$> cabal),
-			InstalledModule <$> (maybe (pure []) fromJSON' dirs) <*> pure (ModulePackage <$> pname <*> pver) <*> iname,
+			InstalledModule <$> maybe (pure []) fromJSON' dirs <*> pure (ModulePackage <$> pname <*> pver) <*> iname,
 			OtherLocation <$> other,
 			pure NoLocation]
 

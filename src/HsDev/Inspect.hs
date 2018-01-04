@@ -1,9 +1,9 @@
 {-# LANGUAGE TypeSynonymInstances, ImplicitParams, TemplateHaskell #-}
 
 module HsDev.Inspect (
-	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded, preloadedImports, preload,
+	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded, preload,
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
-	analyzeResolve, analyzePreloaded, inspectPreloaded, inspectDocs, readDocs, inspectDocsGhc,
+	analyzeResolve, analyzePreloaded, inspectDocs, readDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, sourceInspection, fileInspection, fileContentsInspection, installedInspection, moduleInspection,
 	projectDirs, projectSources,
@@ -15,7 +15,7 @@ module HsDev.Inspect (
 
 import Control.DeepSeq
 import qualified Control.Exception as E
-import Control.Lens hiding ((%=), (.=), universe)
+import Control.Lens
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Except
@@ -83,10 +83,6 @@ asModule = lens g' s' where
 	s' p m = p {
 		_preloadedId = _moduleId m,
 		_preloadedModule = maybe (_preloadedModule p) dropScope (_moduleSource m) }
-
-preloadedImports :: Preloaded -> [Text]
-preloadedImports p = [fromString nm | H.ModuleName _ nm <- map H.importModule mimps] where
-	H.Module _ _ _ mimps _ = _preloadedModule p
 
 -- | Preload module - load head and imports to get actual extensions and dependencies
 preload :: Text -> [(String, String)] -> [String] -> ModuleLocation -> Maybe Text -> IO Preloaded
@@ -196,11 +192,6 @@ analyzePreloaded aenv@(AnalyzeEnv env gfixities _) p = case H.parseFileContentsW
 	where
 		qimps = M.keys $ N.importTable env (_preloadedModule p)
 		p' = p { _preloadedMode = (_preloadedMode p) { H.fixities = Just (mapMaybe (`M.lookup` gfixities) qimps) } }
-
--- | Same as 'analyzePreloaded', but throws on error
-inspectPreloaded :: AnalyzeEnv -> Preloaded -> IO Module
-inspectPreloaded aenv = either (hsdevError . InspectError) return . analyzePreloaded aenv
-
 
 -- | Get top symbols
 getSymbols :: [H.Decl Ann] -> [Symbol]

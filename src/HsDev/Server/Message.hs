@@ -4,8 +4,8 @@ module HsDev.Server.Message (
 	Message(..), messageId, message,
 	messagesById,
 	Notification(..), Result(..), ResultPart(..),
-	Response(..), isNotification, notification, result, responseError, resultPart,
-	groupResponses, responsesById,
+	Response(..), isNotification, result, responseError,
+	groupResponses,
 	decodeMessage, encodeMessage,
 
 	module HsDev.Server.Message.Lisp
@@ -86,17 +86,11 @@ newtype Response = Response { unResponse :: Either Notification Result } derivin
 isNotification :: Response -> Bool
 isNotification = either (const True) (const False) . unResponse
 
-notification :: ToJSON a => a -> Response
-notification = Response . Left . Notification . toJSON
-
 result :: ToJSON a => a -> Response
 result = Response . Right . Result . toJSON
 
 responseError :: HsDevError -> Response
 responseError = Response . Right . Error
-
-resultPart :: ToJSON a => a  -> Notification
-resultPart = Notification . toJSON . ResultPart . toJSON
 
 instance ToJSON Response where
 	toJSON (Response (Left n)) = toJSON n
@@ -115,9 +109,6 @@ groupResponses = unfoldr break' where
 			(Response (Right r') : _) -> r'
 			[] -> Error $ OtherError "groupResponses: no result"
 			_ -> error "groupResponses: impossible happened"
-
-responsesById :: Maybe String -> [Message Response] -> [([Notification], Result)]
-responsesById i = groupResponses . messagesById i
 
 -- | Decode lisp or json request
 decodeMessage :: FromJSON a => ByteString -> Either (Msg String) (Msg (Message a))

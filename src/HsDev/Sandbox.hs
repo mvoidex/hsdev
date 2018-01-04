@@ -3,13 +3,12 @@
 module HsDev.Sandbox (
 	SandboxType(..), Sandbox(..), sandboxType, sandbox,
 	isSandbox, guessSandboxType, sandboxFromPath,
-	findSandbox, searchSandbox, projectSandbox, sandboxPackageDbStack, packageDbSandbox, searchPackageDbStack, restorePackageDbStack,
+	findSandbox, searchSandbox, projectSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
 
 	-- * cabal-sandbox util
 	cabalSandboxLib, cabalSandboxPackageDb,
 
 	getModuleOpts,
-	pathInSandbox,
 
 	getProjectSandbox,
 	getProjectPackageDbStack
@@ -25,7 +24,6 @@ import Control.Lens (view, makeLenses)
 import Data.Aeson
 import Data.List (find)
 import Data.Maybe (isJust, fromMaybe)
-import Data.List (inits)
 import qualified Data.Text as T (unpack)
 import Distribution.Compiler
 import Distribution.System
@@ -118,15 +116,8 @@ projectSandbox fpath = runMaybeT $ do
 sandboxPackageDbStack :: Sandbox -> GhcM PackageDbStack
 sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
 	dir <- cabalSandboxPackageDb
-	return $ PackageDbStack [PackageDb $ fromFilePath $ (view path fpath) </> dir]
+	return $ PackageDbStack [PackageDb $ fromFilePath $ view path fpath </> dir]
 sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory (view path fpath)
-
--- | Get sandbox from package-db
-packageDbSandbox :: PackageDb -> Maybe Sandbox
-packageDbSandbox GlobalDb = Nothing
-packageDbSandbox UserDb = Nothing
-packageDbSandbox (PackageDb fpath) = msum [sandboxFromPath p | p <- parents] where
-	parents = map joinPaths . tail . inits . splitPaths $ fpath
 
 -- | Search package-db stack with user-db as default
 searchPackageDbStack :: Path -> GhcM PackageDbStack
@@ -174,10 +165,6 @@ getModuleOpts opts m = do
 		packageDbStackOpts pdbs,
 		moduleOpts pkgs m,
 		opts]
-
--- | Is file in within sandbox, i.e. sandboxes parent is parent for file
-pathInSandbox :: Path -> Sandbox -> Bool
-pathInSandbox fpath (Sandbox _ spath) = takeDir spath `isParent` fpath
 
 -- | Get sandbox of project (if any)
 getProjectSandbox :: MonadLog m => Project -> m (Maybe Sandbox)

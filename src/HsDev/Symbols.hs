@@ -2,10 +2,6 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols (
-	-- * Information
-	unnamedModuleId,
-	sortSourced,
-
 	-- * Utility
 	locateProject, searchProject,
 	locateSourceDir,
@@ -29,7 +25,6 @@ import Control.Monad.Except
 import Data.List
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import qualified Data.Map.Strict as M
-import Data.Ord (comparing)
 import qualified Data.Set as S
 import System.Directory
 import System.FilePath
@@ -40,12 +35,6 @@ import HsDev.Symbols.Documented (Documented(..))
 import HsDev.Symbols.HaskellNames
 import HsDev.Util (searchPath, uniqueBy, directoryContents)
 import System.Directory.Paths
-
-unnamedModuleId :: ModuleLocation -> ModuleId
-unnamedModuleId = ModuleId ""
-
-sortSourced :: Sourced a => [a] -> [a]
-sortSourced = sortBy (comparing (view sourcedName))
 
 -- | Find project file is related to
 locateProject :: FilePath -> IO (Maybe Project)

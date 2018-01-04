@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.Update (
-	Status(..), Progress(..), Task(..), isStatus,
+	Status(..), Progress(..), Task(..),
 	UpdateOptions(..),
 
 	UpdateM(..),
@@ -33,7 +33,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
-import Data.Aeson.Types
 import Data.Function (on)
 import Data.List (nubBy, sortBy)
 import Data.Ord
@@ -79,9 +78,6 @@ onStatus = asks (view (updateOptions . updateTasks)) >>= commandNotify . Notific
 
 childTask :: UpdateMonad m => Task -> m a -> m a
 childTask t = local (over (updateOptions . updateTasks) (t:))
-
-isStatus :: Value -> Bool
-isStatus = isJust . parseMaybe (parseJSON :: Value -> Parser Task)
 
 runUpdate :: ServerMonadBase m => UpdateOptions -> UpdateM m a -> ClientM m a
 runUpdate uopts act = Log.scope "update" $ withSqlConnection $ do

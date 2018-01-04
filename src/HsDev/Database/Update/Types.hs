@@ -21,6 +21,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Trans.Control
 import Data.Aeson
+import Data.Functor
 import Data.Default
 import Text.Format ((~~))
 import qualified System.Log.Simple as Log
@@ -42,8 +43,8 @@ instance ToJSON Status where
 
 instance FromJSON Status where
 	parseJSON v = msum $ map ($ v) [
-		withText "status" $ \t -> guard (t == "working") *> return StatusWorking,
-		withText "status" $ \t -> guard (t == "ok") *> return StatusOk,
+		withText "status" $ \t -> guard (t == "working") $> StatusWorking,
+		withText "status" $ \t -> guard (t == "ok") $> StatusOk,
 		liftM StatusError . parseJSON,
 		fail "invalid status"]
 

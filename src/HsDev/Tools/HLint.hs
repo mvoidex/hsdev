@@ -1,5 +1,5 @@
 module HsDev.Tools.HLint (
-	hlint, hlintFile, hlintSource,
+	hlint,
 
 	module Control.Monad.Except
 	) where
@@ -33,12 +33,6 @@ hlint file msrc = do
 	return $ map (recalcTabs cts 8 . indentIdea cts . fromIdea) $
 		filter (not . ignoreIdea) $
 		applyHints classify hint [m]
-
-hlintFile :: FilePath -> ExceptT String IO [Note OutputMessage]
-hlintFile f = hlint f Nothing
-
-hlintSource :: FilePath -> Text -> ExceptT String IO [Note OutputMessage]
-hlintSource f = hlint f . Just
 
 ignoreIdea :: Idea -> Bool
 ignoreIdea idea = ideaSeverity idea == HL.Ignore

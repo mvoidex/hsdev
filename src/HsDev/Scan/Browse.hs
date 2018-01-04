@@ -4,8 +4,7 @@ module HsDev.Scan.Browse (
 	-- * Scan cabal modules
 	listModules, browseModules, browseModules',
 	-- * Helpers
-	withPackages, withPackages_,
-	readPackage, readPackageConfig, ghcPackageDb, ghcModuleLocation,
+	readPackage, readPackageConfig, ghcModuleLocation,
 	packageDbCandidate, packageDbCandidate_,
 	packageConfigs, packageDbModules, lookupModule_,
 	modulesPackages, modulesPackagesGroups,
@@ -28,7 +27,6 @@ import Language.Haskell.Exts.Fixity
 import Language.Haskell.Exts.Syntax (Assoc(..), QName(..), Name(Ident), ModuleName(..))
 import System.Directory
 import System.FilePath
-import System.Log.Simple.Monad (MonadLog)
 
 import Data.Deps
 import Data.LookupTable
@@ -36,7 +34,7 @@ import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Error
 import HsDev.Tools.Base (inspect)
-import HsDev.Tools.Ghc.Worker (GhcM, runGhcM, tmpSession)
+import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub)
 import System.Directory.Paths
@@ -47,7 +45,6 @@ import qualified DynFlags as GHC
 import qualified GHC
 import qualified GHC.PackageDb as GHC
 import qualified GhcMonad as GHC (liftIO)
-import qualified GHC.Paths as GHC
 import qualified Name as GHC
 import qualified IdInfo as GHC
 import qualified Outputable as GHC
@@ -183,22 +180,6 @@ browseModule modId lookSym package' m = do
 					Just cls -> map (formatType dflags) $ GHC.classSCTheta cls
 		showResult _ _ = Nothing
 
-withInitializedPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
-withInitializedPackages ghcOpts cont = runGhcM (Just GHC.libdir) $ do
-	tmpSession ghcOpts
-	fs <- GHC.getSessionDynFlags
-	cleanupHandler fs $ do
-		(fs', _, _) <- GHC.parseDynamicFlags fs (map GHC.noLoc ghcOpts)
-		_ <- GHC.setSessionDynFlags fs'
-		(result, _) <- GHC.liftIO $ GHC.initPackages fs'
-		cont result
-
-withPackages :: MonadLog m => [String] -> (GHC.DynFlags -> GhcM a) -> m a
-withPackages = withInitializedPackages
-
-withPackages_ :: MonadLog m => [String] -> GhcM a -> m a
-withPackages_ ghcOpts act = withPackages ghcOpts (const act)
-
 formatType :: GHC.DynFlags -> GHC.Type -> Text
 formatType dflag t = fromString $ showOutputable dflag (removeForAlls t)
 
@@ -237,10 +218,6 @@ ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (Ju
 ghcModuleId :: GHC.PackageConfig -> GHC.Module -> ModuleId
 ghcModuleId p m = ModuleId (fromString mname') (ghcModuleLocation p m) where
 	mname' = GHC.moduleNameString $ GHC.moduleName m
-
-
-ghcPackageDb :: GHC.PackageConfig -> IO PackageDb
-ghcPackageDb = maybe (return GlobalDb) packageDbCandidate_ . listToMaybe . GHC.libraryDirs
 
 -- | Get package-db for package library directory
 -- Haskish way

@@ -16,7 +16,7 @@ module HsDev.Tools.Ghc.Worker (
 	clearTargets, makeTarget, loadTargets,
 	loadInteractive, reload,
 	-- * Utils
-	listPackages, spanRegion,
+	spanRegion,
 	withCurrentDirectory,
 	logToChan, logToNull,
 
@@ -33,9 +33,7 @@ import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Catch
 import Data.Dynamic
-import Data.Maybe
 import Data.Time.Clock (getCurrentTime)
-import Data.Version (showVersion)
 import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -43,23 +41,21 @@ import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.FilePath
 import qualified System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
-import Text.Read (readMaybe)
 import Text.Format hiding (withFlags)
 
 import Exception (ExceptionMonad(..))
-import GHC hiding (Warning, Module, moduleName, pkgDatabase)
+import GHC hiding (Warning, Module)
 import GHC.Paths
 import Outputable
 import FastString (unpackFS)
-import Packages
 import StringBuffer
 
 import Control.Concurrent.FiniteChan
 import Control.Concurrent.Worker
 import System.Directory.Paths
-import HsDev.Symbols.Location (Position(..), Region(..), region, ModulePackage, ModuleLocation(..))
+import HsDev.Symbols.Location (Position(..), Region(..), region, ModuleLocation(..))
 import HsDev.Tools.Types
-import HsDev.Tools.Ghc.Compat hiding (setLogAction)
+import HsDev.Tools.Ghc.Compat
 import qualified HsDev.Tools.Ghc.Compat as C (setLogAction)
 import HsDev.Tools.Ghc.MGhc
 
@@ -112,7 +108,7 @@ workerSession ty opts = do
 		Log.sendLog Log.Trace $ "killing session: {}" ~~ s'
 		deleteSession s'
 	Log.sendLog Log.Trace $ "session: {}" ~~ SessionConfig ty opts
-	switchSession_ (SessionConfig ty opts) $ Just $ initialize
+	switchSession_ (SessionConfig ty opts) $ Just initialize
 	where
 		toKill (SessionConfig ty' opts') = or [
 			(ty == ty' && opts /= opts'),
@@ -133,11 +129,11 @@ ghciSession = workerSession SessionGhci []
 
 -- | Get haddock session with flags
 haddockSession :: [String] -> GhcM ()
-haddockSession opts = workerSession SessionHaddock opts
+haddockSession = workerSession SessionHaddock
 
 -- | Get haddock session with flags
 tmpSession :: [String] -> GhcM ()
-tmpSession opts = workerSession SessionTmp opts
+tmpSession = workerSession SessionTmp
 
 -- | Run ghc
 ghcRun :: GhcMonad m => [String] -> m a -> m a
@@ -240,13 +236,6 @@ reload = do
 	clearTargets
 	setTargets ts
 	setContext ctx
-
--- | Get list of installed packages
-listPackages :: GhcMonad m => m [ModulePackage]
-listPackages = liftM (mapMaybe readPackage . fromMaybe [] . pkgDatabase) getSessionDynFlags
-
-readPackage :: PackageConfig -> Maybe ModulePackage
-readPackage pc = readMaybe $ packageNameString pc ++ "-" ++ showVersion (packageVersion pc)
 
 -- | Get region of @SrcSpan@
 spanRegion :: SrcSpan -> Region

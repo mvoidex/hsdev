@@ -8,11 +8,11 @@ module HsDev.Database.SQLite (
 	updatePackageDb, removePackageDb, insertPackageDb,
 	updateProject, removeProject, insertProject, insertBuildInfo,
 	updateModule,
-	removeModule, removeModuleSymbols,
-	insertModule, insertModuleSymbols,
+	removeModule,
+	insertModuleSymbols,
 	upsertModule,
-	lookupModuleLocation, lookupModule, insertLookupModule,
-	lookupSymbol, insertLookupSymbol,
+	lookupModuleLocation, lookupModule,
+	lookupSymbol,
 	lastRow,
 
 	loadModule, loadModules,
@@ -77,7 +77,7 @@ initialize p = do
 			[Only equalVersion] <- SQL.query conn "select sum(json(value) == json(?)) > 0 from hsdev where option == 'version';" (Only $ toJSON version)
 			return equalVersion
 		else return True
-	when (not goodVersion) $ do
+	unless goodVersion $
 		-- TODO: Completely drop schema to reinitialize
 		hsdevError $ OtherError "Not implemented: dropping schema of db"
 	when (not hasTables || not goodVersion) $ SQL.withTransaction conn $ do
@@ -150,7 +150,7 @@ removePackageDb pdb = scope "remove-package-db" $
 	execute "delete from package_dbs where package_db == ?;" (Only pdb)
 
 insertPackageDb :: SessionMonad m => PackageDb -> [ModulePackage] -> m ()
-insertPackageDb pdb pkgs = scope "insert-package-db" $ forM_ pkgs $ \pkg -> do
+insertPackageDb pdb pkgs = scope "insert-package-db" $ forM_ pkgs $ \pkg ->
 	execute
 		"insert into package_dbs (package_db, package_name, package_version) values (?, ?, ?);"
 		(pdb, pkg ^. packageName, pkg ^. packageVersion)
@@ -167,7 +167,7 @@ removeProject proj = scope "remove-project" $ do
 	case projId of
 		[] -> return ()
 		pids -> do
-			when (length pids > 1) $ do
+			when (length pids > 1) $
 				sendLog Warning $ "multiple projects for cabal {} found" ~~ (proj ^. projectCabal)
 			forM_ pids $ \pid -> do
 				bids <- query @_ @(Only Int) "select build_info_id from targets where project_id == ?;" pid
@@ -224,33 +224,6 @@ removeModule mid = scope "remove-module" $ do
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
 	execute "delete from modules where id == ?;" (Only mid)
-
-removeModuleSymbols :: SessionMonad m => Int -> m ()
-removeModuleSymbols mid = scope "remove-module-symbols" $ do
-	execute "delete from exports where symbol_id in (select id from symbols where module_id == ?);" (Only mid)
-	execute "delete from scopes where symbol_id in (select id from symbols where module_id == ?);" (Only mid)
-	execute "delete from symbols where module_id == ?;" (Only mid)
-
-insertModule :: SessionMonad m => InspectedModule -> m ()
-insertModule im = scope "insert-module" $ do
-	execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
-		im ^? inspectedKey . moduleFile . path,
-		im ^? inspectedKey . moduleProject . _Just . projectCabal,
-		fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
-		im ^? inspectedKey . modulePackage . _Just . packageName,
-		im ^? inspectedKey . modulePackage . _Just . packageVersion,
-		im ^? inspectedKey . installedModuleName,
-		im ^? inspectedKey . otherLocationName)
-		:. (
-		msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
-		im ^? inspected . moduleDocs,
-		fmap encode $ im ^? inspected . moduleFixities,
-		encode $ asDict $ im ^. inspectionTags,
-		fmap show $ im ^? inspectionResult . _Left)
-		:.
-		fromMaybe InspectionNone (im ^? inspection)
-		where
-			asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
 
 upsertModule :: SessionMonad m => InspectedModule -> m Int
 upsertModule im = scope "upsert-module" $ do
@@ -460,23 +433,6 @@ lookupModule m = do
 	when (length mids > 1) $ sendLog Warning  $ "different modules with same name and location: {}" ~~ (m ^. moduleName)
 	return $ listToMaybe [mid | Only mid <- mids]
 
-insertLookupModule :: SessionMonad m => ModuleId -> m Int
-insertLookupModule m = do
-	modId <- lookupModule m
-	case modId of
-		Just mid -> return mid
-		Nothing -> do
-			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name) values (?, ?, ?, ?, ?, ?, ?, ?);" (
-				m ^? moduleLocation . moduleFile . path,
-				m ^? moduleLocation . moduleProject . _Just . projectCabal,
-				fmap (encode . map (view path)) (m ^? moduleLocation . moduleInstallDirs),
-				m ^? moduleLocation . modulePackage . _Just . packageName,
-				m ^? moduleLocation . modulePackage . _Just . packageVersion,
-				m ^? moduleLocation . installedModuleName,
-				m ^? moduleLocation . otherLocationName,
-				m ^. moduleName)
-			lastRow
-
 lookupSymbol :: SessionMonad m => Int -> SymbolId -> m (Maybe Int)
 lookupSymbol mid sym = do
 	sids <- query "select id from symbols where name == ? and module_id == ?;" (
@@ -485,30 +441,6 @@ lookupSymbol mid sym = do
 	when (length sids > 1) $ sendLog Warning $ "different symbols with same module id: {}.{}" ~~ show mid ~~ (sym ^. symbolName)
 	return $ listToMaybe [sid | Only sid <- sids]
 
-insertLookupSymbol :: SessionMonad m => Int -> Symbol -> m Int
-insertLookupSymbol mid sym = do
-	msid <- lookupSymbol mid (sym ^. symbolId)
-	case msid of
-		Just sid -> return sid
-		Nothing -> do
-			execute "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ (
-				sym ^. symbolId . symbolName,
-				mid,
-				sym ^. symbolDocs,
-				sym ^? symbolPosition . _Just . positionLine,
-				sym ^? symbolPosition . _Just . positionColumn)
-				:. (
-				symbolType sym,
-				sym ^? symbolInfo . functionType . _Just,
-				msum [sym ^? symbolInfo . parentClass, sym ^? symbolInfo . parentType],
-				encode $ sym ^? symbolInfo . selectorConstructors,
-				encode $ sym ^? symbolInfo . typeArgs,
-				encode $ sym ^? symbolInfo . typeContext,
-				sym ^? symbolInfo . familyAssociate . _Just,
-				sym ^? symbolInfo . patternType . _Just,
-				sym ^? symbolInfo . patternConstructor)
-			lastRow
-
 lastRow :: SessionMonad m => m Int
 lastRow = do
 	[Only i] <- query_ "select last_insert_rowid();"
@@ -516,7 +448,7 @@ lastRow = do
 
 loadModule :: SessionMonad m => Int -> m Module
 loadModule mid = scope "load-module" $ do
-	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int)) (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString $ "mu.id == ?"])) (Only mid)
+	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int)) (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString "mu.id == ?"])) (Only mid)
 	case ms of
 		[] -> sqlFailure $ "module with id {} not found" ~~ mid
 		mods@((mid' :. (mdocs, mfixities, _)):_) -> do

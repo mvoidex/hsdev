@@ -5,7 +5,7 @@ module Control.Concurrent.Worker (
 	startWorker, workerDone,
 	sendTask, pushTask,
 	restartWorker, stopWorker, syncTask,
-	inWorkerWith, inWorker, inWorker_,
+	inWorkerWith, inWorker,
 
 	module Control.Concurrent.Async
 	) where
@@ -90,7 +90,3 @@ inWorkerWith err w act = liftIO (pushTask w act) >>= (liftIO . waitCatch >=> eit
 -- | Run action in worker and wait for result
 inWorker :: (MonadIO m, MonadCatch m) => Worker m -> m a -> IO a
 inWorker w act = pushTask w act >>= liftIO . wait
-
--- | Run action in worker and wait for result
-inWorker_ :: (MonadIO m, MonadCatch m) => Worker m -> m a -> ExceptT SomeException IO a
-inWorker_ w act = liftIO (pushTask w act) >>= ExceptT . waitCatch

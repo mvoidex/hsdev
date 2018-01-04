@@ -1,7 +1,7 @@
 {-# LANGUAGE PatternSynonyms, ViewPatterns, OverloadedStrings #-}
 
 module HsDev.Symbols.Name (
-	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, namePrefix, fromName_, toName_, toModuleName_, fromModuleName_, fromName, toName,
+	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, fromName_, toName_, toModuleName_, fromModuleName_, fromName, toName,
 	) where
 
 import Control.Arrow
@@ -34,9 +34,6 @@ pattern Name :: Maybe Text -> Text -> Name
 pattern Name m n <- ((nameModule &&& nameIdent) -> (m, n)) where
 	Name Nothing n = UnQual () (Exts.Ident () (T.unpack n))
 	Name (Just m) n = Qual () (ModuleName () (T.unpack m)) (Exts.Ident () (T.unpack n))
-
-namePrefix :: Name -> Name -> Bool
-namePrefix p s = nameModule p == nameModule s && nameIdent p `T.isPrefixOf` nameIdent s
 
 fromName_ :: Exts.Name () -> Text
 fromName_ (Exts.Ident _ s') = fromString s'
