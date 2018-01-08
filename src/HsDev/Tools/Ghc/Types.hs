@@ -48,7 +48,7 @@ instance HasType (LHsExpr Id) where
 			return (getLoc e, exprType ex)
 
 instance HasType (LHsBind Id) where
-	getType _ (L spn FunBind { fun_matches = m}) = return $ Just (spn, typ) where
+	getType _ (L _ FunBind { fun_id = fid, fun_matches = m}) = return $ Just (getLoc fid, typ) where
 		typ = mkFunTys (mg_arg_tys m) (mg_res_ty m)
 	getType _ _ = return Nothing
 

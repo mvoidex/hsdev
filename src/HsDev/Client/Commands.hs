@@ -247,8 +247,8 @@ runCommand (Whoat l c fpath) = toValue $ do
 			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
 		(fpath ^. path, l, c)
 	locals <- do
-		defs <- query @_ @(ModuleId :. (Text, Int, Int)) (toQuery $ qModuleId `mappend` select_
-			["n.name", "n.def_line", "n.def_column"]
+		defs <- query @_ @(ModuleId :. (Text, Int, Int, Maybe Text)) (toQuery $ qModuleId `mappend` select_
+			["n.name", "n.def_line", "n.def_column", "n.inferred_type"]
 			["names as n"]
 			[
 				"mu.id == n.module_id",
@@ -262,8 +262,8 @@ runCommand (Whoat l c fpath) = toValue $ do
 				_symbolId = SymbolId nm mid,
 				_symbolDocs = Nothing,
 				_symbolPosition = Just (Position defLine defColumn),
-				_symbolInfo = infoOf Function
-			} | (mid :. (nm, defLine, defColumn)) <- defs]
+				_symbolInfo = Function ftype
+			} | (mid :. (nm, defLine, defColumn, ftype)) <- defs]
 	return $ rs ++ locals
 runCommand (ResolveScopeModules sq fpath) = toValue $ do
 	pids <- query @_ @(Only (Maybe Path)) "select m.cabal from modules as m where (m.file == ?);"

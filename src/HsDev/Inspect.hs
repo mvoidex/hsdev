@@ -23,7 +23,7 @@ import Data.Data (Data)
 import Data.Function (on)
 import Data.List
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe, mapMaybe, listToMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Ord (comparing)
 import Data.String (IsString, fromString)
 import Data.Text (Text)
@@ -313,15 +313,16 @@ inspectDocs opts m = do
 	return $ maybe id addDocs docsMap m
 
 -- | Read docs for one module
-readDocs :: [String] -> Path -> Ghc (Maybe (Map String String))
-readDocs opts fpath = liftM (fmap (formatDocs . snd) . listToMaybe) $ hsdevLift $
-	readSourcesGhc opts [view path fpath]
+readDocs :: Text -> [String] -> Path -> Ghc (Maybe (Map String String))
+readDocs mname opts fpath = do
+	docs <- hsdevLift $ readSourcesGhc opts [view path fpath]
+	return $ fmap formatDocs $ lookup (T.unpack mname) docs
 
 -- | Like @inspectDocs@, but in @Ghc@ monad
 inspectDocsGhc :: [String] -> Module -> Ghc Module
 inspectDocsGhc opts m = case view (moduleId . moduleLocation) m of
 	FileModule fpath _ -> do
-		docsMap <- readDocs opts fpath
+		docsMap <- readDocs (m ^. moduleId . moduleName) opts fpath
 		return $ maybe id addDocs docsMap m
 	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
 

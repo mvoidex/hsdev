@@ -33,9 +33,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
-import Data.Function (on)
-import Data.List (nubBy, sortBy)
-import Data.Ord
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
@@ -496,11 +493,12 @@ scanDocs = runTasks_ . map scanDocs' where
 	scanDocs' m = runTask "scanning docs" (view (moduleId . moduleLocation) m) $ Log.scope "docs" $ do
 		mid <- SQLite.lookupModule (m ^. moduleId)
 		mid' <- maybe (hsdevError $ SQLiteError $ "module id not found") return mid
-		Log.sendLog Log.Trace $ "Scanning docs for {}" ~~ view (moduleId . moduleLocation) m
+		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
+		Log.sendLog Log.Trace $ "Scanning docs for {}" ~~ view (moduleId . moduleLocation) m'
 		docsMap <- inSessionGhc $ do
-			opts' <- getModuleOpts [] m
+			opts' <- getModuleOpts [] m'
 			haddockSession opts'
-			liftGhc $ readDocs opts' (m ^?! moduleId . moduleLocation . moduleFile)
+			liftGhc $ readDocs (m ^. moduleId . moduleName) opts' (m' ^?! moduleId . moduleLocation . moduleFile)
 		sendUpdateAction $ Log.scope "scan-docs" $ do
 			SQLite.executeMany "update symbols set docs = ? where name == ? and module_id == ?;"
 				[(doc, nm, mid') | (nm, doc) <- maybe [] M.toList docsMap]
@@ -512,22 +510,20 @@ inferModTypes = runTasks_ . map inferModTypes' where
 	inferModTypes' m = runTask "inferring types" (view (moduleId . moduleLocation) m) $ Log.scope "types" $ do
 		mid <- SQLite.lookupModule (m ^. moduleId)
 		mid' <- maybe (hsdevError $ SQLiteError $ "module id not found") return mid
-		Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view (moduleId . moduleLocation) m
+		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
+		Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view (moduleId . moduleLocation) m'
 		types' <- inSessionGhc $ do
-			opts' <- getModuleOpts [] m
-			targetSession opts' m
-			fileTypes opts' m Nothing
-		let
-			sortedTypes' =
-				nubBy ((==) `on` (view (noteRegion . regionFrom))) $
-				sortBy (comparing $ view noteRegion) types'
-			typeMap = M.fromList [(t' ^. noteRegion . regionFrom, t' ^. note . typedType) | t' <- sortedTypes']
+			opts' <- getModuleOpts [] m'
+			targetSession opts' m'
+			fileTypes opts' m' Nothing
 
 		sendUpdateAction $ Log.scope "infer-types" $ do
-			points <- SQLite.query "select s.line, s.column from symbols as s where (s.module_id == ?) and (s.line is not null) and (s.column is not null);"
-				(SQLite.Only mid')
-			SQLite.executeMany "update symbols set type = ? where (line == ?) and (column == ?) and (module_id == ?);"
-				[(t', l, c, mid') | (l, c) <- points, t' <- maybeToList (M.lookup (Position l c) typeMap)]
+			SQLite.withTemporaryTable "inferred_types" ["line", "column", "line_to", "column_to", "type"] $ do
+				SQLite.executeMany "insert into inferred_types values (?, ?, ?, ?, ?);" [
+					view noteRegion n' SQLite.:. (SQLite.Only $ view (note . typedType) n') | n' <- types']
+				SQLite.execute "update names set inferred_type = (select type from inferred_types as t where names.line = t.line and names.column = t.column and names.line_to = t.line_to and names.column_to = t.column_to) where module_id == ?;"
+					(SQLite.Only mid')
+				SQLite.execute "update symbols set type = (select type from inferred_types as t where symbols.line = t.line and symbols.column = t.column order by t.line_to, t.column_to) where module_id == ?;" (SQLite.Only mid')
 			SQLite.execute "update modules set tags = json_set(tags, '$.types', 1) where id == ?;" (SQLite.Only mid')
 
 -- | Generic scan function. Removed obsolete modules and calls callback on changed modules.

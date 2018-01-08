@@ -77,8 +77,8 @@ create view projects_deps (
 	package_version
 ) as
 select distinct p.cabal, deps.value, ps.package_version
-from projects as p, build_infos as b, json_each(b.depends) as deps, targets as t, latest_packages as ps
-where (p.id == t.project_id) and (b.id == t.build_info_id) and (deps.value <> p.name) and (ps.package_name == deps.value);
+from projects as p, json_each(p.package_db_stack) as pdb_stack, build_infos as b, json_each(b.depends) as deps, targets as t, latest_packages as ps
+where (p.id == t.project_id) and (b.id == t.build_info_id) and (deps.value <> p.name) and (ps.package_name == deps.value) and (ps.package_db == pdb_stack.value);
 
 create view projects_modules_scope (
 	cabal,
@@ -195,6 +195,7 @@ create table names (
 	column_to integer,
 	def_line integer,
 	def_column integer,
+	inferred_type text,
 	resolved_module text,
 	resolved_name text,
 	resolve_error text
