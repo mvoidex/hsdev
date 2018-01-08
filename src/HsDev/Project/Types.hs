@@ -19,7 +19,6 @@ import Data.Maybe
 import Data.Monoid
 import Data.Ord
 import Data.Text (Text)
-import Data.Text.Lens (unpacked)
 import qualified Data.Text as T
 import Distribution.Text (display)
 import Language.Haskell.Extension
@@ -121,7 +120,8 @@ instance Paths ProjectDescription where
 class Target a where
 	targetName :: Traversal' a Text
 	buildInfo :: Lens' a Info
-	targetModules :: a -> [Path]
+	targetMain :: a -> Maybe Path
+	targetModules :: a -> [[Text]]
 
 -- | Library in project
 data Library = Library {
@@ -306,18 +306,20 @@ makeLenses ''Extensions
 instance Target Library where
 	targetName _ = pure
 	buildInfo = libraryBuildInfo
-	targetModules lib' = map toPath (lib' ^.. libraryModules . each) where
-		toPath ps = fromFilePath (joinPath (ps ^.. each . unpacked) <.> "hs")
+	targetMain _ = Nothing
+	targetModules lib' = lib' ^.. libraryModules . each
 
 instance Target Executable where
 	targetName = executableName
 	buildInfo = executableBuildInfo
-	targetModules exe' = [exe' ^. executablePath]
+	targetMain exe' = Just $ exe' ^. executablePath
+	targetModules _ = []
 
 instance Target Test where
 	targetName = testName
 	buildInfo = testBuildInfo
-	targetModules test' = map toPath (test' ^.. testMain . _Just . path) where
+	targetMain test' = fmap toPath (test' ^? testMain . _Just . path) where
 		toPath f
 			| haskellSource f = fromFilePath f
 			| otherwise = fromFilePath (f <.> "hs")
+	targetModules _ = []

@@ -9,8 +9,8 @@ module HsDev.Tools.Ghc.Worker (
 	workerSession, ghcSession, ghciSession, haddockSession, tmpSession,
 
 	-- * Initializers and actions
-	ghcRun,
-	withFlags, modifyFlags, addCmdOpts, setCmdOpts,
+	ghcRun, ghcRunWith, interpretedFlags, noLinkFlags,
+	withFlags, modifyFlags,
 	importModules, preludeModules,
 	evaluate,
 	clearTargets, makeTarget, loadTargets,
@@ -117,7 +117,7 @@ workerSession ty opts = do
 			SessionGhci -> ghcRun opts (importModules preludeModules)
 			SessionGhc -> ghcRun opts (return ())
 			SessionTmp -> ghcRun opts (return ())
-			SessionHaddock -> ghcRun ("-haddock" : opts) (return ())
+			SessionHaddock -> ghcRunWith noLinkFlags ("-haddock" : opts) (return ())
 
 -- | Get ghc session
 ghcSession :: [String] -> GhcM ()
@@ -137,19 +137,29 @@ tmpSession = workerSession SessionTmp
 
 -- | Run ghc
 ghcRun :: GhcMonad m => [String] -> m a -> m a
-ghcRun opts f = do
+ghcRun = ghcRunWith interpretedFlags
+
+-- | Run ghc
+ghcRunWith :: GhcMonad m => (DynFlags -> DynFlags) -> [String] -> m a -> m a
+ghcRunWith onFlags opts act = do
 	fs <- getSessionDynFlags
 	cleanupHandler fs $ do
 		(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
-		let fs'' = fs' {
-			ghcMode = CompManager,
-			ghcLink = LinkInMemory,
-			hscTarget = HscInterpreted }
-			-- ghcLink = NoLink,
-			-- hscTarget = HscNothing }
-		void $ setSessionDynFlags fs''
+		void $ setSessionDynFlags $ onFlags fs'
 		modifyFlags $ C.setLogAction logToNull
-		f
+		act
+
+interpretedFlags :: DynFlags -> DynFlags
+interpretedFlags fs = fs {
+	ghcMode = CompManager,
+	ghcLink = LinkInMemory,
+	hscTarget = HscInterpreted }
+
+noLinkFlags :: DynFlags -> DynFlags
+noLinkFlags fs = fs {
+	ghcMode = CompManager,
+	ghcLink = NoLink,
+	hscTarget = HscNothing }
 
 -- | Alter @DynFlags@ temporary
 withFlags :: GhcMonad m => m a -> m a
@@ -164,29 +174,6 @@ modifyFlags f = do
 	_ <- setSessionDynFlags fs'
 	-- _ <- liftIO $ initPackages fs'
 	return ()
-
--- | Add options without reinit session
-addCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
-addCmdOpts [] = return ()
-addCmdOpts opts = do
-	Log.sendLog Log.Trace $ "setting ghc options: {}" ~~ unwords opts
-	fs <- getSessionDynFlags
-	(fs', _, _) <- parseDynamicFlags fs (map noLoc opts)
-	let fs'' = fs' {
-		ghcMode = CompManager,
-		ghcLink = LinkInMemory,
-		hscTarget = HscInterpreted }
-		-- ghcLink = NoLink,
-		-- hscTarget = HscNothing }
-	void $ setSessionDynFlags fs''
-
--- | Set options after session reinit
-setCmdOpts :: (MonadLog m, GhcMonad m) => [String] -> m ()
-setCmdOpts opts = do
-	Log.sendLog Log.Trace $ "restarting ghc session with: {}" ~~ unwords opts
-	initGhcMonad (Just libdir)
-	addCmdOpts opts
-	modifyFlags $ C.setLogAction logToNull
 
 -- | Import some modules
 importModules :: GhcMonad m => [String] -> m ()

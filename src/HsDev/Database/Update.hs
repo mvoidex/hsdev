@@ -497,8 +497,10 @@ scanDocs = runTasks_ . map scanDocs' where
 		Log.sendLog Log.Trace $ "Scanning docs for {}" ~~ view (moduleId . moduleLocation) m'
 		docsMap <- inSessionGhc $ do
 			opts' <- getModuleOpts [] m'
+			currentSession >>= maybe (return ()) (const clearTargets)
+			-- Calling haddock with targets set sometimes cause errors
 			haddockSession opts'
-			liftGhc $ readDocs (m ^. moduleId . moduleName) opts' (m' ^?! moduleId . moduleLocation . moduleFile)
+			liftGhc $ readModuleDocs opts' m'
 		sendUpdateAction $ Log.scope "scan-docs" $ do
 			SQLite.executeMany "update symbols set docs = ? where name == ? and module_id == ?;"
 				[(doc, nm, mid') | (nm, doc) <- maybe [] M.toList docsMap]
@@ -512,10 +514,11 @@ inferModTypes = runTasks_ . map inferModTypes' where
 		mid' <- maybe (hsdevError $ SQLiteError $ "module id not found") return mid
 		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
 		Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view (moduleId . moduleLocation) m'
+
 		types' <- inSessionGhc $ do
 			opts' <- getModuleOpts [] m'
 			targetSession opts' m'
-			fileTypes opts' m' Nothing
+			fileTypes m' Nothing
 
 		sendUpdateAction $ Log.scope "infer-types" $ do
 			SQLite.withTemporaryTable "inferred_types" ["line", "column", "line_to", "column_to", "type"] $ do

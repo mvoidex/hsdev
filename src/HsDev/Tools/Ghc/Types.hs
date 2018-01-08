@@ -98,8 +98,8 @@ instance FromJSON TypedExpr where
 		v .:: "type"
 
 -- | Get all types in module
-fileTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe Text -> m [Note TypedExpr]
-fileTypes opts m msrc = scope "types" $ case view (moduleId . moduleLocation) m of
+fileTypes :: (MonadLog m, GhcMonad m) => Module -> Maybe Text -> m [Note TypedExpr]
+fileTypes m msrc = scope "types" $ case view (moduleId . moduleLocation) m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
 		cts <- maybe (liftIO $ readFileUtf8 (view path file')) return msrc
@@ -108,8 +108,7 @@ fileTypes opts m msrc = scope "types" $ case view (moduleId . moduleLocation) m 
 				(sourceModuleRoot (view (moduleId . moduleName) m) file') $
 				preview (_Just . projectPath) proj
 		ex <- liftIO $ dirExists dir
-		withFlags $ (if ex then Ghc.withCurrentDirectory (view path dir) else id) $ do
-			addCmdOpts opts
+		(if ex then Ghc.withCurrentDirectory (view path dir) else id) $ do
 			target <- makeTarget (relPathTo dir file') msrc
 			loadTargets [target]
 			ts <- moduleTypes file'
@@ -138,5 +137,5 @@ setModuleTypes ts = over (moduleScope . each . each) setType . over (moduleExpor
 		return $ set (symbolInfo . functionType) (Just $ view (note . typedType) tnote) d
 
 -- | Infer types in module
-inferTypes :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe Text -> m Module
-inferTypes opts m msrc = scope "infer" $ liftM (`setModuleTypes` m) $ fileTypes opts m msrc
+inferTypes :: (MonadLog m, GhcMonad m) => Module -> Maybe Text -> m Module
+inferTypes m msrc = scope "infer" $ liftM (`setModuleTypes` m) $ fileTypes m msrc

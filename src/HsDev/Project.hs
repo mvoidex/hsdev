@@ -49,8 +49,12 @@ infoSourceDirsDef = lens get' set' where
 
 -- | Get all source file names of target without prepending them with source-dirs
 targetFiles :: Target t => t -> [Path]
-targetFiles target' = targetModules target' ++ map toFile (target' ^.. buildInfo . infoOtherModules . each) where
-	toFile ps = fromFilePath (joinPath (ps ^.. each . unpacked) <.> "hs")
+targetFiles target' = concat [
+	maybeToList (targetMain target'),
+	map toFile $ targetModules target',
+	map toFile $ target' ^.. buildInfo . infoOtherModules . each]
+	where
+		toFile ps = fromFilePath (joinPath (ps ^.. each . unpacked) <.> "hs")
 
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription

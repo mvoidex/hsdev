@@ -346,7 +346,7 @@ runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $ do
 			inSessionGhc $ do
 				when clear $ clearTargets
 				fn m
-	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check [] m c)) fs
+	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs
 runCommand (CheckLint fs ghcs' clear) = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
@@ -355,7 +355,7 @@ runCommand (CheckLint fs ghcs' clear) = toValue $ do
 			inSessionGhc $ do
 				when clear $ clearTargets
 				fn m
-	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check [] m c)) fs
+	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs' clear) = toValue $ do
@@ -364,7 +364,7 @@ runCommand (Types fs ghcs' clear) = toValue $ do
 		m <- setFileSourceSession ghcs' file
 		inSessionGhc $ do
 			when clear $ clearTargets
-			Types.fileTypes [] m msrc
+			Types.fileTypes m msrc
 runCommand (AutoFix ns) = toValue $ return $ AutoFix.corrections ns
 runCommand (Refactor ns rest isPure) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns

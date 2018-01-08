@@ -13,7 +13,7 @@ module HsDev.Tools.Ghc.Check (
 	module Control.Monad.Except
 	) where
 
-import Control.Lens (preview, view, each, _Just, (^..), (^.))
+import Control.Lens (preview, view, each, (^..), (^.))
 import Control.Monad.Except
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -34,17 +34,14 @@ import HsDev.Util (readFileUtf8, ordNub)
 import System.Directory.Paths
 
 -- | Check module source
-check :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe Text -> m [Note OutputMessage]
-check opts m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
-	FileModule file proj -> do
+check :: (MonadLog m, GhcMonad m) => Module -> Maybe Text -> m [Note OutputMessage]
+check m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
+	FileModule file _ -> do
 		ch <- liftIO newChan
 		let
-			dir = fromMaybe
-				(sourceModuleRoot (view (moduleId . moduleName) m) file) $
-				preview (_Just . projectPath) proj
+			dir = sourceRoot_ (m ^. moduleId)
 		ex <- liftIO $ dirExists dir
 		withFlags $ (if ex then withCurrentDirectory (dir ^. path) else id) $ do
-			addCmdOpts opts
 			modifyFlags $ C.setLogAction $ logToChan ch
 			target <- makeTarget (relPathTo dir file) msrc
 			loadTargets [target]

@@ -3,7 +3,7 @@
 module HsDev.Inspect (
 	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded, preload,
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
-	analyzeResolve, analyzePreloaded, inspectDocs, readDocs, inspectDocsGhc,
+	analyzeResolve, analyzePreloaded, inspectDocs, readDocs, readModuleDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, sourceInspection, fileInspection, fileContentsInspection, installedInspection, moduleInspection,
 	projectDirs, projectSources,
@@ -54,9 +54,9 @@ import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable, symbolUniq
 import HsDev.Symbols.Parsed hiding (file)
 import qualified HsDev.Symbols.HaskellNames as HN
 import HsDev.Tools.Base
-import HsDev.Tools.Ghc.Worker (GhcM)
+import HsDev.Tools.Ghc.Worker (GhcM, withCurrentDirectory)
 import HsDev.Tools.HDocs (hdocs, hdocsProcess)
-import HsDev.Util
+import HsDev.Util hiding (withCurrentDirectory)
 import System.Directory.Paths
 
 -- | Preloaded module with contents and extensions
@@ -318,13 +318,18 @@ readDocs mname opts fpath = do
 	docs <- hsdevLift $ readSourcesGhc opts [view path fpath]
 	return $ fmap formatDocs $ lookup (T.unpack mname) docs
 
+-- | Read docs for one module
+readModuleDocs :: [String] -> Module -> Ghc (Maybe (Map String String))
+readModuleDocs opts m = case view (moduleId . moduleLocation) m of
+	FileModule fpath _ -> withCurrentDirectory (sourceRoot_ (m ^. moduleId) ^. path) $ do
+		readDocs (m ^. moduleId . moduleName) opts fpath
+	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
+
 -- | Like @inspectDocs@, but in @Ghc@ monad
 inspectDocsGhc :: [String] -> Module -> Ghc Module
-inspectDocsGhc opts m = case view (moduleId . moduleLocation) m of
-	FileModule fpath _ -> do
-		docsMap <- readDocs (m ^. moduleId . moduleName) opts fpath
-		return $ maybe id addDocs docsMap m
-	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
+inspectDocsGhc opts m = do
+	docsMap <- readModuleDocs opts m
+	return $ maybe id addDocs docsMap m
 
 -- | Inspect contents
 inspectContents :: Text -> [(String, String)] -> [String] -> Text -> ExceptT String IO InspectedModule

@@ -16,6 +16,7 @@ module HsDev.Symbols.Location (
 
 	sourceModuleRoot,
 	importPath,
+	sourceRoot, sourceRoot_,
 	RecalcTabs(..),
 
 	module HsDev.PackageDb.Types
@@ -23,7 +24,7 @@ module HsDev.Symbols.Location (
 
 import Control.Applicative
 import Control.DeepSeq (NFData(..))
-import Control.Lens (makeLenses, view, over)
+import Control.Lens (makeLenses, view, preview, over)
 import Data.Aeson
 import Data.Char (isSpace, isDigit)
 import Data.List (findIndex)
@@ -307,6 +308,19 @@ sourceModuleRoot mname = over paths $
 -- >importPath "Quux.Blah" = "Quux/Blah.hs"
 importPath :: Text -> Path
 importPath = fromFilePath . (`addExtension` "hs") . joinPath . map unpack . T.split (== '.')
+
+-- | Root of sources, package dir or root directory of standalone modules
+sourceRoot :: ModuleId -> Maybe Path
+sourceRoot m = do
+	fpath <- preview (moduleLocation . moduleFile) m
+	mproj <- preview (moduleLocation . moduleProject) m
+	return $ maybe
+		(sourceModuleRoot (view moduleName m) fpath)
+		(view projectPath)
+		mproj
+
+sourceRoot_ :: ModuleId -> Path
+sourceRoot_ = fromMaybe (error "sourceRoot_: not a source location") . sourceRoot
 
 -- | Recalc positions to interpret '\t' as one symbol instead of N
 class RecalcTabs a where
