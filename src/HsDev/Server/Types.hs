@@ -6,7 +6,7 @@ module HsDev.Server.Types (
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
 	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverSources, serverUpdateSources,
-	serverSqlDatabase, openSqlConnection, closeSqlConnection, withSqlConnection, withSqlTransaction, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	serverSqlDatabase, openSqlConnection, closeSqlConnection, withSqlConnection, withSqlTransaction, serverSetFileContents, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -72,6 +72,7 @@ data Session = Session {
 	sessionSqlPath :: String,
 	sessionLog :: SessionLog,
 	sessionWatcher :: Watcher,
+	sessionFileContents :: Path -> Maybe Text -> IO (),
 #if mingw32_HOST_OS
 	sessionMmapPool :: Maybe Pool,
 #endif
@@ -235,6 +236,12 @@ withSqlTransaction fn = do
 	conn <- serverSqlDatabase
 	sess <- getSession
 	liftIO $ SQL.withTransaction conn $ withSession sess fn
+
+-- | Set custom file contents
+serverSetFileContents :: SessionMonad m => Path -> Maybe Text -> m ()
+serverSetFileContents fpath mcts = do
+	setCts <- askSession sessionFileContents
+	liftIO $ setCts fpath mcts
 
 -- | In ghc session
 inSessionGhc :: SessionMonad m => GhcM a -> m a

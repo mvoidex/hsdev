@@ -30,6 +30,7 @@ import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Maybe
 import Data.String (fromString)
 import qualified Data.Text as T (pack)
+import Data.Time.Clock.POSIX
 import Options.Applicative (info, progDesc)
 import System.Log.Simple hiding (Level(..), Message)
 import qualified System.Log.Simple.Base as Log (level_)
@@ -90,12 +91,18 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 	ghcw <- ghcWorker
 	defs <- liftIO getDefines
 	let
+		setFileCts fpath mcts = do
+			tm <- getPOSIXTime
+			withSession session $ SQLite.execute "update file_contents set contents = ?, mtime = ? where file = ?;" (mcts, (fromRational (toRational tm) :: Double), fpath)
+			writeChan (W.watcherChan watcher) (W.WatchedModule, W.Event W.Modified (view path fpath) tm)
+
 		session = Session
 			srcs
 			sqlDb
 			(fromMaybe SQLite.sharedMemory $ serverDbFile sopts)
 			slog
 			watcher
+			setFileCts
 #if mingw32_HOST_OS
 			mmapPool
 #endif

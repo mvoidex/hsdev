@@ -245,3 +245,9 @@ where
 	(im.name == i.module_name) and
 	(m.file is not null) and
 	(im.file is not null);
+
+create table file_contents (
+	file text not null,
+	contents text,
+	mtime integer
+);
