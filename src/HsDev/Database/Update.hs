@@ -13,7 +13,7 @@ module HsDev.Database.Update (
 	scanModules, scanFile, scanFiles, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
 	scanDocs, inferModTypes,
 	scan,
-	processEvent, updateEvents, applyUpdates,
+	processEvents, updateEvents, applyUpdates,
 
 	module HsDev.Database.Update.Types,
 
@@ -33,6 +33,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
+import Data.List (intercalate)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
@@ -563,12 +564,12 @@ scan part' mlocs opts act = Log.scope "scan" $ do
 	sendUpdateAction $ Log.scope "scan/remove-obsolete" $ forM_ (M.elems obsolete) $ SQLite.removeModule . fst
 	act changed
 
-processEvent :: ([(Watched, Event)] -> IO ()) -> MVar (A.Async ()) -> MVar [(Watched, Event)] -> Watched -> Event -> ClientM IO ()
-processEvent handleEvents updaterTask eventsVar w e = Log.scope "event" $ do
-	Log.sendLog Log.Trace $ "event received: {}" ~~ view eventPath e
+processEvents :: ([(Watched, Event)] -> IO ()) -> MVar (A.Async ()) -> MVar [(Watched, Event)] -> [(Watched, Event)] -> ClientM IO ()
+processEvents handleEvents updaterTask eventsVar evs = Log.scope "event" $ do
+	Log.sendLog Log.Trace $ "events received: {}" ~~ intercalate ", " (evs ^.. each . _2 . eventPath)
 	l <- Log.askLog
 	liftIO $ do
-		modifyMVar_ eventsVar (return . ((w, e):))
+		modifyMVar_ eventsVar (return . (++evs))
 		modifyMVar_ updaterTask $ \task -> do
 			done <- fmap isJust $ poll task
 			if done

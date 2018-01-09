@@ -7,14 +7,16 @@ module System.Directory.Watcher (
 	watchDir, watchDir_, unwatchDir, isWatchingDir,
 	watchTree, watchTree_, unwatchTree, isWatchingTree,
 	-- * Working with events
-	readEvent, events, mergeEvents, onEvent, onEvent_,
-	-- * Internal
-	mergeConsumeEvent
+	readEvent, eventGroup, onEvents, onEvents_
 	) where
 
 import Control.Lens (makeLenses)
 import Control.Arrow
+import Control.Concurrent
 import Control.Concurrent.MVar
+import Control.Concurrent.Async
+import Control.Concurrent.STM
+import Control.Concurrent.STM.TMVar
 import Control.Concurrent.Chan
 import Control.Monad
 import Control.Monad.State
@@ -29,6 +31,8 @@ import Data.Time.Clock.POSIX
 import System.FilePath (takeDirectory, isDrive)
 import System.Directory
 import qualified System.FSNotify as FS
+
+import HsDev.Util (uniqueBy)
 
 -- | Event type
 data EventType = Added | Modified | Removed deriving (Eq, Ord, Enum, Bounded, Read, Show)
@@ -126,45 +130,34 @@ isWatchingTree w f = do
 readEvent :: Watcher a -> IO (a, Event)
 readEvent = readChan . watcherChan
 
--- | Get lazy list of events
-events :: Watcher a -> IO [(a, Event)]
-events = getChanContents . watcherChan
-
--- | Merge same events with slightly different time
-mergeEvents :: NominalDiffTime -> [(a, Event)] -> [(a, Event)]
-mergeEvents tolerance = uncurry concat' . flip runState (M.empty, M.empty) . mapM (mergeConsumeEvent tolerance) where
-	concat' :: [[(a, Event)]] -> (Map (EventType, FilePath) (POSIXTime, POSIXTime), Map POSIXTime (a, Event)) -> [(a, Event)]
-	concat' evs ~(_, queueTail) = concat evs ++ M.elems queueTail
-
-mergeConsumeEvent :: NominalDiffTime -> (a, Event) -> State (Map (EventType, FilePath) (POSIXTime, POSIXTime), Map POSIXTime (a, Event)) [(a, Event)]
-mergeConsumeEvent tolerance (v, e) = do
-	(events', queue') <- get
-	let
-		needMerge = isNothing $ do
-			(pushTime', _) <- M.lookup (eventKey e) events'
-			guard (_eventTime e - pushTime' >= tolerance)
-		pushTime = maybe (_eventTime e) fst $ M.lookup (eventKey e) events'
-		newPushTime
-			| needMerge = pushTime
-			| otherwise = _eventTime e
-
-		insertEvent = M.insert (eventKey e) (newPushTime, _eventTime e)
-		insertTime = M.insert newPushTime (v, e)
-		(old, bound, new) = M.splitLookup (_eventTime e - tolerance) (insertTime queue')
-		actual = S.fromList $ map (eventKey . snd) $ M.elems new
-		removeOld = M.filterWithKey (\k _ -> k `S.member` actual)
-	put (insertEvent $ removeOld events', new)
-	return $ M.elems old ++ maybeToList bound
-	where
-		eventKey ev = (_eventType ev, _eventPath ev)
+-- | Get event group
+eventGroup :: Watcher a -> NominalDiffTime -> ([(a, Event)] -> IO ()) -> IO ()
+eventGroup w tm onGroup = do
+	groupVar <- newTMVarIO []
+	syncVar <- newEmptyTMVarIO
+	_ <- async $ forever $ do
+		ev <- readChan (watcherChan w)
+		_ <- atomically $ tryPutTMVar syncVar ()
+		atomically $ do
+			evs <- takeTMVar groupVar
+			putTMVar groupVar (ev : evs)
+	forever $ do
+		_ <- atomically $ takeTMVar syncVar
+		threadDelay $ floor (tm * 1e6)
+		evs' <- atomically $ do
+			evs <- takeTMVar groupVar
+			putTMVar groupVar []
+			_ <- tryTakeTMVar syncVar
+			return $ reverse evs
+		onGroup $ uniqueBy (\(_, ev') -> (_eventType ev', _eventPath ev')) evs'
 
 -- | Process all events
-onEvent :: Watcher a -> NominalDiffTime -> (a -> Event -> IO ()) -> IO ()
-onEvent w tolerance act = events w >>= mapM_ (uncurry act) . mergeEvents tolerance
+onEvents :: Watcher a -> NominalDiffTime -> ([(a, Event)] -> IO ()) -> IO ()
+onEvents = eventGroup
 
 -- | Process all events
-onEvent_ :: Watcher a -> (a -> Event -> IO ()) -> IO ()
-onEvent_ w = onEvent w (fromRational (1 % 5))
+onEvents_ :: Watcher a -> ([(a, Event)] -> IO ()) -> IO ()
+onEvents_ w = onEvents w (fromRational (1 % 5))
 
 fromEvent :: FS.Event -> Event
 fromEvent e = Event t (FS.eventPath e) (utcTimeToPOSIXSeconds $ FS.eventTime e) where

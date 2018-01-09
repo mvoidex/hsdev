@@ -117,8 +117,8 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 		emptyTask <- async $ return ()
 		updaterTask <- newMVar emptyTask
 		tasksVar <- newMVar []
-		Update.onEvent_ watcher $ \w e -> withSession session $
-			void $ Client.runClient def $ Update.processEvent (withSession session . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar w e
+		Update.onEvents_ watcher $ \evs -> withSession session $
+			void $ Client.runClient def $ Update.processEvents (withSession session . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar evs
 	liftIO $ runReaderT (runServerM $ watchDb >> act) session
 
 -- | Set initial watch: package-dbs, projects and standalone sources

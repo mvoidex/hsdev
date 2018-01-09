@@ -17,7 +17,7 @@ import Control.Lens (preview, view, each, (^..), (^.))
 import Control.Monad.Except
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import System.Log.Simple (MonadLog(..), scope)
+import System.Log.Simple (MonadLog(..), scope, sendLog, Level(Trace))
 
 import GHC hiding (Warning, Module, moduleName)
 
@@ -41,11 +41,13 @@ check m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
 		let
 			dir = sourceRoot_ (m ^. moduleId)
 		ex <- liftIO $ dirExists dir
+		sendLog Trace "loading targets"
 		withFlags $ (if ex then withCurrentDirectory (dir ^. path) else id) $ do
 			modifyFlags $ C.setLogAction $ logToChan ch
 			target <- makeTarget (relPathTo dir file) msrc
 			loadTargets [target]
 		notes <- liftIO $ stopChan ch
+		sendLog Trace "targets checked"
 		liftIO $ recalcNotesTabs notes
 	_ -> scope "check" $ hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
 
