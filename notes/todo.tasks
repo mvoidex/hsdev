@@ -13,14 +13,18 @@ todo:
  ✔ replace `browseModules` with `browseModulesGroups` @done (17-12-19 19:57)
 
 next:
+ ☐ when specifying symbol, allow pass module, that exports symbol instead of one it defined, for example:
+   hsdev symbol 'toList' -m 'Data.Map'
+   should find 'Data.Map.Internal.toList'
+ ☐ `complete` should return `Completion` — symbol with qualifier
+
  ☐ use `like` in sql queries correctly: escape '%' @high
  ☐ `rename` doesn't take scope into account, so it will rename symbols in modules with same name @bug
  ☐ resolved names region includes qualifier, but shouldn't @bug
- ☐ add `go to definition` for local symbols using `names` table
+ ✔ add `go to definition` for local symbols using `names` table @done (18-01-09 15:43)
  ☐ if update fails, client won't disconnect @bug
  ☐ table `sources_depends` incorrect for standalone modules as long as lookup is based on directory structure, but it is not used; maybe add column `module_root` to `modules`?
 
 notes:
  ☐ can we drop `Parsed` too? @low
- ☐ where does modules with no location comes from?
  ☐ write command to drop all ghc's

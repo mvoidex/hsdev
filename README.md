@@ -11,7 +11,7 @@ Haskell development library and tool with support of autocompletion, symbol info
 Uses [fsnotify](http://hackage.haskell.org/package/fsnotify) to watch for changes.
 There are also several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofix`
 
-Main idea is to hold in memory scanned sourced and installed modules, so that getting info about symbols and modules is fast and simple.
+Main idea is to hold in memory scanned sourced and installed modules, so that getting info about symbols and modules is fast.
 It also doesn't require much work to integrate with some editor:
 
 1. Create `hsdev run ...` process
@@ -26,7 +26,7 @@ It also doesn't require much work to integrate with some editor:
 
 ## Usage
 
-Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will store information.
+Use `hsdev start` to start remote server. Specify `--db`, where `hsdev` will store information (SQLite database).
 Then you can connect to server and send requests (see [requests/responses](API.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
 Scan sources, installed modules and you're ready to request various information: scope, completions, info about symbols etc.
 
@@ -36,8 +36,8 @@ PS> hsdev start
 Server started at port 4567
 PS> hsdev scan --path /projects/haskell --project /projects/hsdev --cabal --silent
 []
-PS> hsdev complete DB.r -f /projects/hsdev/src/HsDev/Server/Commands.hs | jq -r '.[] | .name + """ :: """ + .decl.type'
-readAsync :: Async a -> IO a
+PS> hsdev complete runC -f ./src/HsDev/Server/Commands.hs | jq -r '.[] | .id.name + """ :: """ + .info.type'
+runClientM :: ServerM (ReaderT CommandOptions m) a
 </pre>
 
 ## Stack support
@@ -53,13 +53,13 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `connect` — connect to server to send commands from command line (for debug)
 * `ping` — ping server
 * `listen` — connect to server and listen for its log (for debug)
-* `add` — add info to database
+* `set-log` — set log level
 * `scan` — scan installed modules, cabal projects and files
 * `docs`, `infer` — scan docs or infer types for sources
 * `remove`, `remove-all` — unload data
 * `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
-* `symbol`, `module`, `project` — find symbol, module or project
-* `lookup`, `whois` — find project-visible or imported symbol
+* `symbol`, `module`, `project`, `sandbox` — get info about symbol, module, project or sandbox
+* `whoat`, `whois`, `lookup` — find project-visible or imported symbol
 * `scope`, `scope modules` — get modules or declarations, accessible from file
 * `usages` — find usages of symbol
 * `complete` — get completions for file and input
@@ -84,12 +84,14 @@ PS> hsdev scan --cabal --path path/to/projects --project path/to/some/project --
 
 #### Whois/whoat
 
-Get information for symbol in context of source file. Understand qualified names and also names qualified with module shortcut (`import ... as`), note `M.` qualified for `map`:
+Get information for symbol in context of source file. Understand qualified names and also names qualified with module shortcut (`import ... as`), note `M.` qualified for `map`, and local definition `toResult`:
 <pre>
 PS> dev whois M.lookup --file .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
 lookup :: Ord k => k -> Map k a -> Maybe a
-PS> hsdev whoat 375 39 --file .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
-catMaybes :: [Maybe a] -> [a]
+PS> hsdev whoat 64 1 -f .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+toValue :: m a -> m Value
+PS> hsdev whoat 55 32 -f .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+toResult :: ReaderT CommandOptions m a -> m Result
 </pre>
 
 #### Usages
@@ -99,9 +101,10 @@ Returns all places where symbol is used
 PS> hsdev usages Data.Map.toList | json | % { $_.in.name, $_.at.line, $_.at.column -join ':' }
 Data.Deps:33:90
 Data.Deps:57:62
-HsDev.Client.Commands:192:18
-HsDev.Database:75:16
-HsDev.Database:76:17
+HsDev.Symbols.Types:93:12
+HsDev.Symbols.Types:95:54
+HsDev.Symbols.Types:104:74
+HsDev.Symbols.Types:104:94
 ...
 </pre>
 
@@ -127,27 +130,22 @@ PS> $corrs2 | hsdev refactor --stdin --pure
 ### Examples
 
 <pre>
-PS> hsdev start --cache cache
+PS> hsdev start --db hsdev.db
 Server started at port 4567
 PS> hsdev scan --cabal
 {}
 PS> hsdev scan --project hsdev
 {}
-PS> hsdev module --project hsdev --header | json | % { $_.result.name } | select -first 3
-Data.Async
-Data.Group
-HsDev
-PS> hsdev symbol enumProject | json | % { $_.result.declaration } | % { $_.name + ' :: ' + $_.decl.type }
-enumProject :: Project -> ErrorT String IO ProjectToScan
-PS> hsdev complete C -f .\hsdev\tools\hsdev.hs | json | % { $_.result.declaration.name }
-ClientOpts
-CommandAction
-CommandOptions
-CommandResult
-PS> hsdev symbol foldr | json | % result | % { $_.declaration.name + ' :: ' + $_.declaration.decl.type + ' -- ' + $_.'module-id'.name } | select -first 3
-foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString
-foldr :: (Char -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Char8
-foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Lazy
+PS> hsdev module --project hsdev -h | json | % { $_.name } | select -first 3
+HsDev.Database.Update
+HsDev.Client.Commands
+HsDev.Scan
+PS> hsdev symbol enumProject --src | json | % { $_.id.name + ' :: ' + $_.info.type }
+enumProject :: Project -> m ScanContents
+PS> hsdev complete tr -f .\tools\hsdev.hs | json | % { $_.id.name }
+traverse
+traverseDirectory
+...
 PS> hsdev stop
 {}
 </pre>

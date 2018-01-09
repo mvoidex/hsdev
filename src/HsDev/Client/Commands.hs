@@ -179,19 +179,19 @@ runCommand InfoSandboxes = toValue $ do
 	return [pdb | Only pdb <- rs]
 runCommand (InfoSymbol sq filters True _) = toValue $ do
 	let
-		(conds, params) = targetFilters "m" filters
+		(conds, params) = targetFilters "m" (Just "s") filters
 	rs <- queryNamed @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like :pattern escape '\\'"] `mappend` where_ conds)
 		([":pattern" := likePattern sq] ++ params)
 	return rs
 runCommand (InfoSymbol sq filters False _) = toValue $ do
 	let
-		(conds, params) = targetFilters "m" filters
+		(conds, params) = targetFilters "m" (Just "s") filters
 	rs <- queryNamed @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like :pattern escape '\\'"] `mappend` where_ conds)
 		([":pattern" := likePattern sq] ++ params)
 	return rs
 runCommand (InfoModule sq filters h _) = toValue $ do
 	let
-		(conds, params) = targetFilters "mu" filters
+		(conds, params) = targetFilters "mu" Nothing filters
 	rs <- queryNamed @(Only Int :. ModuleId) (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like :pattern escape '\\'"] `mappend` where_ conds)
 		([":pattern" := likePattern sq] ++ params)
 	if h
@@ -310,7 +310,7 @@ runCommand (Complete input True fpath) = toValue $ do
 			"m.id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
 			"msrc.file == ?",
 			"s.name like ? escape '\\'"])
-		(fpath ^. path, likePattern (SearchQuery input SearchPrefix), fpath ^. path, likePattern (SearchQuery input SearchPrefix))
+		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))
 	return rs
 runCommand (Complete input False fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
@@ -433,19 +433,24 @@ runCommand Exit = toValue serverExit
 
 -- TODO: Implement `targetFilter` for sql
 
-targetFilter :: Text -> TargetFilter -> (Text, [NamedParam])
-targetFilter table (TargetProject proj) = (
-	"{t}.cabal in (select cabal from projects where name == :project or cabal == :project)" ~~ ("t" ~% table),
+targetFilter :: Text -> Maybe Text -> TargetFilter -> (Text, [NamedParam])
+targetFilter mtable _ (TargetProject proj) = (
+	"{t}.cabal in (select cabal from projects where name == :project or cabal == :project)" ~~ ("t" ~% mtable),
 	[":project" := proj])
-targetFilter table (TargetFile f) = ("{t}.file == :file" ~~ ("t" ~% table), [":file" := f])
-targetFilter table (TargetModule nm) = ("{t}.name == :module_name" ~~ ("t" ~% table), [":module_name" := nm])
-targetFilter table (TargetPackage nm) = ("{t}.package_name == :package_name" ~~ ("t" ~% table), [":package_name" := nm])
-targetFilter table TargetInstalled = ("{t}.package_name is not null" ~~ ("t" ~% table), [])
-targetFilter table TargetSourced = ("{t}.file is not null" ~~ ("t" ~% table), [])
-targetFilter table TargetStandalone = ("{t}.file is not null and {t}.cabal is null" ~~ ("t" ~% table), [])
+targetFilter mtable _ (TargetFile f) = ("{t}.file == :file" ~~ ("t" ~% mtable), [":file" := f])
+targetFilter mtable Nothing (TargetModule nm) = ("{t}.name == :module_name" ~~ ("t" ~% mtable), [":module_name" := nm])
+targetFilter mtable (Just stable) (TargetModule nm) = (
+	"({t}.name == :module_name) or ({s}.id in (select e.symbol_id from exports as e, modules as em where e.module_id == em.id and em.name == :module_name))"
+		~~ ("t" ~% mtable)
+		~~ ("s" ~% stable),
+	[":module_name" := nm])
+targetFilter mtable _ (TargetPackage nm) = ("{t}.package_name == :package_name" ~~ ("t" ~% mtable), [":package_name" := nm])
+targetFilter mtable _ TargetInstalled = ("{t}.package_name is not null" ~~ ("t" ~% mtable), [])
+targetFilter mtable _ TargetSourced = ("{t}.file is not null" ~~ ("t" ~% mtable), [])
+targetFilter mtable _ TargetStandalone = ("{t}.file is not null and {t}.cabal is null" ~~ ("t" ~% mtable), [])
 
-targetFilters :: Text -> [TargetFilter] -> ([Text], [NamedParam])
-targetFilters table = second concat . unzip . map (targetFilter table)
+targetFilters :: Text -> Maybe Text -> [TargetFilter] -> ([Text], [NamedParam])
+targetFilters mtable stable = second concat . unzip . map (targetFilter mtable stable)
 
 likePattern :: SearchQuery -> Text
 likePattern (SearchQuery input stype) = case stype of
