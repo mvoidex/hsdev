@@ -6,7 +6,7 @@ module HsDev.Symbols (
 	locateProject, searchProject,
 	locateSourceDir,
 	standaloneInfo,
-	moduleOpts,
+	moduleOpts, projectTargetOpts,
 
 	-- * Tags
 	setTag, hasTag, removeTag, dropTags,
@@ -94,6 +94,21 @@ moduleOpts pkgs m = case view (moduleId . moduleLocation) m of
 				| null (info' ^. infoDepends) = []
 				| otherwise = ["-hide-all-packages"]
 	_ -> []
+
+-- | Options for GHC of project
+projectTargetOpts :: [PackageConfig] -> Project -> Info -> [String]
+projectTargetOpts pkgs proj info = concat [hidePackages, targetOpts absInfo] where
+	info' = over infoDepends (filter validDep) (selfInfo `mappend` info)
+	absInfo = absolutise (view projectPath proj) info'
+	selfInfo
+		| proj ^. projectName `elem` (info ^.. infoDepends . each) = fromMaybe mempty $
+			proj ^? projectDescription . _Just . projectLibrary . _Just . libraryBuildInfo
+		| otherwise = mempty
+	validDep d = d `elem` pkgs'
+	pkgs' = pkgs ^.. each . package . packageName
+	hidePackages
+		| null (info' ^. infoDepends) = []
+		| otherwise = ["-hide-all-packages"]
 
 -- | Set tag to `Inspected`
 setTag :: Ord t => t -> Inspected i t a -> Inspected i t a

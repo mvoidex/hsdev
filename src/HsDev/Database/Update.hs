@@ -33,6 +33,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
+import Data.List (intercalate)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
@@ -463,7 +464,20 @@ scanProject opts cabal = runTask "scanning" (project $ view path cabal) $ Log.sc
 	S.ScanContents _ [(_, sources)] _ <- S.enumProject proj
 	let
 		projMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal == ?;" (SQLite.Only $ proj ^. projectCabal)
-	scan projMods sources opts $ scanModules opts
+	scan projMods sources opts $ \mlocs' -> do
+		scanModules opts mlocs'
+
+		-- Scan docs
+		-- inSessionGhc $ do
+		-- 	currentSession >>= maybe (return ()) (const clearTargets)
+
+		-- 	forM_ (maybe [] targetInfos (proj ^. projectDescription)) $ \tinfo' -> do
+		-- 		opts' <- getProjectTargetOpts [] proj (tinfo' ^. targetBuildInfo)
+		-- 		files' <- projectTargetFiles proj tinfo'
+		-- 		haddockSession opts'
+		-- 		docsMap <- liftGhc $ readProjectTargetDocs opts' proj files'
+		-- 		Log.sendLog Log.Debug $ "scanned logs for modules: {}, summary docs: {}" ~~ (intercalate "," (M.keys docsMap)) ~~ (sum $ map M.size $ M.elems docsMap)
+
 
 -- | Scan directory for source files and projects
 scanDirectory :: UpdateMonad m => [String] -> Path -> m ()

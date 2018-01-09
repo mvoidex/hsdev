@@ -3,7 +3,7 @@
 module HsDev.Inspect (
 	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded, preload,
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
-	analyzeResolve, analyzePreloaded, inspectDocs, readDocs, readModuleDocs, inspectDocsGhc,
+	analyzeResolve, analyzePreloaded, inspectDocs, readDocs, readModuleDocs, readProjectTargetDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, sourceInspection, fileInspection, fileContentsInspection, installedInspection, moduleInspection,
 	projectDirs, projectSources,
@@ -324,6 +324,11 @@ readModuleDocs opts m = case view (moduleId . moduleLocation) m of
 	FileModule fpath _ -> withCurrentDirectory (sourceRoot_ (m ^. moduleId) ^. path) $ do
 		readDocs (m ^. moduleId . moduleName) opts fpath
 	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
+
+readProjectTargetDocs :: [String] -> Project -> [Path] -> Ghc (Map String (Map String String))
+readProjectTargetDocs opts proj fpaths = withCurrentDirectory (proj ^. projectPath . path) $ do
+	docs <- hsdevLift $ readSourcesGhc opts (fpaths ^.. each . path)
+	return $ M.map formatDocs $ M.fromList docs
 
 -- | Like @inspectDocs@, but in @Ghc@ monad
 inspectDocsGhc :: [String] -> Module -> Ghc Module

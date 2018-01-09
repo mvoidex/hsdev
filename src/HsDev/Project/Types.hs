@@ -3,8 +3,8 @@
 
 module HsDev.Project.Types (
 	Project(..), projectName, projectPath, projectCabal, projectDescription, project,
-	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests, infos,
-	Target(..),
+	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests, infos, targetInfos,
+	Target(..), TargetInfo(..), targetInfoName, targetBuildInfo, targetInfoMain, targetInfoModules, targetInfo,
 	Library(..), libraryModules, libraryBuildInfo,
 	Executable(..), executableName, executablePath, executableBuildInfo,
 	Test(..), testName, testEnabled, testBuildInfo, testMain,
@@ -94,6 +94,13 @@ infos f desc = (\lib exes tests -> desc { _projectLibrary = lib, _projectExecuta
 	(each . buildInfo) f (_projectExecutables desc) <*>
 	(each . buildInfo) f (_projectTests desc)
 
+-- | Build target infos, more detailed
+targetInfos :: ProjectDescription -> [TargetInfo]
+targetInfos desc = concat [
+	map targetInfo $ maybeToList (_projectLibrary desc),
+	map targetInfo $ _projectExecutables desc,
+	map targetInfo $ _projectTests desc]
+
 instance Show ProjectDescription where
 	show pd = unlines $
 		concatMap (lines . show) (maybeToList (_projectLibrary pd)) ++
@@ -122,6 +129,19 @@ class Target a where
 	buildInfo :: Lens' a Info
 	targetMain :: a -> Maybe Path
 	targetModules :: a -> [[Text]]
+
+data TargetInfo = TargetInfo {
+	_targetInfoName :: Maybe Text,
+	_targetBuildInfo :: Info,
+	_targetInfoMain :: Maybe Path,
+	_targetInfoModules :: [[Text]] }
+		deriving (Eq, Ord, Show)
+
+targetInfo :: Target a => a -> TargetInfo
+targetInfo t = TargetInfo (t ^? targetName) (t ^. buildInfo) (targetMain t) (targetModules t)
+
+instance Paths TargetInfo where
+	paths f (TargetInfo n i mp ms) = TargetInfo n <$> paths f i <*> traverse (paths f) mp <*> pure ms
 
 -- | Library in project
 data Library = Library {
@@ -297,6 +317,7 @@ instance Traversable Extensions where
 
 makeLenses ''Project
 makeLenses ''ProjectDescription
+makeLenses ''TargetInfo
 makeLenses ''Library
 makeLenses ''Executable
 makeLenses ''Test
@@ -323,3 +344,9 @@ instance Target Test where
 			| haskellSource f = fromFilePath f
 			| otherwise = fromFilePath (f <.> "hs")
 	targetModules _ = []
+
+instance Target TargetInfo where
+	targetName = targetInfoName . _Just
+	buildInfo = targetBuildInfo
+	targetMain = _targetInfoMain
+	targetModules = _targetInfoModules

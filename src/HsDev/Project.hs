@@ -3,7 +3,7 @@
 module HsDev.Project (
 	module HsDev.Project.Types,
 
-	infoSourceDirsDef, targetFiles,
+	infoSourceDirsDef, targetFiles, projectTargetFiles,
 	analyzeCabal,
 	readProject, loadProject,
 	withExtensions,
@@ -18,9 +18,11 @@ module HsDev.Project (
 import Control.Arrow
 import Control.Lens hiding ((.=), (%=), (<.>), set')
 import Control.Monad.Except
+import Control.Monad.Loops
 import Data.List
 import Data.Maybe
 import Data.Text (Text, pack, unpack)
+import qualified Data.Text as T (intercalate)
 import Data.Text.Lens (unpacked)
 import Distribution.Compiler (CompilerFlavor(GHC))
 import qualified Distribution.Package as P
@@ -31,6 +33,9 @@ import Distribution.ModuleName (components)
 import Distribution.Text (display)
 import Language.Haskell.Extension
 import System.FilePath
+import System.Log.Simple hiding (Level(..))
+import qualified System.Log.Simple as Log (Level(..))
+import Text.Format
 
 import System.Directory.Paths
 import HsDev.Project.Compat
@@ -55,6 +60,20 @@ targetFiles target' = concat [
 	map toFile $ target' ^.. buildInfo . infoOtherModules . each]
 	where
 		toFile ps = fromFilePath (joinPath (ps ^.. each . unpacked) <.> "hs")
+
+-- | Get all source file names relative to project root
+projectTargetFiles :: (MonadLog m, Target t) => Project -> t -> m [Path]
+projectTargetFiles proj t = do
+	liftM concat $ forM files $ \file' -> do
+		candidate <- liftIO $ firstM (fileExists . absolutise (proj ^. projectPath)) [subPath srcDir file' | srcDir <- srcDirs]
+		case candidate of
+			Nothing -> do
+				sendLog Log.Warning $ "Unable to locate source file: {} in source-dirs: {}" ~~ file' ~~ (T.intercalate ", " srcDirs)
+				return []
+			Just file'' -> return [normPath file'']
+	where
+		files = targetFiles t
+		srcDirs = t ^.. buildInfo . infoSourceDirsDef . each
 
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
@@ -105,11 +124,11 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDesc source of
 
 -- | Read project info from .cabal
 readProject :: FilePath -> IO Project
-readProject file = do
-	source <- readFile file
-	length source `seq` either (hsdevError . InspectCabalError file) (return . mkProject) $ analyzeCabal source
+readProject file' = do
+	source <- readFile file'
+	length source `seq` either (hsdevError . InspectCabalError file') (return . mkProject) $ analyzeCabal source
 	where
-		mkProject desc = (project file) {
+		mkProject desc = (project file') {
 			_projectDescription = Just desc }
 
 -- | Load project description

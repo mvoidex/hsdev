@@ -8,7 +8,7 @@ module HsDev.Sandbox (
 	-- * cabal-sandbox util
 	cabalSandboxLib, cabalSandboxPackageDb,
 
-	getModuleOpts,
+	getModuleOpts, getProjectTargetOpts,
 
 	getProjectSandbox,
 	getProjectPackageDbStack
@@ -36,7 +36,7 @@ import HsDev.PackageDb
 import HsDev.Project.Types
 import HsDev.Scan.Browse (browsePackages)
 import HsDev.Stack hiding (path)
-import HsDev.Symbols (moduleOpts)
+import HsDev.Symbols (moduleOpts, projectTargetOpts)
 import HsDev.Symbols.Types (moduleId, Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
@@ -164,6 +164,16 @@ getModuleOpts opts m = do
 	return $ concat [
 		packageDbStackOpts pdbs,
 		moduleOpts pkgs m,
+		opts]
+
+-- | Options for GHC for project target
+getProjectTargetOpts :: [String] -> Project -> Info -> GhcM [String]
+getProjectTargetOpts opts proj t = do
+	pdbs <- searchPackageDbStack $ view projectPath proj
+	pkgs <- browsePackages opts pdbs
+	return $ concat [
+		packageDbStackOpts pdbs,
+		projectTargetOpts pkgs proj t,
 		opts]
 
 -- | Get sandbox of project (if any)
