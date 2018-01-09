@@ -436,7 +436,7 @@ scanProjectFile opts cabal = runTask "scanning" cabal $ do
 -- | Refine project info and update if necessary
 refineProjectInfo :: UpdateMonad m => Project -> m Project
 refineProjectInfo proj = do
-	[(SQLite.Only exist)] <- SQLite.query "select count(*) > 1 from projects where cabal == ?;" (SQLite.Only (proj ^. projectCabal))
+	[(SQLite.Only exist)] <- SQLite.query "select count(*) > 0 from projects where cabal == ?;" (SQLite.Only (proj ^. projectCabal))
 	if exist
 		then SQLite.loadProject (proj ^. projectCabal)
 		else runTask "scanning" (proj ^. projectCabal) $ do

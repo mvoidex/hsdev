@@ -35,7 +35,7 @@ import Options.Applicative (info, progDesc)
 import System.Log.Simple hiding (Level(..), Message)
 import qualified System.Log.Simple.Base as Log (level_)
 import qualified System.Log.Simple as Log
-import Network.Socket hiding (connect)
+import Network.Socket
 import qualified Network.Socket.ByteString as Net (send)
 import qualified Network.Socket.ByteString.Lazy as Net (getContents)
 import System.FilePath
@@ -216,10 +216,9 @@ readCommand :: [String] -> Command
 readCommand = either error id . parseCommand
 
 sendServer :: Server -> CommandOptions -> [String] -> IO Result
-sendServer srv copts args = do
-	case parseCommand args of
-		Left e -> hsdevError $ RequestError e (unwords args)
-		Right c -> inServer srv (clientCommand copts c)
+sendServer srv copts args = case parseCommand args of
+	Left e -> hsdevError $ RequestError e (unwords args)
+	Right c -> inServer srv (clientCommand copts c)
 
 sendServer_ :: Server -> [String] -> IO Result
 sendServer_ srv = sendServer srv def
@@ -328,7 +327,7 @@ processClientSocket name s = do
 				when (sent > 0) $ sendAll sock (BS.drop sent bs)
 
 #if mingw32_HOST_OS
-data MmapFile = MmapFile String
+newtype MmapFile = MmapFile String
 
 instance ToJSON MmapFile where
 	toJSON (MmapFile f) = object ["file" .= f]

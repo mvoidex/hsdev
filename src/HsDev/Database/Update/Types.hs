@@ -3,7 +3,7 @@
 module HsDev.Database.Update.Types (
 	Status(..), Progress(..), Task(..),
 	UpdateOptions(..), updateTasks, updateGhcOpts, updateDocs, updateInfer,
-	UpdateState(..), updateOptions, updateChan, withUpdateState, sendUpdateAction,
+	UpdateState(..), updateOptions, updateWorker, withUpdateState, sendUpdateAction,
 	UpdateM(..), UpdateMonad,
 	taskName, taskStatus, taskSubjectType, taskSubjectName, taskProgress,
 
@@ -11,7 +11,6 @@ module HsDev.Database.Update.Types (
 	) where
 
 import Control.Applicative
-import qualified Control.Concurrent.Async as Async
 import Control.Lens (makeLenses)
 import Control.Monad.Base
 import Control.Monad.Catch
@@ -26,8 +25,7 @@ import Data.Default
 import Text.Format ((~~))
 import qualified System.Log.Simple as Log
 
-import Control.Concurrent.Util (sync)
-import qualified Control.Concurrent.FiniteChan as F
+import Control.Concurrent.Worker
 import HsDev.Database.SQLite
 import HsDev.Server.Types hiding (Command(..))
 import HsDev.Symbols
@@ -98,31 +96,33 @@ makeLenses ''UpdateOptions
 
 data UpdateState = UpdateState {
 	_updateOptions :: UpdateOptions,
-	_updateChan :: F.Chan (ServerM IO ()) }
+	_updateWorker :: Worker (ServerM IO) }
 
 makeLenses ''UpdateState
 
 withUpdateState :: SessionMonad m => UpdateOptions -> (UpdateState -> m a) -> m a
-withUpdateState uopts fn = bracket (liftIO F.newChan) (liftIO . F.closeChan) $ \ch -> do
+withUpdateState uopts fn = do
 	session <- getSession
-	th <- liftIO $ Async.async $ withSession session $ Log.component "sqlite" $ transaction_ Immediate $ do
-		Log.sendLog Log.Debug "updating sql database"
-		cts <- liftIO $ F.readChan ch
-		sequence_ $ map (handleAll logErr) cts
-		Log.sendLog Log.Debug "sql database updated"
-	r <- fn (UpdateState uopts ch)
-	liftIO $ liftIO $ F.closeChan ch
-	liftIO $ Async.wait th
-	return r
+	bracket (liftIO $ startWorker (withSession session . Log.component "sqlite" . Log.scope "update") enterTransaction (handleAll logErr)) (liftIO . joinWorker) $ \w ->
+		fn (UpdateState uopts w)
 	where
-		logErr e = Log.sendLog Log.Error ("exception in sql database updater: {}" ~~ displayException e)
+		enterTransaction act = do
+			Log.sendLog Log.Trace "entering sqlite transaction"
+			transaction_ Immediate $ do
+				Log.sendLog Log.Debug "updating sql database"
+				_ <- act
+				Log.sendLog Log.Debug "sql database updated"
+
+		logErr e = do
+			Log.sendLog Log.Error ("exception in sql database updater: {}" ~~ displayException e)
+			throwM e
 
 type UpdateMonad m = (CommandMonad m, MonadReader UpdateState m, MonadWriter [ModuleLocation] m)
 
 sendUpdateAction :: UpdateMonad m => ServerM IO () -> m ()
 sendUpdateAction act = do
-	ch <- asks _updateChan
-	sync $ \done -> liftIO $ F.putChan ch (act `finally` liftIO done)
+	w <- asks _updateWorker
+	liftIO $ inWorker w act
 
 newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateState (WriterT [ModuleLocation] (ClientM m)) a }
 	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask, Functor, MonadReader UpdateState, MonadWriter [ModuleLocation])

@@ -160,6 +160,19 @@ create table imports (
 
 create index imports_module_id_index on imports (module_id);
 
+create view imported_modules (
+	module_id,
+	module_name,
+	imported_id
+) as
+select i.module_id, i.module_name, im.id
+from imports as i, projects_modules_scope as ps, modules as im, modules as m
+where
+	i.module_id == m.id and
+	((ps.cabal is null and m.cabal is null) or (ps.cabal == m.cabal)) and
+	ps.module_id == im.id and
+	im.name == i.module_name;
+
 create table exports (
 	module_id integer,
 	symbol_id integer

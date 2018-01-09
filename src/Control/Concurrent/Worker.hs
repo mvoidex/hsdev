@@ -2,9 +2,9 @@
 
 module Control.Concurrent.Worker (
 	Worker(..), WorkerStopped(..),
-	startWorker, workerDone,
+	startWorker, workerAlive, workerAbort, workerDone,
 	sendTask, pushTask,
-	restartWorker, stopWorker, syncTask,
+	restartWorker, stopWorker, joinWorker, syncTask,
 	inWorkerWith, inWorker,
 
 	module Control.Concurrent.Async
@@ -14,7 +14,7 @@ import Control.Concurrent.MVar
 import Control.Monad.IO.Class
 import Control.Monad.Catch
 import Control.Monad.Except
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Typeable
 
 import Control.Concurrent.FiniteChan
@@ -50,6 +50,20 @@ startWorker run initialize wrap = do
 				when stopped (start >>= void . swapMVar taskVar)
 	return $ Worker ch wrap taskVar restart
 
+-- | Check whether worker alive
+workerAlive :: Worker m -> IO Bool
+workerAlive w = do
+	task <- readMVar $ workerTask w
+	isNothing <$> poll task
+
+-- | Abort all unconsumed tasks
+workerAbort :: Worker w -> IO ()
+workerAbort w = do
+	alive' <- workerAlive w
+	unless alive' $ fix $ \loop -> do
+		waiting <- fmap fst <$> liftIO (getChan $ workerChan w)
+		maybe (return ()) (\w' -> cancel w' >> loop) waiting
+
 workerDone :: Worker m -> IO Bool
 workerDone = doneChan . workerChan
 
@@ -76,8 +90,17 @@ restartWorker w = do
 	cancel async'
 	void $ waitCatch async'
 
+-- | Close worker channel
 stopWorker :: Worker m -> IO ()
 stopWorker = closeChan . workerChan
+
+-- | Stop worker and wait for it
+joinWorker :: Worker m -> IO ()
+joinWorker w = do
+	stopWorker w
+	async' <- readMVar $ workerTask w
+	void $ waitCatch async'
+	workerAbort w
 
 -- | Send empty task and wait until worker run it
 syncTask :: (MonadCatch m, MonadIO m) => Worker m -> IO ()

@@ -58,7 +58,7 @@ inverse = mconcat . map (uncurry dep) . concatMap inverse' . M.toList . _depsMap
 	inverse' :: (a, [a]) -> [(a, a)]
 	inverse' (m, ds) = zip ds (repeat m)
 
-data DepsError a =
+newtype DepsError a =
 	CyclicDeps [a]
 	-- ^ Dependency cycle, list is cycle, where last item depends on first
 		deriving (Eq, Ord, Read)

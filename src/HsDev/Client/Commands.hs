@@ -351,7 +351,9 @@ runCommand (CheckLint fs ghcs' clear) = toValue $ do
 	-- ensureUpToDate (Update.UpdateOptions [] ghcs' False False) fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
+			Log.sendLog Log.Trace $ "setting file source session for {}" ~~ file
 			m <- setFileSourceSession ghcs' file
+			Log.sendLog Log.Trace $ "file source session set"
 			inSessionGhc $ do
 				when clear $ clearTargets
 				fn m
