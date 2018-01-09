@@ -33,7 +33,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
-import Data.List (intercalate)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
@@ -308,7 +307,7 @@ scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ h
 	fpaths' <- traverse (liftIO . canonicalize) $ map (fileSource . fst) fsrcs
 	forM_ fpaths' $ \fpath' -> do
 		ex <- liftIO $ fileExists fpath'
-		when (not ex) $ hsdevError $ FileNotFound fpath'
+		unless ex $ hsdevError $ FileNotFound fpath'
 	mlocs <- forM fpaths' $ \fpath' -> do
 		mids <- SQLite.query (SQLite.toQuery $ SQLite.qModuleId `mappend` SQLite.where_ ["mu.file == ?"]) (SQLite.Only fpath')
 		if length mids > 1
@@ -430,7 +429,8 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project
 scanProjectFile opts cabal = runTask "scanning" cabal $ do
 	proj <- S.scanProjectFile opts cabal
-	sendUpdateAction $ Log.scope "scan-project-file" $ SQLite.updateProject proj Nothing
+	pdbs <- inSessionGhc $ getProjectPackageDbStack proj
+	sendUpdateAction $ Log.scope "scan-project-file" $ SQLite.updateProject proj (Just pdbs)
 	return proj
 
 -- | Refine project info and update if necessary
@@ -441,7 +441,8 @@ refineProjectInfo proj = do
 		then SQLite.loadProject (proj ^. projectCabal)
 		else runTask "scanning" (proj ^. projectCabal) $ do
 			proj' <- liftIO $ loadProject proj
-			sendUpdateAction $ Log.scope "refine-project-info" $ SQLite.updateProject proj' Nothing
+			pdbs <- inSessionGhc $ getProjectPackageDbStack proj'
+			sendUpdateAction $ Log.scope "refine-project-info" $ SQLite.updateProject proj' (Just pdbs)
 			return proj'
 
 -- | Get project info for module
@@ -506,7 +507,7 @@ scanDocs :: UpdateMonad m => [Module] -> m ()
 scanDocs = runTasks_ . map scanDocs' where
 	scanDocs' m = runTask "scanning docs" (view (moduleId . moduleLocation) m) $ Log.scope "docs" $ do
 		mid <- SQLite.lookupModule (m ^. moduleId)
-		mid' <- maybe (hsdevError $ SQLiteError $ "module id not found") return mid
+		mid' <- maybe (hsdevError $ SQLiteError "module id not found") return mid
 		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
 		Log.sendLog Log.Trace $ "Scanning docs for {}" ~~ view (moduleId . moduleLocation) m'
 		docsMap <- inSessionGhc $ do
@@ -525,7 +526,7 @@ inferModTypes :: UpdateMonad m => [Module] -> m ()
 inferModTypes = runTasks_ . map inferModTypes' where
 	inferModTypes' m = runTask "inferring types" (view (moduleId . moduleLocation) m) $ Log.scope "types" $ do
 		mid <- SQLite.lookupModule (m ^. moduleId)
-		mid' <- maybe (hsdevError $ SQLiteError $ "module id not found") return mid
+		mid' <- maybe (hsdevError $ SQLiteError "module id not found") return mid
 		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
 		Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view (moduleId . moduleLocation) m'
 
@@ -557,7 +558,7 @@ scan :: UpdateMonad m
 scan part' mlocs opts act = Log.scope "scan" $ do
 	mlocs' <- liftM (M.fromList . map (\((SQLite.Only mid) SQLite.:. (m SQLite.:. i)) -> (m, (mid, i)))) part'
 	let
-		obsolete = M.filterWithKey (\k _ -> k `S.notMember` (S.fromList $ map (^. _1) mlocs)) mlocs'
+		obsolete = M.filterWithKey (\k _ -> k `S.notMember` S.fromList (map (^. _1) mlocs)) mlocs'
 	changed <- liftIO $ S.changedModules (M.map snd mlocs') opts mlocs
 	sendUpdateAction $ Log.scope "scan/remove-obsolete" $ forM_ (M.elems obsolete) $ SQLite.removeModule . fst
 	act changed
@@ -575,7 +576,7 @@ processEvent handleEvents updaterTask eventsVar w e = Log.scope "event" $ do
 					Log.withLog l $ Log.sendLog Log.Trace "starting update thread"
 					A.async $ fix $ \loop -> do
 						updates <- modifyMVar eventsVar (\es -> return ([], es))
-						when (not $ null updates) $ handleEvents updates >> loop
+						unless (null updates) $ handleEvents updates >> loop
 				else return task
 
 updateEvents :: ServerMonadBase m => [(Watched, Event)] -> UpdateM m ()
