@@ -5,6 +5,7 @@ module HsDev.Symbols.Types (
 	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleImports, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
+	ScopeSymbol(..), scopeQualifier, scopeSymbol,
 	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, fresh, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
@@ -50,7 +51,7 @@ import HsDev.Symbols.Location
 import HsDev.Symbols.Documented
 import HsDev.Symbols.Parsed
 import HsDev.Types
-import HsDev.Util ((.::), (.::?), (.::?!), noNulls)
+import HsDev.Util ((.::), (.::?), (.::?!), noNulls, objectUnion)
 import System.Directory.Paths
 
 instance NFData l => NFData (ModuleName l) where
@@ -292,6 +293,23 @@ gwhat n v = do
 	s <- v .:: "what"
 	guard (s == n)
 
+-- | Symbol in scope with qualifier
+data ScopeSymbol = ScopeSymbol {
+	_scopeQualifier :: Maybe Text,
+	_scopeSymbol :: SymbolId }
+		deriving (Eq, Ord)
+
+instance Show ScopeSymbol where
+	show (ScopeSymbol q s) = maybe "" (\q' -> T.unpack q' ++ ".") q ++ show s
+
+instance ToJSON ScopeSymbol where
+	toJSON (ScopeSymbol q s) = toJSON s `objectUnion` object (noNulls ["qualifier" .= q])
+
+instance FromJSON ScopeSymbol where
+	parseJSON = withObject "scope-symbol" $ \v -> ScopeSymbol <$>
+		(v .::? "qualifier") <*>
+		parseJSON (Object v)
+
 -- | Symbol usage
 data SymbolUsage = SymbolUsage {
 	_symbolUsed :: Symbol,
@@ -476,6 +494,7 @@ instance Documented Symbol where
 makeLenses ''Module
 makeLenses ''Symbol
 makeLenses ''SymbolInfo
+makeLenses ''ScopeSymbol
 makeLenses ''SymbolUsage
 makeLenses ''Inspection
 makeLenses ''Inspected

@@ -279,7 +279,7 @@ runCommand (ResolveScopeModules sq fpath) = toValue $ do
 			(proj, likePattern sq)
 		_ -> fail "Impossible happened: several projects for one module"
 runCommand (ResolveScope sq fpath) = toValue $ do
-	rs <- query @_ @SymbolId (toQuery $ qSymbolId `mappend` select_ []
+	rs <- query @_ @(SymbolId :. Only (Maybe Text)) (toQuery $ qSymbolId `mappend` select_ ["sc.qualifier"]
 		["scopes as sc", "modules as srcm"]
 		[
 			"srcm.id == sc.module_id",
@@ -287,7 +287,7 @@ runCommand (ResolveScope sq fpath) = toValue $ do
 			"srcm.file == ?",
 			"s.name like ? escape '\\'"])
 		(fpath ^. path, likePattern sq)
-	return rs
+	return [ScopeSymbol q s | (s :. Only q) <- rs]
 runCommand (FindUsages nm) = toValue $ do
 	let
 		q = nameModule $ toName nm
