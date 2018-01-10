@@ -17,8 +17,10 @@ module HsDev.Server.Base (
 
 import Control.Concurrent
 import Control.Concurrent.Async
+import qualified Control.Concurrent.Chan as C
 import Control.Lens (set, traverseOf, view)
 import Control.Monad
+import Control.Monad.Loops
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Catch (bracket_, bracket, finally, handleAll)
@@ -69,13 +71,13 @@ import System.Posix.Files (removeLink)
 -- | Inits log chan and returns functions (print message, wait channel)
 initLog :: ServerOpts -> IO SessionLog
 initLog sopts = do
-	msgs <- F.newChan
+	msgs <- C.newChan
 	l <- newLog (logCfg [("", Log.level_ . T.pack . serverLogLevel $ sopts)]) $ concat [
 		[handler text coloredConsole | not $ serverSilent sopts],
 		[chaner msgs],
 		[handler text (file f) | f <- maybeToList (serverLog sopts)]]
 	let
-		listenLog = F.dupChan msgs >>= F.readChan
+		listenLog = C.dupChan msgs >>= C.getChanContents
 	return $ SessionLog l listenLog (stopLog l)
 
 -- | Run server
@@ -167,7 +169,7 @@ setupServer sopts = do
 												threadDelay 1000000
 												killThread me
 											liftIO $ void $ waitCatch waitAsync
-								liftIO $ F.putChan clientChan timeoutWait
+								liftIO $ void $ F.sendChan clientChan timeoutWait
 								processClientSocket (show addr') s'
 
 	Log.sendLog Log.Trace "waiting for starting accept thread..."
@@ -223,8 +225,8 @@ sendServer srv copts args = case parseCommand args of
 sendServer_ :: Server -> [String] -> IO Result
 sendServer_ srv = sendServer srv def
 
-chaner :: F.Chan Log.Message -> Consumer Log.Message
-chaner ch = return $ F.putChan ch
+chaner :: C.Chan Log.Message -> Consumer Log.Message
+chaner ch = return $ C.writeChan ch
 
 findPath :: MonadIO m => CommandOptions -> FilePath -> m FilePath
 findPath copts f = liftIO $ canonicalize (normalise f') where
@@ -257,10 +259,9 @@ processClient name rchan send' = do
 				ellipsis str
 					| length str < 100 = str
 					| otherwise = take 100 str ++ "..."
-	-- flip finally (disconnected linkVar) $ forever $ Log.scopeLog (commandLogger copts) (T.pack name) $ do
-	reqs <- liftIO $ F.readChan rchan
+
 	flip finally (disconnected linkVar) $
-		forM_ reqs $ \req' -> do
+		whileJust_ (liftIO $ F.getChan rchan) $ \req' -> do
 			Log.sendLog Log.Trace $ "received >> {}" ~~ fromUtf8 req'
 			case decodeMessage req' of
 				Left em -> do
@@ -310,7 +311,7 @@ processClientSocket :: SessionMonad m => String -> Socket -> m ()
 processClientSocket name s = do
 	recvChan <- liftIO F.newChan
 	fork $ finally
-		(Net.getContents s >>= mapM_ (F.putChan recvChan) . L.lines)
+		(Net.getContents s >>= mapM_ (F.sendChan recvChan) . L.lines)
 		(F.closeChan recvChan)
 	processClient name recvChan (sendLine s)
 	where

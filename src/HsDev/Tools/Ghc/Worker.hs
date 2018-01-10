@@ -243,7 +243,7 @@ logToChan :: Chan (Note OutputMessage) -> LogAction
 logToChan ch fs sev src msg
 	| Just sev' <- checkSev sev = do
 		src' <- canonicalize srcMod
-		putChan ch Note {
+		void $ sendChan ch Note {
 			_noteSource = src',
 			_noteRegion = spanRegion src,
 			_noteLevel = Just sev',
