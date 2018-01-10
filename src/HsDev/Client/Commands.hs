@@ -432,6 +432,12 @@ runCommand Flags = toValue $ return ["-f" ++ prefix ++ f |
 	f <- Compat.flags,
 	prefix <- ["", "no-"]]
 runCommand (Link hold) = toValue $ commandLink >> when hold commandHold
+runCommand StopGhc = toValue $ do
+	inSessionGhc $ do
+		ms <- findSessionBy (const True)
+		forM_ ms $ \s -> do
+			Log.sendLog Log.Trace $ "stopping session: {}" ~~ s
+			deleteSession s
 runCommand Exit = toValue serverExit
 
 -- TODO: Implement `targetFilter` for sql

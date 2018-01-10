@@ -64,7 +64,7 @@ import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
 import HsDev.Util (ordNub, fromJSON')
 import qualified HsDev.Util as Util (withCurrentDirectory)
-import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..), serverSources, serverUpdateSources)
+import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..))
 import HsDev.Server.Message
 import HsDev.Database.Update.Types
 import HsDev.Watcher
@@ -200,51 +200,18 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			Just proj -> sendUpdateAction $ SQLite.updateProject proj (Just pdbs)
 			Nothing -> return ()
 		updater $ ms' ^.. each . _1
-		srcs <- serverSources
 		defines <- askSession sessionDefines
-		-- Make table of already scanned and up to date modules
-		let
-			isActual (_, _, Just _) = return Nothing
-			isActual (mloc, mopts, Nothing) = case findParsedSource mloc of
-				Nothing -> return Nothing
-				Just parsed' -> do
-					modId <- SQLite.lookupModuleLocation mloc
-					case modId of
-						Nothing -> return Nothing
-						Just modId' -> do
-							[insp] <- SQLite.query "select inspection_time, inspection_opts from modules as m where m.id == ?;" (SQLite.Only modId')
-							insp' <- liftIO $ case mloc of
-								FileModule p' _ -> fileInspection p' (opts ++ mopts)
-								InstalledModule{} -> installedInspection (opts ++ mopts)
-								_ -> return InspectionNone
-							if fresh insp insp'
-								then do
-									m' <- SQLite.loadModule modId'
-									return $ Just (mloc, set moduleSource (Just parsed') m')
-								else return Nothing
-
-			findParsedSource :: ModuleLocation -> Maybe Parsed
-			findParsedSource mloc' = do
-				mfile' <- mloc' ^? moduleFile
-				srcs ^? ix mfile'
-
-		alreadyScanned <- liftM (M.fromList . catMaybes) $ traverse isActual ms'
 
 		let
 			inspectionInfos = M.fromList
 				[(mloc, sourceInspection mfile mcts (opts ++ mopts)) |
 					(mloc, mopts, mcts) <- ms',
 					mfile <- mloc ^.. moduleFile]
-			dropScope (N.Scoped _ v) = v
 			pload (mloc, mopts, mcts) = runTask "preloading" mloc $
-				case alreadyScanned ^? ix mloc of
-					Nothing -> do
-						p <- liftIO $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts
-						return (p, True)
-					Just m' -> return (Preloaded (m' ^. moduleId) H.defaultParseMode (fmap dropScope $ m' ^?! moduleSource . _Just) mempty, False)
+				liftIO $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts
 
 		ploaded <- runTasks (map pload ms')
-		mlocs' <- forM (map fst $ filter snd ploaded) $ \p -> do
+		mlocs' <- forM ploaded $ \p -> do
 			let
 				mloc = p ^. preloadedId . moduleLocation
 			insp <- liftIO $ inspectionInfos ^?! ix mloc
@@ -253,9 +220,6 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			sendUpdateAction $ Log.scope "preloaded" $ SQLite.updateModule inspectedMod
 			return mloc
 		updater mlocs'
-
-		let
-			pmods = map fst ploaded
 
 		(sqlMods', sqlAenv') <- do
 			let
@@ -267,7 +231,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			return (sqlMods', mconcat (map moduleAnalyzeEnv sqlMods'))
 
 		Log.sendLog Log.Trace $ "resolving environment: {} modules" ~~ length sqlMods'
-		case order pmods of
+		case order ploaded of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
 				ms'' <- flip evalStateT sqlAenv' $ runTasks (map inspect' ordered)
@@ -278,8 +242,6 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 					let
 						inspectedMod = Inspected insp mloc mempty (Right m)
 					sendUpdateAction $ Log.scope "resolved" $ SQLite.updateModule inspectedMod
-					Log.scope "update-sources" $ do
-						void $ traverse (serverUpdateSources . uncurry M.insert) ((,) <$> (mloc ^? moduleFile) <*> (m ^. moduleSource))
 					return mloc
 				updater mlocs''
 				where
@@ -287,9 +249,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 						aenv <- get
 						let
 							mloc = pmod ^. preloadedId . moduleLocation
-						m <- either (hsdevError . InspectError) eval $ case alreadyScanned ^? ix mloc of
-							Nothing -> analyzePreloaded aenv pmod
-							Just m' -> Right $ analyzeResolve aenv m'
+						m <- either (hsdevError . InspectError) eval $ analyzePreloaded aenv pmod
 						modify (mappend (moduleAnalyzeEnv m))
 						return m
 	grouped = M.toList $ M.unionsWith (++) [M.singleton (m ^? _1 . moduleProject . _Just) [m] | m <- ms]

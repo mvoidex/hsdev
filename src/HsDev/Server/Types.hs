@@ -2,10 +2,10 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Types (
-	ServerMonadBase, ParsedSources,
+	ServerMonadBase,
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
-	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverSources, serverUpdateSources,
+	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients,
 	serverSqlDatabase, openSqlConnection, closeSqlConnection, withSqlConnection, withSqlTransaction, serverSetFileContents, inSessionGhc, inSessionUpdater, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
@@ -59,15 +59,12 @@ import System.Win32.FileMapping.NamePool (Pool)
 
 type ServerMonadBase m = (MonadIO m, MonadMask m, MonadBaseControl IO m, Alternative m, MonadPlus m)
 
-type ParsedSources = Map Path Parsed
-
 data SessionLog = SessionLog {
 	sessionLogger :: Log,
 	sessionListenLog :: IO [Log.Message],
 	sessionLogWait :: IO () }
 
 data Session = Session {
-	sessionSources :: MVar ParsedSources,
 	sessionSqlDatabase :: SQL.Connection,
 	sessionSqlPath :: String,
 	sessionLog :: SessionLog,
@@ -201,16 +198,6 @@ serverWaitClients :: SessionMonad m => m ()
 serverWaitClients = do
 	clientChan <- askSession sessionClients
 	liftIO (F.stopChan clientChan) >>= sequence_ . map liftIO
-
--- | Get parsed sources
-serverSources :: SessionMonad m => m ParsedSources
-serverSources = askSession sessionSources >>= liftIO . readMVar
-
--- | Update parsed sources
-serverUpdateSources :: SessionMonad m => (ParsedSources -> ParsedSources) -> m ()
-serverUpdateSources fn = do
-	mvar <- askSession sessionSources
-	liftIO $ modifyMVar_ mvar (return . fn)
 
 -- | Get sql connection
 serverSqlDatabase :: SessionMonad m => m SQL.Connection
@@ -482,6 +469,7 @@ data Command =
 	Langs |
 	Flags |
 	Link { linkHold :: Bool } |
+	StopGhc |
 	Exit
 		deriving (Show)
 
@@ -592,6 +580,7 @@ instance FromCmd Command where
 		cmd "langs" "ghc language options" (pure Langs),
 		cmd "flags" "ghc flags" (pure Flags),
 		cmd "link" "link to server" (Link <$> holdFlag),
+		cmd "stop-ghc" "stop ghc sessions" (pure StopGhc),
 		cmd "exit" "exit" (pure Exit)]
 
 instance FromCmd FileSource where
@@ -710,6 +699,7 @@ instance ToJSON Command where
 	toJSON Langs = cmdJson "langs" []
 	toJSON Flags = cmdJson "flags" []
 	toJSON (Link h) = cmdJson "link" ["hold" .= h]
+	toJSON StopGhc = cmdJson "stop-ghc" []
 	toJSON Exit = cmdJson "exit" []
 
 instance FromJSON Command where
@@ -762,6 +752,7 @@ instance FromJSON Command where
 		guardCmd "langs" v *> pure Langs,
 		guardCmd "flags" v *> pure Flags,
 		guardCmd "link" v *> (Link <$> (v .:: "hold" <|> pure False)),
+		guardCmd "stop-ghc" v *> pure StopGhc,
 		guardCmd "exit" v *> pure Exit]
 
 instance ToJSON FileSource where

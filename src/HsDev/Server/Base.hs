@@ -85,7 +85,6 @@ initLog sopts = do
 runServer :: ServerOpts -> ServerM IO () -> IO ()
 runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.withWatcher $ \watcher -> withLog (sessionLogger slog) $ do
 	waitSem <- liftIO $ newQSem 0
-	srcs <- liftIO $ newMVar mempty
 	sqlDb <- liftIO $ SQLite.initialize (fromMaybe SQLite.sharedMemory $ serverDbFile sopts)
 	clientChan <- liftIO F.newChan
 #if mingw32_HOST_OS
@@ -104,7 +103,6 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 		uw <- startWorker (withSession sess . withSqlConnection) id logAll
 
 		return $ Session
-			srcs
 			sqlDb
 			(fromMaybe SQLite.sharedMemory $ serverDbFile sopts)
 			slog
