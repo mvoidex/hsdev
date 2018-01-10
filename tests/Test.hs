@@ -37,7 +37,7 @@ main :: IO ()
 main = hspec $ do
 	describe "scan project" $ do
 		dir <- runIO getCurrentDirectory
-		s <- runIO $ startServer (def { serverSilent = True })
+		s <- runIO $ startServer_ (def { serverSilent = True })
 		it "should load data" $ do
 			inserts <- liftM lines $ readFile (dir </> "tests/data/base.sql")
 			inServer s $ mapM_ (execute_ . fromString) inserts
@@ -48,7 +48,7 @@ main = hspec $ do
 			exports one `shouldBe` mkSet ["test", "newChan", "untypedFoo"]
 			two <- send s ["module", "ModuleTwo", "--exact"]
 			exports two `shouldBe` mkSet ["untypedFoo", "twice", "overloadedStrings"]
-		it "should pass extensions when checkings" $ do
+		it "should pass extensions when checks" $ do
 			checks <- send s ["check", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
 			(checks ^.. traverseArray . key "level" . _Just) `shouldSatisfy` (("error" :: String) `notElem`)
 		it "should return types and docs" $ do
@@ -64,6 +64,16 @@ main = hspec $ do
 				exprs = do
 					note' <- ts ^.. traverseArray . key "note"
 					return (note' ^. key "expr" . _Just, note' ^. key "type" . _Just)
-			lookup "untypedFoo x y = x + y" exprs `shouldBe` Just "a -> a -> a" -- FIXME: Where's Num constraint?
+			lookup "untypedFoo" exprs `shouldBe` Just "a -> a -> a" -- FIXME: Where's Num constraint?
+		it "should return symbol under location" $ do
+			_ <- send s ["infer", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
+			who' <- send s ["whoat", "13", "15", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
+			let
+				whoName :: Maybe String
+				whoName = who' ^. traverseArray . key "id" . key "name"
+				whoType :: Maybe String
+				whoType = who' ^. traverseArray . key "info" . key "type"
+			whoName `shouldBe` Just "f"
+			whoType `shouldBe` Just "a -> a"
 		_ <- runIO $ send s ["exit"]
 		return ()
