@@ -6,7 +6,7 @@ module HsDev.Server.Types (
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
 	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients, serverSources, serverUpdateSources,
-	serverSqlDatabase, openSqlConnection, closeSqlConnection, withSqlConnection, withSqlTransaction, serverSetFileContents, inSessionGhc, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	serverSqlDatabase, openSqlConnection, closeSqlConnection, withSqlConnection, withSqlTransaction, serverSetFileContents, inSessionGhc, inSessionUpdater, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -77,6 +77,7 @@ data Session = Session {
 	sessionMmapPool :: Maybe Pool,
 #endif
 	sessionGhc :: GhcWorker,
+	sessionUpdater :: Worker (ServerM IO),
 	sessionExit :: IO (),
 	sessionWait :: IO (),
 	sessionClients :: F.Chan (IO ()),
@@ -248,6 +249,12 @@ inSessionGhc :: SessionMonad m => GhcM a -> m a
 inSessionGhc act = do
 	ghcw <- askSession sessionGhc
 	inWorkerWith (hsdevError . GhcError . displayException) ghcw act
+
+-- | In updater
+inSessionUpdater :: SessionMonad m => ServerM IO a -> m a
+inSessionUpdater act = do
+	uw <- askSession sessionUpdater
+	inWorkerWith (hsdevError . OtherError . displayException) uw act
 
 -- | Exit session
 serverExit :: SessionMonad m => m ()

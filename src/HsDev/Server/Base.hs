@@ -41,6 +41,7 @@ import Network.Socket
 import qualified Network.Socket.ByteString as Net (send)
 import qualified Network.Socket.ByteString.Lazy as Net (getContents)
 import System.FilePath
+import System.IO
 import Text.Format ((~~))
 
 import Control.Concurrent.Util
@@ -92,13 +93,17 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 #endif
 	ghcw <- ghcWorker
 	defs <- liftIO getDefines
-	let
-		setFileCts fpath mcts = do
-			tm <- getPOSIXTime
-			withSession session $ SQLite.execute "update file_contents set contents = ?, mtime = ? where file = ?;" (mcts, (fromRational (toRational tm) :: Double), fpath)
-			writeChan (W.watcherChan watcher) (W.WatchedModule, W.Event W.Modified (view path fpath) tm)
 
-		session = Session
+	session <- liftIO $ fixIO $ \sess -> do
+		let
+			setFileCts fpath mcts = do
+				tm <- getPOSIXTime
+				withSession sess $ SQLite.execute "update file_contents set contents = ?, mtime = ? where file = ?;" (mcts, (fromRational (toRational tm) :: Double), fpath)
+				writeChan (W.watcherChan watcher) (W.WatchedModule, W.Event W.Modified (view path fpath) tm)
+
+		uw <- startWorker (withSession sess . withSqlConnection) id logAll
+
+		return $ Session
 			srcs
 			sqlDb
 			(fromMaybe SQLite.sharedMemory $ serverDbFile sopts)
@@ -109,18 +114,20 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 			mmapPool
 #endif
 			ghcw
+			uw
 			(do
 				withLog (sessionLogger slog) $ Log.sendLog Log.Trace "stopping server"
 				signalQSem waitSem)
 			(waitQSem waitSem)
 			clientChan
 			defs
+
 	_ <- fork $ do
 		emptyTask <- async $ return ()
 		updaterTask <- newMVar emptyTask
 		tasksVar <- newMVar []
 		Update.onEvents_ watcher $ \evs -> withSession session $
-			void $ Client.runClient def $ Update.processEvents (withSession session . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar evs
+			void $ Client.runClient def $ Update.processEvents (withSession session . inSessionUpdater . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar evs
 	liftIO $ runReaderT (runServerM $ watchDb >> act) session
 
 -- | Set initial watch: package-dbs, projects and standalone sources

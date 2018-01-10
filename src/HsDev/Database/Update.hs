@@ -78,7 +78,7 @@ childTask :: UpdateMonad m => Task -> m a -> m a
 childTask t = local (over (updateOptions . updateTasks) (t:))
 
 runUpdate :: ServerMonadBase m => UpdateOptions -> UpdateM m a -> ClientM m a
-runUpdate uopts act = Log.scope "update" $ withSqlConnection $ do
+runUpdate uopts act = Log.scope "update" $ do
 	(r, updatedMods) <- withUpdateState uopts $ \ust ->
 		runWriterT (runUpdateM act' `runReaderT` ust)
 	Log.sendLog Log.Debug $ "updated {} modules" ~~ length updatedMods
@@ -197,7 +197,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 	scanModules' mproj ms' = do
 		pdbs <- maybe (return userDb) (inSessionGhc . getProjectPackageDbStack) mproj
 		case mproj of
-			Just proj -> sendUpdateAction $ Log.scope "scan-modules" $ SQLite.updateProject proj (Just pdbs)
+			Just proj -> sendUpdateAction $ SQLite.updateProject proj (Just pdbs)
 			Nothing -> return ()
 		updater $ ms' ^.. each . _1
 		srcs <- serverSources
@@ -250,7 +250,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			insp <- liftIO $ inspectionInfos ^?! ix mloc
 			let
 				inspectedMod = Inspected insp mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
-			sendUpdateAction $ Log.scope "scan-modules/preloaded" $ SQLite.updateModule inspectedMod
+			sendUpdateAction $ Log.scope "preloaded" $ SQLite.updateModule inspectedMod
 			return mloc
 		updater mlocs'
 
@@ -277,7 +277,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 					insp <- liftIO $ inspectionInfos ^?! ix mloc
 					let
 						inspectedMod = Inspected insp mloc mempty (Right m)
-					sendUpdateAction $ Log.scope "scan-modules/resolved" $ SQLite.updateModule inspectedMod
+					sendUpdateAction $ Log.scope "resolved" $ SQLite.updateModule inspectedMod
 					Log.scope "update-sources" $ do
 						void $ traverse (serverUpdateSources . uncurry M.insert) ((,) <$> (mloc ^? moduleFile) <*> (m ^. moduleSource))
 					return mloc
@@ -374,7 +374,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 				Log.sendLog Log.Trace "docs scanned"
 				docsTbl <- newLookupTable
 				ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
-				sendUpdateAction $ Log.scope "scan-package-db" $ do
+				sendUpdateAction $ do
 					mapM_ SQLite.updateModule ms'
 					SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
 				updater $ ms' ^.. each . inspectedKey
@@ -420,7 +420,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 				docsTbl <- newLookupTable
 				ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
 
-				sendUpdateAction $ Log.scope "scan-package-db-stack" $ do
+				sendUpdateAction $ do
 					mapM_ SQLite.updateModule ms'
 					sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
 
@@ -517,7 +517,7 @@ scanDocs = runTasks_ . map scanDocs' where
 			-- Calling haddock with targets set sometimes cause errors
 			haddockSession opts'
 			liftGhc $ readModuleDocs opts' m'
-		sendUpdateAction $ Log.scope "scan-docs" $ do
+		sendUpdateAction $ do
 			SQLite.executeMany "update symbols set docs = ? where name == ? and module_id == ?;"
 				[(doc, nm, mid') | (nm, doc) <- maybe [] M.toList docsMap]
 			SQLite.execute "update modules set tags = json_set(tags, '$.docs', 1) where id == ?;" (SQLite.Only mid')
@@ -536,7 +536,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 			targetSession opts' m'
 			fileTypes m' Nothing
 
-		sendUpdateAction $ Log.scope "infer-types" $ do
+		sendUpdateAction $ do
 			SQLite.withTemporaryTable "inferred_types" ["line", "column", "line_to", "column_to", "type"] $ do
 				SQLite.executeMany "insert into inferred_types values (?, ?, ?, ?, ?);" [
 					view noteRegion n' SQLite.:. (SQLite.Only $ view (note . typedType) n') | n' <- types']
@@ -561,7 +561,7 @@ scan part' mlocs opts act = Log.scope "scan" $ do
 	let
 		obsolete = M.filterWithKey (\k _ -> k `S.notMember` S.fromList (map (^. _1) mlocs)) mlocs'
 	changed <- liftIO $ S.changedModules (M.map snd mlocs') opts mlocs
-	sendUpdateAction $ Log.scope "scan/remove-obsolete" $ forM_ (M.elems obsolete) $ SQLite.removeModule . fst
+	sendUpdateAction $ Log.scope "remove-obsolete" $ forM_ (M.elems obsolete) $ SQLite.removeModule . fst
 	act changed
 
 processEvents :: ([(Watched, Event)] -> IO ()) -> MVar (A.Async ()) -> MVar [(Watched, Event)] -> [(Watched, Event)] -> ClientM IO ()

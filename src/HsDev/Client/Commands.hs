@@ -10,6 +10,7 @@ import Control.Concurrent.MVar
 import Control.Exception (displayException)
 import Control.Lens hiding ((.=), (<.>))
 import Control.Monad
+import Control.Monad.Morph
 import Control.Monad.Except
 import Control.Monad.Reader
 import qualified Control.Monad.State as State
@@ -555,10 +556,13 @@ findProject proj = do
 			| otherwise = over path (\p' -> p' </> (takeBaseName p' <.> "cabal")) p
 
 -- | Run DB update action
-updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM m ()] -> ClientM m ()
-updateProcess uopts = mapM_ (Update.runUpdate uopts . runAct) where
-	runAct act = catch act onError
-	onError e = Log.sendLog Log.Error $ "{}" ~~ (e :: HsDevError)
+updateProcess :: ServerMonadBase m => Update.UpdateOptions -> [Update.UpdateM IO ()] -> ClientM m ()
+updateProcess uopts acts = hoist liftIO $ do
+	copts <- getOptions
+	inSessionUpdater $ hoist (flip runReaderT copts) $ runClientM $ mapM_ (Update.runUpdate uopts . runAct) acts
+	where
+		runAct act = catch act onError
+		onError e = Log.sendLog Log.Error $ "{}" ~~ (e :: HsDevError)
 
 -- | Ensure file is up to date
 -- ensureUpToDate :: ServerMonadBase m => Update.UpdateOptions -> [FileSource] -> ClientM m ()
