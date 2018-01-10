@@ -21,7 +21,7 @@ import Control.Lens (set, traverseOf, view)
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader
-import Control.Monad.Catch (bracket_, bracket, finally)
+import Control.Monad.Catch (bracket_, bracket, finally, handleAll)
 import Data.Aeson hiding (Result, Error)
 import Data.Default
 import qualified Data.ByteString.Char8 as BS
@@ -186,11 +186,11 @@ shutdownServer sopts = do
 	Log.sendLog Log.Info "server stopped"
 
 startServer :: ServerOpts -> IO Server
-startServer sopts = startWorker (runServer sopts) (bracket_ (setupServer sopts) (shutdownServer sopts)) id
+startServer sopts = startWorker (runServer sopts) (bracket_ (setupServer sopts) (shutdownServer sopts)) logAll
 
 -- Tiny version with no network stuff
 startServer_ :: ServerOpts -> IO Server
-startServer_ sopts = startWorker (runServer sopts) id id
+startServer_ sopts = startWorker (runServer sopts) id logAll
 
 stopServer :: Server -> IO ()
 stopServer s = sendServer_ s ["exit"] >> stopWorker s

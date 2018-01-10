@@ -16,6 +16,7 @@ module HsDev.Util (
 	(.::), (.::?), (.::?!), objectUnion, noNulls, fromJSON',
 	-- * Exceptions
 	liftException, liftE, tries, triesMap, liftExceptionM, liftIOErrors,
+	logAll,
 	-- * UTF-8
 	fromUtf8, toUtf8, readFileUtf8, writeFileUtf8,
 	-- * IO
@@ -61,6 +62,7 @@ import qualified Distribution.Text (Text)
 import Options.Applicative
 import qualified System.Directory as Dir
 import System.FilePath
+import System.Log.Simple
 import System.IO
 import Text.Format
 import Text.Read (readMaybe)
@@ -224,6 +226,11 @@ liftExceptionM act = C.catch act onError where
 -- | Lift IO exceptions to ExceptT
 liftIOErrors :: C.MonadCatch m => ExceptT String m a -> ExceptT String m a
 liftIOErrors act = liftException (runExceptT act) >>= either throwError return
+
+-- | Log exceptions and ignore
+logAll :: (MonadLog m, C.MonadCatch m) => m () -> m ()
+logAll = C.handleAll logExc' where
+	logExc' e = sendLog Warning $ "exception: {}" ~~ displayException e
 
 fromUtf8 :: ByteString -> String
 fromUtf8 = T.unpack . T.decodeUtf8

@@ -30,7 +30,7 @@ import HsDev.Database.SQLite
 import HsDev.Server.Types hiding (Command(..))
 import HsDev.Symbols
 import HsDev.Types
-import HsDev.Util ((.::))
+import HsDev.Util ((.::), logAll)
 
 data Status = StatusWorking | StatusOk | StatusError HsDevError
 
@@ -103,7 +103,7 @@ makeLenses ''UpdateState
 withUpdateState :: SessionMonad m => UpdateOptions -> (UpdateState -> m a) -> m a
 withUpdateState uopts fn = do
 	session <- getSession
-	bracket (liftIO $ startWorker (withSession session . Log.component "sqlite" . Log.scope "update") enterTransaction (handleAll logErr)) (liftIO . joinWorker) $ \w ->
+	bracket (liftIO $ startWorker (withSession session . Log.component "sqlite" . Log.scope "update") enterTransaction logAll) (liftIO . joinWorker) $ \w ->
 		fn (UpdateState uopts w)
 	where
 		enterTransaction act = do
@@ -112,10 +112,6 @@ withUpdateState uopts fn = do
 				Log.sendLog Log.Debug "updating sql database"
 				_ <- act
 				Log.sendLog Log.Debug "sql database updated"
-
-		logErr e = do
-			Log.sendLog Log.Error ("exception in sql database updater: {}" ~~ displayException e)
-			throwM e
 
 type UpdateMonad m = (CommandMonad m, MonadReader UpdateState m, MonadWriter [ModuleLocation] m)
 

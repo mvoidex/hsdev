@@ -43,7 +43,7 @@ import qualified System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Format hiding (withFlags)
 
-import Exception (ExceptionMonad(..))
+import Exception (ExceptionMonad(..), ghandle)
 import GHC hiding (Warning, Module)
 import GHC.Paths
 import Outputable
@@ -98,7 +98,10 @@ runGhcM dir act = do
 ghcWorker :: MonadLog m => m GhcWorker
 ghcWorker = do
 	l <- Log.askLog
-	liftIO $ startWorker (withLog l . runGhcM (Just libdir)) id (Log.scope "ghc")
+	liftIO $ startWorker (withLog l . runGhcM (Just libdir)) (Log.scope "ghc") (ghandle logErr)
+	where
+		logErr :: MonadLog m => SomeException -> m ()
+		logErr e = Log.sendLog Log.Warning ("exception in ghc worker task: {}" ~~ displayException e)
 
 -- | Create session with options
 workerSession :: SessionType -> [String] -> GhcM ()

@@ -416,7 +416,7 @@ runCommand (GhcEval exprs mfile) = toValue $ do
 		Just (FileSource f mcts) -> do
 			m <- setFileSourceSession [] f
 			inSessionGhc $ interpretModule m mcts
-	async' <- liftIO $ pushTask ghcw $ do
+	async' <- liftIO $ sendTask ghcw $ do
 		mapM (try . evaluate) exprs
 	res <- waitAsync async'
 	return $ map toValue' res
