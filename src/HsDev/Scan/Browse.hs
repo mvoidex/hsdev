@@ -5,7 +5,6 @@ module HsDev.Scan.Browse (
 	listModules, browseModules, browseModules',
 	-- * Helpers
 	readPackage, readPackageConfig, ghcModuleLocation,
-	packageDbCandidate, packageDbCandidate_,
 	packageConfigs, packageDbModules, lookupModule_,
 	modulesPackages, modulesPackagesGroups,
 
@@ -218,46 +217,6 @@ ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (re
 ghcModuleId :: GHC.PackageConfig -> GHC.Module -> ModuleId
 ghcModuleId p m = ModuleId (fromString mname') (ghcModuleLocation p m) where
 	mname' = GHC.moduleNameString $ GHC.moduleName m
-
--- | Get package-db for package library directory
--- Haskish way
--- global-db - library is in <path>/lib/<package> and there exists <path>/lib/package.conf.d
--- user-db - library is in cabal user directory
--- package-db
---   cabal-sandbox - library in .../.cabal-sandbox/.../<platform-ghc-ver>/<package>
---     then package-db is .../.cabal-sandbox/<platform-ghc-ver>-package.conf.d
---   stack (snapshots or .stack-work) - library in <path>/lib/<platform-ghc-ver>/<package>
---     then package-db is <path>/pkgdb
-packageDbCandidate :: FilePath -> IO (Maybe PackageDb)
-packageDbCandidate fpath = liftM Just (msum [global', user', sandbox', stack']) `mplus` return Nothing where
-	global' = do
-		guard (takeFileName (takeDirectory fpath') == "lib")
-		guardExist (takeDirectory fpath' </> "package.conf.d")
-		return GlobalDb
-	user' = do
-		cabalDir <- getAppUserDataDirectory "cabal"
-		guard (splitDirectories cabalDir `isPrefixOf` splitDirectories fpath')
-		return UserDb
-	sandbox' = do
-		guard (".cabal-sandbox" `elem` splitDirectories fpath')
-		let
-			sandboxPath = joinPath $ reverse $ dropWhile (/= ".cabal-sandbox") $ reverse $ splitDirectories fpath'
-			platform = takeFileName (takeDirectory fpath')
-			dbPath = sandboxPath </> (platform ++ "-packages.conf.d")
-		guardExist dbPath
-		return $ PackageDb $ fromFilePath dbPath
-	stack' = do
-		guard (takeFileName (takeDirectory (takeDirectory fpath')) == "lib")
-		let
-			pkgDb = takeDirectory (takeDirectory $ takeDirectory fpath') </> "pkgdb"
-		guardExist pkgDb
-		return $ PackageDb $ fromFilePath pkgDb
-	guardExist = doesDirectoryExist >=> guard
-	fpath' = normalise fpath
-
--- | Use global as default
-packageDbCandidate_ :: FilePath -> IO PackageDb
-packageDbCandidate_ = packageDbCandidate >=> maybe (return GlobalDb) return
 
 packageConfigs :: GhcM [GHC.PackageConfig]
 packageConfigs = liftM (fromMaybe [] . pkgDatabase) GHC.getSessionDynFlags
