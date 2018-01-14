@@ -3,7 +3,8 @@
 module HsDev.Inspect (
 	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded, preload,
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
-	analyzeResolve, analyzePreloaded, inspectDocs, readDocs, readModuleDocs, readProjectTargetDocs, inspectDocsGhc,
+	analyzeResolve, analyzePreloaded,
+	inspectDocs, readDocs, readModuleDocs, readProjectTargetDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, sourceInspection, fileInspection, fileContentsInspection, installedInspection, moduleInspection,
 	projectDirs, projectSources,
@@ -75,11 +76,13 @@ asModule = lens g' s' where
 	g' p = Module {
 		_moduleId = _preloadedId p,
 		_moduleDocs = Nothing,
-		_moduleImports = mempty,
+		_moduleImports = map (fromModuleName_ . void . H.importModule) idecls,
 		_moduleExports = mempty,
 		_moduleFixities = mempty,
 		_moduleScope = mempty,
 		_moduleSource = Just $ fmap (N.Scoped N.None) $ _preloadedModule p }
+		where
+			H.Module _ _ _ idecls _ = _preloadedModule p
 	s' p m = p {
 		_preloadedId = _moduleId m,
 		_preloadedModule = maybe (_preloadedModule p) dropScope (_moduleSource m) }

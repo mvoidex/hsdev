@@ -23,7 +23,7 @@ import Control.Monad
 import Control.Monad.Loops
 import Control.Monad.Except
 import Control.Monad.Reader
-import Control.Monad.Catch (bracket_, bracket, finally, handleAll)
+import Control.Monad.Catch (bracket_, bracket, finally)
 import Data.Aeson hiding (Result, Error)
 import Data.Default
 import qualified Data.ByteString.Char8 as BS
