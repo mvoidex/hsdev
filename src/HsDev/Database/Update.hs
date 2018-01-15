@@ -11,6 +11,7 @@ module HsDev.Database.Update (
 	postStatus, updater, runTask, runTasks, runTasks_,
 
 	scanModules, scanFile, scanFiles, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
+	scanPackageDbStackDocs,
 	scanDocs, inferModTypes,
 	scan,
 	processEvents, updateEvents, applyUpdates,
@@ -330,14 +331,14 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 				packageDbMods' = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only (topPackageDb pdbs))
 			scan packageDbMods' ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
-				docs <- inSessionGhc $ hdocsCabal pdbs opts
-				Log.sendLog Log.Trace "docs scanned"
-				docsTbl <- newLookupTable
-				ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
+				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 				sendUpdateAction $ do
-					mapM_ SQLite.updateModule ms'
+					mapM_ SQLite.updateModule ms
 					SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
-				updater $ ms' ^.. each . inspectedKey
+
+				scanPackageDbStackDocs opts pdbs
+
+				updater $ ms ^.. each . inspectedKey
 
 -- | Scan top of package-db stack, usable for rescan
 scanPackageDbStack :: UpdateMonad m => [String] -> PackageDbStack -> m ()
@@ -362,6 +363,9 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 			scan packageDbStackMods ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
+				sendUpdateAction $ do
+					mapM_ SQLite.updateModule ms
+					sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
 
 				-- BUG: I don't know why, but these steps leads to segfault on my PC:
 				-- > hsdev scan --cabal --project .
@@ -375,16 +379,9 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 				-- 		return $ map (fmap $ setDocs' docs) ms
 				-- 	else return ms
 
-				docs <- inSessionGhc $ hdocsCabal pdbs opts
-				Log.sendLog Log.Trace "docs scanned"
-				docsTbl <- newLookupTable
-				ms' <- mapMOf (each . inspected) (setModuleDocs docsTbl docs) ms
+				scanPackageDbStackDocs opts pdbs
 
-				sendUpdateAction $ do
-					mapM_ SQLite.updateModule ms'
-					sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
-
-				updater $ ms' ^.. each . inspectedKey
+				updater $ ms ^.. each . inspectedKey
 
 -- | Scan project file
 scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project
@@ -462,6 +459,19 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	scan filesMods standSrcs opts $ scanModules opts
+
+-- | Scan installed docs
+scanPackageDbStackDocs :: UpdateMonad m => [String] -> PackageDbStack -> m ()
+scanPackageDbStackDocs opts pdbs = Log.scope "docs" $ do
+	docs <- inSessionGhc $ hdocsCabal pdbs opts
+	Log.sendLog Log.Trace $ "docs scanned: {} packages, {} modules total"
+		~~ length docs ~~ sum (map (M.size . snd) docs)
+	sendUpdateAction $ SQLite.executeMany "update symbols set docs = ? where name == ? and module_id in (select id from modules where name == ? and package_name == ? and package_version == ?);" $ do
+		(ModulePackage pname pver, pdocs) <- docs
+		(mname, mdocs) <- M.toList pdocs
+		(nm, doc) <- M.toList mdocs
+		return (doc, nm, mname, pname, pver)
+	Log.sendLog Log.Trace "docs set"
 
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [Module] -> m ()

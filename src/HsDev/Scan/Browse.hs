@@ -6,7 +6,7 @@ module HsDev.Scan.Browse (
 	-- * Helpers
 	readPackage, readPackageConfig, ghcModuleLocation,
 	packageConfigs, packageDbModules, lookupModule_,
-	modulesPackages, modulesPackagesGroups,
+	modulesPackages, modulesPackagesGroups, withEachPackage,
 
 	module Control.Monad.Except
 	) where
@@ -16,7 +16,7 @@ import Control.Lens (preview)
 import Control.Monad.Catch (MonadCatch, catch, SomeException)
 import Control.Monad.Except
 import Data.Function (on)
-import Data.List (isPrefixOf, groupBy, sort)
+import Data.List (groupBy, sort)
 import Data.Maybe
 import Data.String (fromString)
 import Data.Text (Text)
@@ -24,8 +24,6 @@ import qualified Data.Set as S
 import Data.Version
 import Language.Haskell.Exts.Fixity
 import Language.Haskell.Exts.Syntax (Assoc(..), QName(..), Name(Ident), ModuleName(..))
-import System.Directory
-import System.FilePath
 
 import Data.Deps
 import Data.LookupTable
@@ -36,7 +34,6 @@ import HsDev.Tools.Base (inspect)
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub)
-import System.Directory.Paths
 
 import qualified ConLike as GHC
 import qualified DataCon as GHC
@@ -66,8 +63,7 @@ browsePackagesDeps opts dbs = do
 	tmpSession (packageDbStackOpts dbs ++ opts)
 	df <- GHC.getSessionDynFlags
 	cfgs <- packageConfigs
-	return $ mapDeps (toPkg df) $ mconcat $ map (uncurry deps) $
-		map (Compat.unitId &&& Compat.depends df) cfgs
+	return $ mapDeps (toPkg df) $ mconcat [deps (Compat.unitId cfg) (Compat.depends df cfg) | cfg <- cfgs]
 	where
 		toPkg df' = readPackageConfig . getPackageDetails df'
 
@@ -88,14 +84,11 @@ listModules opts dbs pkgs = do
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
 	tmpSession (packageDbStackOpts dbs ++ opts)
-	liftM concat . mapM (browseModules' opts) . map snd . modulesPackagesGroups $ mlocs
+	liftM concat . withEachPackage (const $ browseModules' opts) $ mlocs
 
--- | Inspect installed modules, doesn't set session!
+-- | Inspect installed modules, doesn't set session and package flags!
 browseModules' :: [String] -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules' opts mlocs = do
-	-- we set package flags separately in order not to drop previous temporary session with consecutive call to this function
-	setPackagesOpts
-
 	ms <- packageDbModules
 	midTbl <- newLookupTable
 	sidTbl <- newLookupTable
@@ -106,12 +99,6 @@ browseModules' opts mlocs = do
 		browseModule' :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
 		browseModule' modId' sym' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m)
 		mlocs' = S.fromList mlocs
-		packagesOpts = "-hide-all-packages" : ["-package " ++ show p | p <- modulesPackages mlocs]
-		setPackagesOpts = void $ do
-			fs <- GHC.getSessionDynFlags
-			(fs', _, _) <- GHC.parseDynamicFlags (fs { GHC.packageFlags = [] }) (map GHC.noLoc packagesOpts)
-			(fs'', _) <- GHC.liftIO $ GHC.initPackages fs'
-			GHC.setSessionDynFlags fs''
 
 browseModule :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM Module
 browseModule modId lookSym package' m = do
@@ -141,13 +128,12 @@ browseModule modId lookSym package' m = do
 		toDecl df minfo n = do
 			tyInfo <- GHC.modInfoLookupName minfo n
 			tyResult <- maybe (GHC.lookupName n) (return . Just) tyInfo
-			dflag <- GHC.getSessionDynFlags
 			declModId <- mloc df (GHC.nameModule n)
-			return $ Symbol {
+			return Symbol {
 				_symbolId = SymbolId (fromString $ GHC.getOccString n) declModId,
 				_symbolDocs = Nothing,
 				_symbolPosition = Nothing,
-				_symbolInfo = fromMaybe (Function Nothing) (tyResult >>= showResult dflag) }
+				_symbolInfo = fromMaybe (Function Nothing) (tyResult >>= showResult df) }
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe SymbolInfo
 		showResult dflags (GHC.AnId i) = case GHC.idDetails i of
 			GHC.RecSelId p _ -> Just $ Selector (Just $ formatType dflags $ GHC.varType i) parent ctors where
@@ -245,3 +231,14 @@ modulesPackages = ordNub . mapMaybe (preview modulePackage)
 -- | Group modules by packages
 modulesPackagesGroups :: [ModuleLocation] -> [(ModulePackage, [ModuleLocation])]
 modulesPackagesGroups = map (first head . unzip) . groupBy ((==) `on` fst) . sort . mapMaybe (\m -> (,) <$> preview modulePackage m <*> pure m)
+
+-- | Run action for each package with prepared '-package' flags
+withEachPackage :: (ModulePackage -> [ModuleLocation] -> GhcM a) -> [ModuleLocation] -> GhcM [a]
+withEachPackage act = mapM (uncurry act') . modulesPackagesGroups where
+	act' mpkg mlocs = setPackagesOpts >> act mpkg mlocs where
+		packagesOpts = "-hide-all-packages" : ["-package " ++ show p | p <- modulesPackages mlocs]
+		setPackagesOpts = void $ do
+			fs <- GHC.getSessionDynFlags
+			(fs', _, _) <- GHC.parseDynamicFlags (fs { GHC.packageFlags = [] }) (map GHC.noLoc packagesOpts)
+			(fs'', _) <- GHC.liftIO $ GHC.initPackages fs'
+			GHC.setSessionDynFlags fs''

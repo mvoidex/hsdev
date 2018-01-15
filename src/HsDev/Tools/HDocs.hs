@@ -1,5 +1,5 @@
 module HsDev.Tools.HDocs (
-	hdocsy, hdocs, hdocsCabal,
+	hdocsy, hdocs, hdocsPackage, hdocsCabal,
 	setSymbolDocs, setDocs, setModuleDocs,
 
 	hdocsProcess,
@@ -21,12 +21,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 
 import qualified HDocs.Module as HDocs
-import qualified HDocs.Haddock as HDocs (readSourceGhc, readSourcesGhc)
+import qualified HDocs.Haddock as HDocs
 
 import qualified GHC
+import qualified PackageConfig as P
 
 import Data.LookupTable
 import HsDev.Error
+import HsDev.Scan.Browse (packageConfigs, readPackage)
 import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker (GhcM, haddockSession, liftGhc)
 import HsDev.Symbols
@@ -54,16 +56,28 @@ hdocs mloc opts = (force . HDocs.formatDocs) <$> docs' mloc where
 				liftIO $ hsdevLiftWith (ToolError "hdocs") $ HDocs.moduleDocsF df (T.unpack mname)
 			_ -> hsdevError $ ToolError "hdocs" $ "Can't get docs for: " ++ show mloc'
 
--- | Get all docs
-hdocsCabal :: PackageDbStack -> [String] -> GhcM (Map Text (Map Text Text))
-hdocsCabal pdbs opts = do
-	haddockSession (packageDbStackOpts pdbs ++ opts)
-	df <- GHC.getSessionDynFlags
-	docs <- liftIO $ hsdevLiftWith (ToolError "hdocs") $
-		liftM (M.map $ force . HDocs.formatDocs) $ HDocs.installedDocsF df
+-- | Get docs for package
+hdocsPackage :: P.PackageConfig -> GhcM (Map Text (Map Text Text))
+hdocsPackage p = do
+	ifaces <-
+		liftIO . hsdevLiftWith (ToolError "hdocs") .
+		liftM concat . mapM ((`mplus` return []) . HDocs.readInstalledInterfaces) $
+		P.haddockInterfaces p
 	let
+		idocs = HDocs.installedInterfacesDocs ifaces
+		iexports = M.fromList $ map (HDocs.exportsDocs idocs) ifaces
+		docs = M.map HDocs.formatDocs iexports
 		tdocs = M.map (M.map fromString . M.mapKeys fromString) . M.mapKeys fromString $ docs
 	return $!! tdocs
+
+-- | Get all docs
+hdocsCabal :: PackageDbStack -> [String] -> GhcM [(ModulePackage, (Map Text (Map Text Text)))]
+hdocsCabal pdbs opts = do
+	haddockSession (packageDbStackOpts pdbs ++ opts)
+	pkgs <- packageConfigs
+	forM pkgs $ \pkg -> do
+		pkgDocs' <- hdocsPackage pkg
+		return (readPackage pkg, pkgDocs')
 
 -- | Set docs for module
 setSymbolDocs :: MonadIO m => LookupTable (Text, Text) (Maybe Text) -> Map Text Text -> Symbol -> m Symbol
