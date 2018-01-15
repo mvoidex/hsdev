@@ -179,6 +179,7 @@ setupServer sopts = do
 
 	Log.sendLog Log.Trace "waiting for starting accept thread..."
 	liftIO $ waitQSem q
+	logIO "error writing to stdout: " (Log.sendLog Log.Error . fromString) $ liftIO $ putStrLn $ "Server started at port {}" ~~ serverPort sopts
 	Log.sendLog Log.Info $ "Server started at port {}" ~~ serverPort sopts
 
 -- | Shutdown server
