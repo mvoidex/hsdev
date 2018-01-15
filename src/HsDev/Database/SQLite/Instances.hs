@@ -21,6 +21,7 @@ import Text.Format
 import System.Directory.Paths
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
+import HsDev.Tools.Ghc.Types
 import HsDev.Util
 
 instance ToField Value where
@@ -217,3 +218,9 @@ instance ToRow Inspection where
 	toRow (InspectionAt tm opts) = [
 		if tm == 0 then SQLNull else toField (fromRational (toRational tm) :: Double),
 		toField $ toJSON opts]
+
+instance FromRow TypedExpr where
+	fromRow = TypedExpr <$> field <*> field
+
+instance ToRow TypedExpr where
+	toRow (TypedExpr e t) = [toField e, toField t]

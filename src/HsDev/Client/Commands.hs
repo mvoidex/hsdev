@@ -99,7 +99,7 @@ runCommand (RefineDocs projs fs) = toValue $ do
 			loadModules "select id from modules where file == ? and json_extract(tags, '$.docs') is null"
 				(Only f)
 		return $ projMods ++ fileMods
-	updateProcess (Update.UpdateOptions [] [] False False) [Update.scanDocs mods]
+	updateProcess def [Update.scanDocs mods]
 runCommand (InferTypes projs fs) = toValue $ do
 	projects <- traverse findProject projs
 	mods <- do
@@ -112,7 +112,7 @@ runCommand (InferTypes projs fs) = toValue $ do
 			loadModules "select id from modules where file == ? and json_extract(tags, '$.types') is null"
 				(Only f)
 		return $ projMods ++ fileMods
-	updateProcess (Update.UpdateOptions [] [] False False) [Update.inferModTypes mods]
+	updateProcess def [Update.inferModTypes mods]
 runCommand (Remove projs cabal sboxes files) = toValue $ withSqlConnection $ SQLite.transaction_ SQLite.Immediate $ do
 	let
 		-- We can safely remove package-db from db iff doesn't used by some of other package-dbs
@@ -189,9 +189,8 @@ runCommand (InfoSymbol sq filters True _) = toValue $ do
 runCommand (InfoSymbol sq filters False _) = toValue $ do
 	let
 		(conds, params) = targetFilters "m" (Just "s") filters
-	rs <- queryNamed @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like :pattern escape '\\'"] `mappend` where_ conds)
+	queryNamed @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like :pattern escape '\\'"] `mappend` where_ conds)
 		([":pattern" := likePattern sq] ++ params)
-	return rs
 runCommand (InfoModule sq filters h _) = toValue $ do
 	let
 		(conds, params) = targetFilters "mu" Nothing filters
@@ -212,8 +211,8 @@ runCommand (InfoModule sq filters h _) = toValue $ do
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
-runCommand (Lookup nm fpath) = toValue $ do
-	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+runCommand (Lookup nm fpath) = toValue $
+	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
 		["projects_modules_scope as pms", "modules as srcm", "exports as e"]
 		[
 			"pms.cabal is srcm.cabal",
@@ -223,12 +222,11 @@ runCommand (Lookup nm fpath) = toValue $ do
 			"s.id == e.symbol_id",
 			"s.name == ?"])
 		(fpath ^. path, nm)
-	return rs
 runCommand (Whois nm fpath) = toValue $ do
 	let
 		q = nameModule $ toName nm
 		ident = nameIdent $ toName nm
-	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
 		["modules as srcm", "scopes as sc"]
 		[
 			"srcm.id == sc.module_id",
@@ -237,7 +235,6 @@ runCommand (Whois nm fpath) = toValue $ do
 			"sc.qualifier is ?",
 			"sc.name == ?"])
 		(fpath ^. path, q, ident)
-	return rs
 runCommand (Whoat l c fpath) = toValue $ do
 	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
 		["names as n", "modules as srcm"]
@@ -295,7 +292,7 @@ runCommand (FindUsages nm) = toValue $ do
 	let
 		q = nameModule $ toName nm
 		ident = nameIdent $ toName nm
-	rs <- query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
+	query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
 		["n.line", "n.column"]
 		["names as n"]
 		[
@@ -305,18 +302,16 @@ runCommand (FindUsages nm) = toValue $ do
 			"n.resolved_module == ? or ? is null",
 			"n.resolved_name == ?"])
 		(q, q, ident)
-	return rs
-runCommand (Complete input True fpath) = toValue $ do
-	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+runCommand (Complete input True fpath) = toValue $
+	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
 		["modules as srcm"]
 		[
 			"m.id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
 			"msrc.file == ?",
 			"s.name like ? escape '\\'"])
 		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))
-	return rs
-runCommand (Complete input False fpath) = toValue $ do
-	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+runCommand (Complete input False fpath) = toValue $
+	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
 		["completions as c", "modules as srcm"]
 		[
 			"c.module_id == srcm.id",
@@ -324,7 +319,6 @@ runCommand (Complete input False fpath) = toValue $ do
 			"srcm.file == ?",
 			"c.completion like ? escape '\\'"])
 		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))
-	return rs
 runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
 	liftIO $ hsdevLift $ Hayoo.hayoo hq (Just i)
@@ -363,10 +357,36 @@ runCommand (CheckLint fs ghcs' clear) = toValue $ do
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs' clear) = toValue $ do
 	liftM concat $ forM fs $ \(FileSource file msrc) -> do
-		m <- setFileSourceSession ghcs' file
-		inSessionGhc $ do
-			when clear $ clearTargets
-			Types.fileTypes m msrc
+		mcached' <- getCached file msrc
+		maybe (updateTypes file msrc) return mcached'
+	where
+		getCached :: ServerMonadBase m => Path -> Maybe Text -> ClientM m (Maybe [Tools.Note Types.TypedExpr])
+		getCached _ (Just _) = return Nothing
+		getCached file' Nothing = do
+			actual' <- sourceUpToDate file'
+			mid <- query @_ @((Bool, Int) :. ModuleId) (toQuery $ select_ ["json_extract(tags, '$.types') == 1", "mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.file = ?"])
+				(Only file')
+			when (length mid > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ file'
+			when (null mid) $ hsdevError $ NotInspected $ FileModule file' Nothing
+			let
+				[(hasTypes', mid') :. modId] = mid
+			if actual' && hasTypes'
+				then do
+					types' <- query @_ @(Region :. Types.TypedExpr) "select line, column, line_to, column_to, expr, type from types where module_id = ?;" (Only mid')
+					liftM Just $ forM types' $ \(rgn :. texpr) -> return $ Tools.Note {
+						Tools._noteSource = modId ^. moduleLocation,
+						Tools._noteRegion = rgn,
+						Tools._noteLevel = Nothing,
+						Tools._note = texpr }
+				else return Nothing
+
+		updateTypes file msrc = do
+			m <- setFileSourceSession ghcs' file
+			types' <- inSessionGhc $ do
+				when clear $ clearTargets
+				Types.fileTypes m msrc
+			updateProcess def [Update.setModTypes (m ^. moduleId) types']
+			return types'
 runCommand (AutoFix ns) = toValue $ return $ AutoFix.corrections ns
 runCommand (Refactor ns rest isPure) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
@@ -500,6 +520,17 @@ findSandbox fpath = do
 	fpath' <- findPath fpath
 	sbox <- liftIO $ S.findSandbox fpath'
 	maybe (hsdevError $ FileNotFound fpath') return sbox
+
+-- | Check if source file up to date
+sourceUpToDate :: CommandMonad m => Path -> m Bool
+sourceUpToDate fpath = do
+	fpath' <- findPath fpath
+	insps <- query @_ @Inspection "select inspection_time, inspection_opts from modules where file = ?;" (Only fpath')
+	when (length insps > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ fpath'
+	maybe
+		(return False)
+		(liftIO . upToDate (FileModule fpath' Nothing) [])
+		(listToMaybe insps)
 
 -- | Get source file
 -- refineSourceFile :: CommandMonad m => Path -> m Path

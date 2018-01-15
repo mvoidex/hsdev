@@ -8,7 +8,7 @@ module HsDev.Database.SQLite (
 	updatePackageDb, removePackageDb, insertPackageDb,
 	updateProject, removeProject, insertProject, insertBuildInfo,
 	updateModule,
-	removeModule,
+	removeModuleContents, removeModule,
 	insertModuleSymbols,
 	upsertModule,
 	lookupModuleLocation, lookupModule,
@@ -221,12 +221,17 @@ updateModule im = scope "update-module" $ do
 	_ <- upsertModule im
 	insertModuleSymbols im
 
-removeModule :: SessionMonad m => Int -> m ()
-removeModule mid = scope "remove-module" $ do
+removeModuleContents :: SessionMonad m => Int -> m ()
+removeModuleContents mid = do
 	execute "delete from imports where module_id == ?;" (Only mid)
 	execute "delete from exports where module_id == ?;" (Only mid)
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
+	execute "delete from types where module_id == ?;" (Only mid)
+
+removeModule :: SessionMonad m => Int -> m ()
+removeModule mid = scope "remove-module" $ do
+	removeModuleContents mid
 	execute "delete from modules where id == ?;" (Only mid)
 
 upsertModule :: SessionMonad m => InspectedModule -> m Int
@@ -269,10 +274,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		":other_location" := im ^? inspectedKey . otherLocationName,
 		":installed_name" := im ^? inspectedKey . installedModuleName]
 	-- TODO: Delete obsolete symbols (note, that they can be referenced from another modules)
-	execute "delete from imports where module_id == ?;" (Only mid)
-	execute "delete from exports where module_id == ?;" (Only mid)
-	execute "delete from scopes where module_id == ?;" (Only mid)
-	execute "delete from names where module_id == ?;" (Only mid)
+	removeModuleContents mid
 	insertModuleImports mid
 	insertExportSymbols mid (im ^.. inspected . moduleExports . each)
 	insertScopeSymbols mid (im ^.. inspected . scopeSymbols)

@@ -264,6 +264,16 @@ where
 	(m.file is not null) and
 	(im.file is not null);
 
+create table types (
+	module_id integer,
+	line integer,
+	column integer,
+	line_to integer,
+	column_to integer,
+	expr text,
+	type text
+);
+
 create table file_contents (
 	file text not null,
 	contents text,

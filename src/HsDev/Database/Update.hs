@@ -11,8 +11,8 @@ module HsDev.Database.Update (
 	postStatus, updater, runTask, runTasks, runTasks_,
 
 	scanModules, scanFile, scanFiles, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
-	scanPackageDbStackDocs,
-	scanDocs, inferModTypes,
+	scanPackageDbStackDocs, scanDocs,
+	setModTypes, inferModTypes,
 	scan,
 	processEvents, updateEvents, applyUpdates,
 
@@ -54,7 +54,7 @@ import HsDev.Sandbox
 import qualified HsDev.Stack as S
 import HsDev.Symbols
 import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
-import HsDev.Tools.Ghc.Types (fileTypes, typedType)
+import HsDev.Tools.Ghc.Types (fileTypes, TypedExpr)
 import HsDev.Tools.Types
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
@@ -486,12 +486,25 @@ scanDocs = runTasks_ . map scanDocs' where
 				[(doc, nm, mid') | (nm, doc) <- maybe [] M.toList docsMap]
 			SQLite.execute "update modules set tags = json_set(tags, '$.docs', 1) where id == ?;" (SQLite.Only mid')
 
+-- | Set inferred types for module
+setModTypes :: UpdateMonad m => ModuleId -> [Note TypedExpr] -> m ()
+setModTypes m ts = Log.scope "set-types" $ do
+	mid <- SQLite.lookupModule m
+	mid' <- maybe (hsdevError $ SQLiteError "module id not found") return mid
+	sendUpdateAction $ do
+		SQLite.executeMany "insert into types (module_id, line, column, line_to, column_to, expr, type) values (?, ?, ?, ?, ?, ?, ?);" [
+			(SQLite.Only mid' SQLite.:. view noteRegion n' SQLite.:. view note n') | n' <- ts]
+		SQLite.execute "update names set inferred_type = (select type from types as t where t.module_id = ? and names.line = t.line and names.column = t.column and names.line_to = t.line_to and names.column_to = t.column_to) where module_id == ?;"
+			(mid', mid')
+		SQLite.execute "update symbols set type = (select type from types as t where t.module_id = ? and symbols.line = t.line and symbols.column = t.column order by t.line_to, t.column_to) where module_id == ?;" (mid', mid')
+		SQLite.execute "update modules set tags = json_set(tags, '$.types', 1) where id == ?;" (SQLite.Only mid')
+
 -- | Infer types for modules
 inferModTypes :: UpdateMonad m => [Module] -> m ()
 inferModTypes = runTasks_ . map inferModTypes' where
 	inferModTypes' m = runTask "inferring types" (view (moduleId . moduleLocation) m) $ Log.scope "types" $ do
 		mid <- SQLite.lookupModule (m ^. moduleId)
-		mid' <- maybe (hsdevError $ SQLiteError "module id not found") return mid
+		_ <- maybe (hsdevError $ SQLiteError "module id not found") return mid
 		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
 		Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view (moduleId . moduleLocation) m'
 
@@ -500,14 +513,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 			targetSession opts' m'
 			fileTypes m' Nothing
 
-		sendUpdateAction $ do
-			SQLite.withTemporaryTable "inferred_types" ["line", "column", "line_to", "column_to", "type"] $ do
-				SQLite.executeMany "insert into inferred_types values (?, ?, ?, ?, ?);" [
-					view noteRegion n' SQLite.:. (SQLite.Only $ view (note . typedType) n') | n' <- types']
-				SQLite.execute "update names set inferred_type = (select type from inferred_types as t where names.line = t.line and names.column = t.column and names.line_to = t.line_to and names.column_to = t.column_to) where module_id == ?;"
-					(SQLite.Only mid')
-				SQLite.execute "update symbols set type = (select type from inferred_types as t where symbols.line = t.line and symbols.column = t.column order by t.line_to, t.column_to) where module_id == ?;" (SQLite.Only mid')
-			SQLite.execute "update modules set tags = json_set(tags, '$.types', 1) where id == ?;" (SQLite.Only mid')
+		setModTypes (m' ^. moduleId) types'
 
 -- | Generic scan function. Removed obsolete modules and calls callback on changed modules.
 scan :: UpdateMonad m
