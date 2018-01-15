@@ -377,7 +377,7 @@ runCommand (Types fs ghcs' clear) = toValue $ do
 						Tools._noteSource = modId ^. moduleLocation,
 						Tools._noteRegion = rgn,
 						Tools._noteLevel = Nothing,
-						Tools._note = texpr }
+						Tools._note = set Types.typedExpr Nothing texpr }
 				else return Nothing
 
 		updateTypes file msrc = do
@@ -386,7 +386,7 @@ runCommand (Types fs ghcs' clear) = toValue $ do
 				when clear $ clearTargets
 				Types.fileTypes m msrc
 			updateProcess def [Update.setModTypes (m ^. moduleId) types']
-			return types'
+			return $ set (each . Tools.note . Types.typedExpr) Nothing types'
 runCommand (AutoFix ns) = toValue $ return $ AutoFix.corrections ns
 runCommand (Refactor ns rest isPure) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns

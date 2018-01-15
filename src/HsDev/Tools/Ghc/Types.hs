@@ -78,7 +78,7 @@ moduleTypes fpath = do
 		mapM (getType tm) (locatedTypes ts :: [LPat Id])]
 
 data TypedExpr = TypedExpr {
-	_typedExpr :: Text,
+	_typedExpr :: Maybe Text,
 	_typedType :: Text }
 		deriving (Eq, Ord, Read, Show)
 
@@ -88,13 +88,13 @@ instance NFData TypedExpr where
 	rnf (TypedExpr e t) = rnf e `seq` rnf t
 
 instance ToJSON TypedExpr where
-	toJSON (TypedExpr e t) = object [
+	toJSON (TypedExpr e t) = object $ noNulls [
 		"expr" .= e,
 		"type" .= t]
 
 instance FromJSON TypedExpr where
 	parseJSON = withObject "typed-expr" $ \v -> TypedExpr <$>
-		v .:: "expr" <*>
+		v .::? "expr" <*>
 		v .:: "type"
 
 -- | Get all types in module
@@ -123,7 +123,7 @@ fileTypes m msrc = scope "types" $ case view (moduleId . moduleLocation) m of
 			_noteLevel = Nothing,
 			_note = fromString $ showType df tp }
 		setExpr :: Text -> Note Text -> Note TypedExpr
-		setExpr cts n = over note (TypedExpr (regionStr (view noteRegion n) cts)) n
+		setExpr cts n = over note (TypedExpr (Just (regionStr (view noteRegion n) cts))) n
 		showType :: DynFlags -> Type -> String
 		showType df = renderStyle Pretty.OneLineMode 80 . withPprStyleDoc df (unqualStyle df) . pprTypeForUser
 
