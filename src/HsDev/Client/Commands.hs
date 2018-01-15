@@ -32,7 +32,7 @@ import System.Directory.Paths
 import Text.Format
 import HsDev.Error
 import HsDev.Database.SQLite as SQLite
-import HsDev.Inspect (fileInspection, preload, asModule)
+import HsDev.Inspect (preload, asModule)
 import HsDev.Scan (upToDate)
 import HsDev.Server.Message as M
 import HsDev.Server.Types
@@ -340,7 +340,6 @@ runCommand (UnresolvedSymbols fs) = toValue $ liftM concat $ forM fs $ \f -> do
 runCommand (Lint fs) = toValue $ do
 	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
 runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $ do
-	-- ensureUpToDate ghcs' fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			Log.sendLog Log.Trace $ "setting file source session for {}" ~~ file
@@ -351,7 +350,6 @@ runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $ do
 				fn m
 	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs
 runCommand (CheckLint fs ghcs' clear) = toValue $ do
-	-- ensureUpToDate ghcs' fs
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
 			Log.sendLog Log.Trace $ "setting file source session for {}" ~~ file
@@ -364,7 +362,6 @@ runCommand (CheckLint fs ghcs' clear) = toValue $ do
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs' clear) = toValue $ do
-	-- ensureUpToDate ghcs' fs
 	liftM concat $ forM fs $ \(FileSource file msrc) -> do
 		m <- setFileSourceSession ghcs' file
 		inSessionGhc $ do
@@ -412,7 +409,6 @@ runCommand (Rename nm newName fpath) = toValue $ do
 
 	return $ defRenames ++ usageRenames
 runCommand (GhcEval exprs mfile) = toValue $ do
-	-- ensureUpToDate [] $ maybeToList mfile
 	ghcw <- askSession sessionGhc
 	case mfile of
 		Nothing -> inSessionGhc ghciSession
@@ -579,21 +575,3 @@ updateProcess uopts acts = hoist liftIO $ do
 	where
 		runAct act = catch act onError
 		onError e = Log.sendLog Log.Error $ "{}" ~~ (e :: HsDevError)
-
--- | Ensure standalone file is up to date as long as its content (imports) required to set ghc opts for check
-ensureUpToDate :: ServerMonadBase m => [String] -> [FileSource] -> ClientM m ()
-ensureUpToDate opts = mapM_ checkUpToDate where
-	checkUpToDate (FileSource f Nothing) = Log.scope "uptodate" $ do
-		Log.sendLog Log.Trace $ "check up-to-date: {}" ~~ f
-		insps <- query @_ @(Only Bool :. Inspection) "select (cabal is null), inspection_time, inspection_opts from modules where file = ?;" (Only f)
-		when (length insps > 1) $ Log.sendLog Log.Warning $ "multiple modules for file {} found" ~~ f
-		case insps of
-			[] -> Log.sendLog Log.Warning $ "file {} not inspected" ~~ f
-			((Only False :. _):_) -> return ()
-			((Only True :. insp):_) -> do
-				finsp <- liftIO $ fileInspection f opts
-				unless (fresh insp finsp) $ do
-					Log.sendLog Log.Trace $ "file {} is not up-to-date, updating" ~~ f
-					updateProcess (Update.UpdateOptions [] opts False False) [Update.scanFile opts f]
-					Log.sendLog Log.Trace $ "file {} updated" ~~ f
-	checkUpToDate _ = return ()

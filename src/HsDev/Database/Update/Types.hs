@@ -22,7 +22,6 @@ import Control.Monad.Trans.Control
 import Data.Aeson
 import Data.Functor
 import Data.Default
-import Text.Format ((~~))
 import qualified System.Log.Simple as Log
 import qualified System.Log.Simple.Monad as Log
 

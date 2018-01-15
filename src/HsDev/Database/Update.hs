@@ -40,12 +40,9 @@ import qualified Data.Set as S
 import Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Language.Haskell.Exts as H
-import qualified Language.Haskell.Names as N
 import System.FilePath
 import qualified System.Log.Simple as Log
 
-import Data.LookupTable
 import HsDev.Error
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Display
@@ -56,7 +53,6 @@ import HsDev.Project
 import HsDev.Sandbox
 import qualified HsDev.Stack as S
 import HsDev.Symbols
-import HsDev.Symbols.Parsed (Parsed)
 import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
 import HsDev.Tools.Ghc.Types (fileTypes, typedType)
 import HsDev.Tools.Types
@@ -248,8 +244,6 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 				where
 					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
 						aenv <- get
-						let
-							mloc = pmod ^. preloadedId . moduleLocation
 						m <- either (hsdevError . InspectError) eval $ analyzePreloaded aenv pmod
 						modify (mappend (moduleAnalyzeEnv m))
 						return m

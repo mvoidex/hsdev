@@ -2,7 +2,8 @@ module HsDev.Scan.Browse (
 	-- * List all packages
 	browsePackages, browsePackagesDeps,
 	-- * Scan cabal modules
-	listModules, browseModules, browseModules',
+	listModules,
+	browseModules, browseModules',
 	-- * Helpers
 	readPackage, readPackageConfig, ghcModuleLocation,
 	packageConfigs, packageDbModules, lookupModule_,

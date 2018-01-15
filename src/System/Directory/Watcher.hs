@@ -13,17 +13,12 @@ module System.Directory.Watcher (
 import Control.Lens (makeLenses)
 import Control.Arrow
 import Control.Concurrent
-import Control.Concurrent.MVar
 import Control.Concurrent.Async
 import Control.Concurrent.STM
-import Control.Concurrent.STM.TMVar
-import Control.Concurrent.Chan
 import Control.Monad
-import Control.Monad.State
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
-import qualified Data.Set as S
-import Data.Maybe (isJust, isNothing, maybeToList)
+import Data.Maybe (isJust)
 import Data.Ratio ((%))
 import Data.String (fromString)
 import Data.Time.Clock (NominalDiffTime)

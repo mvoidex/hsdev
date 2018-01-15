@@ -15,7 +15,6 @@ module HsDev.Server.Types (
 	) where
 
 import Control.Applicative
-import Control.Concurrent.MVar
 import qualified Control.Concurrent.FiniteChan as F
 import Control.Lens (view, set)
 import Control.Monad.Base
@@ -30,7 +29,6 @@ import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Default
-import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
 import Data.Foldable (asum)
 import Data.Text (Text)
@@ -44,7 +42,6 @@ import System.Directory.Paths
 import Text.Format (Formattable(..))
 
 import HsDev.Error (hsdevError)
-import HsDev.Symbols.Parsed (Parsed)
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
 import HsDev.Tools.Ghc.Worker (GhcWorker, GhcM)
