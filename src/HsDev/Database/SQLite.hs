@@ -285,14 +285,15 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 				Just psrc -> do
 					let
 						imps = childrenBi psrc :: [ImportDecl Ann]
-						importRow (ImportDecl _ mname qual _ _ _ alias specList) = (
+						importRow idecl@(ImportDecl _ mname qual _ _ _ alias specList) = (
 							mid,
+							idecl ^. pos . positionLine,
 							getModuleName mname,
 							qual,
 							fmap getModuleName alias,
 							maybe False getHiding specList,
 							fmap makeImportList specList)
-					executeMany "insert into imports (module_id, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?);"
+					executeMany "insert into imports (module_id, line, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?);"
 						(map importRow imps)
 			where
 				getModuleName (ModuleName _ s) = s

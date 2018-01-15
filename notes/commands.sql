@@ -18,3 +18,23 @@ group by
 	resolved_name
 order by count(*)
 limit 10;
+
+# Find unused import list items
+select distinct
+	isc.module_name,
+	json_extract(il.value, '$.name') as il_name,
+	sum((select count(*) from names as n where n.module_id == 2565 and n.qualifier is isc.qualifier and n.name == isc.name))
+from imported_scopes as isc, json_each(isc.import_list) as il
+where
+	isc.module_id == 2565 and
+	il_name == isc.name
+group by isc.module_name, il_name;
+
+# Find unused imports
+select distinct
+	isc.module_name,
+	sum((select count(*) from names as n where n.module_id == 2565 and n.qualifier is isc.qualifier and n.name == isc.name))
+from imported_scopes as isc
+where
+	isc.module_id == 2565
+group by isc.module_name;

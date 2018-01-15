@@ -151,6 +151,7 @@ create unique index modules_other_locations_index on modules (other_location) wh
 
 create table imports (
 	module_id integer,
+	line integer,
 	module_name text,
 	qualified integer,
 	alias text,
@@ -160,18 +161,22 @@ create table imports (
 
 create index imports_module_id_index on imports (module_id);
 
-create view imported_modules (
-	module_id,
-	module_name,
-	imported_id
-) as
-select i.module_id, i.module_name, im.id
+create view imported_modules as
+select i.*, im.id as imported_id
 from imports as i, projects_modules_scope as ps, modules as im, modules as m
 where
 	i.module_id == m.id and
 	((ps.cabal is null and m.cabal is null) or (ps.cabal == m.cabal)) and
 	ps.module_id == im.id and
 	im.name == i.module_name;
+
+create view imported_scopes as
+select i.*, q.value as qualifier, s.name as name, s.id as symbol_id
+from imported_modules as i, json_each(case when i.qualified then json_array(ifnull(i.alias, i.module_name)) else json_array(ifnull(i.alias, i.module_name), null) end) as q, symbols as s, exports as e
+where
+	e.module_id == i.imported_id and
+	e.symbol_id == s.id and
+	(i.import_list is null or (s.name in (select json_extract(import_list_item.value, '$.name') from json_each(i.import_list) as import_list_item) == not i.hiding));
 
 create table exports (
 	module_id integer,
