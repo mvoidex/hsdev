@@ -364,7 +364,7 @@ runCommand (Types fs ghcs' clear) = toValue $ do
 		getCached _ (Just _) = return Nothing
 		getCached file' Nothing = do
 			actual' <- sourceUpToDate file'
-			mid <- query @_ @((Bool, Int) :. ModuleId) (toQuery $ select_ ["json_extract(tags, '$.types') == 1", "mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.file = ?"])
+			mid <- query @_ @((Bool, Int) :. ModuleId) (toQuery $ select_ ["json_extract(tags, '$.types') is 1", "mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.file = ?"])
 				(Only file')
 			when (length mid > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ file'
 			when (null mid) $ hsdevError $ NotInspected $ FileModule file' Nothing
