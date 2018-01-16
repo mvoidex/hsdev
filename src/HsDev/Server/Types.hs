@@ -770,7 +770,7 @@ instance ToJSON TargetFilter where
 	toJSON (TargetProject pname) = object ["project" .= pname]
 	toJSON (TargetFile fpath) = object ["file" .= fpath]
 	toJSON (TargetModule mname) = object ["module" .= mname]
-	toJSON (TargetPackage pname) = object ["package" .= pname]
+	toJSON (TargetPackage pkg) = object ["package" .= pkg]
 	toJSON TargetInstalled = toJSON ("installed" :: String)
 	toJSON TargetSourced = toJSON ("sourced" :: String)
 	toJSON TargetStandalone = toJSON ("standalone" :: String)

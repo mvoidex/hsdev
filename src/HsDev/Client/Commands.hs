@@ -20,7 +20,7 @@ import Data.List
 import Data.Maybe
 import qualified Data.Map.Strict as M
 import Data.Text (Text, pack, unpack)
-import qualified Data.Text as T (append)
+import qualified Data.Text as T (append, null)
 import System.Directory
 import System.FilePath
 import qualified System.Log.Simple as Log
@@ -482,7 +482,16 @@ targetFilter mtable (Just stable) (TargetModule nm) = (
 		~~ ("t" ~% mtable)
 		~~ ("s" ~% stable),
 	[":module_name" := nm])
-targetFilter mtable _ (TargetPackage nm) = ("{t}.package_name == :package_name" ~~ ("t" ~% mtable), [":package_name" := nm])
+targetFilter mtable _ (TargetPackage p) = (tpl ~~ ("t" ~% mtable), params) where
+	pkg = fromMaybe (mkPackage p) (readMaybe (unpack p))
+	tpl
+		| T.null (pkg ^. packageVersion) = "{t}.package_name == :package_name"
+		| otherwise = "{t}.package_name == :package_name and {t}.package_version == :package_version"
+	params
+		| T.null (pkg ^. packageVersion) = [pname]
+		| otherwise = [pname, pver]
+	pname = ":package_name" := (pkg ^. packageName)
+	pver = ":package_version" := (pkg ^. packageVersion)
 targetFilter mtable _ TargetInstalled = ("{t}.package_name is not null" ~~ ("t" ~% mtable), [])
 targetFilter mtable _ TargetSourced = ("{t}.file is not null" ~~ ("t" ~% mtable), [])
 targetFilter mtable _ TargetStandalone = ("{t}.file is not null and {t}.cabal is null" ~~ ("t" ~% mtable), [])
