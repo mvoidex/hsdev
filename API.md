@@ -72,6 +72,16 @@ Args:
   * `infer` — infer types for sources (slow, prefer separate command)
 Response: `{}`
 
+#### Set file contents
+
+Set source string to use instead of file contents. Calls update. All commands will use this source instead of file. Can be used to perform actions on unsaved file data
+
+Command: `set-file-contents`
+Args:
+  * `file` — file to set contents
+  * `contents` — optional contents, if omitted, source will be dropped
+Response: `{}`
+
 #### Refine docs / Infer types
 
 Scan docs or infer types for sources

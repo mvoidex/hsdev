@@ -9,7 +9,6 @@
 
 Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
 Uses [fsnotify](http://hackage.haskell.org/package/fsnotify) to watch for changes.
-There are also several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofix`
 
 Main idea is to hold in memory scanned sourced and installed modules, so that getting info about symbols and modules is fast.
 It also doesn't require much work to integrate with some editor:
@@ -44,6 +43,10 @@ runClientM :: ServerM (ReaderT CommandOptions m) a
 
 `hsdev` uses `stack` to build dependencies and to get corresponding package-dbs. As long as `hsdev` uses `ghc` as library, it passes `--compiler` and `--arch` options (since `0.1.7.2`) to `stack` in order to get compatible package-dbs built with same compiler.
 
+## Build without `haddock`/`hdocs` dependency
+
+Disable flag `docs` to build without these dependencies: `cabal configure -f-docs`
+
 ### Commands
 
 Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help <command>`) to get detailed info.
@@ -55,6 +58,7 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `listen` — connect to server and listen for its log (for debug)
 * `set-log` — set log level
 * `scan` — scan installed modules, cabal projects and files
+* `set-file-contents` — set data to use as file contents, used to work with unsaved files
 * `docs`, `infer` — scan docs or infer types for sources
 * `remove`, `remove-all` — unload data
 * `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
@@ -148,73 +152,6 @@ traverseDirectory
 ...
 PS> hsdev stop
 {}
-</pre>
-
-## Tools
-
-### HsInspect
-
-Tool to inspect source files, .cabal files and installed modules. For source files it also scan docs and try infer types.
-
-<pre>
-PS> hsinspect .\hsdev.cabal | json | % { $_.description.library.modules[3] }
-HsDev.Cache
-PS> hsinspect .\tools\hsdev.hs | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
-main :: IO ()
-printMainUsage :: IO ()
-printUsage :: IO ()
-PS> hsinspect Data.Either | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
-Either :: data Either a b
-Left :: a -> Either a b
-Right :: b -> Either a b
-either :: (a -> c) -> (b -> c) -> Either a b -> c
-isLeft :: Either a b -> Bool
-isRight :: Either a b -> Bool
-lefts :: [Either a b] -> [a]
-partitionEithers :: [Either a b] -> ([a], [b])
-rights :: [Either a b] -> [b]
-</pre>
-
-### HsCabal
-
-Cabal helper with JSON output. For now only `list` command supported
-
-<pre>
-PS> hscabal list aeson | json | ? { $_.'installed-versions' } | % { $_.name + ' - ' + $_.'installed-versions' }
-aeson - 0.7.0.3
-aeson-pretty - 0.7.1
-</pre>
-
-### HsHayoo
-
-Search in hayoo
-
-<pre>
-PS> hshayoo "(a -> b) -> c" | json | % { $_.declaration } | % { $_.name + ' :: ' + $_.decl.type } | select -first 5
-unC :: (tau -> a) -> b
-map3 :: (a -> b) -> f (g (h a)) -> f (g (h b))
-map2 :: (a -> b) -> f (g a) -> f (g b)
-map' :: (a -> b) -> map a -> map b
-map :: (a -> b) -> map a -> map b
-</pre>
-
-### HsAutoFix
-
-Tool to fix some build warnings and to apply hlint suggestions
-
-* `hsautofix show` — read output messages and return suggestions
-* `hsautofix fix -n <i> -n ...` — fix selected suggestions (by index) and return updated rest suggestions, so this command can be chained. There are also flag `--pure`. If set, files will not be modified. Use it, if you don't want `hsautofix` to apply fixes itself.
-
-Here's how you can apply first three suggestions sequentically. On each step suggestion is removed, so we just apply first suggestion three times.
-We can do the same in reverse order, and in that case indices will be 3, 2, 1. And we can apply all three in one call.
-Three commands below have same effect
-<pre>
-PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 1 | hsautofix fix -n 1 | hsautofix fix -n 1
-...
-PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 3 | hsautofix fix -n 2 | hsautofix fix -n 1
-...
-PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 1 -n 2 -n 3
-...
 </pre>
 
 ### Hayoo in GHCi
