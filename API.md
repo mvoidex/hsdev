@@ -225,7 +225,9 @@ Find usages of symbol
 
 Command: `usages`  
 Args:
-  * `name` — qualified name
+  * `line` — line number
+  * `column` — column number
+  * `file` — file name
 Response: list of `symbol-usage` objects
 
 #### Complete

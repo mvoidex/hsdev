@@ -292,22 +292,46 @@ runCommand (ResolveScope sq fpath) = toValue $ do
 			"s.name like ? escape '\\'"])
 		(fpath ^. path, likePattern sq)
 	return [ScopeSymbol q s | (s :. Only q) <- rs]
-runCommand (FindUsages nm) = toValue $ do
-	let
-		q = nameModule $ toName nm
-		ident = nameIdent $ toName nm
-	query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
+runCommand (FindUsages l c fpath) = toValue $ do
+	us <- query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
 		["n.line", "n.column"]
-		["names as n", "projects_modules_scope as ps"]
+		["names as n", "projects_modules_scope as ps", "names as defn", "modules as srcm"]
 		[
-			"m.name == n.resolved_module",
-			"s.name == n.resolved_name",
-			"mu.id == n.module_id",
-			"ps.module_id == m.id",
-			"ps.cabal is mu.cabal",
-			"n.resolved_module == ? or ? is null",
-			"n.resolved_name == ?"])
-		(q, q, ident)
+			"n.module_id = mu.id",
+			"n.resolved_module = defn.resolved_module",
+			"n.resolved_name = defn.resolved_name",
+			"s.name = defn.resolved_name",
+			-- "s.module_id = m.id",
+			"m.name = defn.resolved_module",
+			"(m.id = srcm.id or m.id = ps.module_id)",
+			"(((ps.cabal is null) and (srcm.cabal is null)) or (ps.cabal = srcm.cabal))",
+			"defn.module_id = srcm.id",
+			"(?, ?) between (defn.line, defn.column) and (defn.line_to, defn.column_to)",
+			"(mu.cabal = srcm.cabal or mu.id = srcm.cabal)",
+			"srcm.file = ?"])
+		(l, c, fpath ^. path)
+	locals <- do
+		defs <- query @_ @(ModuleId :. Only Text :. Position :. Only (Maybe Text) :. Position) (toQuery $ qModuleId `mappend` select_
+			["n.name", "n.def_line", "n.def_column", "n.inferred_type", "n.line", "n.column"]
+			["names as n", "names as defn"]
+			[
+				"n.module_id = mu.id",
+				"n.def_line = defn.def_line",
+				"n.def_column = defn.def_column",
+				"defn.module_id = mu.id",
+				"(?, ?) between (defn.line, defn.column) and (defn.line_to, defn.column_to)",
+				"mu.file = ?"])
+			(l, c, fpath ^. path)
+		return $ do
+			(mid :. Only nm :. defPos :. Only ftype :. usePos) <- defs
+			let
+				sym = Symbol {
+					_symbolId = SymbolId nm mid,
+					_symbolDocs = Nothing,
+					_symbolPosition = Just defPos,
+					_symbolInfo = Function ftype }
+			return $ SymbolUsage sym mid usePos
+	return $ us ++ locals
 runCommand (Complete input True fpath) = toValue $
 	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
 		["modules as srcm"]

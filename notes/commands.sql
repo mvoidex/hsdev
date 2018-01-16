@@ -38,3 +38,30 @@ from imported_scopes as isc
 where
 	isc.module_id == 2565
 group by isc.module_name;
+
+
+# Find usages by location
+select n.* from names as n, modules as mu, symbols as s, modules as m, projects_modules_scope as ps, names as defn, modules as srcm where
+	n.module_id = mu.id and
+	n.resolved_module = defn.resolved_module and
+	n.resolved_name = defn.resolved_name and
+	s.name = defn.resolved_name and
+	s.module_id = m.id and
+	m.name = defn.resolved_module and
+	(m.id = srcm.id or m.id = ps.module_id) and
+	(((ps.cabal is null) and (srcm.cabal is null)) or (ps.cabal = srcm.cabal)) and
+	defn.module_id = srcm.id and
+	defn.line == 74 and
+	defn.column == 17 and
+	(mu.cabal = srcm.cabal or mu.id = srcm.cabal) and
+	srcm.file like '%Deps.hs';
+
+# Find local usages by location
+select n.* from names as n, names as defn, modules as srcm where
+	n.module_id = srcm.id and
+	n.def_line = defn.def_line and
+	n.def_column = defn.def_column and
+	defn.module_id = srcm.id and
+	defn.line == 86 and
+	defn.column == 2 and
+	srcm.file like '%Deps.hs';

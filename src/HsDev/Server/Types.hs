@@ -445,7 +445,7 @@ data Command =
 	Whoat Int Int Path |
 	ResolveScopeModules SearchQuery Path |
 	ResolveScope SearchQuery Path |
-	FindUsages Text |
+	FindUsages Int Int Path |
 	Complete Text Bool Path |
 	Hayoo {
 		hayooQuery :: String,
@@ -516,7 +516,7 @@ instance Paths Command where
 	paths f (Whoat l c fpath) = Whoat <$> pure l <*> pure c <*> paths f fpath
 	paths f (ResolveScopeModules q fpath) = ResolveScopeModules q <$> paths f fpath
 	paths f (ResolveScope q fpath) = ResolveScope q <$> paths f fpath
-	paths _ (FindUsages nm) = pure $ FindUsages nm
+	paths f (FindUsages l c fpath) = FindUsages <$> pure l <*> pure c <*> paths f fpath
 	paths f (Complete n g fpath) = Complete n g <$> paths f fpath
 	paths f (UnresolvedSymbols fs) = UnresolvedSymbols <$> traverse (paths f) fs
 	paths f (Lint fs) = Lint <$> traverse (paths f) fs
@@ -570,7 +570,7 @@ instance FromCmd Command where
 		cmd "scope" "get declarations accessible from module or within a project" (
 			subparser (cmd "modules" "get modules accessible from module or within a project" (ResolveScopeModules <$> cmdP <*> ctx)) <|>
 			ResolveScope <$> cmdP <*> ctx),
-		cmd "usages" "find usages of fully qualified symbol (qualified with module its defined in)" (FindUsages <$> textArgument idm),
+		cmd "usages" "find usages of symbol within project/module" (FindUsages <$> argument auto (metavar "line") <*> argument auto (metavar "column") <*> ctx),
 		cmd "complete" "show completions for input" (Complete <$> textArgument idm <*> wideFlag <*> ctx),
 		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
 		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (textArgument idm))),
@@ -695,7 +695,7 @@ instance ToJSON Command where
 	toJSON (Whoat l c f) = cmdJson "whoat" ["line" .= l, "column" .= c, "file" .= f]
 	toJSON (ResolveScopeModules q f) = cmdJson "scope modules" ["query" .= q, "file" .= f]
 	toJSON (ResolveScope q f) = cmdJson "scope" ["query" .= q, "file" .= f]
-	toJSON (FindUsages nm) = cmdJson "usages" ["name" .= nm]
+	toJSON (FindUsages l c f) = cmdJson "usages" ["line" .= l, "column" .= c, "file" .= f]
 	toJSON (Complete q w f) = cmdJson "complete" ["prefix" .= q, "wide" .= w, "file" .= f]
 	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
 	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
@@ -749,7 +749,7 @@ instance FromJSON Command where
 		guardCmd "whoat" v *> (Whoat <$> v .:: "line" <*> v .:: "column" <*> v .:: "file"),
 		guardCmd "scope modules" v *> (ResolveScopeModules <$> v .:: "query" <*> v .:: "file"),
 		guardCmd "scope" v *> (ResolveScope <$> v .:: "query" <*> v .:: "file"),
-		guardCmd "usages" v *> (FindUsages <$> v .:: "name"),
+		guardCmd "usages" v *> (FindUsages <$> v .:: "line" <*> v .:: "column" <*> v .:: "file"),
 		guardCmd "complete" v *> (Complete <$> v .:: "prefix" <*> (v .:: "wide" <|> pure False) <*> v .:: "file"),
 		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> (v .:: "page" <|> pure 0) <*> (v .:: "pages" <|> pure 1)),
 		guardCmd "cabal list" v *> (CabalList <$> v .::?! "packages"),
