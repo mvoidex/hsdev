@@ -17,6 +17,7 @@ extra-source-files:
   tests/test-package/test-package.cabal
   tests/data/base.sql
   data/hsdev.sql
+  data/ModuleTwo.modified.hs
 
 source-repository head
   type: git

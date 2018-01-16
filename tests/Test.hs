@@ -9,9 +9,11 @@ import Control.Exception (displayException)
 import Data.Aeson hiding (Error)
 import Data.Aeson.Lens
 import Data.Default
+import Data.List
 import Data.Maybe
 import Data.String (fromString)
 import qualified Data.Set as S
+import Data.Text (unpack)
 import System.FilePath
 import System.Directory
 import Test.Hspec
@@ -83,5 +85,16 @@ main = hspec $ do
 				whoType = who' ^. traverseArray . key "info" . key "type"
 			whoName `shouldBe` Just "f"
 			whoType `shouldBe` Just "a -> a"
+		it "should use modified file contents" $ do
+			modifiedContents <- fmap unpack $ readFileUtf8 $ dir </> "tests/data/ModuleTwo.modified.hs"
+			void $ send s ["set-file-contents", "--file", dir </> "tests/test-package/ModuleTwo.hs", "--contents", modifiedContents]
+			-- Call scan to wait until file updated
+			void $ send s ["scan", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
+		it "should rescan module with modified contents" $ do
+			two <- send s ["module", "ModuleTwo", "--exact"]
+			exports two `shouldBe` mkSet ["untypedFoo", "twice", "overloadedStrings", "useUntypedFoo"]
+		it "should use modified source in `check` command" $ do
+			checks <- send s ["check", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
+			(checks ^.. traverseArray . key "note" . key "message" . _Just) `shouldSatisfy` (any ("Defined but not used" `isPrefixOf`))
 		_ <- runIO $ send s ["exit"]
 		return ()
