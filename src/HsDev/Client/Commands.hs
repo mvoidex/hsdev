@@ -298,11 +298,13 @@ runCommand (FindUsages nm) = toValue $ do
 		ident = nameIdent $ toName nm
 	query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
 		["n.line", "n.column"]
-		["names as n"]
+		["names as n", "projects_modules_scope as ps"]
 		[
 			"m.name == n.resolved_module",
 			"s.name == n.resolved_name",
 			"mu.id == n.module_id",
+			"ps.module_id == m.id",
+			"ps.cabal is mu.cabal",
 			"n.resolved_module == ? or ? is null",
 			"n.resolved_name == ?"])
 		(q, q, ident)
