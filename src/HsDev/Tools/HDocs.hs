@@ -20,7 +20,9 @@ import Control.Monad.Except
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Text (Text)
+#ifdef NODOCS
 import qualified System.Log.Simple as Log
+#endif
 
 #ifndef NODOCS
 import Control.DeepSeq
