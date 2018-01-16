@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, TypeSynonymInstances, FlexibleInstances, OverloadedStrings #-}
+{-# LANGUAGE CPP, TemplateHaskell, TypeSynonymInstances, FlexibleInstances, OverloadedStrings #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
@@ -72,6 +72,9 @@ instance NFData l => NFData (SpecialCon l) where
 	rnf (TupleCon l b i) = rnf l `seq` rnf b `seq` rnf i
 	rnf (Cons l) = rnf l
 	rnf (UnboxedSingleCon l) = rnf l
+#if MIN_VERSION_haskell_src_exts(1,20,0)
+	rnf (ExprHole l) = rnf l
+#endif
 
 instance NFData l => NFData (QName l) where
 	rnf (Qual l m n) = rnf l `seq` rnf m `seq` rnf n

@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternSynonyms, ViewPatterns, OverloadedStrings #-}
+{-# LANGUAGE CPP, PatternSynonyms, ViewPatterns, OverloadedStrings #-}
 
 module HsDev.Symbols.Name (
 	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, fromName_, toName_, toModuleName_, fromModuleName_, fromName, toName,
@@ -77,4 +77,6 @@ fromName (Special _ c) = case c of
 	TupleCon _ _ i -> fromString $ "(" ++ replicate (pred i) ',' ++ ")"
 	Cons _ -> "(:)"
 	UnboxedSingleCon _ -> "(# #)"
-
+#if MIN_VERSION_haskell_src_exts(1,20,0)
+	ExprHole _ -> "_"
+#endif

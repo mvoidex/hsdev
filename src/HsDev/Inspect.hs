@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, ImplicitParams, TemplateHaskell #-}
+{-# LANGUAGE CPP, TypeSynonymInstances, ImplicitParams, TemplateHaskell #-}
 
 module HsDev.Inspect (
 	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloadedTime, preloaded, preload,
@@ -240,7 +240,12 @@ getDecl decl' = case decl' of
 	H.ClassDecl _ mctx h _ clsDecls -> mkSymbol nm (Class (tyArgs h) (getCtx mctx)) : concatMap (getClassDecl nm) (fromMaybe [] clsDecls) where
 		nm = tyName h
 	H.TypeSig _ ns tsig -> [mkSymbol n (Function (Just $ oneLinePrint tsig)) | n <- ns]
-	H.PatSynSig _ n mas _ _ t -> [mkSymbol n (PatConstructor (maybe [] (map prp) mas) (Just $ oneLinePrint t))]
+	H.PatSynSig _ ns mas _ _ t -> [mkSymbol n (PatConstructor (maybe [] (map prp) mas) (Just $ oneLinePrint t)) | n <- ns'] where
+#if MIN_VERSION_haskell_src_exts(1,20,0)
+		ns' = ns
+#else
+		ns' = [ns]
+#endif
 	H.FunBind _ ms -> [mkSymbol (matchName m) (Function Nothing) | m <- ms] where
 		matchName (H.Match _ n _ _ _) = n
 		matchName (H.InfixMatch _ _ n _ _ _) = n
