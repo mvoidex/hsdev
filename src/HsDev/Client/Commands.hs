@@ -469,8 +469,6 @@ runCommand StopGhc = toValue $ do
 			deleteSession $ view sessionKey s
 runCommand Exit = toValue serverExit
 
--- TODO: Implement `targetFilter` for sql
-
 targetFilter :: Text -> Maybe Text -> TargetFilter -> (Text, [NamedParam])
 targetFilter mtable _ (TargetProject proj) = (
 	"{t}.cabal in (select cabal from projects where name == :project or cabal == :project)" ~~ ("t" ~% mtable),
