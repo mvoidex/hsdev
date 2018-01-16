@@ -40,7 +40,7 @@ import HsDev.Error
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Database.SQLite.Select
 import HsDev.Scan.Browse (browsePackages)
-import HsDev.Server.Types (FileSource(..), SessionMonad(..), CommandMonad(..), inSessionGhc, inSessionUpdater)
+import HsDev.Server.Types (FileSource(..), SessionMonad(..), CommandMonad(..), inSessionGhc, postSessionUpdater)
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Types
@@ -246,6 +246,6 @@ getFileContents fpath = do
 			fmtime <- maybe (hsdevError $ OtherError "impossible: inspection time not set after call to `fileInspection`") return $ insp ^? inspectionAt
 			if fmtime < tm'
 				then return (Just (tm', cts))
-				else inSessionUpdater $ do
-					SQLite.execute "delete from file_contents where file = ?;" (SQLite.Only fpath)
+				else do
+					void $ postSessionUpdater $ SQLite.execute "delete from file_contents where file = ?;" (SQLite.Only fpath)
 					return Nothing

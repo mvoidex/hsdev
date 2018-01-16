@@ -6,7 +6,8 @@ module HsDev.Server.Types (
 	SessionLog(..), Session(..), SessionMonad(..), askSession, ServerM(..),
 	CommandOptions(..), CommandMonad(..), askOptions, ClientM(..),
 	withSession, serverListen, serverSetLogLevel, serverWait, serverWaitClients,
-	serverSqlDatabase, openSqlConnection, closeSqlConnection, withSqlConnection, withSqlTransaction, serverSetFileContents, inSessionGhc, inSessionUpdater, serverExit, commandRoot, commandNotify, commandLink, commandHold,
+	serverSqlDatabase, openSqlConnection, closeSqlConnection, withSqlConnection, withSqlTransaction, serverSetFileContents,
+	inSessionGhc, inSessionUpdater, postSessionUpdater, serverExit, commandRoot, commandNotify, commandLink, commandHold,
 	ServerCommand(..), ConnectionPort(..), ServerOpts(..), silentOpts, ClientOpts(..), serverOptsArgs, Request(..),
 
 	Command(..),
@@ -15,6 +16,7 @@ module HsDev.Server.Types (
 	) where
 
 import Control.Applicative
+import Control.Concurrent.Async (Async)
 import qualified Control.Concurrent.FiniteChan as F
 import Control.Lens (view, set)
 import Control.Monad.Base
@@ -239,6 +241,12 @@ inSessionUpdater :: SessionMonad m => ServerM IO a -> m a
 inSessionUpdater act = do
 	uw <- askSession sessionUpdater
 	inWorkerWith (hsdevError . OtherError . displayException) uw act
+
+-- | Post to updater and return
+postSessionUpdater :: SessionMonad m => ServerM IO a -> m (Async a)
+postSessionUpdater act = do
+	uw <- askSession sessionUpdater
+	liftIO $ sendTask uw act
 
 -- | Exit session
 serverExit :: SessionMonad m => m ()
