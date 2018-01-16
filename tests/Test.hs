@@ -9,6 +9,7 @@ import Control.Exception (displayException)
 import Data.Aeson hiding (Error)
 import Data.Aeson.Lens
 import Data.Default
+import Data.Maybe
 import Data.String (fromString)
 import qualified Data.Set as S
 import System.FilePath
@@ -29,6 +30,11 @@ send srv args = do
 
 exports :: Maybe Value -> S.Set String
 exports v = mkSet (v ^.. traverseArray . key "exports" . traverseArray . key "id" . key "name" . _Just)
+
+rgn :: Maybe Value -> Maybe Region
+rgn v = Region <$> (pos (v ^. key "from")) <*> (pos (v ^. key "to")) where
+	pos :: Maybe Value -> Maybe Position
+	pos v' = Position <$> (v' ^. key "line") <*> (v' ^. key "column")
 
 mkSet :: [String] -> S.Set String
 mkSet = S.fromList
@@ -60,11 +66,13 @@ main = hspec $ do
 		it "should infer types" $ do
 			ts <- send s ["types", "--file", dir </> "tests/test-package/ModuleOne.hs"]
 			let
-				exprs :: [(String, String)]
+				untypedFooRgn = Region (Position 14 1) (Position 14 11)
+				exprs :: [(Region, String)]
 				exprs = do
-					note' <- ts ^.. traverseArray . key "note"
-					return (note' ^. key "expr" . _Just, note' ^. key "type" . _Just)
-			lookup "untypedFoo" exprs `shouldBe` Just "a -> a -> a" -- FIXME: Where's Num constraint?
+					note' <- ts ^.. traverseArray
+					rgn' <- maybeToList $ rgn (note' ^. key "region")
+					return (rgn', note' ^. key "note" . key "type" . _Just)
+			lookup untypedFooRgn exprs `shouldBe` Just "a -> a -> a" -- FIXME: Where's Num constraint?
 		it "should return symbol under location" $ do
 			_ <- send s ["infer", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
 			who' <- send s ["whoat", "13", "15", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
