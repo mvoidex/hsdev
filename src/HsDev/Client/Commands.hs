@@ -47,6 +47,7 @@ import qualified HsDev.Tools.Ghc.Compat as Compat
 import qualified HsDev.Tools.Ghc.Check as Check
 import qualified HsDev.Tools.Ghc.Types as Types
 import qualified HsDev.Tools.Hayoo as Hayoo
+import qualified HsDev.Tools.HDocs as HDocs
 import qualified HsDev.Tools.HLint as HLint
 import qualified HsDev.Tools.Types as Tools
 import HsDev.Util
@@ -88,19 +89,21 @@ runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 		map (Update.scanProject ghcs') projs,
 		map (Update.scanDirectory ghcs') paths']
 runCommand (SetFileContents f mcts) = toValue $ serverSetFileContents f mcts
-runCommand (RefineDocs projs fs) = toValue $ do
-	projects <- traverse findProject projs
-	mods <- do
-		projMods <- liftM concat $ forM projects $ \proj -> do
-			ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.docs') is null"
-				(Only $ proj ^. projectCabal)
-			p <- SQLite.loadProject (proj ^. projectCabal)
-			return $ set (each . moduleId . moduleLocation . moduleProject) (Just p) ms
-		fileMods <- liftM concat $ forM fs $ \f ->
-			loadModules "select id from modules where file == ? and json_extract(tags, '$.docs') is null"
-				(Only f)
-		return $ projMods ++ fileMods
-	updateProcess def [Update.scanDocs mods]
+runCommand (RefineDocs projs fs)
+	| HDocs.hdocsSupported = toValue $ do
+		projects <- traverse findProject projs
+		mods <- do
+			projMods <- liftM concat $ forM projects $ \proj -> do
+				ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.docs') is null"
+					(Only $ proj ^. projectCabal)
+				p <- SQLite.loadProject (proj ^. projectCabal)
+				return $ set (each . moduleId . moduleLocation . moduleProject) (Just p) ms
+			fileMods <- liftM concat $ forM fs $ \f ->
+				loadModules "select id from modules where file == ? and json_extract(tags, '$.docs') is null"
+					(Only f)
+			return $ projMods ++ fileMods
+		updateProcess def [Update.scanDocs mods]
+	| otherwise = hsdevError $ OtherError "docs not supported"
 runCommand (InferTypes projs fs) = toValue $ do
 	projects <- traverse findProject projs
 	mods <- do

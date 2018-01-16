@@ -327,7 +327,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 					mapM_ SQLite.updateModule ms
 					SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
 
-				scanPackageDbStackDocs opts pdbs
+				when hdocsSupported $ scanPackageDbStackDocs opts pdbs
 
 				updater $ ms ^.. each . inspectedKey
 
@@ -370,7 +370,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 				-- 		return $ map (fmap $ setDocs' docs) ms
 				-- 	else return ms
 
-				scanPackageDbStackDocs opts pdbs
+				when hdocsSupported $ scanPackageDbStackDocs opts pdbs
 
 				updater $ ms ^.. each . inspectedKey
 
@@ -453,35 +453,40 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 
 -- | Scan installed docs
 scanPackageDbStackDocs :: UpdateMonad m => [String] -> PackageDbStack -> m ()
-scanPackageDbStackDocs opts pdbs = Log.scope "docs" $ do
-	docs <- inSessionGhc $ hdocsCabal pdbs opts
-	Log.sendLog Log.Trace $ "docs scanned: {} packages, {} modules total"
-		~~ length docs ~~ sum (map (M.size . snd) docs)
-	sendUpdateAction $ SQLite.executeMany "update symbols set docs = ? where name == ? and module_id in (select id from modules where name == ? and package_name == ? and package_version == ?);" $ do
-		(ModulePackage pname pver, pdocs) <- docs
-		(mname, mdocs) <- M.toList pdocs
-		(nm, doc) <- M.toList mdocs
-		return (doc, nm, mname, pname, pver)
-	Log.sendLog Log.Trace "docs set"
+scanPackageDbStackDocs opts pdbs
+	| hdocsSupported = Log.scope "docs" $ do
+		docs <- inSessionGhc $ hdocsCabal pdbs opts
+		Log.sendLog Log.Trace $ "docs scanned: {} packages, {} modules total"
+			~~ length docs ~~ sum (map (M.size . snd) docs)
+		sendUpdateAction $ SQLite.executeMany "update symbols set docs = ? where name == ? and module_id in (select id from modules where name == ? and package_name == ? and package_version == ?);" $ do
+			(ModulePackage pname pver, pdocs) <- docs
+			(mname, mdocs) <- M.toList pdocs
+			(nm, doc) <- M.toList mdocs
+			return (doc, nm, mname, pname, pver)
+		Log.sendLog Log.Trace "docs set"
+	| otherwise = Log.sendLog Log.Warning $ "hdocs not supported"
 
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [Module] -> m ()
-scanDocs = runTasks_ . map scanDocs' where
-	scanDocs' m = runTask "scanning docs" (view (moduleId . moduleLocation) m) $ Log.scope "docs" $ do
-		mid <- SQLite.lookupModule (m ^. moduleId)
-		mid' <- maybe (hsdevError $ SQLiteError "module id not found") return mid
-		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
-		Log.sendLog Log.Trace $ "Scanning docs for {}" ~~ view (moduleId . moduleLocation) m'
-		docsMap <- inSessionGhc $ do
-			opts' <- getModuleOpts [] m'
-			currentSession >>= maybe (return ()) (const clearTargets)
-			-- Calling haddock with targets set sometimes cause errors
-			haddockSession opts'
-			liftGhc $ readModuleDocs opts' m'
-		sendUpdateAction $ do
-			SQLite.executeMany "update symbols set docs = ? where name == ? and module_id == ?;"
-				[(doc, nm, mid') | (nm, doc) <- maybe [] M.toList docsMap]
-			SQLite.execute "update modules set tags = json_set(tags, '$.docs', 1) where id == ?;" (SQLite.Only mid')
+scanDocs
+	| hdocsSupported = runTasks_ . map scanDocs'
+	| otherwise = const $ Log.sendLog Log.Warning $ "hdocs not supported"
+	where
+		scanDocs' m = runTask "scanning docs" (view (moduleId . moduleLocation) m) $ Log.scope "docs" $ do
+			mid <- SQLite.lookupModule (m ^. moduleId)
+			mid' <- maybe (hsdevError $ SQLiteError "module id not found") return mid
+			m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
+			Log.sendLog Log.Trace $ "Scanning docs for {}" ~~ view (moduleId . moduleLocation) m'
+			docsMap <- inSessionGhc $ do
+				opts' <- getModuleOpts [] m'
+				currentSession >>= maybe (return ()) (const clearTargets)
+				-- Calling haddock with targets set sometimes cause errors
+				haddockSession opts'
+				readModuleDocs opts' m'
+			sendUpdateAction $ do
+				SQLite.executeMany "update symbols set docs = ? where name == ? and module_id == ?;"
+					[(doc, nm, mid') | (nm, doc) <- maybe [] M.toList docsMap]
+				SQLite.execute "update modules set tags = json_set(tags, '$.docs', 1) where id == ?;" (SQLite.Only mid')
 
 -- | Set inferred types for module
 setModTypes :: UpdateMonad m => ModuleId -> [Note TypedExpr] -> m ()

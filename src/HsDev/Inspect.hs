@@ -4,7 +4,7 @@ module HsDev.Inspect (
 	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloadedTime, preloaded, preload,
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
 	analyzeResolve, analyzePreloaded,
-	inspectDocs, readDocs, readModuleDocs, readProjectTargetDocs, inspectDocsGhc,
+	inspectDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
 	inspectFile, sourceInspection, fileInspection, fileContentsInspection, fileContentsInspection_, installedInspection, moduleInspection,
 	projectDirs, projectSources,
@@ -45,7 +45,6 @@ import qualified System.Directory as Dir
 import System.FilePath
 import Text.Format
 import Data.Generics.Uniplate.Data
-import HDocs.Haddock
 
 import HsDev.Display ()
 import HsDev.Error
@@ -55,9 +54,9 @@ import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable, symbolUniq
 import HsDev.Symbols.Parsed hiding (file)
 import qualified HsDev.Symbols.HaskellNames as HN
 import HsDev.Tools.Base
-import HsDev.Tools.Ghc.Worker (GhcM, withCurrentDirectory)
-import HsDev.Tools.HDocs (hdocs, hdocsProcess)
-import HsDev.Util hiding (withCurrentDirectory)
+import HsDev.Tools.Ghc.Worker (GhcM)
+import HsDev.Tools.HDocs (hdocs, hdocsProcess, readModuleDocs)
+import HsDev.Util
 import System.Directory.Paths
 
 -- | Preloaded module with contents and extensions
@@ -320,26 +319,8 @@ inspectDocs opts m = do
 		else liftM Just $ hdocs (view (moduleId . moduleLocation) m) opts
 	return $ maybe id addDocs docsMap m
 
--- | Read docs for one module
-readDocs :: Text -> [String] -> Path -> Ghc (Maybe (Map String String))
-readDocs mname opts fpath = do
-	docs <- hsdevLift $ readSourcesGhc opts [view path fpath]
-	return $ fmap formatDocs $ lookup (T.unpack mname) docs
-
--- | Read docs for one module
-readModuleDocs :: [String] -> Module -> Ghc (Maybe (Map String String))
-readModuleDocs opts m = case view (moduleId . moduleLocation) m of
-	FileModule fpath _ -> withCurrentDirectory (sourceRoot_ (m ^. moduleId) ^. path) $ do
-		readDocs (m ^. moduleId . moduleName) opts fpath
-	_ -> hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
-
-readProjectTargetDocs :: [String] -> Project -> [Path] -> Ghc (Map String (Map String String))
-readProjectTargetDocs opts proj fpaths = withCurrentDirectory (proj ^. projectPath . path) $ do
-	docs <- hsdevLift $ readSourcesGhc opts (fpaths ^.. each . path)
-	return $ M.map formatDocs $ M.fromList docs
-
 -- | Like @inspectDocs@, but in @Ghc@ monad
-inspectDocsGhc :: [String] -> Module -> Ghc Module
+inspectDocsGhc :: [String] -> Module -> GhcM Module
 inspectDocsGhc opts m = do
 	docsMap <- readModuleDocs opts m
 	return $ maybe id addDocs docsMap m

@@ -22,9 +22,17 @@ source-repository head
   type: git
   location: git://github.com/mvoidex/hsdev.git
 
+flag docs
+  description: build with haddock/hdocs to support scanning docs
+  default: True
+
 library
   hs-source-dirs: src
   ghc-options: -Wall -fno-warn-tabs
+
+  if !flag(docs)
+    cpp-options: -DNODOCS
+
   exposed-modules:
     Control.Apply.Util
     Control.Concurrent.FiniteChan
@@ -108,23 +116,36 @@ library
       unix >= 2.7.0
 
   if impl(ghc >= 8.2) && impl(ghc < 8.3)
+    if flag(docs)
+      build-depends:
+        haddock-api >= 2.18.0 && < 2.19.0
+
     build-depends:
-      haddock-api >= 2.18.0 && < 2.19.0,
       ghc == 8.2.*,
       ghc-boot,
       directory >= 1.2.6.0
   if impl(ghc >= 8.0) && impl(ghc < 8.2)
+    if flag(docs)
+      build-depends:
+        haddock-api >= 2.17.0 && < 2.18.0
+
     build-depends:
-      haddock-api >= 2.17.0 && < 2.18.0,
       ghc >= 8.0.0 && < 8.1.0,
       ghc-boot,
       directory >= 1.2.6.0
   if impl(ghc < 8.0)
+    if flag(docs)
+      build-depends:
+        haddock-api >= 2.16.0 && < 2.17.0
+
     build-depends:
-      haddock-api >= 2.16.0 && < 2.17.0,
       ghc >= 7.10.0 && < 7.11.0,
       bin-package-db,
       directory == 1.2.2.*
+
+  if flag(docs)
+    build-depends:
+      hdocs >= 0.5.1
 
   build-depends:
     base >= 4.7 && < 5,
@@ -146,7 +167,6 @@ library
     ghc-syb-utils >= 0.2.3,
     haskell-names >= 0.9.0 && < 0.10.0,
     haskell-src-exts >= 1.18.0 && < 1.20.0,
-    hdocs >= 0.5.1,
     hformat >= 0.3.0,
     hlint >= 1.9.13 && < 2.1,
     HTTP >= 4000.2.0,
