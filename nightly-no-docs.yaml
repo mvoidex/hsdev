@@ -1,0 +1,10 @@
+flags:
+  hsdev:
+    docs: False
+packages:
+- '.'
+- 'tests/test-package/'
+extra-deps:
+- git: https://github.com/mvoidex/haskell-names.git
+  commit: 00ff7c63d314a952273550953e1bae82223d17f1
+resolver: nightly-2018-01-15
