@@ -33,7 +33,7 @@ import Text.Format
 import HsDev.Error
 import HsDev.Database.SQLite as SQLite
 import HsDev.Inspect (preload, asModule)
-import HsDev.Scan (upToDate)
+import HsDev.Scan (upToDate, getFileContents)
 import HsDev.Server.Message as M
 import HsDev.Server.Types
 import HsDev.Sandbox hiding (findSandbox)
@@ -87,6 +87,7 @@ runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 		[Update.scanFiles (zip fs (repeat ghcs'))],
 		map (Update.scanProject ghcs') projs,
 		map (Update.scanDirectory ghcs') paths']
+runCommand (SetFileContents f mcts) = toValue $ serverSetFileContents f mcts
 runCommand (RefineDocs projs fs) = toValue $ do
 	projects <- traverse findProject projs
 	mods <- do
@@ -331,8 +332,9 @@ runCommand (UnresolvedSymbols fs) = toValue $ liftM concat $ forM fs $ \f -> do
 		"name" .= nm,
 		"line" .= line,
 		"column" .= column]) rs
-runCommand (Lint fs) = toValue $ do
-	liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
+runCommand (Lint fs) = toValue $ liftM concat $ forM fs $ \fsrc -> do
+	FileSource f c <- actualFileContents fsrc
+	liftIO $ hsdevLift $ HLint.hlint (view path f) c
 runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $ do
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
@@ -342,7 +344,8 @@ runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $ do
 			inSessionGhc $ do
 				when clear $ clearTargets
 				fn m
-	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs
+	fs' <- mapM actualFileContents fs
+	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs'
 runCommand (CheckLint fs ghcs' clear) = toValue $ do
 	let
 		checkSome file fn = Log.scope "checkSome" $ do
@@ -352,13 +355,15 @@ runCommand (CheckLint fs ghcs' clear) = toValue $ do
 			inSessionGhc $ do
 				when clear $ clearTargets
 				fn m
-	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs
-	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs
+	fs' <- mapM actualFileContents fs
+	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs'
+	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs'
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs' clear) = toValue $ do
-	liftM concat $ forM fs $ \(FileSource file msrc) -> do
+	liftM concat $ forM fs $ \fsrc@(FileSource file msrc) -> do
 		mcached' <- getCached file msrc
-		maybe (updateTypes file msrc) return mcached'
+		FileSource _ msrc' <- actualFileContents fsrc
+		maybe (updateTypes file msrc') return mcached'
 	where
 		getCached :: ServerMonadBase m => Path -> Maybe Text -> ClientM m (Maybe [Tools.Note Types.TypedExpr])
 		getCached _ (Just _) = return Nothing
@@ -430,7 +435,8 @@ runCommand (Rename nm newName fpath) = toValue $ do
 	return $ defRenames ++ usageRenames
 runCommand (GhcEval exprs mfile) = toValue $ do
 	ghcw <- askSession sessionGhc
-	case mfile of
+	mfile' <- traverse actualFileContents mfile
+	case mfile' of
 		Nothing -> inSessionGhc ghciSession
 		Just (FileSource f mcts) -> do
 			m <- setFileSourceSession [] f
@@ -529,7 +535,7 @@ sourceUpToDate fpath = do
 	when (length insps > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ fpath'
 	maybe
 		(return False)
-		(liftIO . upToDate (FileModule fpath' Nothing) [])
+		(upToDate (FileModule fpath' Nothing) [])
 		(listToMaybe insps)
 
 -- | Get source file
@@ -556,7 +562,7 @@ refineSourceModule fpath = do
 			case mcabal of
 				Nothing -> do
 					[insp] <- query @_ @Inspection "select inspection_time, inspection_opts from modules where id = ?;" (Only i)
-					fresh' <- liftIO $ upToDate (m ^. moduleId . moduleLocation) [] insp
+					fresh' <- upToDate (m ^. moduleId . moduleLocation) [] insp
 					if fresh'
 						then return m
 						else do
@@ -566,6 +572,11 @@ refineSourceModule fpath = do
 				Just cabal' -> do
 					proj' <- SQLite.loadProject cabal'
 					return $ set (moduleId . moduleLocation . moduleProject) (Just proj') m
+
+-- | Get file contents
+actualFileContents :: CommandMonad m => FileSource -> m FileSource
+actualFileContents (FileSource fpath Nothing) = fmap (FileSource fpath) (fmap (fmap snd) $ getFileContents fpath)
+actualFileContents fcts = return fcts
 
 -- | Set session by source
 setFileSourceSession :: CommandMonad m => [String] -> Path -> m Module

@@ -1,12 +1,12 @@
 {-# LANGUAGE TypeSynonymInstances, ImplicitParams, TemplateHaskell #-}
 
 module HsDev.Inspect (
-	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded, preload,
+	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloadedTime, preloaded, preload,
 	AnalyzeEnv(..), analyzeEnv, analyzeFixities, analyzeRefine, moduleAnalyzeEnv,
 	analyzeResolve, analyzePreloaded,
 	inspectDocs, readDocs, readModuleDocs, readProjectTargetDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
-	inspectFile, sourceInspection, fileInspection, fileContentsInspection, installedInspection, moduleInspection,
+	inspectFile, sourceInspection, fileInspection, fileContentsInspection, fileContentsInspection_, installedInspection, moduleInspection,
 	projectDirs, projectSources,
 	getDefines,
 	preprocess, preprocess_,
@@ -29,7 +29,7 @@ import Data.Ord (comparing)
 import Data.String (IsString, fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, getPOSIXTime)
+import Data.Time.Clock.POSIX (utcTimeToPOSIXSeconds, getPOSIXTime, POSIXTime)
 import qualified Data.Map.Strict as M
 import qualified Language.Haskell.Exts as H
 import Language.Haskell.Exts.Fixity
@@ -66,10 +66,11 @@ data Preloaded = Preloaded {
 	_preloadedMode :: H.ParseMode,
 	_preloadedModule :: H.Module H.SrcSpanInfo,
 	-- ^ Loaded module head without declarations
+	_preloadedTime :: Inspection,
 	_preloaded :: Text }
 
 instance NFData Preloaded where
-	rnf (Preloaded mid _ _ cts) = rnf mid `seq` rnf cts
+	rnf (Preloaded mid _ _ insp cts) = rnf mid `seq` rnf insp `seq` rnf cts
 
 asModule :: Lens' Preloaded Module
 asModule = lens g' s' where
@@ -91,11 +92,13 @@ asModule = lens g' s' where
 preload :: Text -> [(String, String)] -> [String] -> ModuleLocation -> Maybe Text -> IO Preloaded
 preload name defines opts mloc@(FileModule fpath mproj) Nothing = do
 	cts <- readFileUtf8 (view path fpath)
+	insp <- fileInspection fpath opts
 	let
 		srcExts = fromMaybe (takeDir fpath `withExtensions` mempty) $ do
 			proj <- mproj
 			findSourceDir proj fpath
-	preload name defines (opts ++ extensionsOpts srcExts) mloc (Just cts)
+	p' <- preload name defines (opts ++ extensionsOpts srcExts) mloc (Just cts)
+	return $ p' { _preloadedTime = insp }
 preload _ _ _ mloc Nothing = hsdevError $ InspectError $
 	format "preload called non-sourced module: {}" ~~ mloc
 preload name defines opts mloc (Just cts) = do
@@ -117,10 +120,12 @@ preload name defines opts mloc (Just cts) = do
 	mname <- case mhead of
 		Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> return $ fromString nm
 		_ -> hsdevError $ InspectError $ (format "Parsing module head and imports results in empty module name, file {}" ~~ view path fpath)
+	insp <- fileContentsInspection opts
 	return $ Preloaded {
 		_preloadedId = ModuleId mname mloc,
 		_preloadedMode = pmode,
 		_preloadedModule = H.Module l mhead mpragmas mimps [],
+		_preloadedTime = insp,
 		_preloaded = cts' }
 	where
 		fpath = fromMaybe name (mloc ^? moduleFile)
@@ -371,7 +376,7 @@ inspectFile defines opts file mproj mcts = hsdevLiftIO $ do
 -- | Source inspection data, differs whether there are contents provided
 sourceInspection :: Path -> Maybe Text -> [String] -> IO Inspection
 sourceInspection f Nothing = fileInspection f
-sourceInspection f (Just _) = fileContentsInspection f
+sourceInspection _ (Just _) = fileContentsInspection
 
 -- | File inspection data
 fileInspection :: Path -> [String] -> IO Inspection
@@ -380,10 +385,12 @@ fileInspection f opts = do
 	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ map fromString $ sort $ ordNub opts
 
 -- | File contents inspection data
-fileContentsInspection :: Path -> [String] -> IO Inspection
-fileContentsInspection _ opts = do
-	tm <- getPOSIXTime
-	return $ InspectionAt tm $ map fromString $ sort $ ordNub opts
+fileContentsInspection :: [String] -> IO Inspection
+fileContentsInspection opts = fileContentsInspection_ opts <$> getPOSIXTime
+
+-- | File contents inspection data
+fileContentsInspection_ :: [String] -> POSIXTime -> Inspection
+fileContentsInspection_ opts tm = 	InspectionAt tm $ map fromString $ sort $ ordNub opts
 
 -- | Installed module inspection data, just opts
 installedInspection :: [String] -> IO Inspection

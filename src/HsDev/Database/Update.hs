@@ -200,20 +200,22 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		defines <- askSession sessionDefines
 
 		let
-			inspectionInfos = M.fromList
-				[(mloc, sourceInspection mfile mcts (opts ++ mopts)) |
-					(mloc, mopts, mcts) <- ms',
-					mfile <- mloc ^.. moduleFile]
-			pload (mloc, mopts, mcts) = runTask "preloading" mloc $
-				liftIO $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts
+			pload (mloc, mopts, mcts) = runTask "preloading" mloc $ do
+				mfcts <- maybe (S.getFileContents (mloc ^?! moduleFile)) (const $ return Nothing) mcts
+				case (mfcts ^? _Just . _1) of
+					Just tm -> Log.sendLog Log.Trace $ "using edited file contents, mtime = {}" ~~ show tm
+					Nothing -> return ()
+				let
+					resetInspection = maybe id (set preloadedTime . fileContentsInspection_ (opts ++ mopts)) $ mfcts ^? _Just . _1
+					mcts' = mplus mcts (mfcts ^? _Just . _2)
+				p <- liftIO $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts'
+				return $ resetInspection p
 
 		ploaded <- runTasks (map pload ms')
 		mlocs' <- forM ploaded $ \p -> do
 			let
 				mloc = p ^. preloadedId . moduleLocation
-			insp <- liftIO $ inspectionInfos ^?! ix mloc
-			let
-				inspectedMod = Inspected insp mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
+				inspectedMod = Inspected (p ^. preloadedTime) mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
 			sendUpdateAction $ Log.scope "preloaded" $ SQLite.updateModule inspectedMod
 			return mloc
 		updater mlocs'
@@ -232,21 +234,16 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
 				ms'' <- flip evalStateT sqlAenv' $ runTasks (map inspect' ordered)
-				mlocs'' <- forM ms'' $ \m -> do
-					let
-						mloc = m ^. moduleId . moduleLocation
-					insp <- liftIO $ inspectionInfos ^?! ix mloc
-					let
-						inspectedMod = Inspected insp mloc mempty (Right m)
-					sendUpdateAction $ Log.scope "resolved" $ SQLite.updateModule inspectedMod
-					return mloc
+				mlocs'' <- forM ms'' $ \im -> do
+					sendUpdateAction $ Log.scope "resolved" $ SQLite.updateModule im
+					return $ im ^. inspectedKey
 				updater mlocs''
 				where
 					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
 						aenv <- get
 						m <- either (hsdevError . InspectError) eval $ analyzePreloaded aenv pmod
 						modify (mappend (moduleAnalyzeEnv m))
-						return m
+						return $ Inspected (pmod ^. preloadedTime) (m ^. moduleId . moduleLocation) mempty (Right m)
 	grouped = M.toList $ M.unionsWith (++) [M.singleton (m ^? _1 . moduleProject . _Just) [m] | m <- ms]
 	eval v = handle onError (v `deepseq` liftIO (evaluate v)) where
 		onError :: MonadThrow m => ErrorCall -> m a
@@ -508,10 +505,11 @@ inferModTypes = runTasks_ . map inferModTypes' where
 		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
 		Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view (moduleId . moduleLocation) m'
 
+		mcts <- fmap (fmap snd) $ S.getFileContents (m' ^?! moduleId . moduleLocation . moduleFile)
 		types' <- inSessionGhc $ do
 			opts' <- getModuleOpts [] m'
 			targetSession opts' m'
-			fileTypes m' Nothing
+			fileTypes m' mcts
 
 		setModTypes (m' ^. moduleId) types'
 
@@ -530,7 +528,7 @@ scan part' mlocs opts act = Log.scope "scan" $ do
 	mlocs' <- liftM (M.fromList . map (\((SQLite.Only mid) SQLite.:. (m SQLite.:. i)) -> (m, (mid, i)))) part'
 	let
 		obsolete = M.filterWithKey (\k _ -> k `S.notMember` S.fromList (map (^. _1) mlocs)) mlocs'
-	changed <- liftIO $ S.changedModules (M.map snd mlocs') opts mlocs
+	changed <- S.changedModules (M.map snd mlocs') opts mlocs
 	sendUpdateAction $ Log.scope "remove-obsolete" $ forM_ (M.elems obsolete) $ SQLite.removeModule . fst
 	act changed
 

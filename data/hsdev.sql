@@ -279,3 +279,5 @@ create table file_contents (
 	contents text,
 	mtime integer
 );
+
+create unique index file_contents_index on file_contents (file);

@@ -412,6 +412,7 @@ data Command =
 		scanGhcOpts :: [String],
 		scanDocs :: Bool,
 		scanInferTypes :: Bool } |
+	SetFileContents Path (Maybe Text) |
 	RefineDocs {
 		docsProjects :: [Path],
 		docsFiles :: [Path] } |
@@ -493,6 +494,7 @@ instance Paths Command where
 		pure ghcs <*>
 		pure docs <*>
 		pure infer
+	paths f (SetFileContents p cts) = SetFileContents <$> paths f p <*> pure cts
 	paths f (RefineDocs projs fs) = RefineDocs <$> traverse (paths f) projs <*> traverse (paths f) fs
 	paths f (InferTypes projs fs) = InferTypes <$> traverse (paths f) projs <*> traverse (paths f) fs
 	paths f (Remove projs c cs fs) = Remove <$> traverse (paths f) projs <*> pure c <*> traverse (paths f) cs <*> traverse (paths f) fs
@@ -537,6 +539,8 @@ instance FromCmd Command where
 			ghcOpts <*>
 			docsFlag <*>
 			inferFlag,
+		cmd "set-file-contents" "set edited file contents, which will be used instead of contents in file until it updated" $
+			SetFileContents <$> fileArg <*> optional contentsArg,
 		cmd "docs" "scan docs" $ RefineDocs <$> many projectArg <*> many fileArg,
 		cmd "infer" "infer types" $ InferTypes <$> many projectArg <*> many fileArg,
 		cmd "remove" "remove modules info" $ Remove <$>
@@ -611,6 +615,7 @@ textArgument = fmap fromString . strArgument
 
 cabalFlag :: Parser Bool
 clearFlag :: Parser Bool
+contentsArg :: Parser Text
 ctx :: Parser Path
 docsFlag :: Parser Bool
 fileArg :: Parser Path
@@ -632,6 +637,7 @@ wideFlag :: Parser Bool
 
 cabalFlag = switch (long "cabal")
 clearFlag = switch (long "clear" <> short 'c' <> help "clear run, drop previous state")
+contentsArg = textOption (long "contents" <> help "text contents")
 ctx = fileArg
 docsFlag = switch (long "docs" <> help "scan source file docs")
 fileArg = textOption (long "file" <> metavar "path" <> short 'f')
@@ -664,6 +670,7 @@ instance ToJSON Command where
 		"ghc-opts" .= ghcs,
 		"docs" .= docs',
 		"infer" .= infer']
+	toJSON (SetFileContents f cts) = cmdJson "set-file-contents" ["file" .= f, "contents" .= cts]
 	toJSON (RefineDocs projs fs) = cmdJson "docs" ["projects" .= projs, "files" .= fs]
 	toJSON (InferTypes projs fs) = cmdJson "infer" ["projects" .= projs, "files" .= fs]
 	toJSON (Remove projs cabal sboxes fs) = cmdJson "remove" ["projects" .= projs, "cabal" .= cabal, "sandboxes" .= sboxes, "files" .= fs]
@@ -713,6 +720,7 @@ instance FromJSON Command where
 			v .::?! "ghc-opts" <*>
 			(v .:: "docs" <|> pure False) <*>
 			(v .:: "infer" <|> pure False)),
+		guardCmd "set-file-contents" v *> (SetFileContents <$> v .:: "file" <*> v .:: "contents"),
 		guardCmd "docs" v *> (RefineDocs <$> v .::?! "projects" <*> v .::?! "files"),
 		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files"),
 		guardCmd "remove" v *> (Remove <$>

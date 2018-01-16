@@ -95,9 +95,14 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 
 	session <- liftIO $ fixIO $ \sess -> do
 		let
-			setFileCts fpath mcts = do
+			setFileCts fpath Nothing = withSession sess $ do
+				Log.sendLog Log.Trace $ "dropping file contents for {}" ~~ fpath
+				SQLite.execute "delete from file_contents where file = ?;" (SQLite.Only fpath)
+			setFileCts fpath (Just cts) = do
 				tm <- getPOSIXTime
-				withSession sess $ SQLite.execute "update file_contents set contents = ?, mtime = ? where file = ?;" (mcts, (fromRational (toRational tm) :: Double), fpath)
+				withSession sess $ do
+					Log.sendLog Log.Trace $ "setting file contents for {} with mtime = {}" ~~ fpath ~~ show tm
+					SQLite.execute "insert or replace into file_contents (file, contents, mtime) values (?, ?, ?);" (fpath, cts, (fromRational (toRational tm) :: Double))
 				writeChan (W.watcherChan watcher) (W.WatchedModule, W.Event W.Modified (view path fpath) tm)
 
 		uw <- startWorker (withSession sess . withSqlConnection) id logAll

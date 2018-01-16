@@ -86,7 +86,7 @@ isWatchingDir :: Watcher a -> FilePath -> IO Bool
 isWatchingDir w f = do
 	f' <- canonicalizePath f
 	dirs <- readMVar (watcherDirs w)
-	return $ isWatchingDir' dirs f' || isWatchingParents' dirs f'
+	return $ isWatchingDir' dirs f'
 
 -- | Watch directory tree
 watchTree :: Watcher a -> FilePath -> (Event -> Bool) -> a -> IO ()
@@ -119,7 +119,7 @@ isWatchingTree :: Watcher a -> FilePath -> IO Bool
 isWatchingTree w f = do
 	f' <- canonicalizePath f
 	dirs <- readMVar (watcherDirs w)
-	return $ isWatchingTree' dirs f' || isWatchingParents' dirs f'
+	return $ isWatchingTree' dirs f'
 
 -- | Read next event
 readEvent :: Watcher a -> IO (a, Event)
@@ -165,14 +165,10 @@ isWatchingDir' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
 isWatchingDir' m dir
 	| Just (_, _) <- M.lookup dir m = True
 	| isDrive dir = False
-	| otherwise = isWatchingDir' m (takeDirectory dir)
+	| otherwise = isWatchingTree' m (takeDirectory dir)
 
 isWatchingTree' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
 isWatchingTree' m dir
 	| Just (True, _) <- M.lookup dir m = True
 	| isDrive dir = False
 	| otherwise = isWatchingTree' m (takeDirectory dir)
-
-isWatchingParents' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
-isWatchingParents' m dir = any (isWatchingTree' m) parents where
-	parents = takeWhile (not . isDrive) $ iterate takeDirectory dir

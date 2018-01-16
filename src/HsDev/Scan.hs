@@ -10,6 +10,7 @@ module HsDev.Scan (
 	scanProjectFile,
 	scanModify,
 	upToDate, changedModules,
+	getFileContents,
 
 	-- * Reexportss
 	module HsDev.Symbols.Types,
@@ -20,13 +21,15 @@ import Control.DeepSeq
 import Control.Lens
 import Control.Monad.Except
 import Data.Deps
-import Data.Maybe (catMaybes, isJust)
+import Data.Maybe (catMaybes, isJust, listToMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.List (intercalate)
 import Data.Text (Text)
 import Data.Text.Lens (unpacked)
 import qualified Data.Text as T
+import Data.Time.Clock.POSIX (POSIXTime)
+import Data.Traversable (for)
 import Data.String (IsString, fromString)
 import qualified Data.Set as S
 import System.Directory
@@ -37,7 +40,7 @@ import HsDev.Error
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Database.SQLite.Select
 import HsDev.Scan.Browse (browsePackages)
-import HsDev.Server.Types (FileSource(..), CommandMonad(..), inSessionGhc)
+import HsDev.Server.Types (FileSource(..), SessionMonad(..), CommandMonad(..), inSessionGhc)
 import HsDev.Sandbox
 import HsDev.Symbols
 import HsDev.Symbols.Types
@@ -211,16 +214,38 @@ scanModify f im = traverse f' im where
 	f' m = f (toListOf (inspection . inspectionOpts . each . unpacked) im) m
 
 -- | Is inspected module up to date?
-upToDate :: ModuleLocation -> [String] -> Inspection -> IO Bool
+upToDate :: SessionMonad m => ModuleLocation -> [String] -> Inspection -> m Bool
 upToDate mloc opts insp = do
-	insp' <- moduleInspection mloc opts
-	return $ fresh insp insp'
+	insp' <- liftIO $ moduleInspection mloc opts
+	mfinsp <- fmap join $ for (mloc ^? moduleFile) $ \fpath -> do
+		tm <- SQLite.query @_ @(SQLite.Only Double) "select mtime from file_contents where file = ?;" (SQLite.Only fpath)
+		return $ fmap (fileContentsInspection_ opts . fromRational . toRational . SQLite.fromOnly) (listToMaybe tm)
+	let
+		lastInsp = maybe insp' (max insp') mfinsp
+	return $ fresh insp lastInsp
 
 -- | Returns new (to scan) and changed (to rescan) modules
-changedModules :: Map ModuleLocation Inspection -> [String] -> [ModuleToScan] -> IO [ModuleToScan]
+changedModules :: SessionMonad m => Map ModuleLocation Inspection -> [String] -> [ModuleToScan] -> m [ModuleToScan]
 changedModules inspMap opts = filterM $ \m -> if isJust (m ^. _3)
 	then return True
 	else maybe
 		(return True)
 		(liftM not . upToDate (m ^. _1) (opts ++ (m ^. _2)))
 		(M.lookup (m ^. _1) inspMap)
+
+-- | Returns file contents if it was set and still actual
+getFileContents :: SessionMonad m => Path -> m (Maybe (POSIXTime, Text))
+getFileContents fpath = do
+	mcts <- SQLite.query @_ @(Double, Text) "select mtime, contents from file_contents where file = ?;" (SQLite.Only fpath)
+	insp <- liftIO $ fileInspection fpath []
+	case listToMaybe mcts of
+		Nothing -> return Nothing
+		Just (tm, cts) -> do
+			let
+				tm' = fromRational (toRational tm)
+			fmtime <- maybe (hsdevError $ OtherError "impossible: inspection time not set after call to `fileInspection`") return $ insp ^? inspectionAt
+			if fmtime < tm'
+				then return (Just (tm', cts))
+				else do
+					SQLite.execute "delete from file_contents where file = ?;" (SQLite.Only fpath)
+					return Nothing
