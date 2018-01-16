@@ -96,6 +96,7 @@ library
     HsDev.Tools.HDocs
     HsDev.Tools.HLint
     HsDev.Tools.Refact
+    HsDev.Tools.Tabs
     HsDev.Tools.Types
     HsDev.Types
     HsDev.Util

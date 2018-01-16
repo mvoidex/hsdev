@@ -8,18 +8,16 @@ module HsDev.Tools.Ghc.Check (
 	module HsDev.Symbols.Types,
 	PackageDb(..), PackageDbStack(..), Project(..),
 
-	recalcNotesTabs,
-
 	module Control.Monad.Except
 	) where
 
-import Control.Lens (preview, view, each, (^..), (^.))
+import Control.Lens (view, (^.))
 import Control.Monad.Except
-import Data.Maybe (fromMaybe)
+import qualified Data.Map as M
 import Data.Text (Text)
 import System.Log.Simple (MonadLog(..), scope, sendLog, Level(Trace))
 
-import GHC hiding (Warning, Module, moduleName)
+import GHC hiding (Warning, Module)
 
 import Control.Concurrent.FiniteChan
 import HsDev.Error
@@ -30,7 +28,7 @@ import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker
 import HsDev.Tools.Ghc.Compat as C
 import HsDev.Tools.Types
-import HsDev.Util (readFileUtf8, ordNub)
+import HsDev.Tools.Tabs
 import System.Directory.Paths
 
 -- | Check module source
@@ -40,6 +38,9 @@ check m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
 		ch <- liftIO newChan
 		let
 			dir = sourceRoot_ (m ^. moduleId)
+			-- FIXME: There can be dependent modules with modified file contents
+			-- Their contents should be set here too
+			srcs = maybe mempty (M.singleton file) msrc
 		ex <- liftIO $ dirExists dir
 		sendLog Trace "loading targets"
 		withFlags $ (if ex then withCurrentDirectory (dir ^. path) else id) $ do
@@ -48,18 +49,5 @@ check m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
 			loadTargets [target]
 		notes <- liftIO $ stopChan ch
 		sendLog Trace "targets checked"
-		liftIO $ recalcNotesTabs notes
+		liftIO $ recalcNotesTabs srcs notes
 	_ -> scope "check" $ hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)
-
--- Recalc tabs for notes
-recalcNotesTabs :: [Note OutputMessage] -> IO [Note OutputMessage]
-recalcNotesTabs notes = do
-	cts <- mapM (readFileUtf8 . view path) files
-	let
-		recalc' n = fromMaybe n $ do
-			fname <- preview (noteSource . moduleFile) n
-			cts' <- lookup fname (zip files cts)
-			return $ recalcTabs cts' 8 n
-	return $ map recalc' notes
-	where
-		files = ordNub $ notes ^.. each . noteSource . moduleFile
