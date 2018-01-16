@@ -34,9 +34,10 @@ exports :: Maybe Value -> S.Set String
 exports v = mkSet (v ^.. traverseArray . key "exports" . traverseArray . key "id" . key "name" . _Just)
 
 rgn :: Maybe Value -> Maybe Region
-rgn v = Region <$> (pos (v ^. key "from")) <*> (pos (v ^. key "to")) where
-	pos :: Maybe Value -> Maybe Position
-	pos v' = Position <$> (v' ^. key "line") <*> (v' ^. key "column")
+rgn v = Region <$> (pos (v ^. key "from")) <*> (pos (v ^. key "to"))
+
+pos :: Maybe Value -> Maybe Position
+pos v = Position <$> (v ^. key "line") <*> (v ^. key "column")
 
 mkSet :: [String] -> S.Set String
 mkSet = S.fromList
@@ -47,7 +48,7 @@ main = hspec $ do
 		dir <- runIO getCurrentDirectory
 		s <- runIO $ startServer_ (def { serverSilent = True })
 		it "should load data" $ do
-			inserts <- liftM lines $ readFile (dir </> "tests/data/base.sql")
+			inserts <- fmap lines $ readFile (dir </> "tests/data/base.sql")
 			inServer s $ mapM_ (execute_ . fromString) inserts
 		it "should scan project" $ do
 			void $ send s ["scan", "--project", dir </> "tests/test-package"]
@@ -96,5 +97,29 @@ main = hspec $ do
 		it "should use modified source in `check` command" $ do
 			checks <- send s ["check", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
 			(checks ^.. traverseArray . key "note" . key "message" . _Just) `shouldSatisfy` (any ("Defined but not used" `isPrefixOf`))
+		it "should get usages of symbol" $ do
+			-- Note, that source was modified
+			us <- send s ["usages", "2", "2", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
+			let
+				locs :: [(String, Position)]
+				locs = do
+					n <- us ^.. traverseArray
+					nm <- maybeToList $ n ^. key "in" . key "name"
+					p <- maybeToList $ pos (n ^. key "at")
+					return (nm, p)
+			S.fromList locs `shouldBe` S.fromList [
+				("ModuleOne", Position 4 2),
+				("ModuleTwo", Position 2 2),
+				("ModuleTwo", Position 8 19),
+				("ModuleTwo", Position 25 21),
+				("ModuleTwo", Position 25 35)]
+		it "should get usages of local symbols" $ do
+			us <- send s ["usages", "14", "15", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
+			let
+				locs :: [Position]
+				locs = do
+					n <- us ^.. traverseArray
+					maybeToList $ pos (n ^. key "at")
+			S.fromList locs `shouldBe` S.fromList [Position 14 7, Position 14 11, Position 14 15]
 		_ <- runIO $ send s ["exit"]
 		return ()
