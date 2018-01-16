@@ -14,11 +14,13 @@ import Control.Monad (guard)
 import Control.Lens (makeLenses, each, (^.))
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
-import Data.List (tails, isSuffixOf)
+import Data.List (tails, isSuffixOf, intercalate)
 import qualified Data.Text as T
 import Data.String
+import Text.Format
 
 import System.Directory.Paths
+import HsDev.Display
 
 data PackageDb = GlobalDb | UserDb | PackageDb { _packageDb :: Path } deriving (Eq, Ord)
 
@@ -33,6 +35,15 @@ instance Show PackageDb where
 	show GlobalDb = "global-db"
 	show UserDb = "user-db"
 	show (PackageDb p) = "package-db:" ++ p ^. path
+
+instance Display PackageDb where
+	display GlobalDb = "global-db"
+	display UserDb = "user-db"
+	display (PackageDb p) = "package-db " ++ display p
+	displayType _ = "package-db"
+
+instance Formattable PackageDb where
+	formattable = formattable . display
 
 instance ToJSON PackageDb where
 	toJSON GlobalDb = "global-db"
@@ -59,6 +70,13 @@ makeLenses ''PackageDbStack
 
 instance NFData PackageDbStack where
 	rnf (PackageDbStack ps) = rnf ps
+
+instance Display PackageDbStack where
+	display = intercalate "/" . map display . packageDbs
+	displayType _ = "package-db-stack"
+
+instance Formattable PackageDbStack where
+	formattable = formattable . display
 
 instance ToJSON PackageDbStack where
 	toJSON (PackageDbStack ps) = toJSON ps

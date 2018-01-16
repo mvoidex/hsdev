@@ -30,8 +30,10 @@ import Distribution.System
 import qualified Distribution.Text as T (display)
 import System.FilePath
 import System.Log.Simple (MonadLog(..))
+import Text.Format
 
 import System.Directory.Paths
+import HsDev.Display
 import HsDev.PackageDb
 import HsDev.Project.Types
 import HsDev.Scan.Browse (browsePackages)
@@ -60,6 +62,14 @@ instance NFData Sandbox where
 
 instance Show Sandbox where
 	show (Sandbox _ p) = T.unpack p
+
+instance Display Sandbox where
+	display (Sandbox _ fpath) = display fpath
+	displayType (Sandbox CabalSandbox _) = "cabal-sandbox"
+	displayType (Sandbox StackWork _) = "stack-work"
+
+instance Formattable Sandbox where
+	formattable = formattable . display
 
 instance ToJSON Sandbox where
 	toJSON (Sandbox _ p) = toJSON p
@@ -138,7 +148,7 @@ restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDbs [p]) $ r
 -- | Get actual sandbox build path: <arch>-<platform>-<compiler>-<version>
 cabalSandboxLib :: GhcM FilePath
 cabalSandboxLib = do
-	tmpSession ["-no-user-package-db"]
+	tmpSession globalDb ["-no-user-package-db"]
 	df <- GHC.getSessionDynFlags
 	let
 		res =
@@ -154,27 +164,25 @@ cabalSandboxPackageDb :: GhcM FilePath
 cabalSandboxPackageDb = liftM (++ "-packages.conf.d") cabalSandboxLib
 
 -- | Options for GHC for module and project
-getModuleOpts :: [String] -> Module -> GhcM [String]
+getModuleOpts :: [String] -> Module -> GhcM (PackageDbStack, [String])
 getModuleOpts opts m = do
 	pdbs <- case view (moduleId . moduleLocation) m of
 		FileModule fpath _ -> searchPackageDbStack fpath
 		InstalledModule _ _ _ -> return userDb
 		_ -> return userDb
 	pkgs <- browsePackages opts pdbs
-	return $ concat [
-		packageDbStackOpts pdbs,
+	return $ (pdbs, concat [
 		moduleOpts pkgs m,
-		opts]
+		opts])
 
 -- | Options for GHC for project target
-getProjectTargetOpts :: [String] -> Project -> Info -> GhcM [String]
+getProjectTargetOpts :: [String] -> Project -> Info -> GhcM (PackageDbStack, [String])
 getProjectTargetOpts opts proj t = do
 	pdbs <- searchPackageDbStack $ view projectPath proj
 	pkgs <- browsePackages opts pdbs
-	return $ concat [
-		packageDbStackOpts pdbs,
+	return $ (pdbs, concat [
 		projectTargetOpts pkgs proj t,
-		opts]
+		opts])
 
 -- | Get sandbox of project (if any)
 getProjectSandbox :: MonadLog m => Project -> m (Maybe Sandbox)

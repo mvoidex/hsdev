@@ -43,6 +43,7 @@ import qualified Language.Haskell.Exts as Exts (Name(..))
 import Text.Format
 
 import Control.Apply.Util (chain)
+import HsDev.Display
 import HsDev.PackageDb.Types
 import HsDev.Project
 import HsDev.Symbols.Name
@@ -436,6 +437,12 @@ instance NFData ModuleTag where
 	rnf InferredTypesTag = ()
 	rnf RefinedDocsTag = ()
 	rnf OnlyHeaderTag = ()
+
+instance Display ModuleTag where
+	display InferredTypesTag = "types"
+	display RefinedDocsTag = "docs"
+	display OnlyHeaderTag = "header"
+	displayType _ = "module-tag"
 
 instance ToJSON ModuleTag where
 	toJSON InferredTypesTag = toJSON ("types" :: String)

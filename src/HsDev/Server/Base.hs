@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, OverloadedStrings, CPP, PatternGuards #-}
+{-# LANGUAGE CPP, OverloadedStrings, CPP, PatternGuards, TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Base (
@@ -54,7 +54,7 @@ import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Error
 import qualified HsDev.Database.Update as Update
 import HsDev.Inspect (getDefines)
-import HsDev.Tools.Ghc.Worker
+import HsDev.Tools.Ghc.Worker hiding (Session)
 import HsDev.Server.Types
 import HsDev.Server.Message
 import HsDev.Symbols.Location (ModuleLocation(..))
@@ -101,9 +101,13 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 			setFileCts fpath (Just cts) = do
 				tm <- getPOSIXTime
 				withSession sess $ do
+					notChanged <- SQLite.query @_ @(SQLite.Only Bool) "select contents == ? from file_contents where file = ?;" (cts, fpath)
+					let
+						notChanged' = any SQLite.fromOnly notChanged
 					Log.sendLog Log.Trace $ "setting file contents for {} with mtime = {}" ~~ fpath ~~ show tm
 					SQLite.execute "insert or replace into file_contents (file, contents, mtime) values (?, ?, ?);" (fpath, cts, (fromRational (toRational tm) :: Double))
-				writeChan (W.watcherChan watcher) (W.WatchedModule, W.Event W.Modified (view path fpath) tm)
+					unless notChanged' $ liftIO $
+						writeChan (W.watcherChan watcher) (W.WatchedModule, W.Event W.Modified (view path fpath) tm)
 
 		uw <- startWorker (withSession sess . withSqlConnection) id logAll
 

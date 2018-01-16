@@ -30,11 +30,14 @@ import Data.Char (isSpace, isDigit)
 import Data.List (findIndex)
 import Data.Maybe
 import Data.Text (Text, pack, unpack)
+import Data.Text.Lens (unpacked)
 import qualified Data.Text as T
 import System.FilePath
 import Text.Read (readMaybe)
+import Text.Format
 
 import System.Directory.Paths
+import HsDev.Display
 import HsDev.PackageDb.Types
 import HsDev.Project.Types
 import HsDev.Util ((.::), (.::?), (.::?!), objectUnion, noNulls)
@@ -140,6 +143,16 @@ instance NFData ModuleLocation where
 
 instance Show ModuleLocation where
 	show = unpack . locationId
+
+instance Display ModuleLocation where
+	display (FileModule f _) = display f
+	display (InstalledModule _ _ n) = view unpacked n
+	display (OtherLocation s) = view unpacked s
+	display NoLocation = "<no-location>"
+	displayType _ = "module"
+
+instance Formattable ModuleLocation where
+	formattable = formattable . display
 
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object $ noNulls ["file" .= f, "project" .= fmap (view projectCabal) p]

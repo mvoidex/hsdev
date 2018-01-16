@@ -43,7 +43,7 @@ import qualified System.Directory.Paths as P
 -- | Get compiler version
 stackCompiler :: GhcM String
 stackCompiler = do
-	tmpSession ["-no-user-package-db"]
+	tmpSession globalDb ["-no-user-package-db"]
 	df <- GHC.getSessionDynFlags
 	let
 		res =

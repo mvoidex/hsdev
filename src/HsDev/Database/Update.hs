@@ -478,10 +478,10 @@ scanDocs
 			m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
 			Log.sendLog Log.Trace $ "Scanning docs for {}" ~~ view (moduleId . moduleLocation) m'
 			docsMap <- inSessionGhc $ do
-				opts' <- getModuleOpts [] m'
+				(pdbs, opts') <- getModuleOpts [] m'
 				currentSession >>= maybe (return ()) (const clearTargets)
 				-- Calling haddock with targets set sometimes cause errors
-				haddockSession opts'
+				haddockSession pdbs opts'
 				readModuleDocs opts' m'
 			sendUpdateAction $ do
 				SQLite.executeMany "update symbols set docs = ? where name == ? and module_id == ?;"
@@ -512,8 +512,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 
 		mcts <- fmap (fmap snd) $ S.getFileContents (m' ^?! moduleId . moduleLocation . moduleFile)
 		types' <- inSessionGhc $ do
-			opts' <- getModuleOpts [] m'
-			targetSession opts' m'
+			targetSession [] m'
 			fileTypes m' mcts
 
 		setModTypes (m' ^. moduleId) types'

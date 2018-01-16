@@ -45,6 +45,7 @@ import qualified Database.SQLite.Simple as SQL (query, query_, queryNamed, execu
 import Distribution.Text (display)
 import Language.Haskell.Exts.Syntax hiding (Name, Module)
 import Language.Haskell.Extension ()
+import System.Directory
 import System.Log.Simple
 import Text.Format
 
@@ -77,13 +78,20 @@ initialize p = do
 			[Only equalVersion] <- SQL.query conn "select sum(json(value) == json(?)) > 0 from hsdev where option == 'version';" (Only $ toJSON version)
 			return equalVersion
 		else return True
-	unless goodVersion $
-		-- TODO: Completely drop schema to reinitialize
-		hsdevError $ OtherError "Not implemented: dropping schema of db"
-	when (not hasTables || not goodVersion) $ SQL.withTransaction conn $ do
-		mapM_ (SQL.execute_ conn) commands
-		SQL.execute @(Text, Value) conn "insert into hsdev values (?, ?);" ("version", toJSON version)
-	return conn
+	let
+		start
+			| not goodVersion = do
+					close conn
+					removeFile p
+					conn' <- open p
+					initDb conn'
+			| not hasTables = initDb conn
+			| otherwise = return conn
+		initDb conn' = SQL.withTransaction conn' $ do
+			mapM_ (SQL.execute_ conn) commands
+			SQL.execute @(Text, Value) conn' "insert into hsdev values (?, ?);" ("version", toJSON version)
+			return conn'
+	start
 
 purge :: SessionMonad m => m ()
 purge = do

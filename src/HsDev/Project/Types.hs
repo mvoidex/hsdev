@@ -20,11 +20,13 @@ import Data.Monoid
 import Data.Ord
 import Data.Text (Text)
 import qualified Data.Text as T
-import Distribution.Text (display)
+import qualified Distribution.Text as D (display)
 import Language.Haskell.Extension
 import System.FilePath
+import Text.Format
 
 import System.Directory.Paths
+import HsDev.Display
 import HsDev.Util
 
 -- | Cabal project
@@ -49,6 +51,13 @@ instance Show Project where
 		"project " ++ _projectName p ^. path,
 		"\tcabal: " ++ _projectCabal p ^. path,
 		"\tdescription:"] ++ concatMap (map (tab 2) . lines . show) (maybeToList $ _projectDescription p)
+
+instance Display Project where
+	display = T.unpack . _projectName
+	displayType _ = "project"
+
+instance Formattable Project where
+	formattable = formattable . display
 
 instance ToJSON Project where
 	toJSON p = object [
@@ -249,10 +258,10 @@ instance Ord Info where
 
 instance Show Info where
 	show i = unlines $ lang ++ exts ++ opts ++ sources ++ otherMods where
-		lang = maybe [] (\l -> ["default-language: " ++ display l]) $ _infoLanguage i
+		lang = maybe [] (\l -> ["default-language: " ++ D.display l]) $ _infoLanguage i
 		exts
 			| null (_infoExtensions i) = []
-			| otherwise = "extensions:" : map (tab 1 . display) (_infoExtensions i)
+			| otherwise = "extensions:" : map (tab 1 . D.display) (_infoExtensions i)
 		opts
 			| null (_infoGHCOptions i) = []
 			| otherwise = "ghc-options:" : map (tab 1 . T.unpack) (_infoGHCOptions i)
@@ -278,13 +287,13 @@ instance FromJSON Info where
 		v .:: "other-modules"
 
 instance ToJSON Language where
-	toJSON = toJSON . display
+	toJSON = toJSON . D.display
 
 instance FromJSON Language where
 	parseJSON = withText "language" $ \txt -> parseDT "Language" (T.unpack txt)
 
 instance ToJSON Extension where
-	toJSON = toJSON . display
+	toJSON = toJSON . D.display
 
 instance FromJSON Extension where
 	parseJSON = withText "extension" $ \txt -> parseDT "Extension" (T.unpack txt)

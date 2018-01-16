@@ -23,8 +23,8 @@ import qualified GHC
 -- | Session for module
 targetSession :: [String] -> Module -> GhcM ()
 targetSession opts m = do
-	opts' <- getModuleOpts opts m
-	ghcSession ("-Wall" : opts')
+	(pdbs, opts') <- getModuleOpts opts m
+	ghcSession pdbs ("-Wall" : opts')
 
 -- | Interpret file
 interpretModule :: Module -> Maybe Text -> GhcM ()

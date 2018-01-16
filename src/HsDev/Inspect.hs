@@ -48,6 +48,7 @@ import Data.Generics.Uniplate.Data
 
 import HsDev.Display ()
 import HsDev.Error
+import HsDev.Sandbox (searchPackageDbStack)
 import HsDev.Symbols
 import HsDev.Symbols.Name (fromModuleName_)
 import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable, symbolUniqId)
@@ -319,9 +320,13 @@ inspectDocs :: [String] -> Module -> GhcM Module
 inspectDocs opts m = do
 	let
 		hdocsWorkaround = False
+	pdbs <- case view (moduleId . moduleLocation) m of
+		FileModule fpath _ -> searchPackageDbStack fpath
+		InstalledModule _ _ _ -> return userDb
+		_ -> return userDb
 	docsMap <- if hdocsWorkaround
 		then liftIO $ hdocsProcess (fromMaybe (T.unpack $ view (moduleId . moduleName) m) (preview (moduleId . moduleLocation . moduleFile . path) m)) opts
-		else liftM Just $ hdocs (view (moduleId . moduleLocation) m) opts
+		else liftM Just $ hdocs pdbs (view (moduleId . moduleLocation) m) opts
 	return $ maybe id addDocs docsMap m
 
 -- | Like @inspectDocs@, but in @Ghc@ monad

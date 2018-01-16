@@ -463,8 +463,8 @@ runCommand StopGhc = toValue $ do
 	inSessionGhc $ do
 		ms <- findSessionBy (const True)
 		forM_ ms $ \s -> do
-			Log.sendLog Log.Trace $ "stopping session: {}" ~~ s
-			deleteSession s
+			Log.sendLog Log.Trace $ "stopping session: {}" ~~ view sessionKey s
+			deleteSession $ view sessionKey s
 runCommand Exit = toValue serverExit
 
 -- TODO: Implement `targetFilter` for sql
@@ -570,7 +570,8 @@ refineSourceModule fpath = do
 						then return m
 						else do
 							defs <- askSession sessionDefines
-							p' <- liftIO $ preload (m ^. moduleId . moduleName) defs [] (m ^. moduleId . moduleLocation) Nothing
+							mcts <- fmap (fmap snd) $ getFileContents fpath'
+							p' <- liftIO $ preload (m ^. moduleId . moduleName) defs [] (m ^. moduleId . moduleLocation) mcts
 							return $ set moduleImports (p' ^. asModule . moduleImports) m
 				Just cabal' -> do
 					proj' <- SQLite.loadProject cabal'

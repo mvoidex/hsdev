@@ -50,12 +50,12 @@ import HsDev.Tools.Ghc.Worker
 import System.Directory.Paths
 
 -- | Get docs for modules
-hdocsy :: [ModuleLocation] -> [String] -> GhcM [Map String String]
+hdocsy :: PackageDbStack -> [ModuleLocation] -> [String] -> GhcM [Map String String]
 #ifndef NODOCS
-hdocsy mlocs opts = (map $ force . HDocs.formatDocs) <$> docs' mlocs where
+hdocsy pdbs mlocs opts = (map $ force . HDocs.formatDocs) <$> docs' mlocs where
 	docs' :: [ModuleLocation] -> GhcM [HDocs.ModuleDocMap]
 	docs' ms = do
-		haddockSession opts
+		haddockSession pdbs opts
 		liftGhc $ hsdevLiftWith (ToolError "hdocs") $
 			liftM (map snd) $ HDocs.readSourcesGhc opts $ map (view (moduleFile . path)) ms
 #else
@@ -63,12 +63,12 @@ hdocsy _ _ = notSupported >> return mempty
 #endif
 
 -- | Get docs for module
-hdocs :: ModuleLocation -> [String] -> GhcM (Map String String)
+hdocs :: PackageDbStack -> ModuleLocation -> [String] -> GhcM (Map String String)
 #ifndef NODOCS
-hdocs mloc opts = (force . HDocs.formatDocs) <$> docs' mloc where
+hdocs pdbs mloc opts = (force . HDocs.formatDocs) <$> docs' mloc where
 	docs' :: ModuleLocation -> GhcM HDocs.ModuleDocMap
 	docs' mloc' = do
-		haddockSession opts
+		haddockSession pdbs opts
 		liftGhc $ case mloc' of
 			(FileModule fpath _) -> hsdevLiftWith (ToolError "hdocs") $ liftM snd $ HDocs.readSourceGhc opts (view path fpath)
 			(InstalledModule _ _ mname) -> do
@@ -101,7 +101,7 @@ hdocsPackage _ = notSupported >> return mempty
 hdocsCabal :: PackageDbStack -> [String] -> GhcM [(ModulePackage, (Map Text (Map Text Text)))]
 #ifndef NODOCS
 hdocsCabal pdbs opts = do
-	haddockSession (packageDbStackOpts pdbs ++ opts)
+	haddockSession pdbs opts
 	pkgs <- packageConfigs
 	forM pkgs $ \pkg -> do
 		pkgDocs' <- hdocsPackage pkg

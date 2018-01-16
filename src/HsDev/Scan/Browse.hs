@@ -55,13 +55,13 @@ import qualified Pretty
 -- | Browse packages
 browsePackages :: [String] -> PackageDbStack -> GhcM [PackageConfig]
 browsePackages opts dbs = do
-	tmpSession (packageDbStackOpts dbs ++ opts)
+	tmpSession dbs opts
 	liftM (map readPackageConfig) packageConfigs
 
 -- | Get packages with deps
 browsePackagesDeps :: [String] -> PackageDbStack -> GhcM (Deps PackageConfig)
 browsePackagesDeps opts dbs = do
-	tmpSession (packageDbStackOpts dbs ++ opts)
+	tmpSession dbs opts
 	df <- GHC.getSessionDynFlags
 	cfgs <- packageConfigs
 	return $ mapDeps (toPkg df) $ mconcat [deps (Compat.unitId cfg) (Compat.depends df cfg) | cfg <- cfgs]
@@ -73,7 +73,7 @@ browsePackagesDeps opts dbs = do
 -- otherwise hidden packages won't be loaded
 listModules :: [String] -> PackageDbStack -> [ModulePackage] -> GhcM [ModuleLocation]
 listModules opts dbs pkgs = do
-	tmpSession (packageDbStackOpts dbs ++ opts ++ packagesOpts)
+	tmpSession dbs (opts ++ packagesOpts)
 	ms <- packageDbModules
 	return [ghcModuleLocation p m | (p, m) <- ms]
 	where
@@ -84,7 +84,7 @@ listModules opts dbs pkgs = do
 -- one of them can be lookuped and therefore modules from different version packages won't be actually inspected
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
-	tmpSession (packageDbStackOpts dbs ++ opts)
+	tmpSession dbs opts
 	liftM concat . withEachPackage (const $ browseModules' opts) $ mlocs
 
 -- | Inspect installed modules, doesn't set session and package flags!
