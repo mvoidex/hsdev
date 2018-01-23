@@ -351,7 +351,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 			where
 				insertNames = executeMany insertQuery namesData
 				replaceQNames = executeMany insertQuery qnamesData
-				setResolvedSymbolIds = execute "update names set symbol_id = (select symbol_id from scopes as sc where names.module_id == sc.module_id and ((names.qualifier is null and sc.qualifier is null) or (names.qualifier == sc.qualifier)) and names.name == sc.name) where module_id == ? and resolved_module is not null and resolved_name is not null;" (Only mid)
+				setResolvedSymbolIds = execute "update names set symbol_id = (select sc.symbol_id from scopes as sc, symbols as s, modules as m where names.module_id == sc.module_id and ((names.qualifier is null and sc.qualifier is null) or (names.qualifier == sc.qualifier)) and names.name == sc.name and s.id == sc.symbol_id and m.id == s.module_id and s.name == names.resolved_name and m.name == names.resolved_module) where module_id == ? and resolved_module is not null and resolved_name is not null;" (Only mid)
 				insertQuery = "insert or replace into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				namesData = map toData $ p ^.. P.names
 				qnamesData = map toQData $ p ^.. P.qnames
