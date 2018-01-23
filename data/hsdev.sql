@@ -197,9 +197,10 @@ create index scopes_module_id_index on scopes (module_id);
 create view completions (
 	module_id,
 	completion,
+	qualifier,
 	symbol_id
 ) as
-select id, (case when sc.qualifier is null then sc.name else sc.qualifier || '.' || sc.name end) as full_name, sc.symbol_id
+select id, (case when sc.qualifier is null then sc.name else sc.qualifier || '.' || sc.name end) as full_name, sc.qualifier, sc.symbol_id
 from modules as m, scopes as sc
 where (m.id == sc.module_id);
 

@@ -168,19 +168,8 @@ runCommand RemoveAll = toValue $ do
 runCommand InfoPackages = toValue $
 	query_ @ModulePackage "select package_name, package_version from package_dbs;"
 runCommand InfoProjects = toValue $ do
-	ps <- query_ @(Only Int :. Project) "select p.id, p.name, p.cabal, p.version from projects as p;"
-	forM ps $ \(Only pid :. proj) -> do
-		libs <- query @_ @Library "select l.modules, b.depends, b.language, b.extensions, b.ghc_options, b.source_dirs, b.other_modules from libraries as l, build_infos as b where (l.project_id == ?) and (l.build_info_id == b.id);"
-			(Only pid)
-		exes <- query @_ @Executable "select e.name, e.path, b.depends, b.language, b.extensions, b.ghc_options, b.source_dirs, b.other_modules from executables as e, build_infos as b where (e.project_id == ?) and (e.build_info_id == b.id);"
-			(Only pid)
-		tsts <- query @_ @Test "select t.name, t.enabled, t.main, b.depends, b.language, b.extensions, b.ghc_options, b.source_dirs, b.other_modules from tests as t, build_infos as b where (t.project_id == ?) and (t.build_info_id == b.id);"
-			(Only pid)
-		return $
-			set (projectDescription . _Just . projectLibrary) (listToMaybe libs) .
-			set (projectDescription . _Just . projectExecutables) exes .
-			set (projectDescription . _Just . projectTests) tsts $
-			proj
+	ps <- query_ @(Only Path) "select cabal from projects;"
+	mapM (SQLite.loadProject . fromOnly) ps
 runCommand InfoSandboxes = toValue $ do
 	rs <- query_ @(Only PackageDb) "select distinct package_db from package_dbs;"
 	return [pdb | Only pdb <- rs]
@@ -282,8 +271,8 @@ runCommand (ResolveScopeModules sq fpath) = toValue $ do
 				"mu.name like ? escape '\\'"])
 			(proj, likePattern sq)
 		_ -> fail "Impossible happened: several projects for one module"
-runCommand (ResolveScope sq fpath) = toValue $ do
-	rs <- query @_ @(SymbolId :. Only (Maybe Text)) (toQuery $ qSymbolId `mappend` select_ ["sc.qualifier"]
+runCommand (ResolveScope sq fpath) = toValue $
+	query @_ @(Scoped SymbolId) (toQuery $ qSymbolId `mappend` select_ ["sc.qualifier"]
 		["scopes as sc", "modules as srcm"]
 		[
 			"srcm.id == sc.module_id",
@@ -291,7 +280,6 @@ runCommand (ResolveScope sq fpath) = toValue $ do
 			"srcm.file == ?",
 			"s.name like ? escape '\\'"])
 		(fpath ^. path, likePattern sq)
-	return [ScopeSymbol q s | (s :. Only q) <- rs]
 runCommand (FindUsages l c fpath) = toValue $ do
 	us <- query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
 		["n.line", "n.column"]
@@ -341,7 +329,8 @@ runCommand (Complete input True fpath) = toValue $
 			"s.name like ? escape '\\'"])
 		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))
 runCommand (Complete input False fpath) = toValue $
-	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
+	query @_ @(Scoped Symbol) (toQuery $ qSymbol `mappend` select_
+		["c.qualifier"]
 		["completions as c", "modules as srcm"]
 		[
 			"c.module_id == srcm.id",

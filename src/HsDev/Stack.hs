@@ -28,6 +28,8 @@ import qualified Distribution.Text as T (display)
 import System.Directory
 import System.Environment
 import System.FilePath
+import qualified System.Log.Simple as Log
+import Text.Format (formats, (~%))
 
 import qualified GHC
 import qualified Packages as GHC
@@ -66,7 +68,12 @@ stack cmd' = hsdevLiftIO $ do
 	stackExe <- Util.withCurrentDirectory (takeDirectory curExe) $
 		liftIO (findExecutable "stack") >>= maybe (hsdevError $ ToolNotFound "stack") return
 	comp <- stackCompiler
-	liftIO $ runTool_ stackExe (["--compiler", comp, "--arch", stackArch] ++ cmd')
+	let
+		args' = ["--compiler", comp, "--arch", stackArch] ++ cmd'
+	Log.sendLog Log.Trace $ formats "invoking stack: {exe} {args}" [
+		"exe" ~% stackExe,
+		"args" ~% unwords args']
+	liftIO $ runTool_ stackExe args'
 
 -- | Make yaml opts
 yaml :: Maybe FilePath -> [String]

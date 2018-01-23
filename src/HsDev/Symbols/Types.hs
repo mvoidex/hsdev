@@ -5,7 +5,7 @@ module HsDev.Symbols.Types (
 	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleImports, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
-	ScopeSymbol(..), scopeQualifier, scopeSymbol,
+	Scoped(..), scopeQualifier, scoped,
 	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, fresh, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
@@ -297,20 +297,20 @@ gwhat n v = do
 	s <- v .:: "what"
 	guard (s == n)
 
--- | Symbol in scope with qualifier
-data ScopeSymbol = ScopeSymbol {
+-- | Scoped entity with qualifier
+data Scoped a = Scoped {
 	_scopeQualifier :: Maybe Text,
-	_scopeSymbol :: SymbolId }
+	_scoped :: a }
 		deriving (Eq, Ord)
 
-instance Show ScopeSymbol where
-	show (ScopeSymbol q s) = maybe "" (\q' -> T.unpack q' ++ ".") q ++ show s
+instance Show a => Show (Scoped a) where
+	show (Scoped q s) = maybe "" (\q' -> T.unpack q' ++ ".") q ++ show s
 
-instance ToJSON ScopeSymbol where
-	toJSON (ScopeSymbol q s) = toJSON s `objectUnion` object (noNulls ["qualifier" .= q])
+instance ToJSON a => ToJSON (Scoped a) where
+	toJSON (Scoped q s) = toJSON s `objectUnion` object (noNulls ["qualifier" .= q])
 
-instance FromJSON ScopeSymbol where
-	parseJSON = withObject "scope-symbol" $ \v -> ScopeSymbol <$>
+instance FromJSON a => FromJSON (Scoped a) where
+	parseJSON = withObject "scope-symbol" $ \v -> Scoped <$>
 		(v .::? "qualifier") <*>
 		parseJSON (Object v)
 
@@ -504,7 +504,7 @@ instance Documented Symbol where
 makeLenses ''Module
 makeLenses ''Symbol
 makeLenses ''SymbolInfo
-makeLenses ''ScopeSymbol
+makeLenses ''Scoped
 makeLenses ''SymbolUsage
 makeLenses ''Inspection
 makeLenses ''Inspected

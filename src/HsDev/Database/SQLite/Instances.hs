@@ -152,6 +152,12 @@ instance ToRow Symbol where
 				toField $ sym ^? symbolInfo . patternType . _Just,
 				toField $ sym ^? symbolInfo . patternConstructor]
 
+instance FromRow a => FromRow (Scoped a) where
+	fromRow = flip Scoped <$> fromRow <*> field
+
+instance ToRow a => ToRow (Scoped a) where
+	toRow (Scoped q s) = toRow s ++ [toField q]
+
 instance FromRow Project where
 	fromRow = do
 		name <- field
