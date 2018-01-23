@@ -235,7 +235,7 @@ runCommand (Whoat l c fpath) = toValue $ do
 			"srcm.id == n.module_id",
 			"m.name == n.resolved_module",
 			"s.name == n.resolved_name",
-			"m.id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
+			"s.id == n.symbol_id",
 			"srcm.file == ?",
 			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
 		(fpath ^. path, l, c)
@@ -281,23 +281,26 @@ runCommand (ResolveScope sq fpath) = toValue $
 			"s.name like ? escape '\\'"])
 		(fpath ^. path, likePattern sq)
 runCommand (FindUsages l c fpath) = toValue $ do
-	us <- query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
-		["n.line", "n.column"]
-		["names as n", "projects_modules_scope as ps", "names as defn", "modules as srcm"]
-		[
-			"n.module_id = mu.id",
-			"n.resolved_module = defn.resolved_module",
-			"n.resolved_name = defn.resolved_name",
-			"s.name = defn.resolved_name",
-			-- "s.module_id = m.id",
-			"m.name = defn.resolved_module",
-			"(m.id = srcm.id or m.id = ps.module_id)",
-			"(((ps.cabal is null) and (srcm.cabal is null)) or (ps.cabal = srcm.cabal))",
-			"defn.module_id = srcm.id",
-			"(?, ?) between (defn.line, defn.column) and (defn.line_to, defn.column_to)",
-			"(mu.cabal = srcm.cabal or mu.id = srcm.cabal)",
-			"srcm.file = ?"])
-		(l, c, fpath ^. path)
+	us <- do
+		sids <- query @_ @(Only (Maybe Int)) (toQuery $ select_
+			["n.symbol_id"]
+			["names as n", "modules as srcm"]
+			[
+				"n.module_id == srcm.id",
+				"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)",
+				"srcm.file = ?"])
+			(l, c, fpath)
+		when (length sids > 1) $ Log.sendLog Log.Warning $ "multiple symbols found at location {0}:{1}:{2}" ~~ fpath ~~ l ~~ c
+		let
+			msid = join $ fmap fromOnly $ listToMaybe sids
+		query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
+			["n.line", "n.column"]
+			["names as n"]
+			[
+				"n.symbol_id == ?",
+				"s.id == n.symbol_id",
+				"mu.id == n.module_id"])
+			(Only msid)
 	locals <- do
 		defs <- query @_ @(ModuleId :. Only Text :. Position :. Only (Maybe Text) :. Position) (toQuery $ qModuleId `mappend` select_
 			["n.name", "n.def_line", "n.def_column", "n.inferred_type", "n.line", "n.column"]
@@ -322,9 +325,10 @@ runCommand (FindUsages l c fpath) = toValue $ do
 	return $ us ++ locals
 runCommand (Complete input True fpath) = toValue $
 	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["modules as srcm"]
+		["modules as srcm", "exports as e"]
 		[
-			"m.id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
+			"e.module_id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
+			"s.id == e.symbol_id",
 			"msrc.file == ?",
 			"s.name like ? escape '\\'"])
 		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))

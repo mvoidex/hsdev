@@ -217,7 +217,8 @@ create table names (
 	inferred_type text,
 	resolved_module text,
 	resolved_name text,
-	resolve_error text
+	resolve_error text,
+	symbol_id integer
 );
 
 create unique index names_position_index on names (module_id, line, column, line_to, column_to);
@@ -240,11 +241,10 @@ from names
 where def_line is not null and def_column is not null
 union
 select n.module_id, n.resolved_name, n.line, n.column, n.line_to, n.column_to, s.module_id, s.line, s.column, 0
-from names as n, modules as srcm, modules as m, projects_modules_scope as ps, symbols as s
+from names as n, modules as srcm, modules as m, symbols as s
 where
 	(n.module_id == srcm.id) and
-	(srcm.cabal == ps.cabal) and
-	(m.id == ps.module_id) and
+	(n.symbol_id == s.id) and
 	(m.name == n.resolved_module) and
 	(s.module_id == m.id) and
 	(s.name == n.resolved_name);
