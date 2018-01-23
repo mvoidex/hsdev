@@ -305,6 +305,9 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 							fmap makeImportList specList)
 					executeMany "insert into imports (module_id, line, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?);"
 						(map importRow imps)
+					executeNamed "update imports set import_module_id = (select im.id from modules as im, projects_modules_scope as ps where ((ps.cabal is null and :cabal is null) or (ps.cabal == :cabal)) and ps.module_id == im.id and im.name == imports.module_name) where module_id == :module_id;" [
+					 ":cabal" := im ^? inspectedKey . moduleProject . _Just . projectCabal,
+					 ":module_id" := mid]
 			where
 				getModuleName (ModuleName _ s) = s
 				getHiding (ImportSpecList _ h _) = h

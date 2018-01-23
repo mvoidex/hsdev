@@ -25,7 +25,7 @@ It also doesn't require much work to integrate with some editor:
 
 ## Usage
 
-Use `hsdev start` to start remote server. Specify `--db`, where `hsdev` will store information (SQLite database).
+Use `hsdev start` to start remote server. Specify `--db`, where `hsdev` will store information (SQLite database, see [hsdev.sql](data/hsdev.sql) for schema).
 Then you can connect to server and send requests (see [requests/responses](API.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
 Scan sources, installed modules and you're ready to request various information: scope, completions, info about symbols etc.
 
