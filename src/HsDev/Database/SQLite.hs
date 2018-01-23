@@ -88,7 +88,7 @@ initialize p = do
 			| not hasTables = initDb conn
 			| otherwise = return conn
 		initDb conn' = SQL.withTransaction conn' $ do
-			mapM_ (SQL.execute_ conn) commands
+			mapM_ (SQL.execute_ conn') commands
 			SQL.execute @(Text, Value) conn' "insert into hsdev values (?, ?);" ("version", toJSON version)
 			return conn'
 	start
