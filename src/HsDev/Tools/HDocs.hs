@@ -59,7 +59,7 @@ hdocsy pdbs mlocs opts = (map $ force . HDocs.formatDocs) <$> docs' mlocs where
 		liftGhc $ hsdevLiftWith (ToolError "hdocs") $
 			liftM (map snd) $ HDocs.readSourcesGhc opts $ map (view (moduleFile . path)) ms
 #else
-hdocsy _ _ = notSupported >> return mempty
+hdocsy _ _ _ = notSupported >> return mempty
 #endif
 
 -- | Get docs for module
@@ -76,7 +76,7 @@ hdocs pdbs mloc opts = (force . HDocs.formatDocs) <$> docs' mloc where
 				liftIO $ hsdevLiftWith (ToolError "hdocs") $ HDocs.moduleDocsF df (T.unpack mname)
 			_ -> hsdevError $ ToolError "hdocs" $ "Can't get docs for: " ++ show mloc'
 #else
-hdocs _ _ = notSupported >> return mempty
+hdocs _ _ _ = notSupported >> return mempty
 #endif
 
 -- | Get docs for package
