@@ -54,7 +54,7 @@ main = hspec $ do
 			void $ send s ["scan", "--project", dir </> "tests/test-package"]
 		it "should resolve export list" $ do
 			one <- send s ["module", "ModuleOne", "--exact"]
-			exports one `shouldBe` mkSet ["test", "newChan", "untypedFoo"]
+			exports one `shouldBe` mkSet ["Ctor", "ctor", "test", "newChan", "untypedFoo"]
 			two <- send s ["module", "ModuleTwo", "--exact"]
 			exports two `shouldBe` mkSet ["untypedFoo", "twice", "overloadedStrings"]
 		it "should pass extensions when checks" $ do
@@ -69,7 +69,7 @@ main = hspec $ do
 		it "should infer types" $ do
 			ts <- send s ["types", "--file", dir </> "tests/test-package/ModuleOne.hs"]
 			let
-				untypedFooRgn = Region (Position 14 1) (Position 14 11)
+				untypedFooRgn = Region (Position 15 1) (Position 15 11)
 				exprs :: [(Region, String)]
 				exprs = do
 					note' <- ts ^.. traverseArray
@@ -86,6 +86,11 @@ main = hspec $ do
 				whoType = who' ^. traverseArray . key "info" . key "type"
 			whoName `shouldBe` Just "f"
 			whoType `shouldBe` Just "a -> a"
+		it "should distinguish between constructor and data" $ do
+			whoData <- send s ["whoat", "20", "9", "--file", dir </> "tests/test-package/ModuleOne.hs"]
+			whoCtor <- send s ["whoat", "21", "8", "--file", dir </> "tests/test-package/ModuleOne.hs"]
+			(whoData ^. traverseArray . key "info" . key "what" :: Maybe String) `shouldBe` Just "data"
+			(whoCtor ^. traverseArray . key "info" . key "what" :: Maybe String) `shouldBe` Just "ctor"
 		it "should use modified file contents" $ do
 			modifiedContents <- fmap unpack $ readFileUtf8 $ dir </> "tests/data/ModuleTwo.modified.hs"
 			void $ send s ["set-file-contents", "--file", dir </> "tests/test-package/ModuleTwo.hs", "--contents", modifiedContents]

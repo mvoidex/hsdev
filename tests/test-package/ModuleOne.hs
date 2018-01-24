@@ -1,7 +1,8 @@
 module ModuleOne (
 	test,
 	newChan,
-	untypedFoo
+	untypedFoo,
+	Ctor(..), ctor,
 	) where
 
 import Control.Concurrent.Chan (newChan)
@@ -12,3 +13,9 @@ test = return ()
 
 -- | Some function without type
 untypedFoo x y = x + y
+
+-- | Same name of type and ctor
+data Ctor a = Ctor a
+
+ctor :: Ctor Int
+ctor = Ctor 10
