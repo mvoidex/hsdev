@@ -413,11 +413,11 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 			updateSymbolIds tableName
 
 		updateModuleIds :: SessionMonad m => String -> m ()
-		updateModuleIds tableName = scope "update-module-ids" $ timed $
+		updateModuleIds tableName = scope "update-module-ids" $
 			execute_ (fromString ("update {table} set module_id = (select m.id from modules as m where (m.file = {table}.file) or (m.package_name = {table}.package_name and m.package_version = {table}.package_version and m.installed_name = {table}.installed_name) or (m.other_location = {table}.other_location));" ~~ ("table" ~% tableName)))
 
 		updateSymbolIds :: SessionMonad m => String -> m ()
-		updateSymbolIds tableName = scope "update-symbol-ids" $ timed $
+		updateSymbolIds tableName = scope "update-symbol-ids" $
 			execute_ (fromString ("update {table} set symbol_id = (select s.id from symbols as s where s.name = {table}.name and s.what = {table}.what and s.module_id = {table}.module_id);" ~~ ("table" ~% tableName)))
 
 		updateExistingSymbols :: SessionMonad m => String -> m ()
