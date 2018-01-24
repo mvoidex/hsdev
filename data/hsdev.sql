@@ -130,8 +130,7 @@ create table symbols (
 );
 
 create unique index symbols_id_index on symbols (id);
-create index symbols_module_id_index on symbols (module_id);
-create index symbols_name_index on symbols (name, what);
+create unique index symbols_index on symbols (module_id, name, what);
 
 -- modules
 create table modules (
