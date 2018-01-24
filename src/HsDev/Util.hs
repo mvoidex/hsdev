@@ -30,6 +30,9 @@ module HsDev.Util (
 	-- * Parse
 	parseDT,
 
+	-- * Log utils
+	timed,
+
 	-- * Reexportss
 	module Control.Monad.Except,
 	MonadIO(..)
@@ -57,6 +60,7 @@ import Data.Text (Text)
 import qualified Data.Text.IO as ST
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
+import Data.Time.Clock.POSIX
 import Distribution.Text (simpleParse)
 import qualified Distribution.Text (Text)
 import Options.Applicative
@@ -307,3 +311,12 @@ version = mapM readMaybe $ split (== '.') $cabalVersion
 parseDT :: (Monad m, Distribution.Text.Text a) => String -> String -> m a
 parseDT typeName v = maybe err return (simpleParse v) where
 	err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
+
+-- | Measure time of action
+timed :: MonadLog m => m a -> m a
+timed act = do
+	s <- liftIO getPOSIXTime
+	r <- act
+	e <- liftIO getPOSIXTime
+	sendLog Trace $ "duration: {}" ~~ show (e - s)
+	return r

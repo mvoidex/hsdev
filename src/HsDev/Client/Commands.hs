@@ -235,6 +235,7 @@ runCommand (Whoat l c fpath) = toValue $ do
 			"srcm.id == n.module_id",
 			"m.name == n.resolved_module",
 			"s.name == n.resolved_name",
+			"s.what == n.resolved_what",
 			"s.id == n.symbol_id",
 			"srcm.file == ?",
 			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])

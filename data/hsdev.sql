@@ -131,7 +131,7 @@ create table symbols (
 
 create unique index symbols_id_index on symbols (id);
 create index symbols_module_id_index on symbols (module_id);
-create index symbols_name_index on symbols (name);
+create index symbols_name_index on symbols (name, what);
 
 -- modules
 create table modules (
@@ -204,7 +204,7 @@ create table scopes (
 	symbol_id integer
 );
 
-create index scopes_module_id_index on scopes (module_id);
+create index scopes_name_index on scopes (module_id, name);
 
 -- like `scopes`, but with column `completion` with fully qualified name
 create view completions (
@@ -231,12 +231,13 @@ create table names (
 	inferred_type text, -- inferred name type, set by hsdev
 	resolved_module text, -- resolved module name, for global and top-level names
 	resolved_name text, -- resolved name, for global and top-level names
+	resolved_what text, -- resolved symbol kind
 	resolve_error text,
 	symbol_id integer -- resolved symbol id
 );
 
 create unique index names_position_index on names (module_id, line, column, line_to, column_to);
-create index names_module_id_index on names (module_id);
+create index names_name_index on names (module_id, name);
 
 -- like `names`, but with definition position set for both local and global names
 create view definitions (

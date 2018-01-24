@@ -36,6 +36,7 @@ import Data.Aeson hiding (Error)
 import Data.Generics.Uniplate.Operations
 import Data.List (intercalate)
 import Data.Maybe
+import qualified Data.Map as M
 import Data.String
 import qualified Data.Set as S
 import Data.Text (Text)
@@ -60,6 +61,7 @@ import HsDev.Error
 import HsDev.PackageDb.Types
 import HsDev.Project.Types
 import HsDev.Symbols.Name
+import qualified HsDev.Symbols.HaskellNames as HN
 import HsDev.Symbols.Parsed
 import HsDev.Symbols.Types hiding (loadProject)
 import qualified HsDev.Symbols.Parsed as P
@@ -230,7 +232,7 @@ updateModule im = scope "update-module" $ do
 	insertModuleSymbols im
 
 removeModuleContents :: SessionMonad m => Int -> m ()
-removeModuleContents mid = do
+removeModuleContents mid = scope "remove-module-contents" $ do
 	execute "delete from imports where module_id == ?;" (Only mid)
 	execute "delete from exports where module_id == ?;" (Only mid)
 	execute "delete from scopes where module_id == ?;" (Only mid)
@@ -285,7 +287,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 	removeModuleContents mid
 	insertModuleImports mid
 	insertExportSymbols mid (im ^.. inspected . moduleExports . each)
-	insertScopeSymbols mid (im ^.. inspected . scopeSymbols)
+	insertScopeSymbols mid (M.toList (im ^. inspected . moduleScope))
 	maybe (return ()) (insertResolvedNames mid) (im ^? inspected . moduleSource . _Just)
 	where
 		insertModuleImports :: SessionMonad m => Int -> m ()
@@ -336,11 +338,11 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 			insertMissingSymbols "export_symbols"
 			execute "insert into exports (module_id, symbol_id) select ?, symbol_id from export_symbols;" (Only mid)
 
-		insertScopeSymbols :: SessionMonad m => Int -> [(Symbol, [Name])] -> m ()
+		insertScopeSymbols :: SessionMonad m => Int -> [(Name, [Symbol])] -> m ()
 		insertScopeSymbols _ [] = return ()
 		insertScopeSymbols mid snames = scope "insert-scope-symbols" $ withTemporaryTable "scope_symbols" (symbolsColumns ++ scopeNameColumns ++ idColumns) $ do
 			dumpSymbols "scope_symbols" (symbolsColumns ++ scopeNameColumns)
-				[(s :. (Name.nameModule nm, Name.nameIdent nm)) | (s, nms) <- snames, nm <- nms]
+				[(s :. (Name.nameModule nm, Name.nameIdent nm)) | (nm, syms) <- snames, s <- syms]
 			updateExistingSymbols "scope_symbols"
 			insertMissingModules "scope_symbols"
 			insertMissingSymbols "scope_symbols"
@@ -354,8 +356,8 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 			where
 				insertNames = executeMany insertQuery namesData
 				replaceQNames = executeMany insertQuery qnamesData
-				setResolvedSymbolIds = execute "update names set symbol_id = (select sc.symbol_id from scopes as sc, symbols as s, modules as m where names.module_id == sc.module_id and ((names.qualifier is null and sc.qualifier is null) or (names.qualifier == sc.qualifier)) and names.name == sc.name and s.id == sc.symbol_id and m.id == s.module_id and s.name == names.resolved_name and m.name == names.resolved_module) where module_id == ? and resolved_module is not null and resolved_name is not null;" (Only mid)
-				insertQuery = "insert or replace into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				setResolvedSymbolIds = execute "update names set symbol_id = (select sc.symbol_id from scopes as sc, symbols as s, modules as m where names.module_id == sc.module_id and ((names.qualifier is null and sc.qualifier is null) or (names.qualifier == sc.qualifier)) and names.name == sc.name and s.id == sc.symbol_id and m.id == s.module_id and s.name == names.resolved_name and s.what == names.resolved_what and m.name == names.resolved_module) where module_id == ? and resolved_module is not null and resolved_name is not null and resolved_what is not null;" (Only mid)
+				insertQuery = "insert or replace into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolved_what, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				namesData = map toData $ p ^.. P.names
 				qnamesData = map toQData $ p ^.. P.qnames
 				toData name = (
@@ -371,6 +373,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 					name ^? P.defPos . positionColumn,
 					(name ^? P.resolvedName) >>= Name.nameModule,
 					Name.nameIdent <$> (name ^? P.resolvedName),
+					fmap (symbolType . HN.fromSymbol) $ name ^? P.symbolL,
 					P.resolveError name)
 				toQData qname = (
 					mid,
@@ -385,6 +388,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 					qname ^? P.defPos . positionColumn,
 					(qname ^? P.resolvedName) >>= Name.nameModule,
 					Name.nameIdent <$> (qname ^? P.resolvedName),
+					fmap (symbolType . HN.fromSymbol) $ qname ^? P.symbolL,
 					P.resolveError qname)
 
 		symbolsColumns :: [String]
@@ -409,16 +413,16 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 			updateSymbolIds tableName
 
 		updateModuleIds :: SessionMonad m => String -> m ()
-		updateModuleIds tableName =
-			execute_ (fromString ("update {table} set module_id = (select m.id from modules as m where ((m.name is null and {table}.module_name is null) or m.name = {table}.module_name) and ((m.file is null and {table}.file is null) or m.file = {table}.file) and ((m.package_name is null and {table}.package_name is null) or m.package_name = {table}.package_name) and ((m.package_version is null and {table}.package_version is null) or m.package_version = {table}.package_version) and ((m.installed_name is null and {table}.installed_name is null) or m.installed_name = {table}.installed_name) and ((m.other_location is null and {table}.other_location is null) or m.other_location = {table}.other_location));" ~~ ("table" ~% tableName)))
+		updateModuleIds tableName = scope "update-module-ids" $ timed $
+			execute_ (fromString ("update {table} set module_id = (select m.id from modules as m where (m.file = {table}.file) or (m.package_name = {table}.package_name and m.package_version = {table}.package_version and m.installed_name = {table}.installed_name) or (m.other_location = {table}.other_location));" ~~ ("table" ~% tableName)))
 
 		updateSymbolIds :: SessionMonad m => String -> m ()
-		updateSymbolIds tableName =
-			execute_ (fromString ("update {table} set symbol_id = (select s.id from symbols as s where s.name = {table}.name and s.module_id = {table}.module_id);" ~~ ("table" ~% tableName)))
+		updateSymbolIds tableName = scope "update-symbol-ids" $ timed $
+			execute_ (fromString ("update {table} set symbol_id = (select s.id from symbols as s where s.name = {table}.name and s.what = {table}.what and s.module_id = {table}.module_id);" ~~ ("table" ~% tableName)))
 
 		updateExistingSymbols :: SessionMonad m => String -> m ()
 		updateExistingSymbols tableName = scope "update-existing-symbols" $ do
-			execute_ (fromString ("replace into symbols (id, name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select symbols.id, {table}.name, {table}.module_id, {table}.docs, {table}.line, {table}.column, {table}.what, {table}.type, {table}.parent, {table}.constructors, {table}.args, {table}.context, {table}.associate, {table}.pat_type, {table}.pat_constructor from {table} inner join symbols on (symbols.name == {table}.name) and (symbols.module_id == {table}.module_id);" ~~ ("table" ~% tableName)))
+			execute_ (fromString ("replace into symbols (id, name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select {table}.symbol_id, {table}.name, {table}.module_id, {table}.docs, {table}.line, {table}.column, {table}.what, {table}.type, {table}.parent, {table}.constructors, {table}.args, {table}.context, {table}.associate, {table}.pat_type, {table}.pat_constructor from {table} inner join symbols on (symbols.id == {table}.symbol_id);" ~~ ("table" ~% tableName)))
 
 		insertMissingModules :: SessionMonad m => String -> m ()
 		insertMissingModules tableName = scope "insert-missing-modules" $ do
@@ -432,7 +436,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 
 lookupModuleLocation :: SessionMonad m => ModuleLocation -> m (Maybe Int)
 lookupModuleLocation m = do
-	mids <- queryNamed "select id from modules where ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name) and ((other_location is null and :other_location is null) or other_location = :other_location);" [
+	mids <- queryNamed "select id from modules where (file = :file) or (package_name = :package_name and package_version = :package_version and installed_name = :installed_name) or (other_location = :other_location);" [
 		":file" := m ^? moduleFile . path,
 		":package_name" := m ^? modulePackage . packageName,
 		":package_version" := m ^? modulePackage . packageVersion,
@@ -443,7 +447,7 @@ lookupModuleLocation m = do
 
 lookupModule :: SessionMonad m => ModuleId -> m (Maybe Int)
 lookupModule m = do
-	mids <- queryNamed "select id from modules where ((name is null and :name is null) or name = :name) and ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name) and ((other_location is null and :other_location is null) or other_location = :other_location);" [
+	mids <- queryNamed "select id from modules where ((name is null and :name is null) or name = :name) and ((file = :file) or (package_name = :package_name and package_version = :package_version and installed_name = :installed_name) or (other_location = :other_location));" [
 		":name" := m ^. moduleName,
 		":file" := m ^? moduleLocation . moduleFile . path,
 		":package_name" := m ^? moduleLocation . modulePackage . packageName,
