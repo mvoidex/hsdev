@@ -293,6 +293,8 @@ create table types (
 	type text -- expression type
 );
 
+create unique index types_position_index on types (module_id, line, column, line_to, column_to);
+
 -- modified file contents, hsdev will use it in commands whenever it is newer than file
 create table file_contents (
 	file text not null, -- file path

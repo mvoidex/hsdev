@@ -235,8 +235,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			Right ordered -> do
 				ms'' <- flip evalStateT sqlAenv' $ runTasks (map inspect' ordered)
 				mlocs'' <- forM ms'' $ \im -> do
-					sendUpdateAction $ Log.scope "resolved" $ Log.scope ("{}" ~~ (im ^. inspectedKey)) $
-						SQLite.updateModule im
+					sendUpdateAction $ Log.scope "resolved" $ SQLite.updateModule im
 					return $ im ^. inspectedKey
 				updater mlocs''
 				where
@@ -325,8 +324,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 				sendUpdateAction $ do
-					forM_ ms $ \m' -> Log.scope ("{}" ~~ (m' ^. inspectedKey)) $
-						SQLite.updateModule m'
+					mapM_ SQLite.updateModule ms
 					SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
 
 				when hdocsSupported $ scanPackageDbStackDocs opts pdbs
@@ -357,8 +355,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 				sendUpdateAction $ do
-					forM_ ms $ \m' -> Log.scope ("{}" ~~ (m' ^. inspectedKey)) $
-						SQLite.updateModule m'
+					mapM_ SQLite.updateModule ms
 					sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
 
 				-- BUG: I don't know why, but these steps leads to segfault on my PC:

@@ -23,7 +23,6 @@ import Data.Aeson
 import Data.Functor
 import Data.Default
 import qualified System.Log.Simple as Log
-import qualified System.Log.Simple.Monad as Log
 
 import Control.Concurrent.Worker
 import HsDev.Database.SQLite
@@ -118,8 +117,7 @@ type UpdateMonad m = (CommandMonad m, MonadReader UpdateState m, MonadWriter [Mo
 sendUpdateAction :: UpdateMonad m => ServerM IO () -> m ()
 sendUpdateAction act = do
 	w <- asks _updateWorker
-	s <- Log.askScope
-	liftIO $ inWorker w $ Log.localLog (Log.subLog mempty s) $ act
+	liftIO $ inWorker w act
 
 newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateState (WriterT [ModuleLocation] (ClientM m)) a }
 	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask, Functor, MonadReader UpdateState, MonadWriter [ModuleLocation])
