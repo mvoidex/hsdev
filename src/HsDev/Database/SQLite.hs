@@ -333,7 +333,6 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		insertExportSymbols _ [] = return ()
 		insertExportSymbols mid syms = scope "insert-export-symbols" $ withTemporaryTable "export_symbols" (symbolsColumns ++ idColumns) $ do
 			dumpSymbols "export_symbols" symbolsColumns syms
-			-- updateExistingSymbols "export_symbols"
 			insertMissingModules "export_symbols"
 			insertMissingSymbols "export_symbols"
 			execute "insert into exports (module_id, symbol_id) select ?, symbol_id from export_symbols;" (Only mid)
@@ -343,7 +342,6 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		insertScopeSymbols mid snames = scope "insert-scope-symbols" $ withTemporaryTable "scope_symbols" (symbolsColumns ++ scopeNameColumns ++ idColumns) $ do
 			dumpSymbols "scope_symbols" (symbolsColumns ++ scopeNameColumns)
 				[(s :. (Name.nameModule nm, Name.nameIdent nm)) | (nm, syms) <- snames, s <- syms]
-			-- updateExistingSymbols "scope_symbols"
 			insertMissingModules "scope_symbols"
 			insertMissingSymbols "scope_symbols"
 			execute "insert into scopes (module_id, qualifier, name, symbol_id) select ?, qualifier, ident, symbol_id from scope_symbols;" (Only mid)
@@ -419,10 +417,6 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		updateSymbolIds :: SessionMonad m => String -> m ()
 		updateSymbolIds tableName = scope "update-symbol-ids" $
 			execute_ (fromString ("update {table} set symbol_id = (select s.id from symbols as s where s.name = {table}.name and s.what = {table}.what and s.module_id = {table}.module_id) where symbol_id is null;" ~~ ("table" ~% tableName)))
-
-		updateExistingSymbols :: SessionMonad m => String -> m ()
-		updateExistingSymbols tableName = scope "update-existing-symbols" $ do
-			execute_ (fromString ("replace into symbols (id, name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select {table}.symbol_id, {table}.name, {table}.module_id, {table}.docs, {table}.line, {table}.column, {table}.what, {table}.type, {table}.parent, {table}.constructors, {table}.args, {table}.context, {table}.associate, {table}.pat_type, {table}.pat_constructor from {table} inner join symbols on (symbols.id == {table}.symbol_id);" ~~ ("table" ~% tableName)))
 
 		insertMissingModules :: SessionMonad m => String -> m ()
 		insertMissingModules tableName = scope "insert-missing-modules" $ do

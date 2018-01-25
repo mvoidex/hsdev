@@ -32,19 +32,18 @@ import Text.Format.Colored (coloredLine)
 
 import HsDev.Server.Base
 import HsDev.Server.Types
-import HsDev.Tools.Base (runTool_)
 import HsDev.Error
 import HsDev.Util
 import HsDev.Version
 
 #if mingw32_HOST_OS
 import Data.List
+import HsDev.Tools.Base (runTool_)
 import System.Environment
 import System.Win32.PowerShell (escape, quote, quoteDouble)
 #else
 import Control.Exception (SomeException, handle)
 import System.Posix.Process
-import System.Posix.Files (removeLink)
 import System.Posix.IO
 #endif
 
