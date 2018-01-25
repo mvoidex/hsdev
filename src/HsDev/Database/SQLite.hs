@@ -472,12 +472,22 @@ lastRow = do
 
 loadModule :: SessionMonad m => Int -> m Module
 loadModule mid = scope "load-module" $ do
-	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int)) (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString "mu.id == ?"])) (Only mid)
+	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int))
+		(toQuery $ mconcat [
+			qModuleId,
+			select_ ["mu.docs", "mu.fixities", "mu.id"],
+			where_ [fromString "mu.id == ?"]])
+		(Only mid)
 	case ms of
 		[] -> sqlFailure $ "module with id {} not found" ~~ mid
 		mods@((mid' :. (mdocs, mfixities, _)):_) -> do
 			when (length mods > 1) $ sendLog Warning $ "multiple modules with same id = {} found" ~~ mid
-			syms <- query @_ @Symbol (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid)
+			syms <- query @_ @Symbol
+				(toQuery $ mconcat [
+					qSymbol,
+					from_ ["exports as e"],
+					where_ ["e.module_id == ?", "e.symbol_id == s.id"]])
+				(Only mid)
 			inames <- query @_ @(Only Text) "select distinct module_name from imports where module_id == ?;" (Only mid)
 			return $ Module {
 				_moduleId = mid',
@@ -490,9 +500,19 @@ loadModule mid = scope "load-module" $ do
 
 loadModules :: (SessionMonad m, ToRow q) => String -> q -> m [Module]
 loadModules selectExpr args = scope "load-modules" $ do
-	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int)) (toQuery (qModuleId `mappend` select_ ["mu.docs", "mu.fixities", "mu.id"] [] [fromString $ "mu.id in (" ++ selectExpr ++ ")"])) args
+	ms <- query @_ @(ModuleId :. (Maybe Text, Maybe Value, Int))
+		(toQuery $ mconcat [
+			qModuleId,
+			select_ ["mu.docs", "mu.fixities", "mu.id"],
+			where_ [fromString $ "mu.id in (" ++ selectExpr ++ ")"]])
+		args
 	forM ms $ \(mid' :. (mdocs, mfixities, mid)) -> do
-		syms <- query @_ @Symbol (toQuery (qSymbol `mappend` select_ [] ["exports as e"] ["e.module_id == ?", "e.symbol_id == s.id"])) (Only mid)
+		syms <- query @_ @Symbol
+			(toQuery $ mconcat [
+				qSymbol,
+				from_ ["exports as e"],
+				where_ ["e.module_id == ?", "e.symbol_id == s.id"]])
+			(Only mid)
 		inames <- query @_ @(Only Text) "select distinct module_name from imports where module_id == ?;" (Only mid)
 		return $ Module {
 			_moduleId = mid',
@@ -512,19 +532,34 @@ loadProject cabal = scope "load-project" $ do
 			when (length projs > 1) $ sendLog Warning $ "multiple projects with same cabal = {} found" ~~ view path cabal
 			return $ head projs
 
-	libs <- query (toQuery $ select_ ["lib.modules"] ["libraries as lib"] [] `mappend` qBuildInfo `mappend` where_ [
-		"lib.build_info_id == bi.id",
-		"lib.project_id == ?"])
+	libs <- query
+		(toQuery $ mconcat [
+			select_ ["lib.modules"],
+			from_ ["libraries as lib"],
+			qBuildInfo,
+			where_ [
+				"lib.build_info_id == bi.id",
+				"lib.project_id == ?"]])
 			(Only pid)
 
-	exes <- query (toQuery $ select_ ["exe.name", "exe.path"] ["executables as exe"] [] `mappend` qBuildInfo `mappend` where_ [
-		"exe.build_info_id == bi.id",
-		"exe.project_id == ?"])
+	exes <- query
+		(toQuery $ mconcat [
+			select_ ["exe.name", "exe.path"],
+			from_ ["executables as exe"],
+			qBuildInfo,
+			where_ [
+				"exe.build_info_id == bi.id",
+				"exe.project_id == ?"]])
 			(Only pid)
 
-	tests <- query (toQuery $ select_ ["tst.name", "tst.enabled", "tst.main"] ["tests as tst"] [] `mappend` qBuildInfo `mappend` where_ [
-		"tst.build_info_id == bi.id",
-		"tst.project_id == ?"])
+	tests <- query
+		(toQuery $ mconcat [
+			select_ ["tst.name", "tst.enabled", "tst.main"],
+			from_ ["tests as tst"],
+			qBuildInfo,
+			where_ [
+				"tst.build_info_id == bi.id",
+				"tst.project_id == ?"]])
 			(Only pid)
 
 	return $

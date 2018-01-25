@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, FlexibleInstances, TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.SQLite.Instances (
@@ -16,9 +16,12 @@ import Database.SQLite.Simple
 import Database.SQLite.Simple.ToField
 import Database.SQLite.Simple.FromField
 import Language.Haskell.Extension
+import qualified Language.Haskell.Names as N
+import qualified Language.Haskell.Exts as H
 import Text.Format
 
 import System.Directory.Paths
+import HsDev.Symbols.Name
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
 import HsDev.Tools.Ghc.Types
@@ -101,56 +104,57 @@ instance FromRow SymbolId where
 instance ToRow SymbolId where
 	toRow (SymbolId nm mid) = toField nm : toRow mid
 
+instance FromRow SymbolInfo where
+	fromRow = do
+		what <- id @String <$> field
+		ty <- field
+		parent <- field
+		ctors <- field
+		args <- field
+		ctx <- field
+		assoc <- field
+		patTy <- field
+		patCtor <- field
+		maybe (fail $ "Can't parse symbol info: {}" ~~ show (what, ty, parent, ctors, args, ctx, assoc, patTy, patCtor)) return $ case what of
+			"function" -> return $ Function ty
+			"method" -> Method <$> pure ty <*> parent
+			"selector" -> Selector <$> pure ty <*> parent <*> (fromJSON' =<< ctors)
+			"ctor" -> Constructor <$> (fromJSON' =<< args) <*> parent
+			"type" -> Type <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx)
+			"newtype" -> NewType <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx)
+			"data" -> Data <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx)
+			"class" -> Class <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx)
+			"type-family" -> TypeFam <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx) <*> pure assoc
+			"data-family" -> DataFam <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx) <*> pure assoc
+			"pat-ctor" -> PatConstructor <$> (fromJSON' =<< args) <*> pure patTy
+			"pat-selector" -> PatSelector <$> pure ty <*> pure patTy <*> patCtor
+			_ -> Nothing
+
+instance ToRow SymbolInfo where
+	toRow si = [
+		toField $ symbolInfoType si,
+		toField $ si ^? functionType . _Just,
+		toField $ msum [si ^? parentClass, si ^? parentType],
+		toField $ toJSON $ si ^? selectorConstructors,
+		toField $ toJSON $ si ^? typeArgs,
+		toField $ toJSON $ si ^? typeContext,
+		toField $ si ^? familyAssociate . _Just,
+		toField $ si ^? patternType . _Just,
+		toField $ si ^? patternConstructor]
+
 instance FromRow Symbol where
-	fromRow = Symbol <$> fromRow <*> field <*> pos <*> infoP where
+	fromRow = Symbol <$> fromRow <*> field <*> pos <*> fromRow where
 		pos = do
 			line <- field
 			column <- field
 			return $ Position <$> line <*> column
-		infoP = do
-			what <- str' <$> field
-			ty <- field
-			parent <- field
-			ctors <- field
-			args <- field
-			ctx <- field
-			assoc <- field
-			patTy <- field
-			patCtor <- field
-			maybe (fail $ "Can't parse symbol info: {}" ~~ show (what, ty, parent, ctors, args, ctx, assoc, patTy, patCtor)) return $ case what of
-				"function" -> return $ Function ty
-				"method" -> Method <$> pure ty <*> parent
-				"selector" -> Selector <$> pure ty <*> parent <*> (fromJSON' =<< ctors)
-				"ctor" -> Constructor <$> (fromJSON' =<< args) <*> parent
-				"type" -> Type <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx)
-				"newtype" -> NewType <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx)
-				"data" -> Data <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx)
-				"class" -> Class <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx)
-				"type-family" -> TypeFam <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx) <*> pure assoc
-				"data-family" -> DataFam <$> (fromJSON' =<< args) <*> (fromJSON' =<< ctx) <*> pure assoc
-				"pat-ctor" -> PatConstructor <$> (fromJSON' =<< args) <*> pure patTy
-				"pat-selector" -> PatSelector <$> pure ty <*> pure patTy <*> patCtor
-				_ -> Nothing
-		str' :: String -> String
-		str' = id
 
 instance ToRow Symbol where
 	toRow sym = concat [
 		toRow (sym ^. symbolId),
 		[toField $ sym ^. symbolDocs],
 		maybe [SQLNull, SQLNull] toRow (sym ^. symbolPosition),
-		info]
-		where
-			info = [
-				toField $ symbolType sym,
-				toField $ sym ^? symbolInfo . functionType . _Just,
-				toField $ msum [sym ^? symbolInfo . parentClass, sym ^? symbolInfo . parentType],
-				toField $ toJSON $ sym ^? symbolInfo . selectorConstructors,
-				toField $ toJSON $ sym ^? symbolInfo . typeArgs,
-				toField $ toJSON $ sym ^? symbolInfo . typeContext,
-				toField $ sym ^? symbolInfo . familyAssociate . _Just,
-				toField $ sym ^? symbolInfo . patternType . _Just,
-				toField $ sym ^? symbolInfo . patternConstructor]
+		toRow (sym ^. symbolInfo)]
 
 instance FromRow a => FromRow (Scoped a) where
 	fromRow = flip Scoped <$> fromRow <*> field
@@ -230,3 +234,64 @@ instance FromRow TypedExpr where
 
 instance ToRow TypedExpr where
 	toRow (TypedExpr e t) = [toField e, toField t]
+
+instance FromField (H.Name ()) where
+	fromField = fmap toName_ . fromField
+
+instance ToField (H.Name ()) where
+	toField = toField . fromName_
+
+instance FromField (H.ModuleName ()) where
+	fromField = fmap toModuleName_ . fromField
+
+instance ToField (H.ModuleName ()) where
+	toField = toField . fromModuleName_
+
+instance FromRow N.Symbol where
+	fromRow = do
+		what <- field @T.Text
+		mname <- field
+		name <- field
+		parent <- field
+		ctors <- do
+			ctorsJson <- field
+			return $ fmap (map toName_) (ctorsJson >>= fromJSON')
+		assoc <- field
+		patType <- field
+		patCtor <- field
+		let
+			m = toModuleName_ mname
+			n = toName_ name
+		maybe (fail $ "Can't parse symbol: {}" ~~ show (what, mname, name, parent, ctors, assoc, patType, patCtor)) return $ case what of
+			"function" -> return $ N.Value m n
+			"method" -> N.Method m n <$> parent
+			"selector" -> N.Selector m n <$> parent <*> ctors
+			"ctor" -> N.Constructor m n <$> parent
+			"type" -> return $ N.Type m n
+			"newtype" -> return $ N.NewType m n
+			"data" -> return $ N.Data m n
+			"class" -> return $ N.Class m n
+			"type-family" -> return $ N.TypeFam m n assoc
+			"data-family" -> return $ N.DataFam m n assoc
+			"pat-ctor" -> return $ N.PatternConstructor m n patType
+			"pat-selector" -> N.PatternSelector m n patType <$> patCtor
+			_ -> Nothing
+
+instance ToRow N.Symbol where
+	toRow = padNulls 8 . toRow' where
+		toRow' (N.Value m n) = mk "function" [toField m, toField n]
+		toRow' (N.Method m n p) = mk "method" [toField m, toField n, toField p]
+		toRow' (N.Selector m n p cs) = mk "selector" [toField m, toField n, toField p, toField $ toJSON (map fromName_ cs)]
+		toRow' (N.Constructor m n p) = mk "ctor" [toField m, toField n, toField p]
+		toRow' (N.Type m n) = mk "type" [toField m, toField n]
+		toRow' (N.NewType m n) = mk "newtype" [toField m, toField n]
+		toRow' (N.Data m n) = mk "data" [toField m, toField n]
+		toRow' (N.Class m n) = mk "class" [toField m, toField n]
+		toRow' (N.TypeFam m n assoc) = mk "type-family" [toField m, toField n, SQLNull, SQLNull, toField assoc]
+		toRow' (N.DataFam m n assoc) = mk "data-family" [toField m, toField n, SQLNull, SQLNull, toField assoc]
+		toRow' (N.PatternConstructor m n pty) = mk "pat-ctor" [toField m, toField n, SQLNull, SQLNull, SQLNull, toField pty]
+		toRow' (N.PatternSelector m n pty pctor) = mk "pat-selector" [toField m, toField n, SQLNull, SQLNull, SQLNull, toField pty, toField pctor]
+
+		mk :: T.Text -> [SQLData] -> [SQLData]
+		mk what = (toField what :)
+		padNulls n fs = fs ++ replicate (n - length fs) SQLNull

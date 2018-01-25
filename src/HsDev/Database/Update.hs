@@ -220,30 +220,28 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			return mloc
 		updater mlocs'
 
-		(sqlMods', sqlAenv') <- do
-			let
-				mprojectDeps = SQLite.buildQuery $ SQLite.select_
-					["ps.module_id"]
-					["projects_modules_scope as ps"]
-					["ps.cabal is ?"]
-			sqlMods' <- SQLite.loadModules mprojectDeps (SQLite.Only $ mproj ^? _Just . projectCabal)
-			return (sqlMods', mconcat (map moduleAnalyzeEnv sqlMods'))
+		let
+			mcabal = mproj ^? _Just . projectCabal
 
-		Log.sendLog Log.Trace $ "resolving environment: {} modules" ~~ length sqlMods'
+		env <- loadEnvironment mcabal
+		fixities <- loadFixities mcabal
+
+		Log.sendLog Log.Trace $ "resolved environment: {} modules" ~~ M.size env
 		case order ploaded of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
-				ms'' <- flip evalStateT sqlAenv' $ runTasks (map inspect' ordered)
-				mlocs'' <- forM ms'' $ \im -> do
-					sendUpdateAction $ Log.scope "resolved" $ SQLite.updateModule im
-					return $ im ^. inspectedKey
+				ms'' <- flip evalStateT (env, fixities) $ runTasks (map inspect' ordered)
+				mlocs'' <- withEnv mcabal $ forM ms'' $ \im -> do
+					sendUpdateAction $ Log.scope "resolved" $ updateResolved im
+					return (im ^. inspectedKey)
 				updater mlocs''
 				where
 					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
-						aenv <- get
-						m <- either (hsdevError . InspectError) eval $ analyzePreloaded aenv pmod
-						modify (mappend (moduleAnalyzeEnv m))
-						return $ Inspected (pmod ^. preloadedTime) (m ^. moduleId . moduleLocation) mempty (Right m)
+						(env', fixities') <- get
+						m <- either (hsdevError . InspectError) eval $ resolvePreloaded env' fixities' pmod
+						modify (mappend (resolvedEnv m, resolvedFixitiesTable m))
+						return $ Inspected (pmod ^. preloadedTime) (pmod ^. preloadedId . moduleLocation) mempty (Right m)
+
 	grouped = M.toList $ M.unionsWith (++) [M.singleton (m ^? _1 . moduleProject . _Just) [m] | m <- ms]
 	eval v = handle onError (v `deepseq` liftIO (evaluate v)) where
 		onError :: MonadThrow m => ErrorCall -> m a

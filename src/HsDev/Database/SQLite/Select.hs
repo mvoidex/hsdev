@@ -1,8 +1,9 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 
 module HsDev.Database.SQLite.Select (
-	Select(..), select_, where_, buildQuery, toQuery,
-	qSymbolId, qSymbol, qModuleLocation, qModuleId, qBuildInfo
+	Select(..), select_, from_, where_, buildQuery, toQuery,
+	qSymbolId, qSymbol, qModuleLocation, qModuleId, qBuildInfo,
+	qNSymbol
 	) where
 
 import Data.String
@@ -11,37 +12,40 @@ import qualified Data.Text as T
 import Database.SQLite.Simple
 import Text.Format
 
-data Select = Select {
-	selectColumns :: [Text],
-	selectTables :: [Text],
-	selectConditions :: [Text] }
-		deriving (Eq, Ord, Read, Show)
+data Select a = Select {
+	selectColumns :: [a],
+	selectTables :: [a],
+	selectConditions :: [a] }
+		deriving (Eq, Ord, Read, Show, Functor, Foldable, Traversable)
 
-instance Monoid Select where
+instance Monoid (Select a) where
 	mempty = Select mempty mempty mempty
 	Select lc lt lcond `mappend` Select rc rt rcond = Select
 		(lc `mappend` rc)
 		(lt `mappend` rt)
 		(lcond `mappend` rcond)
 
-select_ :: [Text] -> [Text] -> [Text] -> Select
-select_ = Select
+select_ :: [a] -> Select a
+select_ cols = Select cols [] []
 
-where_ :: [Text] -> Select
-where_ = select_ [] []
+from_ :: [a] -> Select a
+from_ tbls = Select [] tbls []
 
-buildQuery :: Select -> String
+where_ :: [a] -> Select a
+where_ = Select [] []
+
+buildQuery :: Select Text -> String
 buildQuery (Select cols tables conds) = "select {} from {} where {}"
 	~~ T.intercalate ", " cols
 	~~ T.intercalate ", " tables
 	~~ T.intercalate " and " (map (\cond -> T.concat ["(", cond, ")"]) conds)
 
-toQuery :: Select -> Query
+toQuery :: Select Text -> Query
 toQuery = fromString . buildQuery
 
-qSymbolId :: Select
-qSymbolId = select_
-	[
+qSymbolId :: Select Text
+qSymbolId = mconcat [
+	select_ [
 		"s.name",
 		"m.name",
 		"m.file",
@@ -50,13 +54,14 @@ qSymbolId = select_
 		"m.package_name",
 		"m.package_version",
 		"m.installed_name",
-		"m.other_location"]
-	["modules as m", "symbols as s"]
-	["m.id == s.module_id"]
+		"m.other_location"],
+	from_ ["modules as m", "symbols as s"],
+	where_ ["m.id == s.module_id"]]
 
-qSymbol :: Select
-qSymbol = qSymbolId `mappend` select_ cols [] [] where
-	cols = [
+qSymbol :: Select Text
+qSymbol = mconcat [
+	qSymbolId,
+	select_ [
 		"s.docs",
 		"s.line",
 		"s.column",
@@ -68,24 +73,23 @@ qSymbol = qSymbolId `mappend` select_ cols [] [] where
 		"s.context",
 		"s.associate",
 		"s.pat_type",
-		"s.pat_constructor"]
+		"s.pat_constructor"]]
 
-qModuleLocation :: Select
-qModuleLocation = select_
-	[
+qModuleLocation :: Select Text
+qModuleLocation = mconcat [
+	select_ [
 		"ml.file",
 		"ml.cabal",
 		"ml.install_dirs",
 		"ml.package_name",
 		"ml.package_version",
 		"ml.installed_name",
-		"ml.other_location"]
-	["modules as ml"]
-	[]
+		"ml.other_location"],
+	from_ ["modules as ml"]]
 
-qModuleId :: Select
-qModuleId = select_
-	[
+qModuleId :: Select Text
+qModuleId = mconcat [
+	select_ [
 		"mu.name",
 		"mu.file",
 		"mu.cabal",
@@ -93,19 +97,31 @@ qModuleId = select_
 		"mu.package_name",
 		"mu.package_version",
 		"mu.installed_name",
-		"mu.other_location"]
-	["modules as mu"]
-	[]
+		"mu.other_location"],
+	from_ ["modules as mu"]]
 
-qBuildInfo :: Select
-qBuildInfo = select_
-	[
+qBuildInfo :: Select Text
+qBuildInfo = mconcat [
+	select_ [
 		"bi.depends",
 		"bi.language",
 		"bi.extensions",
 		"bi.ghc_options",
 		"bi.source_dirs",
-		"bi.other_modules"
-	]
-	["build_infos as bi"]
-	[]
+		"bi.other_modules"],
+	from_ ["build_infos as bi"]]
+
+-- | Symbol from haskell-names
+qNSymbol :: Text -> Text -> Select Text
+qNSymbol m s = fmap (`formats` ["m" ~% m, "s" ~% s]) $ mconcat [
+	select_ [
+		"{s}.what",
+		"{m}.name",
+		"{s}.name",
+		"{s}.parent",
+		"{s}.constructors",
+		"{s}.associate",
+		"{s}.pat_type",
+		"{s}.pat_constructor"],
+	from_ ["symbols as {s}", "modules as {m}"],
+	where_ ["{m}.id = {s}.module_id"]]

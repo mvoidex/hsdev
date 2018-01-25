@@ -2,9 +2,11 @@
 
 module HsDev.Symbols.Name (
 	Name, qualName, unqualName, nameModule, nameIdent, pattern Name, fromName_, toName_, toModuleName_, fromModuleName_, fromName, toName,
+	name_, moduleName_
 	) where
 
 import Control.Arrow
+import Control.Lens
 import Data.Char (isAlpha, isAlphaNum)
 import Data.Text (Text)
 import Data.String (fromString)
@@ -80,3 +82,9 @@ fromName (Special _ c) = case c of
 #if MIN_VERSION_haskell_src_exts(1,20,0)
 	ExprHole _ -> "_"
 #endif
+
+name_ :: Iso' (Exts.Name ()) Text
+name_ = iso fromName_ toName_
+
+moduleName_ :: Iso' (ModuleName ()) Text
+moduleName_ = iso fromModuleName_ toModuleName_

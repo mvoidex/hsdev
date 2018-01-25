@@ -4,7 +4,7 @@
 module HsDev.Symbols.Types (
 	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleImports, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
-	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolType, patternType, patternConstructor,
+	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolInfoType, symbolType, patternType, patternConstructor,
 	Scoped(..), scopeQualifier, scoped,
 	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
 	infoOf, nullifyInfo,
@@ -259,20 +259,22 @@ instance EmptySymbolInfo SymbolInfo where
 instance (Monoid a, EmptySymbolInfo r) => EmptySymbolInfo (a -> r) where
 	infoOf f = infoOf $ f mempty
 
+symbolInfoType :: SymbolInfo -> String
+symbolInfoType (Function{}) = "function"
+symbolInfoType (Method{}) = "method"
+symbolInfoType (Selector{}) = "selector"
+symbolInfoType (Constructor{}) = "ctor"
+symbolInfoType (Type{}) = "type"
+symbolInfoType (NewType{}) = "newtype"
+symbolInfoType (Data{}) = "data"
+symbolInfoType (Class{}) = "class"
+symbolInfoType (TypeFam{}) = "type-family"
+symbolInfoType (DataFam{}) = "data-family"
+symbolInfoType (PatConstructor{}) = "pat-ctor"
+symbolInfoType (PatSelector{}) = "pat-selector"
+
 symbolType :: Symbol -> String
-symbolType s = case _symbolInfo s of
-	Function{} -> "function"
-	Method{} -> "method"
-	Selector{} -> "selector"
-	Constructor{} -> "ctor"
-	Type{} -> "type"
-	NewType{} -> "newtype"
-	Data{} -> "data"
-	Class{} -> "class"
-	TypeFam{} -> "type-family"
-	DataFam{} -> "data-family"
-	PatConstructor{} -> "pat-ctor"
-	PatSelector{} -> "pat-selector"
+symbolType = symbolInfoType . _symbolInfo
 
 what :: String -> Pair
 what n = "what" .= n

@@ -156,7 +156,12 @@ runCommand (Remove projs cabal sboxes files) = toValue $ withSqlConnection $ SQL
 			removePackageDbStack pdbs
 
 	forM_ files $ \file -> do
-		ms <- query @_ @(ModuleId :. Only Int) (toQuery $ qModuleId `mappend` select_ ["mu.id"] [] ["mu.file == ?"]) (Only file)
+		ms <- query @_ @(ModuleId :. Only Int)
+			(toQuery $ mconcat [
+				qModuleId,
+				select_ ["mu.id"],
+				where_ ["mu.file == ?"]])
+			(Only file)
 		forM_ ms $ \(m :. Only i) -> do
 			SQLite.removeModule i
 			liftIO . unwatchModule w $ (m ^. moduleLocation)
@@ -176,18 +181,31 @@ runCommand InfoSandboxes = toValue $ do
 runCommand (InfoSymbol sq filters True _) = toValue $ do
 	let
 		(conds, params) = targetFilters "m" (Just "s") filters
-	rs <- queryNamed @SymbolId (toQuery $ qSymbolId `mappend` where_ ["s.name like :pattern escape '\\'"] `mappend` where_ conds)
+	rs <- queryNamed @SymbolId
+		(toQuery $ mconcat [
+			qSymbolId,
+			where_ ["s.name like :pattern escape '\\'"],
+			where_ conds])
 		([":pattern" := likePattern sq] ++ params)
 	return rs
 runCommand (InfoSymbol sq filters False _) = toValue $ do
 	let
 		(conds, params) = targetFilters "m" (Just "s") filters
-	queryNamed @Symbol (toQuery $ qSymbol `mappend` where_ ["s.name like :pattern escape '\\'"] `mappend` where_ conds)
+	queryNamed @Symbol
+		(toQuery $ mconcat [
+			qSymbol,
+			where_ ["s.name like :pattern escape '\\'"],
+			where_ conds])
 		([":pattern" := likePattern sq] ++ params)
 runCommand (InfoModule sq filters h _) = toValue $ do
 	let
 		(conds, params) = targetFilters "mu" Nothing filters
-	rs <- queryNamed @(Only Int :. ModuleId) (toQuery $ select_ ["mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.name like :pattern escape '\\'"] `mappend` where_ conds)
+	rs <- queryNamed @(Only Int :. ModuleId)
+		(toQuery $ mconcat [
+			select_ ["mu.id"],
+			qModuleId,
+			where_ ["mu.name like :pattern escape '\\'"],
+			where_ conds])
 		([":pattern" := likePattern sq] ++ params)
 	if h
 		then return (toJSON $ map (\(_ :. m) -> m) rs)
@@ -196,60 +214,65 @@ runCommand (InfoModule sq filters h _) = toValue $ do
 				(Only mid)
 			let
 				fixities' = fromMaybe [] (fixities >>= fromJSON')
-			exports' <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-				["exports as e"]
-				["e.module_id == ?", "e.symbol_id == s.id"])
+			exports' <- query @_ @Symbol (toQuery $ mconcat [
+				qSymbol,
+				from_ ["exports as e"],
+				where_ ["e.module_id == ?", "e.symbol_id == s.id"]])
 				(Only mid)
 			return $ Module mheader docs mempty exports' fixities' mempty Nothing
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $
-	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["projects_modules_scope as pms", "modules as srcm", "exports as e"]
-		[
+	query @_ @Symbol (toQuery $ mconcat [
+		qSymbol,
+		from_ ["projects_modules_scope as pms", "modules as srcm", "exports as e"],
+		where_ [
 			"pms.cabal is srcm.cabal",
 			"srcm.file == ?",
 			"pms.module_id == e.module_id",
 			"m.id == s.module_id",
 			"s.id == e.symbol_id",
-			"s.name == ?"])
+			"s.name == ?"]])
 		(fpath ^. path, nm)
 runCommand (Whois nm fpath) = toValue $ do
 	let
 		q = nameModule $ toName nm
 		ident = nameIdent $ toName nm
-	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["modules as srcm", "scopes as sc"]
-		[
+	query @_ @Symbol (toQuery $ mconcat [
+		qSymbol,
+		from_ ["modules as srcm", "scopes as sc"],
+		where_ [
 			"srcm.id == sc.module_id",
 			"s.id == sc.symbol_id",
 			"srcm.file == ?",
 			"sc.qualifier is ?",
-			"sc.name == ?"])
+			"sc.name == ?"]])
 		(fpath ^. path, q, ident)
 runCommand (Whoat l c fpath) = toValue $ do
-	rs <- query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["names as n", "modules as srcm"]
-		[
+	rs <- query @_ @Symbol (toQuery $ mconcat [
+		qSymbol,
+		from_ ["names as n", "modules as srcm"],
+		where_ [
 			"srcm.id == n.module_id",
 			"m.name == n.resolved_module",
 			"s.name == n.resolved_name",
 			"s.what == n.resolved_what",
 			"s.id == n.symbol_id",
 			"srcm.file == ?",
-			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
+			"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"]])
 		(fpath ^. path, l, c)
 	locals <- do
-		defs <- query @_ @(ModuleId :. (Text, Int, Int, Maybe Text)) (toQuery $ qModuleId `mappend` select_
-			["n.name", "n.def_line", "n.def_column", "n.inferred_type"]
-			["names as n"]
-			[
+		defs <- query @_ @(ModuleId :. (Text, Int, Int, Maybe Text)) (toQuery $ mconcat [
+			qModuleId,
+			select_ ["n.name", "n.def_line", "n.def_column", "n.inferred_type"],
+			from_ ["names as n"],
+			where_ [
 				"mu.id == n.module_id",
 				"n.def_line is not null",
 				"n.def_column is not null",
 				"mu.file == ?",
-				"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"])
+				"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)"]])
 			(fpath ^. path, l, c)
 		return [
 			Symbol {
@@ -264,55 +287,61 @@ runCommand (ResolveScopeModules sq fpath) = toValue $ do
 		(Only $ fpath ^. path)
 	case pids of
 		[] -> hsdevError $ OtherError $ "module at {} not found" ~~ fpath
-		[Only proj] -> query @_ @ModuleId (toQuery $ qModuleId `mappend` select_ []
-			["projects_modules_scope as msc"]
-			[
+		[Only proj] -> query @_ @ModuleId (toQuery $ mconcat [
+			qModuleId,
+			from_ ["projects_modules_scope as msc"],
+			where_ [
 				"msc.module_id == mu.id",
 				"msc.cabal is ?",
-				"mu.name like ? escape '\\'"])
+				"mu.name like ? escape '\\'"]])
 			(proj, likePattern sq)
 		_ -> fail "Impossible happened: several projects for one module"
 runCommand (ResolveScope sq fpath) = toValue $
-	query @_ @(Scoped SymbolId) (toQuery $ qSymbolId `mappend` select_ ["sc.qualifier"]
-		["scopes as sc", "modules as srcm"]
-		[
+	query @_ @(Scoped SymbolId) (toQuery $ mconcat [
+		qSymbolId,
+		select_ ["sc.qualifier"],
+		from_ ["scopes as sc", "modules as srcm"],
+		where_ [
 			"srcm.id == sc.module_id",
 			"sc.symbol_id == s.id",
 			"srcm.file == ?",
-			"s.name like ? escape '\\'"])
+			"s.name like ? escape '\\'"]])
 		(fpath ^. path, likePattern sq)
 runCommand (FindUsages l c fpath) = toValue $ do
 	us <- do
-		sids <- query @_ @(Only (Maybe Int)) (toQuery $ select_
-			["n.symbol_id"]
-			["names as n", "modules as srcm"]
-			[
+		sids <- query @_ @(Only (Maybe Int)) (toQuery $ mconcat [
+			select_ ["n.symbol_id"],
+			from_ ["names as n", "modules as srcm"],
+			where_ [
 				"n.module_id == srcm.id",
 				"(?, ?) between (n.line, n.column) and (n.line_to, n.column_to)",
-				"srcm.file = ?"])
+				"srcm.file = ?"]])
 			(l, c, fpath)
 		when (length sids > 1) $ Log.sendLog Log.Warning $ "multiple symbols found at location {0}:{1}:{2}" ~~ fpath ~~ l ~~ c
 		let
 			msid = join $ fmap fromOnly $ listToMaybe sids
-		query @_ @SymbolUsage (toQuery $ qSymbol `mappend` qModuleId `mappend` select_
-			["n.line", "n.column"]
-			["names as n"]
-			[
+		query @_ @SymbolUsage (toQuery $ mconcat [
+			qSymbol,
+			qModuleId,
+			select_ ["n.line", "n.column"],
+			from_ ["names as n"],
+			where_ [
 				"n.symbol_id == ?",
 				"s.id == n.symbol_id",
-				"mu.id == n.module_id"])
+				"mu.id == n.module_id"]])
 			(Only msid)
 	locals <- do
-		defs <- query @_ @(ModuleId :. Only Text :. Position :. Only (Maybe Text) :. Position) (toQuery $ qModuleId `mappend` select_
-			["n.name", "n.def_line", "n.def_column", "n.inferred_type", "n.line", "n.column"]
-			["names as n", "names as defn"]
-			[
+		defs <- query @_ @(ModuleId :. Only Text :. Position :. Only (Maybe Text) :. Position) (toQuery $ mconcat [
+			qModuleId,
+			select_ ["n.name", "n.def_line", "n.def_column", "n.inferred_type", "n.line", "n.column"],
+			from_ ["names as n", "names as defn"],
+			where_ [
 				"n.module_id = mu.id",
 				"n.def_line = defn.def_line",
 				"n.def_column = defn.def_column",
 				"defn.module_id = mu.id",
 				"(?, ?) between (defn.line, defn.column) and (defn.line_to, defn.column_to)",
-				"mu.file = ?"])
+				"mu.file = ?"]])
 			(l, c, fpath ^. path)
 		return $ do
 			(mid :. Only nm :. defPos :. Only ftype :. usePos) <- defs
@@ -325,23 +354,25 @@ runCommand (FindUsages l c fpath) = toValue $ do
 			return $ SymbolUsage sym mid usePos
 	return $ us ++ locals
 runCommand (Complete input True fpath) = toValue $
-	query @_ @Symbol (toQuery $ qSymbol `mappend` select_ []
-		["modules as srcm", "exports as e"]
-		[
+	query @_ @Symbol (toQuery $ mconcat [
+		qSymbol,
+		from_ ["modules as srcm", "exports as e"],
+		where_ [
 			"e.module_id in (select srcm.id union select module_id from projects_modules_scope where (((cabal is null) and (srcm.cabal is null)) or (cabal == srcm.cabal)))",
 			"s.id == e.symbol_id",
 			"msrc.file == ?",
-			"s.name like ? escape '\\'"])
+			"s.name like ? escape '\\'"]])
 		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))
 runCommand (Complete input False fpath) = toValue $
-	query @_ @(Scoped Symbol) (toQuery $ qSymbol `mappend` select_
-		["c.qualifier"]
-		["completions as c", "modules as srcm"]
-		[
+	query @_ @(Scoped Symbol) (toQuery $ mconcat [
+		qSymbol,
+		select_ ["c.qualifier"],
+		from_ ["completions as c", "modules as srcm"],
+		where_ [
 			"c.module_id == srcm.id",
 			"c.symbol_id == s.id",
 			"srcm.file == ?",
-			"c.completion like ? escape '\\'"])
+			"c.completion like ? escape '\\'"]])
 		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))
 runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
 	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
@@ -392,7 +423,11 @@ runCommand (Types fs ghcs' clear) = toValue $ do
 		getCached _ (Just _) = return Nothing
 		getCached file' Nothing = do
 			actual' <- sourceUpToDate file'
-			mid <- query @_ @((Bool, Int) :. ModuleId) (toQuery $ select_ ["json_extract(tags, '$.types') is 1", "mu.id"] [] [] `mappend` qModuleId `mappend` where_ ["mu.file = ?"])
+			mid <- query @_ @((Bool, Int) :. ModuleId)
+				(toQuery $ mconcat [
+					select_ ["json_extract(tags, '$.types') is 1", "mu.id"],
+					qModuleId,
+					where_ ["mu.file = ?"]])
 				(Only file')
 			when (length mid > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ file'
 			when (null mid) $ hsdevError $ NotInspected $ FileModule file' Nothing

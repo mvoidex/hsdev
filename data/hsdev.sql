@@ -8,10 +8,12 @@ create table hsdev (
 
 -- packages per package-db
 create table package_dbs (
-	package_db text, -- global, user or path
-	package_name text,
-	package_version text
+	package_db text not null, -- global, user or path
+	package_name text not null,
+	package_version text not null
 );
+
+create index package_names_index on package_dbs (package_db, package_name);
 
 -- same as `package_dbs`, but only latest version of package left
 create view latest_packages (
@@ -26,37 +28,44 @@ group by package_db, package_name;
 -- source projects
 create table projects (
 	id integer primary key autoincrement,
-	name text,
-	cabal text, -- path to `.cabal` file
+	name text not null,
+	cabal text not null, -- path to `.cabal` file
 	version text,
 	package_db_stack json -- list of package-db
 );
 
 create unique index projects_id_index on projects (id);
+create unique index projects_cabal_index on projects (cabal);
 
 -- project's library targets
 create table libraries (
-	project_id integer,
-	modules json, -- list of modules
-	build_info_id integer
+	project_id integer not null,
+	modules json not null, -- list of modules
+	build_info_id integer not null
 );
+
+create unique index libraries_ids_index on libraries (project_id, build_info_id);
 
 -- project's executables targets
 create table executables (
-	project_id integer,
-	name text,
-	path text,
-	build_info_id integer
+	project_id integer not null,
+	name text not null,
+	path text not null,
+	build_info_id integer not null
 );
+
+create unique index executables_ids_index on executables (project_id, build_info_id);
 
 -- project's tests targets
 create table tests (
-	project_id integer,
-	name text,
-	enabled integer,
+	project_id integer not null,
+	name text not null,
+	enabled integer not null,
 	main text,
-	build_info_id integer
+	build_info_id integer not null
 );
+
+create unique index tests_ids_index on tests (project_id, build_info_id);
 
 -- map from project to build-info for all targets
 create view targets (
@@ -72,23 +81,31 @@ select project_id, build_info_id from tests;
 -- target build-info
 create table build_infos(
 	id integer primary key autoincrement,
-	depends json, -- list of dependencies
+	depends json not null, -- list of dependencies
 	language text,
-	extensions json, -- list of extensions
-	ghc_options json, -- list of ghc-options
-	source_dirs json, -- list of source directories
-	other_modules json -- list of other modules
+	extensions json not null, -- list of extensions
+	ghc_options json not null, -- list of ghc-options
+	source_dirs json not null, -- list of source directories
+	other_modules json not null -- list of other modules
 );
+
+create unique index build_infos_id_index on build_infos (id);
 
 -- project dependent packages
 create view projects_deps (
 	cabal,
+	package_db,
 	package_name,
 	package_version
 ) as
-select distinct p.cabal, deps.value, ps.package_version
+select distinct p.cabal, ps.package_db, ps.package_name, ps.package_version
 from projects as p, json_each(p.package_db_stack) as pdb_stack, build_infos as b, json_each(b.depends) as deps, targets as t, latest_packages as ps
-where (p.id == t.project_id) and (b.id == t.build_info_id) and (deps.value <> p.name) and (ps.package_name == deps.value) and (ps.package_db == pdb_stack.value);
+where
+	(p.id == t.project_id) and
+	(b.id == t.build_info_id) and
+	(deps.value <> p.name) and
+	(ps.package_name == deps.value) and
+	(ps.package_db == pdb_stack.value);
 
 -- packages in scope of project
 -- `cabal` may be null for standalone files, in this case all 'user-db' is in scope
@@ -98,27 +115,30 @@ create view projects_modules_scope (
 ) as
 select pdbs.cabal, m.id
 from projects_deps as pdbs, modules as m
-where (m.package_name == pdbs.package_name) and (m.package_version == pdbs.package_version)
+where
+	(m.package_name == pdbs.package_name) and
+	(m.package_version == pdbs.package_version)
 union
 select p.cabal, m.id
 from projects as p, modules as m
 where (m.cabal == p.cabal)
 union
 select null, m.id
-from modules as m, package_dbs as ps
-where (m.package_name == ps.package_name) and (m.package_version == ps.package_version) and (ps.package_db in ('user-db', 'global-db'));
-
-create unique index build_infos_id_index on build_infos (id);
+from modules as m, latest_packages as ps
+where
+	(m.package_name == ps.package_name) and
+	(m.package_version == ps.package_version) and
+	(ps.package_db in ('user-db', 'global-db'));
 
 -- symbols
 create table symbols (
 	id integer primary key autoincrement,
-	name text,
-	module_id integer, -- definition module
+	name text not null,
+	module_id integer not null, -- definition module
 	docs text,
 	line integer, -- line of definition
 	column integer, -- column of definition
-	what text, -- kind of symbol: function, method, ...
+	what text not null, -- kind of symbol: function, method, ...
 	type text, -- type of function/method/...
 	parent text, -- parent of selector/method/...
 	constructors json, -- list of constructors for selector
@@ -146,7 +166,7 @@ create table modules (
 	-- some other location
 	other_location text, -- anything
 
-	name text,
+	name text not null,
 	docs text,
 	fixities json, -- list of fixities
 	tags json, -- dict of tags, value not used, tag is set if present; used by hsdev to mark if types was inferred or docs scanned
@@ -166,10 +186,10 @@ create unique index modules_other_locations_index on modules (other_location) wh
 
 -- module import statements
 create table imports (
-	module_id integer,
-	line integer, -- line number of import
-	module_name text, -- import module name
-	qualified integer, -- is import qualified
+	module_id integer not null,
+	line integer not null, -- line number of import
+	module_name text not null, -- import module name
+	qualified integer not null, -- is import qualified
 	alias text, -- imported with `as`
 	hiding integer, -- is list hiding
 	import_list json, -- list of import specs, null if not specified
@@ -189,18 +209,18 @@ where
 
 -- module exports
 create table exports (
-	module_id integer,
-	symbol_id integer
+	module_id integer not null,
+	symbol_id integer not null
 );
 
 create index exports_module_id_index on exports (module_id);
 
 -- source file module's symbols in scope
 create table scopes (
-	module_id integer,
+	module_id integer not null,
 	qualifier text,
-	name text,
-	symbol_id integer
+	name text not null,
+	symbol_id integer not null
 );
 
 create index scopes_name_index on scopes (module_id, name);
@@ -218,13 +238,13 @@ where (m.id == sc.module_id);
 
 -- resolved names in module
 create table names (
-	module_id integer,
+	module_id integer not null,
 	qualifier text, -- name qualifier
-	name text, -- name
-	line integer, -- line of name
-	column integer, -- column of name
-	line_to integer, -- line of name end
-	column_to integer, -- column of name end
+	name text not null, -- name
+	line integer not null, -- line of name
+	column integer not null, -- column of name
+	line_to integer not null, -- line of name end
+	column_to integer not null, -- column of name end
 	def_line integer, -- name definition line, for local names
 	def_column integer, -- name definition column, for local names
 	inferred_type text, -- inferred name type, set by hsdev
@@ -283,13 +303,13 @@ where
 
 -- expressions types
 create table types (
-	module_id integer,
-	line integer, -- line of expression
-	column integer, -- column of expression
-	line_to integer, --  line of expression end
-	column_to integer, -- column of expression end
-	expr text, -- expression contents
-	type text -- expression type
+	module_id integer not null,
+	line integer not null, -- line of expression
+	column integer not null, -- column of expression
+	line_to integer not null, --  line of expression end
+	column_to integer not null, -- column of expression end
+	expr text not null, -- expression contents
+	type text not null -- expression type
 );
 
 create unique index types_position_index on types (module_id, line, column, line_to, column_to);
@@ -297,8 +317,8 @@ create unique index types_position_index on types (module_id, line, column, line
 -- modified file contents, hsdev will use it in commands whenever it is newer than file
 create table file_contents (
 	file text not null, -- file path
-	contents text, -- file contents
-	mtime integer -- posix modification time
+	contents text not null, -- file contents
+	mtime integer not null -- posix modification time
 );
 
 create unique index file_contents_index on file_contents (file);

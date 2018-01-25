@@ -57,7 +57,10 @@ library
     HsDev.Display
     HsDev.Error
     HsDev.Inspect
+    HsDev.Inspect.Definitions
     HsDev.Inspect.Order
+    HsDev.Inspect.Resolve
+    HsDev.Inspect.Types
     HsDev.PackageDb
     HsDev.PackageDb.Types
     HsDev.Project
