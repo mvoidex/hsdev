@@ -59,7 +59,7 @@ import HsDev.Tools.Types
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
-import HsDev.Util (ordNub, fromJSON')
+import HsDev.Util (ordNub, fromJSON', uniqueBy)
 import qualified HsDev.Util as Util (withCurrentDirectory)
 import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..))
 import HsDev.Server.Message
@@ -492,8 +492,9 @@ setModTypes m ts = Log.scope "set-types" $ do
 	mid <- SQLite.lookupModule m
 	mid' <- maybe (hsdevError $ SQLiteError "module id not found") return mid
 	sendUpdateAction $ do
+		SQLite.execute "delete from types where module_id = ?;" (SQLite.Only mid')
 		SQLite.executeMany "insert into types (module_id, line, column, line_to, column_to, expr, type) values (?, ?, ?, ?, ?, ?, ?);" [
-			(SQLite.Only mid' SQLite.:. view noteRegion n' SQLite.:. view note n') | n' <- ts]
+			(SQLite.Only mid' SQLite.:. view noteRegion n' SQLite.:. view note n') | n' <- uniqueBy (view noteRegion) ts]
 		SQLite.execute "update names set inferred_type = (select type from types as t where t.module_id = ? and names.line = t.line and names.column = t.column and names.line_to = t.line_to and names.column_to = t.column_to) where module_id == ?;"
 			(mid', mid')
 		SQLite.execute "update symbols set type = (select type from types as t where t.module_id = ? and symbols.line = t.line and symbols.column = t.column order by t.line_to, t.column_to) where module_id == ?;" (mid', mid')

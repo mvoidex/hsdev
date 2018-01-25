@@ -228,6 +228,7 @@ insertResolvedSymbols im = do
 					sym ^? symbolPosition . _Just . positionColumn)
 					:.
 					(sym ^. symbolInfo)
+			execute "insert or replace into env (module, name, what, id) select ?, s.name, s.what, s.id from symbols as s where s.module_id = ?;" (im ^?! inspected . resolvedModule . moduleName_, mid)
 
 		insertExportSymbols :: SessionMonad m => Int -> [N.Symbol] -> m ()
 		insertExportSymbols mid syms = scope "exports" $ do
