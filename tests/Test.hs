@@ -114,6 +114,7 @@ main = hspec $ do
 					return (nm, p)
 			S.fromList locs `shouldBe` S.fromList [
 				("ModuleOne", Position 4 2),
+				("ModuleOne", Position 15 1),
 				("ModuleTwo", Position 2 2),
 				("ModuleTwo", Position 8 19),
 				("ModuleTwo", Position 25 21),
