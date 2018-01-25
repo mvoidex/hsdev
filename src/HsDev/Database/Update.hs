@@ -59,7 +59,7 @@ import HsDev.Tools.Types
 import HsDev.Tools.HDocs
 import qualified HsDev.Scan as S
 import HsDev.Scan.Browse
-import HsDev.Util (ordNub, fromJSON', uniqueBy, timed)
+import HsDev.Util (ordNub, fromJSON', uniqueBy, timer)
 import qualified HsDev.Util as Util (withCurrentDirectory)
 import HsDev.Server.Types (commandNotify, inSessionGhc, FileSource(..))
 import HsDev.Server.Message
@@ -231,13 +231,12 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
 				ms'' <- flip evalStateT (env, fixities) $ runTasks (map inspect' ordered)
-				mlocs'' <- timed $ do
+				mlocs'' <- timer "updated scanned modules" $ do
 					Log.sendLog Log.Trace $ case mproj of
 						Just proj -> "inserting data for resolved modules of project: {}" ~~ proj
 						Nothing -> "inserting data for resolved standalone modules"
-					withEnv mcabal $ forM ms'' $ \im -> do
-						sendUpdateAction $ Log.scope "resolved" $ updateResolved im
-						return (im ^. inspectedKey)
+					sendUpdateAction $ Log.scope "resolved" $ withEnv mcabal $ updateResolveds ms''
+					return (ms'' ^.. each . inspectedKey)
 				updater mlocs''
 				where
 					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
@@ -325,8 +324,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 			scan packageDbMods' ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
-				sendUpdateAction $ timed $ do
-					Log.sendLog Log.Trace $ "inserting data for package-db: {}" ~~ (topPackageDb pdbs)
+				sendUpdateAction $ timer "updated package-db modules" $ do
 					mapM_ SQLite.updateModule ms
 					SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
 
@@ -357,8 +355,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 			scan packageDbStackMods ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
-				sendUpdateAction $ timed $ do
-					Log.sendLog Log.Trace $ "inserting data for package-db-stack: {}" ~~ pdbs
+				sendUpdateAction $ timer "updated package-db-stack modules" $ do
 					SQLite.updateModules ms
 					-- mapM_ SQLite.updateModule ms
 					sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]

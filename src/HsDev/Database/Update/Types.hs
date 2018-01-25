@@ -29,7 +29,7 @@ import HsDev.Database.SQLite
 import HsDev.Server.Types hiding (Command(..))
 import HsDev.Symbols
 import HsDev.Types
-import HsDev.Util ((.::), logAll)
+import HsDev.Util ((.::), logAll, timer)
 
 data Status = StatusWorking | StatusOk | StatusError HsDevError
 
@@ -107,7 +107,7 @@ withUpdateState uopts fn = do
 	where
 		enterTransaction act = do
 			Log.sendLog Log.Trace "entering sqlite transaction"
-			transaction_ Immediate $ do
+			timer "closed transaction" $ transaction_ Immediate $ do
 				Log.sendLog Log.Debug "updating sql database"
 				_ <- act
 				Log.sendLog Log.Debug "sql database updated"

@@ -567,33 +567,27 @@ loadProject cabal = scope "load-project" $ do
 
 -- | Update bunch of modules
 updateModules :: SessionMonad m => [InspectedModule] -> m ()
-updateModules ims = scope "update-modules" $ do
+updateModules ims = scope "update-modules" $ timer "updated modules" $ do
 	-- assume that these modules are not in db
-	timed $ do
-		sendLog Trace "inserting modules"
-		executeMany "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-			[mkModuleData im | im <- ims]
-	timed $ do
-		sendLog Trace "inserting symbols"
-		executeMany "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select ?, m.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? from modules as m where (? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location) limit 1;" $ do
-			m <- ims ^.. each . inspected
-			sym <- m ^. moduleExports
-			guard (sym ^. symbolId . symbolModule == m ^. moduleId)
-			return $ (
-				sym ^. symbolId . symbolName,
-				sym ^. symbolDocs,
-				sym ^? symbolPosition . _Just . positionLine,
-				sym ^? symbolPosition . _Just . positionColumn)
-				:. (sym ^. symbolInfo) :. (mkLocationId (sym ^. symbolId . symbolModule))
-	timed $ do
-		sendLog Trace "inserting exports"
-		executeMany "insert into exports (module_id, symbol_id) select m.id, s.id from modules as m, modules as sm, symbols as s where ((? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location)) and ((? = sm.file) or (? = sm.package_name and ? = sm.package_version and ? = sm.installed_name) or (? = sm.other_location)) and (sm.id = s.module_id and s.name = ? and s.what = ?);" $ do
-			m <- ims ^.. each . inspected
-			sym <- m ^. moduleExports
-			return $
-				(mkLocationId (m ^. moduleId)) :.
-				(mkLocationId (sym ^. symbolId . symbolModule)) :.
-				(sym ^. symbolId . symbolName, symbolType sym)
+	timer "inserted modules" $ executeMany "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+		[mkModuleData im | im <- ims]
+	timer "inserted symbols" $ executeMany "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select ?, m.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? from modules as m where (? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location) limit 1;" $ do
+		m <- ims ^.. each . inspected
+		sym <- m ^. moduleExports
+		guard (sym ^. symbolId . symbolModule == m ^. moduleId)
+		return $ (
+			sym ^. symbolId . symbolName,
+			sym ^. symbolDocs,
+			sym ^? symbolPosition . _Just . positionLine,
+			sym ^? symbolPosition . _Just . positionColumn)
+			:. (sym ^. symbolInfo) :. (mkLocationId (sym ^. symbolId . symbolModule))
+	timer "inserted exports" $ executeMany "insert into exports (module_id, symbol_id) select m.id, s.id from modules as m, modules as sm, symbols as s where ((? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location)) and ((? = sm.file) or (? = sm.package_name and ? = sm.package_version and ? = sm.installed_name) or (? = sm.other_location)) and (sm.id = s.module_id and s.name = ? and s.what = ?);" $ do
+		m <- ims ^.. each . inspected
+		sym <- m ^. moduleExports
+		return $
+			(mkLocationId (m ^. moduleId)) :.
+			(mkLocationId (sym ^. symbolId . symbolModule)) :.
+			(sym ^. symbolId . symbolName, symbolType sym)
 	where
 		mkModuleData im = (
 			im ^? inspectedKey . moduleFile . path,

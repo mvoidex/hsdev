@@ -31,7 +31,7 @@ module HsDev.Util (
 	parseDT,
 
 	-- * Log utils
-	timed,
+	timer,
 
 	-- * Reexportss
 	module Control.Monad.Except,
@@ -313,10 +313,10 @@ parseDT typeName v = maybe err return (simpleParse v) where
 	err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
 
 -- | Measure time of action
-timed :: MonadLog m => m a -> m a
-timed act = do
+timer :: MonadLog m => Text -> m a -> m a
+timer msg act = do
 	s <- liftIO getPOSIXTime
 	r <- act
 	e <- liftIO getPOSIXTime
-	sendLog Trace $ "duration: {}" ~~ show (e - s)
+	sendLog Trace $ "{}: {}" ~~ msg ~~ show (e - s)
 	return r
