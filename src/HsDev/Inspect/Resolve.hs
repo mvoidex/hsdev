@@ -257,6 +257,9 @@ insertResolvedSymbols im = do
 		insertResolvedNames mid p = scope "resolved" $ do
 			insertNames
 			replaceQNames
+			executeNamed "update names set resolved_module = :module, (resolved_name, resolved_what) = (select s.name, s.what from symbols as s where s.module_id = names.module_id and s.line = names.line and s.column = names.column) where module_id = :module_id and (line, column) = (def_line, def_column) and resolved_module is null and resolved_name is null;" [
+				":module" := im ^?! inspected . resolvedModule . moduleName_,
+				":module_id" := mid]
 			setResolvedSymbolIds
 			where
 				insertNames = executeMany insertQuery namesData

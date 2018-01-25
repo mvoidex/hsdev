@@ -1,23 +1,25 @@
 # Find rare used symbols
 select
-	resolved_module,
-	resolved_name,
-	count(*),
-	sum(m.name != resolved_module),
-	max(s.id in (select e.symbol_id from exports as e where e.module_id == m.id))
-from names as n, symbols as s, modules as m
+	n.symbol_id,
+	n.resolved_module,
+	n.resolved_name,
+	n.resolved_what,
+	count(*) as use_count,
+	sum(n.module_id == s.module_id) as internal_usages,
+	sum(n.module_id != s.module_id) as external_usages
+from names as n, symbols as s
 where
-	s.module_id == m.id and
-	m.cabal like '%hsdev.cabal' and
-	m.name == resolved_module and
-	s.name == resolved_name and
-	s.what == 'function' and
-	n.module_id in (select id from modules where cabal like '%hsdev.cabal')
+	(n.module_id in (select id from modules where cabal like '%hsdev.cabal')) and
+	s.id = n.symbol_id and
+	(s.module_id in (select id from modules where cabal like '%hsdev.cabal')) and
+	n.resolved_what = 'function'
 group by
-	resolved_module,
-	resolved_name
-order by count(*)
-limit 10;
+	n.symbol_id,
+	n.resolved_module,
+	n.resolved_name,
+	n.resolved_what
+order by external_usages, internal_usages
+limit 30;
 
 # Find unused import list items
 select distinct
