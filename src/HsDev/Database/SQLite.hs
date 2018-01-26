@@ -595,7 +595,7 @@ insertModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ do
 				sym ^. symbolDocs,
 				sym ^? symbolPosition . _Just . positionLine,
 				sym ^? symbolPosition . _Just . positionColumn)
-				:. (sym ^. symbolInfo) :. (mkLocationId (sym ^. symbolId . symbolModule))
+				:. (sym ^. symbolInfo)
 
 		insertModulesExports :: SessionMonad m => [(Int, InspectedModule)] -> m ()
 		insertModulesExports imods = executeMany "insert into exports (module_id, symbol_id) select m.id, s.id from modules as m, modules as sm, symbols as s where ((? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location)) and ((? = sm.file) or (? = sm.package_name and ? = sm.package_version and ? = sm.installed_name) or (? = sm.other_location)) and (sm.id = s.module_id and s.name = ? and s.what = ?);" $ do
