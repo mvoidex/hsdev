@@ -5,6 +5,9 @@ module HsDev.Sandbox (
 	isSandbox, guessSandboxType, sandboxFromPath,
 	findSandbox, searchSandbox, projectSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
 
+	-- * package-db
+	userPackageDb,
+
 	-- * cabal-sandbox util
 	cabalSandboxLib, cabalSandboxPackageDb,
 
@@ -42,6 +45,7 @@ import HsDev.Symbols (moduleOpts, projectTargetOpts)
 import HsDev.Symbols.Types (moduleId, Module(..), ModuleLocation(..), moduleLocation)
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
+import HsDev.Tools.Ghc.System (buildPath)
 import HsDev.Util (searchPath, directoryContents, cabalFile)
 
 import qualified GHC
@@ -145,19 +149,19 @@ restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDbs [p]) $ r
 	sbox <- MaybeT $ liftIO $ searchSandbox p
 	lift $ sandboxPackageDbStack sbox
 
+globalPackageDb :: GhcM FilePath
+globalPackageDb = return 
+
+-- | User package-db: <arch>-<platform>-<version>
+userPackageDb :: GhcM FilePath
+userPackageDb = do
+	root <- liftIO $ getAppUserDataDirectory "ghc"
+	dir <- buildPath "{arch}-{platform}-{version}"
+	return $ root </> dir
+
 -- | Get actual sandbox build path: <arch>-<platform>-<compiler>-<version>
 cabalSandboxLib :: GhcM FilePath
-cabalSandboxLib = do
-	tmpSession globalDb ["-no-user-package-db"]
-	df <- GHC.getSessionDynFlags
-	let
-		res =
-			map (GHC.packageNameString &&& GHC.packageVersion) .
-			fromMaybe [] . Compat.pkgDatabase $ df
-		compiler = T.display buildCompilerFlavor
-		CompilerId _ version = buildCompilerId
-		ver = maybe (T.display version) T.display $ lookup compiler res
-	return $ T.display buildPlatform ++ "-" ++ compiler ++ "-" ++ ver
+cabalSandboxLib = buildPath "{arch}-{platform}-{compiler}-{version}"
 
 -- | Get sandbox package-db: <arch>-<platform>-<compiler>-<version>-packages.conf.d
 cabalSandboxPackageDb :: GhcM FilePath

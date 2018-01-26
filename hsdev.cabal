@@ -93,6 +93,7 @@ library
     HsDev.Tools.Ghc.MGhc
     HsDev.Tools.Ghc.Prelude
     HsDev.Tools.Ghc.Session
+    HsDev.Tools.Ghc.System
     HsDev.Tools.Ghc.Types
     HsDev.Tools.Ghc.Worker
     HsDev.Tools.Hayoo

@@ -17,6 +17,8 @@ import Distribution.Package
 import Distribution.Text (disp)
 import System.FilePath
 
+import GHC.Paths
+
 import HsDev.PackageDb.Types
 import HsDev.Error
 import HsDev.Symbols.Location
@@ -27,22 +29,22 @@ import System.Directory.Paths
 -- | Get path to package-db
 packageDbPath :: PackageDb -> IO Path
 packageDbPath GlobalDb = do
-	out <- fmap lines $ runTool_ "ghc-pkg" ["list", "--global"]
+	out <- fmap lines $ runTool_ ghc_pkg ["list", "--global"]
 	case out of
 		(fpath:_) -> return $ fromFilePath $ normalise fpath
-		[] -> hsdevError $ ToolError "ghc-pkg" "empty output, expecting path to global package-db"
+		[] -> hsdevError $ ToolError ghc_pkg "empty output, expecting path to global package-db"
 packageDbPath UserDb = do
-	out <- fmap lines $ runTool_ "ghc-pkg" ["list", "--user"]
+	out <- fmap lines $ runTool_ ghc_pkg ["list", "--user"]
 	case out of
 		(fpath:_) -> return $ fromFilePath $ normalise fpath
-		[] -> hsdevError $ ToolError "ghc-pkg" "empty output, expecting path to user package db"
+		[] -> hsdevError $ ToolError ghc_pkg "empty output, expecting path to user package db"
 packageDbPath (PackageDb fpath) = return fpath
 
 -- | Read package-db conf files
 readPackageDb :: PackageDb -> IO (Map ModulePackage [ModuleLocation])
 readPackageDb pdb = do
 	p <- packageDbPath pdb
-	mlibdir <- fmap (listToMaybe . lines) $ runTool_ "ghc" ["--print-libdir"]
+	mlibdir <- fmap (listToMaybe . lines) $ runTool_ ghc ["--print-libdir"]
 	confs <- fmap (filter isConf) $ directoryContents (p ^. path)
 	fmap M.unions $ forM confs $ \conf -> do
 		cts <- readFileUtf8 conf
