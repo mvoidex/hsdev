@@ -7,8 +7,19 @@ module HsDev.Tools.Ghc.System (
 	formatBuildPath, buildPath
 	) where
 
+import Control.Arrow
+import qualified Data.Map as M
+import Data.Maybe
+import Distribution.Text (display)
 import qualified System.Info as Sys
 import Text.Format
+
+import DynFlags (DynFlags)
+import PackageConfig as GHC
+import GHC (getSessionDynFlags)
+
+import HsDev.Tools.Ghc.Compat as Compat
+import HsDev.Tools.Ghc.Worker (GhcM)
 
 data BuildInfo = BuildInfo {
 	targetArch :: String,
@@ -21,8 +32,9 @@ buildInfo = BuildInfo Sys.arch Sys.os Sys.compilerName . examineCompilerVersion
 
 examineCompilerVersion :: DynFlags -> String
 examineCompilerVersion =
-	maybe Sys.compilerVersion display .
-	M.lookup Sys.compilerNam .
+	display .
+	fromMaybe Sys.compilerVersion .
+	M.lookup Sys.compilerName .
 	M.fromList .
 	map (GHC.packageNameString &&& GHC.packageVersion) .
 	fromMaybe [] . Compat.pkgDatabase

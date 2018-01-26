@@ -217,8 +217,8 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 				mloc = p ^. preloadedId . moduleLocation
 				inspectedMod = Inspected (p ^. preloadedTime) mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
 			sendUpdateAction $ do
-				p <- Log.scope "preloaded" $ SQLite.updateModule inspectedMod
-				pid <- SQLite.lookupModuleLocation (p ^. preloadedModule . moduleId)
+				Log.scope "preloaded" $ SQLite.updateModule inspectedMod
+				pid <- SQLite.lookupModuleLocation mloc
 				when (isJust pid) $ SQLite.updateModule inspectedMod
 			return mloc
 		updater mlocs'

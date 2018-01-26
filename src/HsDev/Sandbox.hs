@@ -31,6 +31,7 @@ import qualified Data.Text as T (unpack)
 import Distribution.Compiler
 import Distribution.System
 import qualified Distribution.Text as T (display)
+import System.Directory (getAppUserDataDirectory)
 import System.FilePath
 import System.Log.Simple (MonadLog(..))
 import Text.Format
@@ -148,9 +149,6 @@ restorePackageDbStack UserDb = return userDb
 restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDbs [p]) $ runMaybeT $ do
 	sbox <- MaybeT $ liftIO $ searchSandbox p
 	lift $ sandboxPackageDbStack sbox
-
-globalPackageDb :: GhcM FilePath
-globalPackageDb = return 
 
 -- | User package-db: <arch>-<platform>-<version>
 userPackageDb :: GhcM FilePath
