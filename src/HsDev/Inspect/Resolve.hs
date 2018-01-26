@@ -307,7 +307,7 @@ insertResolvedSymbols im = do
 
 insertResolvedsSymbols :: SessionMonad m => [InspectedResolved] -> m ()
 insertResolvedsSymbols ims = withTemporaryTable "updated_ids" ["id integer not null", "cabal text", "module text not null"] $ do
-	ids <- mapM lookupId (ims ^.. each . inspectedKey)
+	ids <- mapM SQLite.lookupId (ims ^.. each . inspectedKey)
 	let
 		imods = zip ids ims
 
@@ -467,7 +467,3 @@ removeModuleContents mid = scope "remove-modules-contents" $ do
 	execute "delete from names where module_id == ?;" (Only mid)
 	execute "delete from types where module_id == ?;" (Only mid)
 	execute "delete from symbols where module_id == ?;" (Only mid)
-
-lookupId :: SessionMonad m => ModuleLocation -> m Int
-lookupId = lookupModuleLocation >=> maybe err return where
-	err = hsdevError $ SQLiteError "module not exist in db"

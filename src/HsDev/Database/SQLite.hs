@@ -21,6 +21,7 @@ module HsDev.Database.SQLite (
 	updateModules,
 
 	-- * Utils
+	lookupId,
 	escapeLike,
 
 	-- * Reexports
@@ -564,48 +565,47 @@ loadProject cabal = scope "load-project" $ do
 		set (projectDescription . _Just . projectTests) tests $
 		proj
 
+-- | Update a bunch of modules
+updateModules :: SessionMonad m => [InspectedModule] -> m ()
+updateModules ims = scope "update-modules" $ do
+	mapM_ (upsertModule >=> removeModuleContents) ims
+	insertModulesSymbols ims
+
 
 -- | Update bunch of modules
-updateModules :: SessionMonad m => [InspectedModule] -> m ()
-updateModules ims = scope "update-modules" $ timer "updated modules" $ do
+insertModulesSymbols :: SessionMonad m => [InspectedModule] -> m ()
+insertModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ do
 	-- assume that these modules are not in db
-	timer "inserted modules" $ executeMany "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-		[mkModuleData im | im <- ims]
-	timer "inserted symbols" $ executeMany "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select ?, m.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? from modules as m where (? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location) limit 1;" $ do
-		m <- ims ^.. each . inspected
-		sym <- m ^. moduleExports
-		guard (sym ^. symbolId . symbolModule == m ^. moduleId)
-		return $ (
-			sym ^. symbolId . symbolName,
-			sym ^. symbolDocs,
-			sym ^? symbolPosition . _Just . positionLine,
-			sym ^? symbolPosition . _Just . positionColumn)
-			:. (sym ^. symbolInfo) :. (mkLocationId (sym ^. symbolId . symbolModule))
-	timer "inserted exports" $ executeMany "insert into exports (module_id, symbol_id) select m.id, s.id from modules as m, modules as sm, symbols as s where ((? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location)) and ((? = sm.file) or (? = sm.package_name and ? = sm.package_version and ? = sm.installed_name) or (? = sm.other_location)) and (sm.id = s.module_id and s.name = ? and s.what = ?);" $ do
-		m <- ims ^.. each . inspected
-		sym <- m ^. moduleExports
-		return $
-			(mkLocationId (m ^. moduleId)) :.
-			(mkLocationId (sym ^. symbolId . symbolModule)) :.
-			(sym ^. symbolId . symbolName, symbolType sym)
+	ids <- mapM lookupId (ims ^.. each . inspectedKey)
+	let
+		imods = zip ids ims
+
+	insertModulesDefs imods
+	insertModulesExports imods
 	where
-		mkModuleData im = (
-			im ^? inspectedKey . moduleFile . path,
-			im ^? inspectedKey . moduleProject . _Just . projectCabal,
-			fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
-			im ^? inspectedKey . modulePackage . packageName,
-			im ^? inspectedKey . modulePackage . packageVersion,
-			im ^? inspectedKey . installedModuleName,
-			im ^? inspectedKey . otherLocationName)
-			:. (
-			msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
-			im ^? inspected . moduleDocs,
-			fmap encode $ im ^? inspected . moduleFixities,
-			encode $ asDict $ im ^. inspectionTags,
-			fmap show $ im ^? inspectionResult . _Left)
-			:.
-			fromMaybe InspectionNone (im ^? inspection)
-		asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
+		insertModulesDefs :: SessionMonad m => [(Int, InspectedModule)] -> m ()
+		insertModulesDefs imods = executeMany "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ do
+			(mid, im) <- imods
+			m <- im ^.. inspected
+			sym <- m ^. moduleExports
+			guard (sym ^. symbolId . symbolModule == m ^. moduleId)
+			return $ (
+				sym ^. symbolId . symbolName,
+				mid,
+				sym ^. symbolDocs,
+				sym ^? symbolPosition . _Just . positionLine,
+				sym ^? symbolPosition . _Just . positionColumn)
+				:. (sym ^. symbolInfo) :. (mkLocationId (sym ^. symbolId . symbolModule))
+
+		insertModulesExports :: SessionMonad m => [(Int, InspectedModule)] -> m ()
+		insertModulesExports imods = executeMany "insert into exports (module_id, symbol_id) select m.id, s.id from modules as m, modules as sm, symbols as s where ((? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location)) and ((? = sm.file) or (? = sm.package_name and ? = sm.package_version and ? = sm.installed_name) or (? = sm.other_location)) and (sm.id = s.module_id and s.name = ? and s.what = ?);" $ do
+			(mid, im) <- imods
+			m <- im ^.. inspected
+			sym <- m ^. moduleExports
+			return $
+				(Only mid) :.
+				mkLocationId (sym ^. symbolId . symbolModule) :.
+				(sym ^. symbolId . symbolName, symbolType sym)
 
 		mkLocationId m' = (
 			m' ^? moduleLocation . moduleFile,
@@ -635,3 +635,7 @@ sqlFailure :: SessionMonad m => Text -> m a
 sqlFailure msg = do
 	sendLog Error msg
 	hsdevError $ SQLiteError $ T.unpack msg
+
+lookupId :: SessionMonad m => ModuleLocation -> m Int
+lookupId = lookupModuleLocation >=> maybe err return where
+	err = hsdevError $ SQLiteError "module not exist in db"

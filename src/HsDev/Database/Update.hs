@@ -216,7 +216,10 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 			let
 				mloc = p ^. preloadedId . moduleLocation
 				inspectedMod = Inspected (p ^. preloadedTime) mloc (tag OnlyHeaderTag) $ Right $ p ^. asModule
-			sendUpdateAction $ Log.scope "preloaded" $ SQLite.updateModule inspectedMod
+			sendUpdateAction $ do
+				p <- Log.scope "preloaded" $ SQLite.updateModule inspectedMod
+				pid <- SQLite.lookupModuleLocation (p ^. preloadedModuleId)
+				when (isJust pid) $ SQLite.updateModule inspectedMod
 			return mloc
 		updater mlocs'
 
@@ -235,7 +238,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 					Log.sendLog Log.Trace $ case mproj of
 						Just proj -> "inserting data for resolved modules of project: {}" ~~ proj
 						Nothing -> "inserting data for resolved standalone modules"
-					sendUpdateAction $ Log.scope "resolved" $ withEnv mcabal $ updateResolveds ms''
+					sendUpdateAction $ Log.scope "resolved" $ withEnv mcabal $ mapM_ updateResolved ms'' -- updateResolveds ms''
 					return (ms'' ^.. each . inspectedKey)
 				updater mlocs''
 				where
@@ -325,7 +328,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 				sendUpdateAction $ timer "updated package-db modules" $ do
-					mapM_ SQLite.updateModule ms
+					SQLite.updateModules ms
 					SQLite.updatePackageDb (topPackageDb pdbs) (M.keys pdbState)
 
 				when hdocsSupported $ scanPackageDbStackDocs opts pdbs
@@ -357,7 +360,6 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 				sendUpdateAction $ timer "updated package-db-stack modules" $ do
 					SQLite.updateModules ms
-					-- mapM_ SQLite.updateModule ms
 					sequence_ [SQLite.updatePackageDb pdb (M.keys pdbState) | (pdb, pdbState) <- zip (packageDbs pdbs) pdbStates]
 
 				-- BUG: I don't know why, but these steps leads to segfault on my PC:

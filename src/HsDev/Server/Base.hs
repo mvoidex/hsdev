@@ -20,6 +20,7 @@ import Control.Concurrent.Async
 import qualified Control.Concurrent.Chan as C
 import Control.Lens (set, traverseOf, view)
 import Control.Monad
+import Control.Monad.IO.Class
 import Control.Monad.Loops
 import Control.Monad.Except
 import Control.Monad.Reader
@@ -136,7 +137,16 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 		tasksVar <- newMVar []
 		Update.onEvents_ watcher $ \evs -> withSession session $
 			void $ Client.runClient def $ Update.processEvents (withSession session . inSessionUpdater . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar evs
-	liftIO $ runReaderT (runServerM $ watchDb >> act) session
+	liftIO $ runReaderT (runServerM $ (watchDb >> act) `finally` closeSession) session
+	where
+		closeSession = do
+			askSession sessionUpdater >>= liftIO . joinWorker
+			Log.sendLog Log.Info "updater worker stopped"
+			askSession sessionGhc >>= liftIO . joinWorker
+			Log.sendLog Log.Info "ghc worker stopped"
+			askSession sessionSqlDatabase >>= liftIO . SQLite.close
+			Log.sendLog Log.Info "sql connection closed"
+
 
 -- | Set initial watch: package-dbs, projects and standalone sources
 watchDb :: SessionMonad m => m ()
@@ -211,7 +221,7 @@ startServer_ :: ServerOpts -> IO Server
 startServer_ sopts = startWorker (runServer sopts) id logAll
 
 stopServer :: Server -> IO ()
-stopServer s = sendServer_ s ["exit"] >> stopWorker s
+stopServer s = sendServer_ s ["exit"] >> joinWorker s
 
 withServer :: ServerOpts -> (Server -> IO a) -> IO a
 withServer sopts = bracket (startServer sopts) stopServer
