@@ -37,7 +37,6 @@ import Text.Format
 import System.Directory.Paths
 import HsDev.Database.SQLite as SQLite
 import qualified HsDev.Display as Display
-import HsDev.Error
 import HsDev.Inspect.Definitions
 import HsDev.Inspect.Types
 import HsDev.Symbols.Name
