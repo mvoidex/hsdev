@@ -248,7 +248,7 @@ fileContentsInspection opts = fileContentsInspection_ opts <$> getPOSIXTime
 
 -- | File contents inspection data
 fileContentsInspection_ :: [String] -> POSIXTime -> Inspection
-fileContentsInspection_ opts tm = 	InspectionAt tm $ map fromString $ sort $ ordNub opts
+fileContentsInspection_ opts tm = InspectionAt tm $ map fromString $ sort $ ordNub opts
 
 -- | Installed module inspection data, just opts
 installedInspection :: [String] -> IO Inspection

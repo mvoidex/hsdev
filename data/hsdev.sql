@@ -164,7 +164,7 @@ create table modules (
 	-- some other location
 	other_location text, -- anything
 
-	name text not null,
+	name text,
 	docs text,
 	fixities json, -- list of fixities
 	tags json, -- dict of tags, value not used, tag is set if present; used by hsdev to mark if types was inferred or docs scanned

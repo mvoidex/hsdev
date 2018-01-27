@@ -191,6 +191,11 @@ runTasks ts = liftM catMaybes $ zipWithM taskNum [1..] (map noErr ts) where
 runTasks_ :: UpdateMonad m => [m ()] -> m ()
 runTasks_ = void . runTasks
 
+data PreloadFailure = PreloadFailure ModuleLocation Inspection HsDevError
+
+instance NFData PreloadFailure where
+	rnf (PreloadFailure mloc insp err) = rnf mloc `seq` rnf insp `seq` rnf err
+
 -- | Scan modules
 scanModules :: UpdateMonad m => [String] -> [S.ModuleToScan] -> m ()
 scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') grouped where
@@ -205,22 +210,28 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		let
 			pload (mloc, mopts, mcts) = runTask "preloading" mloc $ do
 				mfcts <- maybe (S.getFileContents (mloc ^?! moduleFile)) (const $ return Nothing) mcts
+				insp <- liftIO $ fileInspection (mloc ^?! moduleFile) (opts ++ mopts)
 				case (mfcts ^? _Just . _1) of
 					Just tm -> Log.sendLog Log.Trace $ "using edited file contents, mtime = {}" ~~ show tm
 					Nothing -> return ()
 				let
-					resetInspection = maybe id (set preloadedTime . fileContentsInspection_ (opts ++ mopts)) $ mfcts ^? _Just . _1
+					inspection' = maybe insp (fileContentsInspection_ (opts ++ mopts)) $ mfcts ^? _Just . _1
 					mcts' = mplus mcts (mfcts ^? _Just . _2)
-				p <- liftIO $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts'
-				return $ resetInspection p
+				liftIO $ liftM (over _Left (PreloadFailure mloc inspection')) $ hsdevCatch $ do
+					p <- preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts'
+					return $ set preloadedTime inspection' p
 
 		ploaded <- runTasks (map pload ms')
-		-- sendUpdateAction $ Log.scope "preloaded" $ SQLite.updateModules $ do
-		-- 	p <- ploaded
-		-- 	return $ Inspected (p ^. preloadedTime) (p ^. preloadedId . moduleLocation)
-		-- 		(tag OnlyHeaderTag) (Right $ p ^. asModule)
+		sendUpdateAction $ Log.scope "preloaded" $ transact $ mapM_ SQLite.upsertModule $ do
+			p <- ploaded
+			case p of
+				Right p' -> return $ Inspected (p' ^. preloadedTime) (p' ^. preloadedId . moduleLocation)
+					(tag OnlyHeaderTag) (Right $ p' ^. asModule)
+				Left (PreloadFailure mloc' insp' e') -> return $ Inspected insp' mloc'
+					noTags (Left e')
 		let
-			mlocs' = ploaded ^.. each . preloadedId . moduleLocation
+			ploaded' = ploaded ^.. each . _Right
+			mlocs' = ploaded' ^.. each . preloadedId . moduleLocation
 
 		updater mlocs'
 
@@ -231,7 +242,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		fixities <- loadFixities mcabal
 
 		Log.sendLog Log.Trace $ "resolved environment: {} modules" ~~ M.size env
-		case order ploaded of
+		case order ploaded' of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
 				ms'' <- flip evalStateT (env, fixities) $ runTasks (map inspect' ordered)
