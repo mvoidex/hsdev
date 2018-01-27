@@ -58,7 +58,7 @@ import HsDev.Inspect (getDefines)
 import HsDev.Tools.Ghc.Worker hiding (Session)
 import HsDev.Server.Types
 import HsDev.Server.Message
-import HsDev.Symbols.Location (ModuleLocation(..))
+import HsDev.Symbols.Location (ModuleLocation(..), globalDb)
 import qualified HsDev.Watcher as W
 import HsDev.Util
 
@@ -92,6 +92,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 	mmapPool <- Just <$> liftIO (createPool "hsdev")
 #endif
 	ghcw <- ghcWorker
+	liftIO $ inWorker ghcw $ tmpSession globalDb []
 	defs <- liftIO getDefines
 
 	session <- liftIO $ fixIO $ \sess -> do
