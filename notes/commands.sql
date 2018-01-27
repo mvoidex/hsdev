@@ -22,24 +22,25 @@ order by external_usages, internal_usages
 limit 30;
 
 # Find unused import list items
-select distinct
+select
+	isc.module_id,
+	isc.line,
 	isc.module_name,
 	json_extract(il.value, '$.name') as il_name,
-	sum((select count(*) from names as n where n.module_id == 2565 and n.qualifier is isc.qualifier and n.name == isc.name))
+	sum((select count(*) from names as n where n.module_id == isc.module_id and n.qualifier is isc.qualifier and n.name == isc.name)) as uses
 from imported_scopes as isc, json_each(isc.import_list) as il
 where
-	isc.module_id == 2565 and
 	il_name == isc.name
-group by isc.module_name, il_name;
+group by isc.module_id, isc.line, isc.module_name, il_name;
 
 # Find unused imports
-select distinct
+select
+	isc.module_id,
+	isc.line,
 	isc.module_name,
-	sum((select count(*) from names as n where n.module_id == 2565 and n.qualifier is isc.qualifier and n.name == isc.name))
+	sum((select count(*) from names as n where n.module_id == isc.module_id and n.qualifier is isc.qualifier and n.name == isc.name)) as uses
 from imported_scopes as isc
-where
-	isc.module_id == 2565
-group by isc.module_name;
+group by isc.module_id, isc.line, isc.module_name;
 
 
 # Find usages by location
