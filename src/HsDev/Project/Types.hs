@@ -170,7 +170,7 @@ instance ToJSON Library where
 		"info" .= _libraryBuildInfo l]
 
 instance FromJSON Library where
-	parseJSON = withObject "library" $ \v -> Library <$> (fmap (T.split (== '.')) <$> v .:: "modules") <*> v .:: "info" where
+	parseJSON = withObject "library" $ \v -> Library <$> (fmap (T.split (== '.')) <$> v .:: "modules") <*> v .:: "info"
 
 instance Paths Library where
 	paths f (Library ms info) = Library ms <$> paths f info

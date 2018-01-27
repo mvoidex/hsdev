@@ -49,7 +49,7 @@ messagesById :: Maybe String -> [Message a] -> [a]
 messagesById i = map _message . filter ((== i) . _messageId)
 
 -- | Notification from server
-data Notification = Notification Value deriving (Eq, Show)
+newtype Notification = Notification Value deriving (Eq, Show)
 
 instance ToJSON Notification where
 	toJSON (Notification v) = object ["notify" .= v]
@@ -73,7 +73,7 @@ instance FromJSON Result where
 	parseJSON j = (withObject "result" (\v -> (Result <$> v .:: "result")) j) <|> (Error <$> parseJSON j)
 
 -- | Part of result list, returns via notification
-data ResultPart = ResultPart Value
+newtype ResultPart = ResultPart Value
 
 instance ToJSON ResultPart where
 	toJSON (ResultPart r) = object ["result-part" .= r]

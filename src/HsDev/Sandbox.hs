@@ -18,7 +18,6 @@ module HsDev.Sandbox (
 	) where
 
 import Control.Applicative
-import Control.Arrow
 import Control.DeepSeq (NFData(..))
 import Control.Monad
 import Control.Monad.Trans.Maybe
@@ -28,9 +27,6 @@ import Data.Aeson
 import Data.List (find)
 import Data.Maybe (isJust, fromMaybe)
 import qualified Data.Text as T (unpack)
-import Distribution.Compiler
-import Distribution.System
-import qualified Distribution.Text as T (display)
 import System.Directory (getAppUserDataDirectory)
 import System.FilePath
 import System.Log.Simple (MonadLog(..))
@@ -44,13 +40,9 @@ import HsDev.Scan.Browse (browsePackages)
 import HsDev.Stack hiding (path)
 import HsDev.Symbols (moduleOpts, projectTargetOpts)
 import HsDev.Symbols.Types (moduleId, Module(..), ModuleLocation(..), moduleLocation)
-import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
-import HsDev.Tools.Ghc.Compat as Compat
+import HsDev.Tools.Ghc.Worker (GhcM)
 import HsDev.Tools.Ghc.System (buildPath)
 import HsDev.Util (searchPath, directoryContents, cabalFile)
-
-import qualified GHC
-import qualified Packages as GHC
 
 data SandboxType = CabalSandbox | StackWork deriving (Eq, Ord, Read, Show, Enum, Bounded)
 

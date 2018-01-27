@@ -620,17 +620,6 @@ insertModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ do
 			m' ^? moduleLocation . installedModuleName,
 			m' ^? moduleLocation . otherLocationName)
 
-		symbolsColumns :: [String]
-		symbolsColumns = [
-			"name", "module_name",
-			"file", "cabal", "install_dirs", "package_name", "package_version", "installed_name", "other_location",
-			"docs",
-			"line", "column",
-			"what", "type", "parent", "constructors", "args", "context", "associate", "pat_type", "pat_constructor"]
-
-		idColumns :: [String]
-		idColumns = ["module_id", "symbol_id"]
-
 
 escapeLike :: Text -> Text
 escapeLike = T.replace "\\" "\\\\" . T.replace "%" "\\%" . T.replace "_" "\\_"

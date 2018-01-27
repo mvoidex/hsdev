@@ -60,6 +60,6 @@ readPackageDb pdb = do
 			pmods = map (InstalledModule (map fromFilePath $ libraryDirs pinfo) pname) names
 			names = map (pack . show . disp) (exposedModules pinfo) ++ map (pack . show . disp) (hiddenModules pinfo)
 		subst Nothing f = f
-		subst (Just libdir) f = case splitPaths f of
-			("$topdir":rest) -> joinPaths (fromFilePath libdir : rest)
+		subst (Just libdir') f = case splitPaths f of
+			("$topdir":rest) -> joinPaths (fromFilePath libdir' : rest)
 			_ -> f

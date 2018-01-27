@@ -25,11 +25,10 @@ import Data.Default
 import qualified System.Log.Simple as Log
 
 import Control.Concurrent.Worker
-import HsDev.Database.SQLite
 import HsDev.Server.Types hiding (Command(..))
 import HsDev.Symbols
 import HsDev.Types
-import HsDev.Util ((.::), logAll, timer)
+import HsDev.Util ((.::), logAll)
 
 data Status = StatusWorking | StatusOk | StatusError HsDevError
 
