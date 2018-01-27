@@ -10,6 +10,7 @@ module HsDev.Inspect.Resolve (
 	) where
 
 import Control.Lens hiding ((.=))
+import Control.Monad.Catch
 import Data.Aeson
 import Data.Generics.Uniplate.Operations
 import Data.Functor
@@ -34,7 +35,7 @@ import System.Log.Simple
 import Text.Format
 
 import System.Directory.Paths
-import HsDev.Database.SQLite as SQLite hiding (removeModuleContents)
+import HsDev.Database.SQLite as SQLite
 import qualified HsDev.Display as Display
 import HsDev.Error
 import HsDev.Inspect.Definitions
@@ -85,7 +86,7 @@ resolve env m = Resolved {
 
 -- | Load environment from sql
 loadEnvironment :: SessionMonad m => Maybe Path -> m Environment
-loadEnvironment mcabal = do
+loadEnvironment mcabal = transaction_ Deferred $ do
 	sendLog Trace $ "loading environment for {}" ~~ fromMaybe "<standalone>" mcabal
 	env <- query @_ @(Only (H.ModuleName ()) :. N.Symbol)
 		(toQuery $ mconcat [
@@ -106,7 +107,7 @@ loadEnvironment mcabal = do
 
 -- | Load fixities from sql
 loadFixities :: SessionMonad m => Maybe Path -> m FixitiesTable
-loadFixities mcabal = do
+loadFixities mcabal = transaction_ Deferred $ do
 	fixities' <- query @_ @(Only Value)
 		(toQuery $ mconcat [
 			select_ ["m.fixities"],
@@ -122,7 +123,7 @@ loadFixities mcabal = do
 -- | Run with temporary table for environment
 withEnv :: SessionMonad m => Maybe Path -> m a -> m a
 withEnv mcabal = withTemporaryTable "env" ["module text not null", "name text not null", "what text not null", "id integer not null"] . (initEnv >>) where
-	initEnv = do
+	initEnv = transaction_ Immediate $ do
 		execute_ "create unique index env_id_index on env (id);"
 		execute_ "create unique index env_symbol_index on env (module, name, what);"
 		executeNamed "insert into env select m.name, s.name, s.what, min(s.id) from modules as m, symbols as s where m.id = s.module_id and s.id in (select distinct e.symbol_id from exports as e where e.module_id in (select ps.module_id from projects_modules_scope as ps where ps.cabal is :cabal)) group by m.name, s.name, s.what;" [
@@ -137,10 +138,10 @@ updateResolved im = scope "update-resolved" $ do
 	insertResolvedSymbols im
 
 -- | Save results in sql, updated temporary env table
-updateResolveds :: SessionMonad m => [InspectedResolved] -> m ()
-updateResolveds ims = scope "update-resolveds" $ do
-	mapM_ (upsertResolved >=> removeModuleContents) ims
-	insertResolvedsSymbols ims
+updateResolveds :: SessionMonad m => Maybe Path -> [InspectedResolved] -> m ()
+updateResolveds mcabal ims = scope "update-resolveds" $ withEnv mcabal $ do
+	ids <- transaction_ Immediate $ mapM upsertResolved ims
+	updateResolvedsSymbols (zip ids ims)
 
 upsertResolved :: SessionMonad m => InspectedResolved -> m Int
 upsertResolved im = do
@@ -177,7 +178,6 @@ insertResolvedSymbols :: SessionMonad m => InspectedResolved -> m ()
 insertResolvedSymbols im = do
 	Just mid <- lookupModuleLocation (im ^. inspectedKey)
 	removeModuleContents mid
-	execute "delete from symbols where module_id = ?;" (Only mid)
 	insertModuleImports mid (im ^?! inspected . resolvedSource)
 	insertModuleDefs mid (im ^.. inspected . resolvedDefs . each)
 	insertExportSymbols mid (im ^.. inspected . resolvedExports . each)
@@ -305,24 +305,40 @@ insertResolvedSymbols im = do
 		updateEnvironment mid = do
 			execute "insert or replace into env (module, name, what, id) select m.name, s.name, s.what, min(s.id) from modules as m, symbols as s, exports as e where m.id = s.module_id and s.id = e.symbol_id and e.module_id = ? group by m.name, s.name, s.what;" (Only mid)
 
-insertResolvedsSymbols :: SessionMonad m => [InspectedResolved] -> m ()
-insertResolvedsSymbols ims = withTemporaryTable "updated_ids" ["id integer not null", "cabal text", "module text not null"] $ do
-	ids <- mapM SQLite.lookupId (ims ^.. each . inspectedKey)
-	let
-		imods = zip ids ims
+updateResolvedsSymbols :: SessionMonad m => [(Int, InspectedResolved)] -> m ()
+updateResolvedsSymbols ims = bracket_ initTemps dropTemps $ do
+	initUpdatedIds ims
 
-	initUpdatedIds imods
-
-	insertModulesImports imods
-	insertModulesDefs imods
-	insertExportsSymbols imods
-	insertScopesSymbols imods
-	insertResolvedsNames imods
-	updateEnvironment
+	removeModulesContents
+	transaction_ Immediate $ insertModulesDefs ims
+	transaction_ Immediate $ insertModulesImports ims
+	transaction_ Immediate $ insertExportsSymbols ims
+	transaction_ Immediate $ do
+		insertScopesSymbols ims
+		insertResolvedsNames ims
+	commitTemps
 
 	where
+		initTemps :: SessionMonad m => m ()
+		initTemps = do
+			execute_ "create temporary table updated_ids (id integer not null, cabal text, module text not null);"
+			execute_ "create temporary table updating_scopes as select * from scopes where 0;"
+			execute_ "create temporary table updating_names as select * from names where 0;"
+			execute_ "create unique index updating_names_position_index on updating_names (module_id, line, column, line_to, column_to);"
+
+		dropTemps :: SessionMonad m => m ()
+		dropTemps = do
+			execute_ "drop table if exists updated_ids;"
+			execute_ "drop table if exists updating_scopes;"
+			execute_ "drop table if exists updating_names;"
+
+		commitTemps :: SessionMonad m => m ()
+		commitTemps = do
+			transaction_ Immediate $ execute_ "insert into scopes select * from updating_scopes;"
+			transaction_ Immediate $ execute_ "insert into names select * from updating_names;"
+
 		initUpdatedIds :: SessionMonad m => [(Int, InspectedResolved)] -> m ()
-		initUpdatedIds imods = do
+		initUpdatedIds imods = transaction_ Immediate $ do
 			execute_ "create unique index updated_ids_id_index on updated_ids (id);"
 			execute_ "create index updated_ids_module_index on updated_ids (module);"
 			executeMany "insert into updated_ids (id, cabal, module) values (?, ?, ?);" $ do
@@ -331,6 +347,17 @@ insertResolvedsSymbols ims = withTemporaryTable "updated_ids" ["id integer not n
 					mid,
 					im ^? inspectedKey . moduleProject . _Just . projectCabal,
 					im ^?! inspected . resolvedModule . moduleName_)
+
+		removeModulesContents :: SessionMonad m => m ()
+		removeModulesContents = scope "remove-modules-contents" $ do
+			transaction_ Immediate $ do
+				execute_ "delete from symbols where module_id in (select id from updated_ids);"
+				execute_ "delete from imports where module_id in (select id from updated_ids);"
+				execute_ "delete from exports where module_id in (select id from updated_ids);"
+
+			transaction_ Immediate $ execute_ "delete from scopes where module_id in (select id from updated_ids);"
+			transaction_ Immediate $ execute_ "delete from names where module_id in (select id from updated_ids);"
+			transaction_ Immediate $ execute_ "delete from types where module_id in (select id from updated_ids);"
 
 		insertModulesImports :: SessionMonad m => [(Int, InspectedResolved)] -> m ()
 		insertModulesImports imods = scope "imports" $ do
@@ -390,7 +417,7 @@ insertResolvedsSymbols ims = withTemporaryTable "updated_ids" ["id integer not n
 				symbolType (HN.fromSymbol sym))
 
 		insertScopesSymbols :: SessionMonad m => [(Int, InspectedResolved)] -> m ()
-		insertScopesSymbols imods = scope "scope" $ executeMany "insert into scopes (module_id, qualifier, name, symbol_id) select ?, ?, ?, env.id from env where env.module = ? and env.name = ? and env.what = ?;" $ do
+		insertScopesSymbols imods = scope "scope" $ executeMany "insert into updating_scopes (module_id, qualifier, name, symbol_id) select ?, ?, ?, env.id from env where env.module = ? and env.name = ? and env.what = ?;" $ do
 		 (mid, im) <- imods
 		 (qn, syms) <- M.toList (im ^. inspected . resolvedScope)
 		 sym <- syms
@@ -411,9 +438,9 @@ insertResolvedsSymbols ims = withTemporaryTable "updated_ids" ["id integer not n
 			where
 				insertNames = executeMany insertQuery namesData
 				replaceQNames = executeMany insertQuery qnamesData
-				resolveGlobalBinders = execute_ "update names set (resolved_module, resolved_name, resolved_what) = (select u.module, s.name, s.what from updated_ids as u, symbols as s where u.id = s.module_id and s.module_id = names.module_id and s.line = names.line and s.column = names.column) where module_id in (select u.id from updated_ids as u) and (line, column) = (def_line, def_column) and resolved_module is null and resolved_name is null;"
-				setResolvedsSymbolIds = execute_ "update names set symbol_id = (select sc.symbol_id from scopes as sc, symbols as s, modules as m where names.module_id == sc.module_id and ((names.qualifier is null and sc.qualifier is null) or (names.qualifier == sc.qualifier)) and names.name == sc.name and s.id == sc.symbol_id and m.id == s.module_id and s.name == names.resolved_name and s.what == names.resolved_what and m.name == names.resolved_module) where module_id in (select u.id from updated_ids as u) and resolved_module is not null and resolved_name is not null and resolved_what is not null;"
-				insertQuery = "insert or replace into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolved_what, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+				resolveGlobalBinders = execute_ "update updating_names set (resolved_module, resolved_name, resolved_what) = (select u.module, s.name, s.what from updated_ids as u, symbols as s where u.id = s.module_id and s.module_id = updating_names.module_id and s.line = updating_names.line and s.column = updating_names.column) where (line, column) = (def_line, def_column) and resolved_module is null and resolved_name is null;"
+				setResolvedsSymbolIds = execute_ "update updating_names set symbol_id = (select sc.symbol_id from scopes as sc, symbols as s, modules as m where updating_names.module_id == sc.module_id and ((updating_names.qualifier is null and sc.qualifier is null) or (updating_names.qualifier == sc.qualifier)) and updating_names.name == sc.name and s.id == sc.symbol_id and m.id == s.module_id and s.name == updating_names.resolved_name and s.what == updating_names.resolved_what and m.name == updating_names.resolved_module) where resolved_module is not null and resolved_name is not null and resolved_what is not null;"
+				insertQuery = "insert or replace into updating_names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolved_what, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 
 				namesData = map (uncurry toData) $ do
 					(mid, im) <- imods
@@ -454,16 +481,3 @@ insertResolvedsSymbols ims = withTemporaryTable "updated_ids" ["id integer not n
 					nameIdent <$> (qname ^? P.resolvedName),
 					fmap (symbolType . HN.fromSymbol) $ qname ^? P.symbolL,
 					P.resolveError qname)
-
-		updateEnvironment :: SessionMonad m => m ()
-		updateEnvironment = do
-			execute_ "insert or replace into env (module, name, what, id) select m.name, s.name, s.what, min(s.id) from modules as m, symbols as s, exports as e, updated_ids as u where m.id = s.module_id and s.id = e.symbol_id and e.module_id = u.id group by m.name, s.name, s.what;"
-
-removeModuleContents :: SessionMonad m => Int -> m ()
-removeModuleContents mid = scope "remove-modules-contents" $ do
-	execute "delete from imports where module_id == ?;" (Only mid)
-	execute "delete from exports where module_id == ?;" (Only mid)
-	execute "delete from scopes where module_id == ?;" (Only mid)
-	execute "delete from names where module_id == ?;" (Only mid)
-	execute "delete from types where module_id == ?;" (Only mid)
-	execute "delete from symbols where module_id == ?;" (Only mid)

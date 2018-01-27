@@ -206,7 +206,12 @@ serverSqlDatabase = askSession sessionSqlDatabase
 openSqlConnection :: SessionMonad m => m SQL.Connection
 openSqlConnection = do
 	p <- askSession sessionSqlPath
-	liftIO $ SQL.open p
+	-- FIXME: There's `new` function in HsDev's SQLite module
+	liftIO $ do
+		conn <- SQL.open p
+		SQL.execute_ conn "pragma case_sensitive_like = true;"
+		SQL.execute_ conn "pragma synchronous = normal;"
+		return conn
 
 -- | Close sql connection
 closeSqlConnection :: SessionMonad m => SQL.Connection -> m ()

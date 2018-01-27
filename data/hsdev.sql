@@ -1,5 +1,3 @@
-pragma case_sensitive_like = true;
-
 -- system table for various options, for now only version
 create table hsdev (
 	option text,

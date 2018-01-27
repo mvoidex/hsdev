@@ -72,11 +72,18 @@ import qualified HsDev.Symbols.Name as Name
 import HsDev.Server.Types
 import HsDev.Util
 
+-- | Open new connection and set some pragmas
+new :: String -> IO Connection
+new p = do
+	conn <- open p
+	SQL.execute_ conn "pragma case_sensitive_like = true;"
+	SQL.execute_ conn "pragma synchronous = normal;"
+	return conn
+
 -- | Initialize database
 initialize :: String -> IO Connection
 initialize p = do
-	conn <- open p
-	SQL.execute_ conn "pragma case_sensitive_like = true;"
+	conn <- new p
 	[Only hasTables] <- SQL.query_ conn "select count(*) > 0 from sqlite_master where type == 'table';"
 	goodVersion <- if hasTables
 		then do
@@ -157,7 +164,7 @@ withTemporaryTable tableName columns = bracket_ createTable dropTable where
 	dropTable = execute_ $ fromString $ "drop table {};" ~~ tableName
 
 updatePackageDb :: SessionMonad m => PackageDb -> [ModulePackage] -> m ()
-updatePackageDb pdb pkgs = scope "update-package-db" $ do
+updatePackageDb pdb pkgs = scope "update-package-db" $ transaction_ Immediate $ do
 	sendLog Trace $ "update package-db: {}" ~~ Display.display pdb
 	removePackageDb pdb
 	insertPackageDb pdb pkgs
@@ -173,7 +180,7 @@ insertPackageDb pdb pkgs = scope "insert-package-db" $ forM_ pkgs $ \pkg ->
 		(pdb, pkg ^. packageName, pkg ^. packageVersion)
 
 updateProject :: SessionMonad m => Project -> Maybe PackageDbStack -> m ()
-updateProject proj pdbs = scope "update-project" $ do
+updateProject proj pdbs = scope "update-project" $ transaction_ Immediate $ do
 	sendLog Trace $ "update project: {}" ~~ Display.display proj
 	removeProject proj
 	insertProject proj pdbs
@@ -241,6 +248,7 @@ removeModuleContents mid = scope "remove-module-contents" $ do
 	execute "delete from scopes where module_id == ?;" (Only mid)
 	execute "delete from names where module_id == ?;" (Only mid)
 	execute "delete from types where module_id == ?;" (Only mid)
+	execute "delete from symbols where module_id = ?;" (Only mid)
 
 removeModule :: SessionMonad m => Int -> m ()
 removeModule mid = scope "remove-module" $ do
@@ -567,15 +575,13 @@ loadProject cabal = scope "load-project" $ do
 
 -- | Update a bunch of modules
 updateModules :: SessionMonad m => [InspectedModule] -> m ()
-updateModules ims = scope "update-modules" $ do
+updateModules ims = scope "update-modules" $ transaction_ Immediate $ do
 	mapM_ (upsertModule >=> removeModuleContents) ims
 	insertModulesSymbols ims
 
-
--- | Update bunch of modules
+-- | Update symbols of bunch of modules
 insertModulesSymbols :: SessionMonad m => [InspectedModule] -> m ()
 insertModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ do
-	-- assume that these modules are not in db
 	ids <- mapM lookupId (ims ^.. each . inspectedKey)
 	let
 		imods = zip ids ims
@@ -598,7 +604,7 @@ insertModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ do
 				:. (sym ^. symbolInfo)
 
 		insertModulesExports :: SessionMonad m => [(Int, InspectedModule)] -> m ()
-		insertModulesExports imods = executeMany "insert into exports (module_id, symbol_id) select m.id, s.id from modules as m, modules as sm, symbols as s where ((? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location)) and ((? = sm.file) or (? = sm.package_name and ? = sm.package_version and ? = sm.installed_name) or (? = sm.other_location)) and (sm.id = s.module_id and s.name = ? and s.what = ?);" $ do
+		insertModulesExports imods = executeMany "insert into exports (module_id, symbol_id) select ?, s.id from modules as m, symbols as s where ((? = m.file) or (? = m.package_name and ? = m.package_version and ? = m.installed_name) or (? = m.other_location)) and s.module_id = m.id and ? = s.name and ? = s.what;" $ do
 			(mid, im) <- imods
 			m <- im ^.. inspected
 			sym <- m ^. moduleExports

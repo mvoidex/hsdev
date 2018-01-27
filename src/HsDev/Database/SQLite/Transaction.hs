@@ -30,7 +30,7 @@ data Retries = Retries {
 	retriesError :: SQLError -> Bool }
 
 instance Default Retries where
-	def = Retries (replicate 100 100000) $ \e -> sqlError e `elem` [ErrorBusy, ErrorLocked]
+	def = Retries (replicate 10 100000) $ \e -> sqlError e `elem` [ErrorBusy, ErrorLocked]
 
 -- | Don't retry
 noRetry :: Retries

@@ -102,15 +102,15 @@ makeLenses ''UpdateState
 withUpdateState :: SessionMonad m => UpdateOptions -> (UpdateState -> m a) -> m a
 withUpdateState uopts fn = do
 	session <- getSession
-	bracket (liftIO $ startWorker (withSession session . Log.component "sqlite" . Log.scope "update") enterTransaction logAll) (liftIO . joinWorker) $ \w ->
+	bracket (liftIO $ startWorker (withSession session . Log.component "sqlite" . Log.scope "update") id logAll) (liftIO . joinWorker) $ \w ->
 		fn (UpdateState uopts w)
-	where
-		enterTransaction act = do
-			Log.sendLog Log.Trace "entering sqlite transaction"
-			timer "closed transaction" $ transaction_ Immediate $ do
-				Log.sendLog Log.Debug "updating sql database"
-				_ <- act
-				Log.sendLog Log.Debug "sql database updated"
+	-- where
+	-- 	enterTransaction act = do
+	-- 		Log.sendLog Log.Trace "entering sqlite transaction"
+	-- 		timer "closed transaction" $ transaction_ Immediate $ do
+	-- 			Log.sendLog Log.Debug "updating sql database"
+	-- 			_ <- act
+	-- 			Log.sendLog Log.Debug "sql database updated"
 
 type UpdateMonad m = (CommandMonad m, MonadReader UpdateState m, MonadWriter [ModuleLocation] m)
 
