@@ -162,12 +162,20 @@ instance FromRow a => FromRow (Scoped a) where
 instance ToRow a => ToRow (Scoped a) where
 	toRow (Scoped q s) = toRow s ++ [toField q]
 
+instance ToRow Project where
+	toRow (Project name _ cabal pdesc dbs) = [
+		toField name,
+		toField cabal,
+		toField $ pdesc ^? _Just . projectVersion,
+		toField dbs]
+
 instance FromRow Project where
 	fromRow = do
 		name <- field
 		cabal <- field
 		ver <- field
-		return $ Project name (takeDir cabal) cabal $ Just $ ProjectDescription ver Nothing [] []
+		dbs <- field
+		return $ Project name (takeDir cabal) cabal (Just $ ProjectDescription ver Nothing [] []) dbs
 
 instance FromRow Library where
 	fromRow = do
@@ -209,6 +217,12 @@ instance FromField PackageDb where
 			_ -> case T.stripPrefix "package-db:" s of
 				Just p' -> return $ PackageDb p'
 				Nothing -> fail $ "Can't parse package-db, invalid string: " ++ T.unpack s
+
+instance ToField PackageDbStack where
+	toField = toField . toJSON . packageDbs
+
+instance FromField PackageDbStack where
+	fromField = fromField >=> maybe (fail "Error parsing package-db-stack") (return . mkPackageDbStack) . fromJSON'
 
 instance FromRow SymbolUsage where
 	fromRow = SymbolUsage <$> fromRow <*> fromRow <*> fromRow

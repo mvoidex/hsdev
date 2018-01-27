@@ -179,11 +179,11 @@ insertPackageDb pdb pkgs = scope "insert-package-db" $ forM_ pkgs $ \pkg ->
 		"insert into package_dbs (package_db, package_name, package_version) values (?, ?, ?);"
 		(pdb, pkg ^. packageName, pkg ^. packageVersion)
 
-updateProject :: SessionMonad m => Project -> Maybe PackageDbStack -> m ()
-updateProject proj pdbs = scope "update-project" $ transaction_ Immediate $ do
+updateProject :: SessionMonad m => Project -> m ()
+updateProject proj = scope "update-project" $ transaction_ Immediate $ do
 	sendLog Trace $ "update project: {}" ~~ Display.display proj
 	removeProject proj
-	insertProject proj pdbs
+	insertProject proj
 
 removeProject :: SessionMonad m => Project -> m ()
 removeProject proj = scope "remove-project" $ do
@@ -201,13 +201,9 @@ removeProject proj = scope "remove-project" $ do
 				execute "delete from tests where project_id == ?;" pid
 				forM_ bids $ \bid -> execute "delete from build_infos where id == ?;" bid
 
-insertProject :: SessionMonad m => Project -> Maybe PackageDbStack -> m ()
-insertProject proj pdbs = scope "insert-project" $ do
-	execute "insert into projects (name, cabal, version, package_db_stack) values (?, ?, ?, ?);" (
-		proj ^. projectName,
-		proj ^. projectCabal . path,
-		proj ^? projectDescription . _Just . projectVersion,
-		fmap (encode . packageDbs) pdbs)
+insertProject :: SessionMonad m => Project -> m ()
+insertProject proj = scope "insert-project" $ do
+	execute "insert into projects (name, cabal, version, package_db_stack) values (?, ?, ?, ?);" proj
 	projId <- lastRow
 
 	forM_ (proj ^? projectDescription . _Just . projectLibrary . _Just) $ \lib -> do
@@ -530,7 +526,7 @@ loadModules selectExpr args = scope "load-modules" $ do
 
 loadProject :: SessionMonad m => Path -> m Project
 loadProject cabal = scope "load-project" $ do
-	projs <- query @_ @(Only Int :. Project) "select id, name, cabal, version from projects where cabal == ?;" (Only $ view path cabal)
+	projs <- query @_ @(Only Int :. Project) "select id, name, cabal, version, package_db_stack from projects where cabal == ?;" (Only $ view path cabal)
 	(Only pid :. proj) <- case projs of
 		[] -> sqlFailure $ "project with cabal {} not found" ~~ view path cabal
 		_ -> do

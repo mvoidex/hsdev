@@ -2,7 +2,8 @@
 
 module HsDev.PackageDb.Types (
 	PackageDb(..), packageDb,
-	PackageDbStack(..), packageDbStack, globalDb, userDb, fromPackageDbs,
+	PackageDbStack(..), packageDbStack, mkPackageDbStack,
+	globalDb, userDb, fromPackageDbs,
 	topPackageDb, packageDbs, packageDbStacks,
 	isSubStack,
 
@@ -86,6 +87,10 @@ instance FromJSON PackageDbStack where
 
 instance Paths PackageDbStack where
 	paths f (PackageDbStack ps) = PackageDbStack <$> (each . paths) f ps
+
+-- | Make @PackageDbStack@ from list of @PackageDb@
+mkPackageDbStack :: [PackageDb] -> PackageDbStack
+mkPackageDbStack = PackageDbStack . reverse . dropWhile (== GlobalDb)
 
 -- | Global db stack
 globalDb :: PackageDbStack

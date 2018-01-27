@@ -2,7 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Project.Types (
-	Project(..), projectName, projectPath, projectCabal, projectDescription, project,
+	Project(..), projectName, projectPath, projectCabal, projectDescription, projectPackageDbStack, project,
 	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests, infos, targetInfos,
 	Target(..), TargetInfo(..), targetInfoName, targetBuildInfo, targetInfoMain, targetInfoModules, targetInfo,
 	Library(..), libraryModules, libraryBuildInfo,
@@ -27,6 +27,7 @@ import Text.Format
 
 import System.Directory.Paths
 import HsDev.Display
+import HsDev.PackageDb.Types
 import HsDev.Util
 
 -- | Cabal project
@@ -34,11 +35,11 @@ data Project = Project {
 	_projectName :: Text,
 	_projectPath :: Path,
 	_projectCabal :: Path,
-	_projectDescription :: Maybe ProjectDescription }
-		deriving (Read)
+	_projectDescription :: Maybe ProjectDescription,
+	_projectPackageDbStack :: Maybe PackageDbStack }
 
 instance NFData Project where
-	rnf (Project n p c _) = rnf n `seq` rnf p `seq` rnf c
+	rnf (Project n p c _ dbs) = rnf n `seq` rnf p `seq` rnf c `seq` rnf dbs
 
 instance Eq Project where
 	l == r = _projectCabal l == _projectCabal r
@@ -64,17 +65,19 @@ instance ToJSON Project where
 		"name" .= _projectName p,
 		"path" .= _projectPath p,
 		"cabal" .= _projectCabal p,
-		"description" .= _projectDescription p]
+		"description" .= _projectDescription p,
+		"package-db-stack" .= _projectPackageDbStack p]
 
 instance FromJSON Project where
 	parseJSON = withObject "project" $ \v -> Project <$>
 		v .:: "name" <*>
 		v .:: "path" <*>
 		v .:: "cabal" <*>
-		v .:: "description"
+		v .:: "description" <*>
+		v .:: "package-db-stack"
 
 instance Paths Project where
-	paths f (Project nm p c desc) = Project nm <$> paths f p <*> paths f c <*> traverse (paths f) desc
+	paths f (Project nm p c desc dbs) = Project nm <$> paths f p <*> paths f c <*> traverse (paths f) desc <*> pure dbs
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
@@ -82,7 +85,8 @@ project file = Project {
 	_projectName = fromFilePath . takeBaseName . takeDirectory $ cabal,
 	_projectPath = fromFilePath . takeDirectory $ cabal,
 	_projectCabal = fromFilePath cabal,
-	_projectDescription = Nothing }
+	_projectDescription = Nothing,
+	_projectPackageDbStack = Nothing }
 	where
 		file' = dropTrailingPathSeparator $ normalise file
 		cabal

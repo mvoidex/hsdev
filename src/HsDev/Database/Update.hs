@@ -200,10 +200,7 @@ instance NFData PreloadFailure where
 scanModules :: UpdateMonad m => [String] -> [S.ModuleToScan] -> m ()
 scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') grouped where
 	scanModules' mproj ms' = do
-		pdbs <- maybe (return userDb) (inSessionGhc . getProjectPackageDbStack) mproj
-		case mproj of
-			Just proj -> sendUpdateAction $ SQLite.updateProject proj (Just pdbs)
-			Nothing -> return ()
+		maybe (return ()) (sendUpdateAction . SQLite.updateProject) mproj
 		updater $ ms' ^.. each . _1
 		defines <- askSession sessionDefines
 
@@ -395,8 +392,10 @@ scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project
 scanProjectFile opts cabal = runTask "scanning" cabal $ do
 	proj <- S.scanProjectFile opts cabal
 	pdbs <- inSessionGhc $ getProjectPackageDbStack proj
-	sendUpdateAction $ Log.scope "scan-project-file" $ SQLite.updateProject proj (Just pdbs)
-	return proj
+	let
+		proj' = set projectPackageDbStack (Just pdbs) proj
+	sendUpdateAction $ Log.scope "scan-project-file" $ SQLite.updateProject proj'
+	return proj'
 
 -- | Refine project info and update if necessary
 refineProjectInfo :: UpdateMonad m => Project -> m Project
@@ -407,8 +406,10 @@ refineProjectInfo proj = do
 		else runTask "scanning" (proj ^. projectCabal) $ do
 			proj' <- liftIO $ loadProject proj
 			pdbs <- inSessionGhc $ getProjectPackageDbStack proj'
-			sendUpdateAction $ Log.scope "refine-project-info" $ SQLite.updateProject proj' (Just pdbs)
-			return proj'
+			let
+				proj'' = set projectPackageDbStack (Just pdbs) proj'
+			sendUpdateAction $ Log.scope "refine-project-info" $ SQLite.updateProject proj''
+			return proj''
 
 -- | Get project info for module
 locateProjectInfo :: UpdateMonad m => Path -> m (Maybe Project)
