@@ -77,7 +77,8 @@ new :: String -> IO Connection
 new p = do
 	conn <- open p
 	SQL.execute_ conn "pragma case_sensitive_like = true;"
-	SQL.execute_ conn "pragma synchronous = normal;"
+	SQL.execute_ conn "pragma synchronous = off;"
+	SQL.execute_ conn "pragma journal_mode = memory;"
 	return conn
 
 -- | Initialize database
@@ -95,7 +96,7 @@ initialize p = do
 			| not goodVersion = do
 					close conn
 					removeFile p
-					conn' <- open p
+					conn' <- new p
 					initDb conn'
 			| not hasTables = initDb conn
 			| otherwise = return conn

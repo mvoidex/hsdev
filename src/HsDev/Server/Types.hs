@@ -210,7 +210,8 @@ openSqlConnection = do
 	liftIO $ do
 		conn <- SQL.open p
 		SQL.execute_ conn "pragma case_sensitive_like = true;"
-		SQL.execute_ conn "pragma synchronous = normal;"
+		SQL.execute_ conn "pragma synchronous = off;"
+		SQL.execute_ conn "pragma journal_mode = memory;"
 		return conn
 
 -- | Close sql connection

@@ -4,7 +4,7 @@ module HsDev.Inspect.Resolve (
 	-- * Prepare
 	loadEnvironment, loadFixities, withEnv,
 	-- * Resolving
-	resolvePreloaded, resolve,
+	resolveModule, resolvePreloaded, resolve,
 	-- * Saving results
 	updateResolved, updateResolveds
 	) where
@@ -46,14 +46,18 @@ import HsDev.Symbols.Parsed as P
 import HsDev.Server.Types
 import HsDev.Util
 
--- | Try resolve preloaded module
-resolvePreloaded :: Environment -> FixitiesTable -> Preloaded -> Either String Resolved
-resolvePreloaded env fixities p = case H.parseFileContentsWithMode (p' ^. preloadedMode) (T.unpack $ p ^. preloaded) of
+-- | Try resolve module symbols
+resolveModule :: Environment -> FixitiesTable -> Preloaded -> Either String Resolved
+resolveModule env fixities p = case H.parseFileContentsWithMode (p' ^. preloadedMode) (T.unpack $ p ^. preloaded) of
 	H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
 	H.ParseOk m -> Right $ resolve env m
 	where
 		qimps = M.keys $ N.importTable env (p ^. preloadedModule)
 		p' = p { _preloadedMode = (_preloadedMode p) { H.fixities = Just (mapMaybe (`M.lookup` fixities) qimps) } }
+
+-- | Resolve just preloaded part of module, this will give imports and scope
+resolvePreloaded :: Environment -> Preloaded -> Resolved
+resolvePreloaded env = resolve env . view preloadedModule
 
 -- | Resolve parsed module
 resolve :: Environment -> H.Module H.SrcSpanInfo -> Resolved
@@ -322,6 +326,7 @@ updateResolvedsSymbols ims = bracket_ initTemps dropTemps $ do
 		initTemps = do
 			execute_ "create temporary table updated_ids (id integer not null, cabal text, module text not null);"
 			execute_ "create temporary table updating_scopes as select * from scopes where 0;"
+			execute_ "create index updating_scopes_name_index on updating_scopes (module_id, name);"
 			execute_ "create temporary table updating_names as select * from names where 0;"
 			execute_ "create unique index updating_names_position_index on updating_names (module_id, line, column, line_to, column_to);"
 
@@ -417,16 +422,16 @@ updateResolvedsSymbols ims = bracket_ initTemps dropTemps $ do
 
 		insertScopesSymbols :: SessionMonad m => [(Int, InspectedResolved)] -> m ()
 		insertScopesSymbols imods = scope "scope" $ executeMany "insert into updating_scopes (module_id, qualifier, name, symbol_id) select ?, ?, ?, env.id from env where env.module = ? and env.name = ? and env.what = ?;" $ do
-		 (mid, im) <- imods
-		 (qn, syms) <- M.toList (im ^. inspected . resolvedScope)
-		 sym <- syms
-		 return (
-		 		mid,
-		 		nameModule qn,
-		 		nameIdent qn,
-		 		N.symbolModule sym,
-		 		N.symbolName sym,
-		 		symbolType (HN.fromSymbol sym))
+			(mid, im) <- imods
+			(qn, syms) <- M.toList (im ^. inspected . resolvedScope)
+			sym <- syms
+			return (
+				mid,
+				nameModule qn,
+				nameIdent qn,
+				N.symbolModule sym,
+				N.symbolName sym,
+				symbolType (HN.fromSymbol sym))
 
 		insertResolvedsNames :: SessionMonad m => [(Int, InspectedResolved)] -> m ()
 		insertResolvedsNames imods = scope "names" $ do

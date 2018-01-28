@@ -87,14 +87,13 @@ preload name defines opts mloc (Just cts) = do
 			H.fixities = Nothing,
 			H.ignoreFunctionArity = False }
 	H.ModuleHeadAndImports l mpragmas mhead mimps <- parseOk $ fmap H.unNonGreedy $ H.parseWithMode pmode (T.unpack cts')
-	when (H.isNullSpan $ H.srcInfoSpan l) $ hsdevError $ InspectError
-		(format "Error parsing module head and imports, file {}" ~~ view path fpath)
-	mname <- case mhead of
-		Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> return $ fromString nm
-		_ -> hsdevError $ InspectError $ (format "Parsing module head and imports results in empty module name, file {}" ~~ view path fpath)
+	let
+		mname = case mhead of
+			Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> nm
+			_ -> "Main"
 	insp <- fileContentsInspection opts
 	return $ Preloaded {
-		_preloadedId = ModuleId mname mloc,
+		_preloadedId = ModuleId (fromString mname) mloc,
 		_preloadedMode = pmode,
 		_preloadedModule = H.Module l mhead mpragmas mimps [],
 		_preloadedTime = insp,

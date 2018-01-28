@@ -253,7 +253,11 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 				where
 					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
 						(env', fixities') <- get
-						m <- either (hsdevError . InspectError) eval $ resolvePreloaded env' fixities' pmod
+						m <- case resolveModule env' fixities' pmod of
+							Right r' -> eval r'
+							Left err' -> do
+								Log.sendLog Log.Trace $ "error resolving module {}: {}, falling to resolving just imports/scope" ~~ (pmod ^. preloadedId . moduleLocation) ~~ err'
+								eval $ resolvePreloaded env' pmod
 						modify (mappend (resolvedEnv m, resolvedFixitiesTable m))
 						return $ Inspected (pmod ^. preloadedTime) (pmod ^. preloadedId . moduleLocation) mempty (Right m)
 

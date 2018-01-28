@@ -175,7 +175,7 @@ instance FromRow Project where
 		cabal <- field
 		ver <- field
 		dbs <- field
-		return $ Project name (takeDir cabal) cabal (Just $ ProjectDescription ver Nothing [] []) dbs
+		return $ Project name (takeDir cabal) cabal (fmap (\v -> ProjectDescription v Nothing [] []) ver) dbs
 
 instance FromRow Library where
 	fromRow = do

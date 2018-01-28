@@ -98,7 +98,8 @@ qModuleId = mconcat [
 		"mu.package_version",
 		"mu.installed_name",
 		"mu.other_location"],
-	from_ ["modules as mu"]]
+	from_ ["modules as mu"],
+	where_ ["mu.name is not null"]]
 
 qBuildInfo :: Select Text
 qBuildInfo = mconcat [
