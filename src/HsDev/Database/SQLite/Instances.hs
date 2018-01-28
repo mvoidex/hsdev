@@ -225,7 +225,7 @@ instance FromField PackageDbStack where
 	fromField = fromField >=> maybe (fail "Error parsing package-db-stack") (return . mkPackageDbStack) . fromJSON'
 
 instance FromRow SymbolUsage where
-	fromRow = SymbolUsage <$> fromRow <*> fromRow <*> fromRow
+	fromRow = SymbolUsage <$> fromRow <*> field <*> fromRow <*> fromRow
 
 instance FromRow Inspection where
 	fromRow = do

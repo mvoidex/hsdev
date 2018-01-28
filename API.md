@@ -483,8 +483,9 @@ Fields:
 Symbol usage  
 Fields:
   * `symbol` — `symbol` object
+  * `qualifier` — qualifeir symbol used with (optional)
   * `in` — `module-id`, where symbol used
-  * `at` — `position`, where symbol used
+  * `at` — `region`, where symbol used
 
 #### Cabal-package
 

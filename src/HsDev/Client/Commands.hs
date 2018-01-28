@@ -322,8 +322,9 @@ runCommand (FindUsages l c fpath) = toValue $ do
 			msid = join $ fmap fromOnly $ listToMaybe sids
 		query @_ @SymbolUsage (toQuery $ mconcat [
 			qSymbol,
+			select_ ["n.qualifier"],
 			qModuleId,
-			select_ ["n.line", "n.column"],
+			select_ ["n.line", "n.column", "n.line_to", "n.column_to"],
 			from_ ["names as n"],
 			where_ [
 				"n.symbol_id == ?",
@@ -331,9 +332,9 @@ runCommand (FindUsages l c fpath) = toValue $ do
 				"mu.id == n.module_id"]])
 			(Only msid)
 	locals <- do
-		defs <- query @_ @(ModuleId :. Only Text :. Position :. Only (Maybe Text) :. Position) (toQuery $ mconcat [
+		defs <- query @_ @(ModuleId :. Only Text :. Position :. Only (Maybe Text) :. Region) (toQuery $ mconcat [
 			qModuleId,
-			select_ ["n.name", "n.def_line", "n.def_column", "n.inferred_type", "n.line", "n.column"],
+			select_ ["n.name", "n.def_line", "n.def_column", "n.inferred_type", "n.line", "n.column", "n.line_to", "n.column_to"],
 			from_ ["names as n", "names as defn"],
 			where_ [
 				"n.module_id = mu.id",
@@ -344,14 +345,14 @@ runCommand (FindUsages l c fpath) = toValue $ do
 				"mu.file = ?"]])
 			(l, c, fpath ^. path)
 		return $ do
-			(mid :. Only nm :. defPos :. Only ftype :. usePos) <- defs
+			(mid :. Only nm :. defPos :. Only ftype :. useRgn) <- defs
 			let
 				sym = Symbol {
 					_symbolId = SymbolId nm mid,
 					_symbolDocs = Nothing,
 					_symbolPosition = Just defPos,
 					_symbolInfo = Function ftype }
-			return $ SymbolUsage sym mid usePos
+			return $ SymbolUsage sym Nothing mid useRgn
 	return $ us ++ locals
 runCommand (Complete input True fpath) = toValue $
 	query @_ @Symbol (toQuery $ mconcat [

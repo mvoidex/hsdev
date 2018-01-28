@@ -6,7 +6,7 @@ module HsDev.Symbols.Types (
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolInfoType, symbolType, patternType, patternConstructor,
 	Scoped(..), scopeQualifier, scoped,
-	SymbolUsage(..), symbolUsed, symbolUsedIn, symbolUsedPosition,
+	SymbolUsage(..), symbolUsed, symbolUsedQualifier, symbolUsedIn, symbolUsedRegion,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, fresh, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
 	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
@@ -319,19 +319,21 @@ instance FromJSON a => FromJSON (Scoped a) where
 -- | Symbol usage
 data SymbolUsage = SymbolUsage {
 	_symbolUsed :: Symbol,
+	_symbolUsedQualifier :: Maybe Text,
 	_symbolUsedIn :: ModuleId,
-	_symbolUsedPosition :: Position }
+	_symbolUsedRegion :: Region }
 		deriving (Eq, Ord)
 
 instance Show SymbolUsage where
-	show (SymbolUsage s m p) = show s ++ " at " ++ show m ++ ":" ++ show p
+	show (SymbolUsage s _ m p) = show s ++ " at " ++ show m ++ ":" ++ show p
 
 instance ToJSON SymbolUsage where
-	toJSON (SymbolUsage s m p) = object $ noNulls ["symbol" .= s, "in" .= m, "at" .= p]
+	toJSON (SymbolUsage s q m p) = object $ noNulls ["symbol" .= s, "qualifier" .= q, "in" .= m, "at" .= p]
 
 instance FromJSON SymbolUsage where
 	parseJSON = withObject "symbol-usage" $ \v -> SymbolUsage <$>
 		v .:: "symbol" <*>
+		v .::? "qualifier" <*>
 		v .:: "in" <*>
 		v .:: "at"
 
