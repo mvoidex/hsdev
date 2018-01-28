@@ -1,7 +1,8 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module HsDev.Inspect.Types (
-	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloadedTime, preloaded,
+	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded,
+	InspectedPreloaded,
 	Environment, FixitiesTable,
 	Resolved(..), resolvedModule, resolvedSource, resolvedDefs, resolvedImports, resolvedExports, resolvedScope, resolvedFixities,
 	InspectedResolved,
@@ -30,11 +31,10 @@ data Preloaded = Preloaded {
 	_preloadedMode :: H.ParseMode,
 	_preloadedModule :: H.Module H.SrcSpanInfo,
 	-- ^ Loaded module head without declarations
-	_preloadedTime :: Inspection,
 	_preloaded :: Text }
 
 instance NFData Preloaded where
-	rnf (Preloaded mid _ _ insp cts) = rnf mid `seq` rnf insp `seq` rnf cts
+	rnf (Preloaded mid _ _ cts) = rnf mid `seq` rnf cts
 
 asModule :: Lens' Preloaded Module
 asModule = lens g' s' where
@@ -51,6 +51,8 @@ asModule = lens g' s' where
 	s' p m = p {
 		_preloadedId = _moduleId m,
 		_preloadedModule = maybe (_preloadedModule p) dropScope (_moduleSource m) }
+
+type InspectedPreloaded = Inspected ModuleLocation ModuleTag Preloaded
 
 -- | Symbols environment, used to resolve names in source
 type Environment = N.Environment

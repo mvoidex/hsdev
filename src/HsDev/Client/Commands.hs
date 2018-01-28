@@ -634,8 +634,10 @@ refineSourceModule fpath = do
 						else do
 							defs <- askSession sessionDefines
 							mcts <- fmap (fmap snd) $ getFileContents fpath'
-							p' <- liftIO $ preload (m ^. moduleId . moduleName) defs [] (m ^. moduleId . moduleLocation) mcts
-							return $ set moduleImports (p' ^. asModule . moduleImports) m
+							ip' <- runInspect (m ^. moduleId . moduleLocation) $ preload (m ^. moduleId . moduleName) defs [] mcts
+							case ip' ^? inspected of
+								Just p' -> return $ set moduleImports (p' ^. asModule . moduleImports) m
+								Nothing -> return m
 				Just cabal' -> do
 					proj' <- SQLite.loadProject cabal'
 					return $ set (moduleId . moduleLocation . moduleProject) (Just proj') m

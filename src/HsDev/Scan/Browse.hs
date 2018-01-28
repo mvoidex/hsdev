@@ -31,7 +31,6 @@ import Data.LookupTable
 import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Error
-import HsDev.Tools.Base (inspect)
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub)
@@ -98,7 +97,7 @@ browseModules' opts mlocs = do
 	liftM catMaybes $ sequence [browseModule' lookupModuleId (cacheInTableM sidTbl) p m | (p, m) <- ms, ghcModuleLocation p m `S.member` mlocs']
 	where
 		browseModule' :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
-		browseModule' modId' sym' p m = tryT $ inspect (ghcModuleLocation p m) (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m)
+		browseModule' modId' sym' p m = tryT $ runInspect (ghcModuleLocation p m) $ inspect_ (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m)
 		mlocs' = S.fromList mlocs
 
 browseModule :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM Module

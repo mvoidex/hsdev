@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, TemplateHaskell, TypeSynonymInstances, FlexibleInstances, OverloadedStrings #-}
+{-# LANGUAGE CPP, TemplateHaskell, TypeSynonymInstances, FlexibleInstances, OverloadedStrings, GeneralizedNewtypeDeriving, MultiParamTypeClasses, TypeFamilies, UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
@@ -9,6 +9,7 @@ module HsDev.Symbols.Types (
 	SymbolUsage(..), symbolUsed, symbolUsedQualifier, symbolUsedIn, symbolUsedRegion,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, fresh, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
+	InspectM(..), runInspect, continueInspect, inspect, inspect_, withInspection,
 	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
 
 	module HsDev.PackageDb.Types,
@@ -23,6 +24,11 @@ import Control.Arrow
 import Control.Applicative
 import Control.Lens hiding ((.=))
 import Control.Monad
+import Control.Monad.Morph
+import Control.Monad.Catch
+import Control.Monad.Except
+import Control.Monad.Reader
+import Control.Monad.State
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Aeson.Types (Pair, Parser)
@@ -44,6 +50,7 @@ import Text.Format
 
 import Control.Apply.Util (chain)
 import HsDev.Display
+import HsDev.Error
 import HsDev.PackageDb.Types
 import HsDev.Project
 import HsDev.Symbols.Name
@@ -51,7 +58,6 @@ import HsDev.Symbols.Class
 import HsDev.Symbols.Location
 import HsDev.Symbols.Documented
 import HsDev.Symbols.Parsed
-import HsDev.Types
 import HsDev.Util ((.::), (.::?), (.::?!), noNulls, objectUnion)
 import System.Directory.Paths
 
@@ -427,6 +433,39 @@ instance (FromJSON k, Ord t, FromJSON t, FromJSON a) => FromJSON (Inspected k t 
 		(S.fromList <$> (v .::?! "tags")) <*>
 		((Left <$> v .:: "error") <|> (Right <$> v .:: "result"))
 
+newtype InspectM k t m a = InspectM { runInspectM :: ReaderT k (ExceptT HsDevError (StateT (Inspection, S.Set t) m)) a }
+	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadReader k, MonadError HsDevError, MonadState (Inspection, S.Set t))
+
+instance MonadTrans (InspectM k t) where
+	lift = InspectM . lift . lift . lift
+
+runInspect :: (Monad m, Ord t) => k -> InspectM k t m a -> m (Inspected k t a)
+runInspect key act = do
+	(res, (insp, ts)) <- flip runStateT (InspectionNone, mempty) . runExceptT . flip runReaderT key . runInspectM $ act
+	return $ Inspected insp key ts res
+
+-- | Continue inspection
+continueInspect :: (Monad m, Ord t) => Inspected k t a -> (a -> InspectM k t m b) -> m (Inspected k t b)
+continueInspect start act = runInspect (_inspectedKey start) $ do
+	put (_inspection start, _inspectionTags start)
+	val <- either throwError return $ _inspectionResult start
+	act val
+
+inspect :: MonadCatch m => m Inspection -> (k -> m a) -> InspectM k t m a
+inspect insp act = withInspection insp $ do
+	key <- ask
+	lift (hsdevCatch (hsdevLiftIO $ act key)) >>= either throwError return
+
+withInspection :: MonadCatch m => m Inspection -> InspectM k t m a -> InspectM k t m a
+withInspection insp inner = do
+	insp' <- lift insp
+	let
+		setInsp = modify (set _1 insp')
+	catchError (inner <* setInsp) (\e -> setInsp >> throwError e)
+
+inspect_ :: MonadCatch m => m Inspection -> m a -> InspectM k t m a
+inspect_ insp = inspect insp . const
+
 -- | Empty tags
 noTags :: Set t
 noTags = S.empty
@@ -435,29 +474,37 @@ noTags = S.empty
 tag :: t -> Set t
 tag = S.singleton
 
-data ModuleTag = InferredTypesTag | RefinedDocsTag | OnlyHeaderTag deriving (Eq, Ord, Read, Show, Enum, Bounded)
+data ModuleTag = InferredTypesTag | RefinedDocsTag | OnlyHeaderTag | DirtyTag | ResolvedNamesTag deriving (Eq, Ord, Read, Show, Enum, Bounded)
 
 instance NFData ModuleTag where
 	rnf InferredTypesTag = ()
 	rnf RefinedDocsTag = ()
 	rnf OnlyHeaderTag = ()
+	rnf DirtyTag = ()
+	rnf ResolvedNamesTag = ()
 
 instance Display ModuleTag where
 	display InferredTypesTag = "types"
 	display RefinedDocsTag = "docs"
 	display OnlyHeaderTag = "header"
+	display DirtyTag = "dirty"
+	display ResolvedNamesTag = "resolved"
 	displayType _ = "module-tag"
 
 instance ToJSON ModuleTag where
 	toJSON InferredTypesTag = toJSON ("types" :: String)
 	toJSON RefinedDocsTag = toJSON ("docs" :: String)
 	toJSON OnlyHeaderTag = toJSON ("header" :: String)
+	toJSON DirtyTag = toJSON ("dirty" :: String)
+	toJSON ResolvedNamesTag = toJSON ("resolved" :: String)
 
 instance FromJSON ModuleTag where
 	parseJSON = withText "module-tag" $ \txt -> msum [
 		guard (txt == "types") >> return InferredTypesTag,
 		guard (txt == "docs") >> return RefinedDocsTag,
-		guard (txt == "header") >> return OnlyHeaderTag]
+		guard (txt == "header") >> return OnlyHeaderTag,
+		guard (txt == "dirty") >> return DirtyTag,
+		guard (txt == "resolved") >> return ResolvedNamesTag]
 
 -- | Inspected module
 type InspectedModule = Inspected ModuleLocation ModuleTag Module

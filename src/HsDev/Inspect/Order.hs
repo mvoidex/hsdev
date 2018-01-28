@@ -1,11 +1,11 @@
 module HsDev.Inspect.Order (
-	order
+	orderBy, order
 	) where
 
 import Control.Lens
-import Data.List
 import Data.Maybe
 import Data.String
+import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Language.Haskell.Exts as H
 
@@ -15,14 +15,14 @@ import HsDev.Symbols.Types
 import System.Directory.Paths
 
 -- | Order source files so that dependencies goes first and we are able to resolve symbols and set fixities
-order :: [Preloaded] -> Either (DepsError Path) [Preloaded]
-order ps = do
+orderBy :: (a -> Maybe Preloaded) -> [a] -> Either (DepsError Path) [a]
+orderBy fn ps = do
 	order' <- linearize pdeps
-	return $ mapMaybe byFile order'
+	return $ mapMaybe (`M.lookup` pm) order'
 	where
-		pdeps = mconcat $ map getDeps ps
-		byFile f = find (\p -> (_preloadedId p ^? moduleLocation . moduleFile) == Just f) ps
-		files = S.fromList $ map _preloadedId ps ^.. each . moduleLocation . moduleFile
+		pdeps = mconcat $ mapMaybe (fmap getDeps . fn) ps
+		pm = M.fromList [(pfile, p) | p <- ps, pfile <- fn p ^.. _Just . preloadedId . moduleLocation . moduleFile]
+		files = S.fromList $ map fn ps ^.. each . _Just . preloadedId . moduleLocation . moduleFile
 		getDeps :: Preloaded -> Deps Path
 		getDeps p = deps mfile [ifile | ifile <- ifiles, S.member ifile files] where
 			H.Module _ _ _ idecls _ = _preloadedModule p
@@ -37,3 +37,6 @@ order ps = do
 				i <- fileTargets proj mfile
 				view infoSourceDirs i
 			ifiles = [normPath (joinPaths [mroot, dir, importPath imod]) | imod <- imods, dir <- if null dirs then [fromFilePath "."] else dirs]
+
+order :: [Preloaded] -> Either (DepsError Path) [Preloaded]
+order = orderBy Just

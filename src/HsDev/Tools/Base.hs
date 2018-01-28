@@ -5,15 +5,11 @@ module HsDev.Tools.Base (
 	tool, tool_,
 	matchRx, splitRx, replaceRx,
 	at, at_,
-	inspect,
 
 	module HsDev.Tools.Types
 	) where
 
-import Control.Lens (set)
-import Control.Monad.Catch (MonadCatch)
 import Control.Monad.Except
-import Control.Monad.State
 import Data.Array (assocs)
 import Data.List (unfoldr, intercalate)
 import Data.Maybe (fromMaybe)
@@ -24,7 +20,6 @@ import Text.Regex.PCRE ((=~), MatchResult(..))
 
 import HsDev.Error
 import HsDev.Tools.Types
-import HsDev.Symbols
 import HsDev.Util (liftIOErrors)
 
 -- | Run tool, throwing HsDevError on fail
@@ -90,12 +85,3 @@ at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
 
 at_ :: IsString s => (Int -> Maybe s) -> Int -> s
 at_ g = fromMaybe (fromString "") . g
-
-inspect :: MonadCatch m => ModuleLocation -> m Inspection -> m Module -> m InspectedModule
-inspect mloc insp act = execStateT inspect' (notInspected mloc) where
-	inspect' = do
-		r <- hsdevCatch $ hsdevLiftIO $ do
-			i <- lift insp
-			modify (set inspection i)
-			lift act
-		modify (set inspectionResult r)

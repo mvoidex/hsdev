@@ -17,6 +17,7 @@ import System.Directory.Paths
 
 -- | hsdev exception type
 data HsDevError =
+	HsDevFailure |
 	ModuleNotSource ModuleLocation |
 	BrowseNoModuleInfo String |
 	FileNotFound Path |
@@ -37,6 +38,7 @@ data HsDevError =
 		deriving (Typeable)
 
 instance NFData HsDevError where
+	rnf HsDevFailure = ()
 	rnf (ModuleNotSource mloc) = rnf mloc
 	rnf (BrowseNoModuleInfo m) = rnf m
 	rnf (FileNotFound f) = rnf f
@@ -56,6 +58,7 @@ instance NFData HsDevError where
 	rnf (UnhandledError e) = rnf e
 
 instance Show HsDevError where
+	show HsDevFailure = format "failure"
 	show (ModuleNotSource mloc) = format "module is not source: {}" ~~ show mloc
 	show (BrowseNoModuleInfo m) = format "can't find module info for {}" ~~ m
 	show (FileNotFound f) = format "file '{}' not found" ~~ f
@@ -74,12 +77,17 @@ instance Show HsDevError where
 	show (OtherError e) = e
 	show (UnhandledError e) = e
 
+instance Monoid HsDevError where
+	mempty = HsDevFailure
+	mappend _ r = r
+
 instance Formattable HsDevError where
 
 jsonErr :: String -> [Pair] -> Value
 jsonErr e = object . (("error" .= e) :)
 
 instance ToJSON HsDevError where
+	toJSON HsDevFailure = jsonErr "failure" []
 	toJSON (ModuleNotSource mloc) = jsonErr "module is not source" ["module" .= mloc]
 	toJSON (BrowseNoModuleInfo m) = jsonErr "no module info" ["module" .= m]
 	toJSON (FileNotFound f) = jsonErr "file not found" ["file" .= f]
@@ -102,6 +110,7 @@ instance FromJSON HsDevError where
 	parseJSON = withObject "hsdev-error" $ \v -> do
 		err <- v .: "error" :: Parser String
 		case err of
+			"failure" -> pure HsDevFailure
 			"module is not source" -> ModuleNotSource <$> v .: "module"
 			"no module info" -> BrowseNoModuleInfo <$> v .: "module"
 			"file not found" -> FileNotFound <$> v .: "file"

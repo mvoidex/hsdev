@@ -20,7 +20,8 @@ import Control.DeepSeq
 import qualified Control.Exception as E
 import Control.Lens
 import Control.Monad
-import Control.Monad.State
+import Control.Monad.Catch
+import Control.Monad.Reader
 import Control.Monad.Except
 import Data.List
 import Data.Map.Strict (Map)
@@ -61,52 +62,55 @@ import HsDev.Util
 import System.Directory.Paths
 
 -- | Preload module - load head and imports to get actual extensions and dependencies
-preload :: Text -> [(String, String)] -> [String] -> ModuleLocation -> Maybe Text -> IO Preloaded
-preload name defines opts mloc@(FileModule fpath mproj) Nothing = do
-	cts <- readFileUtf8 (view path fpath)
-	insp <- fileInspection fpath opts
-	let
-		srcExts = fromMaybe (takeDir fpath `withExtensions` mempty) $ do
-			proj <- mproj
-			findSourceDir proj fpath
-	p' <- preload name defines (opts ++ extensionsOpts srcExts) mloc (Just cts)
-	return $ p' { _preloadedTime = insp }
-preload _ _ _ mloc Nothing = hsdevError $ InspectError $
-	format "preload called non-sourced module: {}" ~~ mloc
-preload name defines opts mloc (Just cts) = do
-	cts' <- preprocess_ defines exts fpath $ T.map untab cts
-	pragmas <- parseOk $ H.getTopPragmas (T.unpack cts')
-	let
-		fileExts = [H.parseExtension (T.unpack $ fromName_ $ void lang) | H.LanguagePragma _ langs <- pragmas, lang <- langs]
-		pmode = H.ParseMode {
-			H.parseFilename = view path fpath,
-			H.baseLanguage = H.Haskell2010,
-			H.extensions = ordNub (map H.parseExtension exts ++ fileExts),
-			H.ignoreLanguagePragmas = False,
-			H.ignoreLinePragmas = True,
-			H.fixities = Nothing,
-			H.ignoreFunctionArity = False }
-	H.ModuleHeadAndImports l mpragmas mhead mimps <- parseOk $ fmap H.unNonGreedy $ H.parseWithMode pmode (T.unpack cts')
-	let
-		mname = case mhead of
-			Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> nm
-			_ -> "Main"
-	insp <- fileContentsInspection opts
-	return $ Preloaded {
-		_preloadedId = ModuleId (fromString mname) mloc,
-		_preloadedMode = pmode,
-		_preloadedModule = H.Module l mhead mpragmas mimps [],
-		_preloadedTime = insp,
-		_preloaded = cts' }
+preload :: (MonadIO m, MonadCatch m) => Text -> [(String, String)] -> [String] -> Maybe Text -> InspectM ModuleLocation ModuleTag m Preloaded
+preload name defines opts mcts = inspectTag OnlyHeaderTag $ case mcts of
+	Nothing -> do
+		mloc <- ask
+		case mloc of
+			FileModule fpath mproj -> do
+				inspect_ (liftIO $ fileInspection fpath opts) $ do
+					cts <- liftIO $ readFileUtf8 (view path fpath)
+					let
+						srcExts = fromMaybe (takeDir fpath `withExtensions` mempty) $ do
+							proj <- mproj
+							findSourceDir proj fpath
+					liftIO $ preload' name defines (opts ++ extensionsOpts srcExts) mloc cts
+			_ -> throwError $ InspectError $ format "preload called on non-sourced module: {}" ~~ mloc
+	Just cts -> inspect (liftIO $ fileContentsInspection opts) $ \mloc ->
+		liftIO $ preload' name defines opts mloc cts
 	where
-		fpath = fromMaybe name (mloc ^? moduleFile)
-		parseOk :: H.ParseResult a -> IO a
-		parseOk (H.ParseOk v) = return v
-		parseOk (H.ParseFailed loc err) = hsdevError $ InspectError $
-			format "Parse {} failed at {} with: {}" ~~ fpath ~~ show loc ~~ err
-		untab '\t' = ' '
-		untab ch = ch
-		exts = mapMaybe flagExtension opts
+		preload' name' defines' opts' mloc' cts' = do
+			cts'' <- preprocess_ defines' exts fpath $ T.map untab cts'
+			pragmas <- parseOk $ H.getTopPragmas (T.unpack cts'')
+			let
+				fileExts = [H.parseExtension (T.unpack $ fromName_ $ void lang) | H.LanguagePragma _ langs <- pragmas, lang <- langs]
+				pmode = H.ParseMode {
+					H.parseFilename = view path fpath,
+					H.baseLanguage = H.Haskell2010,
+					H.extensions = ordNub (map H.parseExtension exts ++ fileExts),
+					H.ignoreLanguagePragmas = False,
+					H.ignoreLinePragmas = True,
+					H.fixities = Nothing,
+					H.ignoreFunctionArity = False }
+			H.ModuleHeadAndImports l mpragmas mhead mimps <- parseOk $ fmap H.unNonGreedy $ H.parseWithMode pmode (T.unpack cts'')
+			let
+				mname = case mhead of
+					Just (H.ModuleHead _ (H.ModuleName _ nm) _ _) -> nm
+					_ -> "Main"
+			return $ Preloaded {
+				_preloadedId = ModuleId (fromString mname) mloc',
+				_preloadedMode = pmode,
+				_preloadedModule = H.Module l mhead mpragmas mimps [],
+				_preloaded = cts'' }
+			where
+				fpath = fromMaybe name' (mloc' ^? moduleFile)
+				parseOk :: H.ParseResult a -> IO a
+				parseOk (H.ParseOk v) = return v
+				parseOk (H.ParseFailed loc err) = hsdevError $ InspectError $
+					format "Parse {} failed at {} with: {}" ~~ fpath ~~ show loc ~~ err
+				untab '\t' = ' '
+				untab ch = ch
+				exts = mapMaybe flagExtension opts'
 
 data AnalyzeEnv = AnalyzeEnv {
 	_analyzeEnv :: N.Environment,
@@ -202,13 +206,14 @@ inspectDocsGhc opts m = do
 	return $ maybe id addDocs docsMap m
 
 -- | Inspect contents
-inspectContents :: Text -> [(String, String)] -> [String] -> Text -> ExceptT String IO InspectedModule
-inspectContents name defines opts cts = inspect (OtherLocation name) (contentsInspection cts opts) $ do
-	p <- lift $ preload name defines opts (OtherLocation name) (Just cts)
-	analyzed <- ExceptT $ return $ analyzePreloaded mempty p
-	return $ set (moduleId . moduleLocation) (OtherLocation name) analyzed
+inspectContents :: Text -> [(String, String)] -> [String] -> Text -> IO InspectedModule
+inspectContents name defines opts cts = runInspect (OtherLocation name) $ withInspection (contentsInspection cts opts) $ do
+	p <- preload name defines opts (Just cts)
+	analyzed <- lift $ either (hsdevError . InspectError) return $ analyzePreloaded mempty p
+	inspectUntag OnlyHeaderTag $
+		return $ set (moduleId . moduleLocation) (OtherLocation name) analyzed
 
-contentsInspection :: Text -> [String] -> ExceptT String IO Inspection
+contentsInspection :: Text -> [String] -> IO Inspection
 contentsInspection _ _ = return InspectionNone -- crc or smth
 
 -- | Inspect file
@@ -217,14 +222,9 @@ inspectFile defines opts file mproj mcts = hsdevLiftIO $ do
 	absFilename <- canonicalize file
 	ex <- fileExists absFilename
 	unless ex $ hsdevError $ FileNotFound absFilename
-	inspect (FileModule absFilename mproj) (sourceInspection absFilename mcts opts) $ do
-		-- docsMap <- liftE $ if hdocsWorkaround
-		-- 	then hdocsProcess absFilename opts
-		-- 	else liftM Just $ hdocs (FileModule absFilename Nothing) opts
-		forced <- hsdevLiftWith InspectError $ ExceptT $ E.handle onError $ do
-			p <- preload absFilename defines opts (FileModule absFilename mproj) mcts
-			return $!! analyzePreloaded mempty p
-		-- return $ setLoc absFilename mproj . maybe id addDocs docsMap $ forced
+	runInspect (FileModule absFilename mproj) $ withInspection (sourceInspection absFilename mcts opts) $ do
+		p <- preload absFilename defines opts mcts
+		forced <- liftIO (E.handle onError (return $!! analyzePreloaded mempty p)) >>= either (hsdevError . InspectError) return
 		return $ set (moduleId . moduleLocation) (FileModule absFilename mproj) forced
 	where
 		onError :: E.ErrorCall -> IO (Either String Module)

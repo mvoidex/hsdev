@@ -10,6 +10,7 @@ module HsDev.Symbols (
 
 	-- * Tags
 	setTag, hasTag, removeTag, dropTags,
+	inspectTag, inspectUntag,
 
 	-- * Reexportss
 	module HsDev.Symbols.Types,
@@ -22,6 +23,7 @@ import Control.Applicative
 import Control.Lens
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
+import Control.Monad.State
 import Data.List
 import Data.Maybe (fromMaybe, listToMaybe, catMaybes)
 import qualified Data.Map.Strict as M
@@ -125,3 +127,11 @@ removeTag tag' = over inspectionTags (S.delete tag')
 -- | Drop all tags
 dropTags :: Inspected i t a -> Inspected i t a
 dropTags = set inspectionTags S.empty
+
+-- | Set inspection tag
+inspectTag :: (Monad m, Ord t) => t -> InspectM k t m a -> InspectM k t m a
+inspectTag tag' act = act <* modify (over _2 (S.insert tag'))
+
+-- | Unser inspection tag
+inspectUntag :: (Monad m, Ord t) => t -> InspectM k t m a -> InspectM k t m a
+inspectUntag tag' act = act <* modify (over _2 (S.delete tag'))

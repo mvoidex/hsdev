@@ -213,22 +213,14 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 					Nothing -> return ()
 				let
 					inspection' = maybe insp (fileContentsInspection_ (opts ++ mopts)) $ mfcts ^? _Just . _1
+					dirtyTag' = maybe id (const $ inspectTag DirtyTag) $ mfcts ^? _Just . _1
 					mcts' = mplus mcts (mfcts ^? _Just . _2)
-				liftIO $ liftM (over _Left (PreloadFailure mloc inspection')) $ hsdevCatch $ do
-					p <- preload (mloc ^?! moduleFile) defines (opts ++ mopts) mloc mcts'
-					return $ set preloadedTime inspection' p
+				runInspect mloc $ withInspection (return inspection') $ dirtyTag' $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mcts'
 
 		ploaded <- runTasks (map pload ms')
-		sendUpdateAction $ Log.scope "preloaded" $ transact $ mapM_ SQLite.upsertModule $ do
-			p <- ploaded
-			case p of
-				Right p' -> return $ Inspected (p' ^. preloadedTime) (p' ^. preloadedId . moduleLocation)
-					(tag OnlyHeaderTag) (Right $ p' ^. asModule)
-				Left (PreloadFailure mloc' insp' e') -> return $ Inspected insp' mloc'
-					noTags (Left e')
+		sendUpdateAction $ Log.scope "preloaded" $ transact $ mapM_ SQLite.upsertModule $ map (fmap (view asModule)) ploaded
 		let
-			ploaded' = ploaded ^.. each . _Right
-			mlocs' = ploaded' ^.. each . preloadedId . moduleLocation
+			mlocs' = ploaded ^.. each . inspected . preloadedId . moduleLocation
 
 		updater mlocs'
 
@@ -239,7 +231,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		fixities <- loadFixities mcabal
 
 		Log.sendLog Log.Trace $ "resolved environment: {} modules" ~~ M.size env
-		case order ploaded' of
+		case orderBy (preview inspected) ploaded of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
 				ms'' <- flip evalStateT (env, fixities) $ runTasks (map inspect' ordered)
@@ -251,15 +243,21 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 					return (ms'' ^.. each . inspectedKey)
 				updater mlocs''
 				where
-					inspect' pmod = runTask "scanning" (pmod ^. preloadedId . moduleLocation) $ Log.scope "module" $ do
+					inspect' pmod = runTask "scanning" ploc $ Log.scope "module" $ do
 						(env', fixities') <- get
-						m <- case resolveModule env' fixities' pmod of
-							Right r' -> eval r'
-							Left err' -> do
-								Log.sendLog Log.Trace $ "error resolving module {}: {}, falling to resolving just imports/scope" ~~ (pmod ^. preloadedId . moduleLocation) ~~ err'
-								eval $ resolvePreloaded env' pmod
-						modify (mappend (resolvedEnv m, resolvedFixitiesTable m))
-						return $ Inspected (pmod ^. preloadedTime) (pmod ^. preloadedId . moduleLocation) mempty (Right m)
+						r <- continueInspect pmod $ \p -> do
+							resolved' <- msum [
+								resolveModule env' fixities' p,
+								do
+									lift (Log.sendLog Log.Trace ("error resolving module {}, falling to resolving just imports/scope" ~~ (p ^. preloadedId . moduleLocation)))
+									resolvePreloaded env' p]
+							eval resolved'
+						modify $ mappend (
+							maybe mempty resolvedEnv (r ^? inspected),
+							maybe mempty resolvedFixitiesTable (r ^? inspected))
+						return r
+						where
+							ploc = pmod ^?! inspected . preloadedId . moduleLocation
 
 	grouped = M.toList $ M.unionsWith (++) [M.singleton (m ^? _1 . moduleProject . _Just) [m] | m <- ms]
 	eval v = handle onError (v `deepseq` liftIO (evaluate v)) where

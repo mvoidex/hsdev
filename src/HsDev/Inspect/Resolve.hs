@@ -37,27 +37,27 @@ import Text.Format
 import System.Directory.Paths
 import HsDev.Database.SQLite as SQLite
 import qualified HsDev.Display as Display
+import HsDev.Error
 import HsDev.Inspect.Definitions
 import HsDev.Inspect.Types
-import HsDev.Symbols.Name
-import HsDev.Symbols.Types
+import HsDev.Symbols
 import qualified HsDev.Symbols.HaskellNames as HN
 import HsDev.Symbols.Parsed as P
 import HsDev.Server.Types
 import HsDev.Util
 
 -- | Try resolve module symbols
-resolveModule :: Environment -> FixitiesTable -> Preloaded -> Either String Resolved
-resolveModule env fixities p = case H.parseFileContentsWithMode (p' ^. preloadedMode) (T.unpack $ p ^. preloaded) of
-	H.ParseFailed loc reason -> Left $ "Parse failed at " ++ show loc ++ ": " ++ reason
-	H.ParseOk m -> Right $ resolve env m
+resolveModule :: MonadThrow m => Environment -> FixitiesTable -> Preloaded -> InspectM ModuleLocation ModuleTag m Resolved
+resolveModule env fixities p = inspectTag ResolvedNamesTag $ inspectUntag OnlyHeaderTag $ case H.parseFileContentsWithMode (p' ^. preloadedMode) (T.unpack $ p ^. preloaded) of
+	H.ParseFailed loc reason -> hsdevError $ InspectError $ "Parse failed at " ++ show loc ++ ": " ++ reason
+	H.ParseOk m -> return (resolve env m)
 	where
 		qimps = M.keys $ N.importTable env (p ^. preloadedModule)
 		p' = p { _preloadedMode = (_preloadedMode p) { H.fixities = Just (mapMaybe (`M.lookup` fixities) qimps) } }
 
 -- | Resolve just preloaded part of module, this will give imports and scope
-resolvePreloaded :: Environment -> Preloaded -> Resolved
-resolvePreloaded env = resolve env . view preloadedModule
+resolvePreloaded :: MonadThrow m => Environment -> Preloaded -> InspectM ModuleLocation ModuleTag m Resolved
+resolvePreloaded env = inspectTag ResolvedNamesTag . return . resolve env . view preloadedModule
 
 -- | Resolve parsed module
 resolve :: Environment -> H.Module H.SrcSpanInfo -> Resolved
@@ -324,7 +324,7 @@ updateResolvedsSymbols ims = bracket_ initTemps dropTemps $ do
 	where
 		initTemps :: SessionMonad m => m ()
 		initTemps = do
-			execute_ "create temporary table updated_ids (id integer not null, cabal text, module text not null);"
+			execute_ "create temporary table updated_ids (id integer not null, cabal text, module text not null, only_header int not null, dirty int not null);"
 			execute_ "create temporary table updating_scopes as select * from scopes where 0;"
 			execute_ "create index updating_scopes_name_index on updating_scopes (module_id, name);"
 			execute_ "create temporary table updating_names as select * from names where 0;"
@@ -345,17 +345,20 @@ updateResolvedsSymbols ims = bracket_ initTemps dropTemps $ do
 		initUpdatedIds imods = transaction_ Immediate $ do
 			execute_ "create unique index updated_ids_id_index on updated_ids (id);"
 			execute_ "create index updated_ids_module_index on updated_ids (module);"
-			executeMany "insert into updated_ids (id, cabal, module) values (?, ?, ?);" $ do
+			executeMany "insert into updated_ids (id, cabal, module, only_header, dirty) values (?, ?, ?, ?, ?);" $ do
 				(mid, im) <- imods
 				return (
 					mid,
 					im ^? inspectedKey . moduleProject . _Just . projectCabal,
-					im ^?! inspected . resolvedModule . moduleName_)
+					im ^?! inspected . resolvedModule . moduleName_,
+					hasTag OnlyHeaderTag im,
+					hasTag DirtyTag im)
 
 		removeModulesContents :: SessionMonad m => m ()
 		removeModulesContents = scope "remove-modules-contents" $ do
 			transaction_ Immediate $ do
-				execute_ "delete from symbols where module_id in (select id from updated_ids);"
+				execute_ "delete from symbols where module_id in (select id from updated_ids where not only_header or not dirty);"
+				execute_ "update symbols set line = null, column = null where module_id in (select id from updated_ids where only_header and dirty);"
 				execute_ "delete from imports where module_id in (select id from updated_ids);"
 				execute_ "delete from exports where module_id in (select id from updated_ids);"
 
