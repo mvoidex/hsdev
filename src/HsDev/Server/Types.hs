@@ -478,6 +478,7 @@ data Command =
 	Refactor [Note Refact] [Note Refact] Bool |
 	Rename Text Text Path |
 	GhcEval { ghcEvalExpressions :: [String], ghcEvalSource :: Maybe FileSource } |
+	GhcType { ghcTypeExpressions :: [String], ghcTypeSource :: Maybe FileSource } |
 	Langs |
 	Flags |
 	Link { linkHold :: Bool } |
@@ -530,6 +531,7 @@ instance Paths Command where
 	paths f (CheckLint fs ghcs c) = CheckLint <$> traverse (paths f) fs <*> pure ghcs <*> pure c
 	paths f (Types fs ghcs c) = Types <$> traverse (paths f) fs <*> pure ghcs <*> pure c
 	paths f (GhcEval e mf) = GhcEval e <$> traverse (paths f) mf
+	paths f (GhcType e mf) = GhcType e <$> traverse (paths f) mf
 	paths _ c = pure c
 
 instance Paths FileSource where
@@ -591,7 +593,9 @@ instance FromCmd Command where
 			option readJSON (long "rest" <> metavar "correction" <> short 'r' <> help "update corrections") <*>
 			pureFlag),
 		cmd "rename" "get rename refactors" (Rename <$> textArgument idm <*> textArgument idm <*> ctx),
-		cmd "ghc" "ghc commands" (subparser $ cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm) <*> optional cmdP)),
+		cmd "ghc" "ghc commands" (
+				subparser (cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm) <*> optional cmdP)) <|>
+				subparser (cmd "type" "expression type" (GhcType <$> many (strArgument idm) <*> optional cmdP))),
 		cmd "langs" "ghc language options" (pure Langs),
 		cmd "flags" "ghc flags" (pure Flags),
 		cmd "link" "link to server" (Link <$> holdFlag),
@@ -714,6 +718,7 @@ instance ToJSON Command where
 	toJSON (Refactor ns rests pure') = cmdJson "refactor" ["messages" .= ns, "rest" .= rests, "pure" .= pure']
 	toJSON (Rename n n' f) = cmdJson "rename" ["name" .= n, "new-name" .= n', "file" .= f]
 	toJSON (GhcEval exprs f) = cmdJson "ghc eval" ["exprs" .= exprs, "file" .= f]
+	toJSON (GhcType exprs f) = cmdJson "ghc type" ["exprs" .= exprs, "file" .= f]
 	toJSON Langs = cmdJson "langs" []
 	toJSON Flags = cmdJson "flags" []
 	toJSON (Link h) = cmdJson "link" ["hold" .= h]
@@ -768,6 +773,7 @@ instance FromJSON Command where
 		guardCmd "refactor" v *> (Refactor <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True)),
 		guardCmd "rename" v *> (Rename <$> v .:: "name" <*> v .:: "new-name" <*> v .:: "file"),
 		guardCmd "ghc eval" v *> (GhcEval <$> v .::?! "exprs" <*> v .::? "file"),
+		guardCmd "ghc type" v *> (GhcType <$> v .::?! "exprs" <*> v .::? "file"),
 		guardCmd "langs" v *> pure Langs,
 		guardCmd "flags" v *> pure Flags,
 		guardCmd "link" v *> (Link <$> (v .:: "hold" <|> pure False)),

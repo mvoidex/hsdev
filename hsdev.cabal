@@ -88,10 +88,12 @@ library
     HsDev.Tools.Base
     HsDev.Tools.Cabal
     HsDev.Tools.ClearImports
+    HsDev.Tools.Ghc.Base
     HsDev.Tools.Ghc.Check
     HsDev.Tools.Ghc.Compat
     HsDev.Tools.Ghc.MGhc
     HsDev.Tools.Ghc.Prelude
+    HsDev.Tools.Ghc.Repl
     HsDev.Tools.Ghc.Session
     HsDev.Tools.Ghc.System
     HsDev.Tools.Ghc.Types

@@ -73,8 +73,8 @@ moduleTypes fpath = do
 	let
 		ts = tm_typechecked_source tm
 	liftM (catMaybes . concat) $ sequence [
-		mapM (getType tm) (locatedTypes ts :: [LHsBind Id]),
 		mapM (getType tm) (locatedTypes ts :: [LHsExpr Id]),
+		mapM (getType tm) (locatedTypes ts :: [LHsBind Id]),
 		mapM (getType tm) (locatedTypes ts :: [LPat Id])]
 
 data TypedExpr = TypedExpr {

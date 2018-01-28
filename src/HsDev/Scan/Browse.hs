@@ -20,7 +20,6 @@ import Data.Function (on)
 import Data.List (groupBy, sort)
 import Data.Maybe
 import Data.String (fromString)
-import Data.Text (Text)
 import qualified Data.Set as S
 import Data.Version
 import Language.Haskell.Exts.Fixity
@@ -31,7 +30,7 @@ import Data.LookupTable
 import HsDev.PackageDb
 import HsDev.Symbols
 import HsDev.Error
-import HsDev.Tools.Ghc.Worker (GhcM, tmpSession)
+import HsDev.Tools.Ghc.Worker (GhcM, tmpSession, formatType)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub)
 
@@ -43,13 +42,11 @@ import qualified GHC.PackageDb as GHC
 import qualified GhcMonad as GHC (liftIO)
 import qualified Name as GHC
 import qualified IdInfo as GHC
-import qualified Outputable as GHC
 import qualified Packages as GHC
 import qualified PatSyn as GHC
 import qualified TyCon as GHC
 import qualified Type as GHC
 import qualified Var as GHC
-import qualified Pretty
 
 -- | Browse packages
 browsePackages :: [String] -> PackageDbStack -> GhcM [PackageConfig]
@@ -136,17 +133,17 @@ browseModule modId lookSym package' m = do
 				_symbolInfo = fromMaybe (Function Nothing) (tyResult >>= showResult df) }
 		showResult :: GHC.DynFlags -> GHC.TyThing -> Maybe SymbolInfo
 		showResult dflags (GHC.AnId i) = case GHC.idDetails i of
-			GHC.RecSelId p _ -> Just $ Selector (Just $ formatType dflags $ GHC.varType i) parent ctors where
+			GHC.RecSelId p _ -> Just $ Selector (Just $ fromString $ formatType dflags $ GHC.varType i) parent ctors where
 				parent = fromString $ Compat.recSelParent p
 				ctors = map fromString $ Compat.recSelCtors p
-			GHC.ClassOpId cls -> Just $ Method (Just $ formatType dflags $ GHC.varType i) (fromString $ GHC.getOccString cls)
-			_ -> Just $ Function (Just $ formatType dflags $GHC.varType i)
+			GHC.ClassOpId cls -> Just $ Method (Just $ fromString $ formatType dflags $ GHC.varType i) (fromString $ GHC.getOccString cls)
+			_ -> Just $ Function (Just $ fromString $ formatType dflags $GHC.varType i)
 		showResult dflags (GHC.AConLike c) = case c of
 			GHC.RealDataCon d -> Just $ Constructor
-				(map (formatType dflags) $ GHC.dataConOrigArgTys d)
+				(map (fromString . formatType dflags) $ GHC.dataConOrigArgTys d)
 				(fromString $ GHC.getOccString (GHC.dataConTyCon d))
 			GHC.PatSynCon p -> Just $ PatConstructor
-				(map (formatType dflags) $ GHC.patSynArgs p)
+				(map (fromString . formatType dflags) $ GHC.patSynArgs p)
 				Nothing
 			-- TODO: Deal with `patSynFieldLabels` and `patSynFieldType`
 		showResult dflags (GHC.ATyCon t)
@@ -159,31 +156,11 @@ browseModule modId lookSym package' m = do
 			| GHC.isDataFamilyTyCon t = Just $ DataFam args ctx Nothing
 			| otherwise = Just $ Type [] []
 			where
-				args = map (formatType dflags . GHC.mkTyVarTy) $ GHC.tyConTyVars t
+				args = map (fromString . formatType dflags . GHC.mkTyVarTy) $ GHC.tyConTyVars t
 				ctx = case GHC.tyConClass_maybe t of
 					Nothing -> []
-					Just cls -> map (formatType dflags) $ GHC.classSCTheta cls
+					Just cls -> map (fromString . formatType dflags) $ GHC.classSCTheta cls
 		showResult _ _ = Nothing
-
-formatType :: GHC.DynFlags -> GHC.Type -> Text
-formatType dflag t = fromString $ showOutputable dflag (removeForAlls t)
-
-removeForAlls :: GHC.Type -> GHC.Type
-removeForAlls ty = removeForAlls' ty' tty' where
-	ty'  = GHC.dropForAlls ty
-	tty' = GHC.splitFunTy_maybe ty'
-
-removeForAlls' :: GHC.Type -> Maybe (GHC.Type, GHC.Type) -> GHC.Type
-removeForAlls' ty Nothing = ty
-removeForAlls' ty (Just (pre, ftype))
-	| GHC.isPredTy pre = GHC.mkFunTy pre (GHC.dropForAlls ftype)
-	| otherwise = ty
-
-showOutputable :: GHC.Outputable a => GHC.DynFlags -> a -> String
-showOutputable dflag = unwords . lines . showUnqualifiedPage dflag . GHC.ppr
-
-showUnqualifiedPage :: GHC.DynFlags -> GHC.SDoc -> String
-showUnqualifiedPage dflag = renderStyle Pretty.LeftMode 0 . GHC.withPprStyleDoc dflag (Compat.unqualStyle dflag)
 
 tryT :: MonadCatch m => m a -> m (Maybe a)
 tryT act = catch (fmap Just act) (const (return Nothing) . (id :: SomeException -> SomeException))

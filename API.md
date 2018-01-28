@@ -321,9 +321,17 @@ Command: `ghc eval`
 Args:
   * `exprs` — list of expressions
   * `file` — optional `file-source` context
-Response: list of results, where result if one of:
-  * `<result>` — string with result
-  * `{"fail":<msg>}` — error message
+Response: list of `repl-result` objects
+
+#### Ghc type
+
+Get type of expression
+
+Command: `ghc type`
+Args:
+  * `exprs` — list of expressions
+  * `file` — optional `file-source` context
+Response: list of `repl-result` objects
 
 #### Langs
 
@@ -548,3 +556,11 @@ Fields:
     - `line` — line
     - `column` — column
   * `to` — end of region
+
+
+#### Repl-result
+
+Result of some interactive evaluations
+Object with only one field:
+  * `ok` — evaluation result
+  * `error` — error message

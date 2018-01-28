@@ -493,23 +493,21 @@ runCommand (Rename nm newName fpath) = toValue $ do
 
 	return $ defRenames ++ usageRenames
 runCommand (GhcEval exprs mfile) = toValue $ do
-	ghcw <- askSession sessionGhc
 	mfile' <- traverse actualFileContents mfile
 	case mfile' of
 		Nothing -> inSessionGhc ghciSession
 		Just (FileSource f mcts) -> do
 			m <- setFileSourceSession [] f
 			inSessionGhc $ interpretModule m mcts
-	async' <- liftIO $ sendTask ghcw $ do
-		mapM (try . evaluate) exprs
-	res <- waitAsync async'
-	return $ map toValue' res
-	where
-		waitAsync :: CommandMonad m => Async a -> m a
-		waitAsync a = liftIO (waitCatch a) >>= either (hsdevError . GhcError . displayException) return
-		toValue' :: ToJSON a => Either SomeException a -> Value
-		toValue' (Left (SomeException e)) = object ["fail" .= show e]
-		toValue' (Right s) = toJSON s
+	inSessionGhc $ mapM (tryRepl . evaluate) exprs
+runCommand (GhcType exprs mfile) = toValue $ do
+	mfile' <- traverse actualFileContents mfile
+	case mfile' of
+		Nothing -> inSessionGhc ghciSession
+		Just (FileSource f mcts) -> do
+			m <- setFileSourceSession [] f
+			inSessionGhc $ interpretModule m mcts
+	inSessionGhc $ mapM (tryRepl . expressionType) exprs
 runCommand Langs = toValue $ return $ Compat.languages
 runCommand Flags = toValue $ return ["-f" ++ prefix ++ f |
 	f <- Compat.flags,
@@ -522,6 +520,7 @@ runCommand StopGhc = toValue $ do
 			Log.sendLog Log.Trace $ "stopping session: {}" ~~ view sessionKey s
 			deleteSession $ view sessionKey s
 runCommand Exit = toValue serverExit
+
 
 targetFilter :: Text -> Maybe Text -> TargetFilter -> (Text, [NamedParam])
 targetFilter mtable _ (TargetProject proj) = (
