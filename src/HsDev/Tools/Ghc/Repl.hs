@@ -38,7 +38,7 @@ evaluate expr = liftM fromDynamic (dynCompileExpr $ "show ({})" ~~ expr) >>=
 expressionType :: GhcMonad m => String -> m String
 expressionType expr = do
 	dflags <- getSessionDynFlags
-	ty <- exprType TM_Default expr
+	ty <- exprType TM_Inst expr
 	return $ formatType dflags ty
 
 data ReplResult a = ReplError String | ReplOk a deriving (Eq, Ord, Read, Show)
