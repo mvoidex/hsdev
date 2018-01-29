@@ -131,7 +131,7 @@ enumRescan :: CommandMonad m => FilePath -> m ScanContents
 enumRescan fpath = Log.scope "enum-rescan" $ do
 	ms <- SQLite.query @_ @(ModuleLocation SQLite.:. Inspection)
 		(toQuery $ mconcat [
-			qModuleLocation,
+			qModuleLocation "ml",
 			select_ ["ml.inspection_time", "ml.inspection_opts"],
 			where_ ["ml.file == ?"]])
 		(SQLite.Only fpath)

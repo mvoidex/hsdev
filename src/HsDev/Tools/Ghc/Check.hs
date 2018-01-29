@@ -19,14 +19,12 @@ import System.Log.Simple (MonadLog(..), scope, sendLog, Level(Trace))
 
 import GHC hiding (Warning, Module)
 
-import Control.Concurrent.FiniteChan
 import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
 import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker
-import HsDev.Tools.Ghc.Compat as C
 import HsDev.Tools.Types
 import HsDev.Tools.Tabs
 import System.Directory.Paths
@@ -35,7 +33,6 @@ import System.Directory.Paths
 check :: (MonadLog m, GhcMonad m) => Module -> Maybe Text -> m [Note OutputMessage]
 check m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
 	FileModule file _ -> do
-		ch <- liftIO newChan
 		let
 			dir = sourceRoot_ (m ^. moduleId)
 			-- FIXME: There can be dependent modules with modified file contents
@@ -43,11 +40,9 @@ check m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
 			srcs = maybe mempty (M.singleton file) msrc
 		ex <- liftIO $ dirExists dir
 		sendLog Trace "loading targets"
-		withFlags $ (if ex then withCurrentDirectory (dir ^. path) else id) $ do
-			modifyFlags $ C.setLogAction $ logToChan ch
+		notes <- withFlags $ (if ex then withCurrentDirectory (dir ^. path) else id) $ collectMessages_ $ do
 			target <- makeTarget (relPathTo dir file) msrc
 			loadTargets [target]
-		notes <- liftIO $ stopChan ch
 		sendLog Trace "targets checked"
 		liftIO $ recalcNotesTabs srcs notes
 	_ -> scope "check" $ hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)

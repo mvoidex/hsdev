@@ -5,7 +5,7 @@ module HsDev.Tools.Ghc.Compat (
 	pkgDatabase,
 	UnitId, InstalledUnitId, toInstalledUnitId,
 	unitId, moduleUnitId, depends, getPackageDetails, patSynType, cleanupHandler, renderStyle,
-	LogAction, setLogAction,
+	LogAction, setLogAction, addLogAction,
 	languages, flags,
 	recSelParent, recSelCtors,
 	getFixity,
@@ -16,7 +16,6 @@ module HsDev.Tools.Ghc.Compat (
 import qualified BasicTypes
 import qualified DynFlags as GHC
 import qualified ErrUtils
-import qualified IdInfo
 import qualified GHC
 import qualified Module
 import qualified Name
@@ -27,9 +26,6 @@ import Outputable
 
 #if __GLASGOW_HASKELL__ >= 800
 import Data.List (nub)
-#endif
-
-#if __GLASGOW_HASKELL__ == 800
 import qualified IdInfo
 #endif
 
@@ -123,6 +119,19 @@ setLogAction act fs = fs { GHC.log_action = act' } where
 	act' df _ sev src _ msg = act df sev src msg
 #elif __GLASGOW_HASKELL__ == 710
 	act' df sev src _ msg = act df sev src msg
+#endif
+
+addLogAction :: LogAction -> GHC.DynFlags -> GHC.DynFlags
+addLogAction act fs = fs { GHC.log_action = logBoth } where
+	logBoth :: GHC.LogAction
+#if __GLASGOW_HASKELL__ >= 800
+	logBoth df wreason sev src style msg = do
+		GHC.log_action fs df wreason sev src style msg
+		GHC.log_action (setLogAction act fs) df wreason sev src style msg
+#elif __GLASGOW_HASKELL__ == 710
+	logBoth df sev src style ms = do
+		GHC.log_action fs df sev src style msg
+		GHC.log_action (setLogAction act fs) df sev src style msg
 #endif
 
 #if __GLASGOW_HASKELL__ == 710

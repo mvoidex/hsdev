@@ -320,3 +320,27 @@ create table file_contents (
 );
 
 create unique index file_contents_index on file_contents (file);
+
+-- table with last time of loading module
+create table load_times (
+	module_id integer not null, -- module affected
+	load_time integer not null -- timestamp
+);
+
+create unique index load_times_module_id_index on load_times (module_id);
+
+-- table with ghc warnings on file
+-- sequential call to load module won't actually reload file and won't produce warnings
+-- but we want to see them again
+create table messages (
+	module_id integer not null,
+	line integer not null,
+	column integer not null,
+	line_to integer not null,
+	column_to integer not null,
+	severity text,
+	message text not null,
+	suggestion text
+);
+
+create index messages_module_id_index on messages (module_id);

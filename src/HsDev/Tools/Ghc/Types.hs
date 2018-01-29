@@ -37,10 +37,10 @@ import HsDev.Tools.Types
 import HsDev.Util
 
 class HasType a where
-	getType :: GhcMonad m => TypecheckedModule -> a -> m (Maybe (SrcSpan, Type))
+	getType :: GhcMonad m => a -> m (Maybe (SrcSpan, Type))
 
 instance HasType (LHsExpr Id) where
-	getType _ e = do
+	getType e = do
 		env <- getSession
 		mbe <- liftIO $ liftM snd $ deSugarExpr env e
 		return $ do
@@ -48,12 +48,12 @@ instance HasType (LHsExpr Id) where
 			return (getLoc e, exprType ex)
 
 instance HasType (LHsBind Id) where
-	getType _ (L _ FunBind { fun_id = fid, fun_matches = m}) = return $ Just (getLoc fid, typ) where
+	getType (L _ FunBind { fun_id = fid, fun_matches = m}) = return $ Just (getLoc fid, typ) where
 		typ = mkFunTys (mg_arg_tys m) (mg_res_ty m)
-	getType _ _ = return Nothing
+	getType _ = return Nothing
 
 instance HasType (LPat Id) where
-	getType _ (L spn pat) = return $ Just (spn, hsPatType pat)
+	getType (L spn pat) = return $ Just (spn, hsPatType pat)
 
 locatedTypes :: Typeable a => TypecheckedSource -> [Located a]
 locatedTypes = types' p where
@@ -73,9 +73,9 @@ moduleTypes fpath = do
 	let
 		ts = tm_typechecked_source tm
 	liftM (catMaybes . concat) $ sequence [
-		mapM (getType tm) (locatedTypes ts :: [LHsExpr Id]),
-		mapM (getType tm) (locatedTypes ts :: [LHsBind Id]),
-		mapM (getType tm) (locatedTypes ts :: [LPat Id])]
+		mapM getType (locatedTypes ts :: [LHsExpr Id]),
+		mapM getType (locatedTypes ts :: [LHsBind Id]),
+		mapM getType (locatedTypes ts :: [LPat Id])]
 
 data TypedExpr = TypedExpr {
 	_typedExpr :: Maybe Text,

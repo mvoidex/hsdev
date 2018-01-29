@@ -3,7 +3,7 @@
 module HsDev.Database.SQLite.Select (
 	Select(..), select_, from_, where_, buildQuery, toQuery,
 	qSymbolId, qSymbol, qModuleLocation, qModuleId, qBuildInfo,
-	qNSymbol
+	qNSymbol, qNote
 	) where
 
 import Data.String
@@ -75,17 +75,17 @@ qSymbol = mconcat [
 		"s.pat_type",
 		"s.pat_constructor"]]
 
-qModuleLocation :: Select Text
-qModuleLocation = mconcat [
+qModuleLocation :: Text -> Select Text
+qModuleLocation ml = template ["ml" ~% ml] [
 	select_ [
-		"ml.file",
-		"ml.cabal",
-		"ml.install_dirs",
-		"ml.package_name",
-		"ml.package_version",
-		"ml.installed_name",
-		"ml.other_location"],
-	from_ ["modules as ml"]]
+		"{ml}.file",
+		"{ml}.cabal",
+		"{ml}.install_dirs",
+		"{ml}.package_name",
+		"{ml}.package_version",
+		"{ml}.installed_name",
+		"{ml}.other_location"],
+	from_ ["modules as {ml}"]]
 
 qModuleId :: Select Text
 qModuleId = mconcat [
@@ -114,7 +114,7 @@ qBuildInfo = mconcat [
 
 -- | Symbol from haskell-names
 qNSymbol :: Text -> Text -> Select Text
-qNSymbol m s = fmap (`formats` ["m" ~% m, "s" ~% s]) $ mconcat [
+qNSymbol m s = template ["m" ~% m, "s" ~% s] [
 	select_ [
 		"{s}.what",
 		"{m}.name",
@@ -126,3 +126,18 @@ qNSymbol m s = fmap (`formats` ["m" ~% m, "s" ~% s]) $ mconcat [
 		"{s}.pat_constructor"],
 	from_ ["symbols as {s}", "modules as {m}"],
 	where_ ["{m}.id = {s}.module_id"]]
+
+qNote :: Text -> Text -> Select Text
+qNote m n = template ["m" ~% m, "n" ~% n] [
+	select_ [
+		"{m}.file",
+		"{n}.line", "{n}.column", "{n}.line_to", "{n}.column_to",
+		"{n}.severity",
+		"{n}.message", "{n}.suggestion"],
+	from_ ["modules as {m}", "messages as {n}"],
+	where_ [
+		"{m}.file is not null",
+		"{n}.module_id = {m}.id"]]
+
+template :: [FormatArg] -> [Select Text] -> Select Text
+template args = fmap ((`formats` args) . T.unpack) . mconcat

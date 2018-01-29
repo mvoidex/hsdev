@@ -10,6 +10,8 @@ module HsDev.Tools.Ghc.Base (
 	-- * Loading targets
 	clearTargets, makeTarget, loadTargets,
 	loadInteractive, reload,
+	-- * Logging messages
+	collectMessages, collectMessages_,
 
 	-- * Util
 	formatType,
@@ -41,7 +43,7 @@ import System.Directory.Paths
 import HsDev.Symbols.Location (Position(..), Region(..), region, ModuleLocation(..))
 import HsDev.Tools.Types
 import HsDev.Tools.Ghc.Compat
-import qualified HsDev.Tools.Ghc.Compat as C (setLogAction, unqualStyle)
+import qualified HsDev.Tools.Ghc.Compat as C (setLogAction, addLogAction, unqualStyle)
 
 -- | Run ghc
 ghcRun :: GhcMonad m => [String] -> m a -> m a
@@ -118,6 +120,20 @@ reload = do
 	clearTargets
 	setTargets ts
 	setContext ctx
+
+-- | Collect messages from ghc for underlying computation
+collectMessages :: GhcMonad m => m a -> m (a, [Note OutputMessage])
+collectMessages act = do
+	ch <- liftIO newChan
+	r <- gbracket (liftM log_action getSessionDynFlags) (\action' -> modifyFlags (\fs -> fs { log_action = action' })) $ \_ -> do
+		modifyFlags (C.addLogAction $ logToChan ch)
+		act
+	notes <- liftIO $ stopChan ch
+	return (r, notes)
+
+-- | Same as @collectMessages@, but when no result except notes needed
+collectMessages_ :: GhcMonad m => m () -> m [Note OutputMessage]
+collectMessages_ = fmap snd . collectMessages
 
 -- | Format type for output
 formatType :: GHC.DynFlags -> GHC.Type -> String

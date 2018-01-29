@@ -390,28 +390,11 @@ runCommand (UnresolvedSymbols fs) = toValue $ liftM concat $ forM fs $ \f -> do
 runCommand (Lint fs) = toValue $ liftM concat $ forM fs $ \fsrc -> do
 	FileSource f c <- actualFileContents fsrc
 	liftIO $ hsdevLift $ HLint.hlint (view path f) c
-runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $ do
-	let
-		checkSome file fn = Log.scope "checkSome" $ do
-			Log.sendLog Log.Trace $ "setting file source session for {}" ~~ file
-			m <- setFileSourceSession ghcs' file
-			Log.sendLog Log.Trace $ "file source session set"
-			inSessionGhc $ do
-				when clear $ clearTargets
-				fn m
-	fs' <- mapM actualFileContents fs
-	liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs'
+runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $
+	liftM concat $ mapM (runCheck ghcs' clear) fs
 runCommand (CheckLint fs ghcs' clear) = toValue $ do
-	let
-		checkSome file fn = Log.scope "checkSome" $ do
-			Log.sendLog Log.Trace $ "setting file source session for {}" ~~ file
-			m <- setFileSourceSession ghcs' file
-			Log.sendLog Log.Trace $ "file source session set"
-			inSessionGhc $ do
-				when clear $ clearTargets
-				fn m
 	fs' <- mapM actualFileContents fs
-	checkMsgs <- liftM concat $ mapM (\(FileSource f c) -> checkSome f (\m -> Check.check m c)) fs'
+	checkMsgs <- liftM concat $ mapM (runCheck ghcs' clear) fs'
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs'
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs' clear) = toValue $ do
@@ -445,10 +428,12 @@ runCommand (Types fs ghcs' clear) = toValue $ do
 				else return Nothing
 
 		updateTypes file msrc = do
+			sess <- getSession
 			m <- setFileSourceSession ghcs' file
 			types' <- inSessionGhc $ do
 				when clear $ clearTargets
-				Types.fileTypes m msrc
+				Update.cacheGhcWarnings sess [m ^. moduleId . moduleLocation] $
+					Types.fileTypes m msrc
 			updateProcess def [Update.setModTypes (m ^. moduleId) types']
 			return $ set (each . Tools.note . Types.typedExpr) Nothing types'
 runCommand (AutoFix ns) = toValue $ return $ AutoFix.corrections ns
@@ -574,6 +559,27 @@ instance FromJSON Log.Message where
 		(read <$> (v .:: "component")) <*>
 		(read <$> (v .:: "scope")) <*>
 		(v .:: "text")
+
+
+-- | Run check
+runCheck :: CommandMonad m => [String] -> Bool -> FileSource -> m [Tools.Note Tools.OutputMessage]
+runCheck ghcs' clear = actualFileContents >=> check' where
+	check' (FileSource file mcts) = Log.scope "run-check" $ do
+		Log.sendLog Log.Trace $ "setting file source session for {}" ~~ file
+		sess <- getSession
+		m <- setFileSourceSession ghcs' file
+		Log.sendLog Log.Trace "file source session set"
+		ns <- inSessionGhc $ do
+			when clear $ clearTargets
+			Update.cacheGhcWarnings sess [m ^. moduleId . moduleLocation] $
+				Check.check m mcts
+		if null ns
+			then do
+				ns' <- Update.cachedWarnings [m ^. moduleId . moduleLocation]
+				when (not $ null ns') $
+					Log.sendLog Log.Trace $ "returning {} cached warnings for {}" ~~ length ns' ~~ file
+				return ns'
+			else return ns
 
 -- Helper functions
 

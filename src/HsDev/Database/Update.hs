@@ -1,4 +1,4 @@
-{-# LANGUAGE FlexibleContexts, OverloadedStrings, MultiParamTypeClasses, RankNTypes, TypeOperators #-}
+{-# LANGUAGE FlexibleContexts, OverloadedStrings, MultiParamTypeClasses, RankNTypes, TypeOperators, TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Database.Update (
@@ -16,6 +16,8 @@ module HsDev.Database.Update (
 	scan,
 	processEvents, updateEvents, applyUpdates,
 
+	cacheGhcWarnings, cachedWarnings,
+
 	module HsDev.Database.Update.Types,
 
 	module HsDev.Watcher,
@@ -28,17 +30,19 @@ import Control.Concurrent.MVar
 import Control.DeepSeq
 import Control.Exception (ErrorCall, evaluate, displayException)
 import Control.Lens hiding ((.=))
-import Control.Monad.Catch (catch, handle, MonadThrow)
+import Control.Monad.Catch (catch, handle, MonadThrow, bracket_)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.State (get, modify, evalStateT)
 import Data.Aeson
 import Data.List (intercalate)
+import Data.String (fromString)
 import qualified Data.Map.Strict as M
 import qualified Data.Set as S
 import Data.Maybe
 import Data.Text (Text)
+import Data.Time.Clock.POSIX
 import qualified Data.Text as T
 import System.FilePath
 import qualified System.Log.Simple as Log
@@ -53,7 +57,7 @@ import HsDev.Project
 import HsDev.Sandbox
 import qualified HsDev.Stack as S
 import HsDev.Symbols
-import HsDev.Tools.Ghc.Session hiding (wait, evaluate)
+import HsDev.Tools.Ghc.Session hiding (Session, wait, evaluate)
 import HsDev.Tools.Ghc.Types (fileTypes, TypedExpr)
 import HsDev.Tools.Types
 import HsDev.Tools.HDocs
@@ -518,7 +522,7 @@ setModTypes m ts = Log.scope "set-types" $ do
 			(SQLite.Only mid' SQLite.:. view noteRegion n' SQLite.:. view note n') | n' <- uniqueBy (view noteRegion) ts]
 		SQLite.execute "update names set inferred_type = (select type from types as t where t.module_id = ? and names.line = t.line and names.column = t.column and names.line_to = t.line_to and names.column_to = t.column_to) where module_id == ?;"
 			(mid', mid')
-		SQLite.execute "update symbols set type = (select type from types as t where t.module_id = ? and symbols.line = t.line and symbols.column = t.column order by t.line_to, t.column_to) where module_id == ?;" (mid', mid')
+		SQLite.execute "update symbols set type = (select type from types as t where t.module_id = ? and symbols.line = t.line and symbols.column = t.column order by t.line_to, t.column_to) where module_id == ? and type is null;" (mid', mid')
 		SQLite.execute "update modules set tags = json_set(tags, '$.types', 1) where id == ?;" (SQLite.Only mid')
 
 -- | Infer types for modules
@@ -530,10 +534,12 @@ inferModTypes = runTasks_ . map inferModTypes' where
 		m' <- mapMOf (moduleId . moduleLocation . moduleProject . _Just) refineProjectInfo m
 		Log.sendLog Log.Trace $ "Inferring types for {}" ~~ view (moduleId . moduleLocation) m'
 
+		sess <- getSession
 		mcts <- fmap (fmap snd) $ S.getFileContents (m' ^?! moduleId . moduleLocation . moduleFile)
 		types' <- inSessionGhc $ do
 			targetSession [] m'
-			fileTypes m' mcts
+			cacheGhcWarnings sess (m' ^.. moduleId . moduleLocation) $
+				fileTypes m' mcts
 
 		setModTypes (m' ^. moduleId) types'
 
@@ -614,6 +620,74 @@ updateEvents updates = Log.scope "updater" $ do
 
 applyUpdates :: UpdateOptions -> [(Watched, Event)] -> ClientM IO ()
 applyUpdates uopts = runUpdate uopts . updateEvents
+
+-- Save ghc warnings on loading target, because second loading won't produce any
+cacheGhcWarnings :: Session -> [ModuleLocation] -> GhcM a -> GhcM a
+cacheGhcWarnings sess mlocs act = Log.scope "cache-warnings" $ do
+	tm <- liftIO getPOSIXTime
+	(r, msgs) <- collectMessages act
+	Log.sendLog Log.Trace $ "collected {} warnings" ~~ length msgs
+	_ <- liftIO $ withSession sess $ postSessionUpdater $ refreshCache mlocs tm msgs
+	return r
+	where
+		refreshCache :: [ModuleLocation] -> POSIXTime -> [Note OutputMessage] -> ServerM IO ()
+		refreshCache mlocs' tm' msgs' = Log.scope "refresh" $ bracket_ initTemp dropTemp $ do
+			fillTemp
+			removeOutdated
+			insertMessages
+			where
+				initTemp :: SessionMonad m => m ()
+				initTemp = do
+					SQLite.execute_ "create temporary table updating_ids (id integer not null unique);"
+					SQLite.execute_ "create temporary table updating_messages as select * from messages where 0;"
+					SQLite.execute_ "create index update_messages_module_id_index on updating_messages (module_id);"
+
+				dropTemp :: SessionMonad m => m ()
+				dropTemp = do
+					SQLite.execute_ "drop table if exists updating_ids;"
+					SQLite.execute_ "drop table if exists updating_messages;"
+
+				fillTemp :: SessionMonad m => m ()
+				fillTemp = do
+					SQLite.executeMany "insert into updating_ids select distinct m.id from modules as m where (m.file = ?);" $ (map SQLite.Only $ mlocs' ^.. each . moduleFile)
+					SQLite.executeMany "insert into updating_messages select (select m.id from modules as m where (m.file = ?)), ?, ?, ?, ?, ?, ?, ?;" msgs'
+					SQLite.execute_ "insert into updating_ids select distinct umsgs.module_id from updating_messages as umsgs where umsgs.module_id not in (select id from updating_ids);"
+
+				removeOutdated :: SessionMonad m => m ()
+				removeOutdated = SQLite.execute_ $ fromString $ unlines [
+					"delete from messages",
+					"where",
+					" module_id in (",
+					"  select um.id",
+					"  from",
+					"   updating_ids as um, modules as m",
+					"  left outer join",
+					"   load_times as lt",
+					"  on",
+					"   lt.module_id = um.id",
+					"  where",
+					"   um.id = m.id and (",
+					"    lt.load_time is null or",
+					"    lt.load_time <= m.inspection_time or",
+					"    um.id in (select distinct umsgs.module_id from updating_messages as umsgs)",
+					"   )",
+					" );"]
+
+				insertMessages :: SessionMonad m => m ()
+				insertMessages = SQLite.transaction_ SQLite.Deferred $ do
+					SQLite.execute "insert or replace into load_times (module_id, load_time) select um.id, ? from updating_ids as um;" (SQLite.Only tm')
+					SQLite.execute_ "insert into messages select distinct * from updating_messages;"
+
+-- | Get cached warnings
+cachedWarnings :: SessionMonad m => [ModuleLocation] -> m [Note OutputMessage]
+cachedWarnings mlocs = liftM concat $ forM (mlocs ^.. each . moduleFile) $ \f -> SQLite.query @_ @(Note OutputMessage) (SQLite.toQuery $ mconcat [
+	SQLite.qNote "m" "n",
+	SQLite.from_ ["load_times as lt"],
+	SQLite.where_ [
+		"lt.module_id = m.id",
+		"m.file = ?",
+		"lt.load_time >= m.inspection_time"]])
+	(SQLite.Only f)
 
 watch :: SessionMonad m => (Watcher -> IO ()) -> m ()
 watch f = do

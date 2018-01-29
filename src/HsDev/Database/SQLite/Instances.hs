@@ -6,9 +6,10 @@ module HsDev.Database.SQLite.Instances (
 	) where
 
 import Control.Lens ((^.), (^?), _Just)
-import Data.Aeson as A
+import Data.Aeson as A hiding (Error)
 import Data.Maybe
 import Data.Foldable
+import Data.Time.Clock.POSIX
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Lazy as L
@@ -25,6 +26,7 @@ import HsDev.Symbols.Name
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
 import HsDev.Tools.Ghc.Types
+import HsDev.Tools.Types
 import HsDev.Util
 
 instance ToField Value where
@@ -106,7 +108,7 @@ instance ToRow SymbolId where
 
 instance FromRow SymbolInfo where
 	fromRow = do
-		what <- id @String <$> field
+		what <- field @String
 		ty <- field
 		parent <- field
 		ctors <- field
@@ -227,20 +229,26 @@ instance FromField PackageDbStack where
 instance FromRow SymbolUsage where
 	fromRow = SymbolUsage <$> fromRow <*> field <*> fromRow <*> fromRow
 
+instance FromField POSIXTime where
+	fromField = fmap (fromRational . toRational @Double) . fromField
+
+instance ToField POSIXTime where
+	toField = toField . fromRational @Double . toRational
+
 instance FromRow Inspection where
 	fromRow = do
 		tm <- field
 		opts <- field
 		case (tm, opts) of
 			(Nothing, Nothing) -> return InspectionNone
-			(_, Just opts') -> InspectionAt (maybe 0 (fromRational . (toRational :: Double -> Rational)) tm) <$>
+			(_, Just opts') -> InspectionAt (fromMaybe 0 tm) <$>
 				maybe (fail "Error parsing inspection opts") return (fromJSON' opts')
 			(Just _, Nothing) -> fail "Error parsing inspection data, time is set, but flags are null"
 
 instance ToRow Inspection where
 	toRow InspectionNone = [SQLNull, SQLNull]
 	toRow (InspectionAt tm opts) = [
-		if tm == 0 then SQLNull else toField (fromRational (toRational tm) :: Double),
+		if tm == 0 then SQLNull else toField tm,
 		toField $ toJSON opts]
 
 instance FromRow TypedExpr where
@@ -309,3 +317,33 @@ instance ToRow N.Symbol where
 		mk :: T.Text -> [SQLData] -> [SQLData]
 		mk what = (toField what :)
 		padNulls n fs = fs ++ replicate (n - length fs) SQLNull
+
+instance FromField Severity where
+	fromField fld = do
+		s <- fromField @String fld
+		msum [
+			guard (s == "error") >> return Error,
+			guard (s == "warning") >> return Warning,
+			guard (s == "hint") >> return Hint,
+			fail ("Unknown severity: {}" ~~ s)]
+
+instance ToField Severity where
+	toField Error = toField @String "error"
+	toField Warning = toField @String "warning"
+	toField Hint = toField @String "hint"
+
+instance FromRow OutputMessage where
+	fromRow = OutputMessage <$> field <*> field
+
+instance ToRow OutputMessage where
+	toRow (OutputMessage msg suggest) = [toField msg, toField suggest]
+
+instance FromRow a => FromRow (Note a) where
+	fromRow = Note <$> (FileModule <$> field <*> pure Nothing) <*> fromRow <*> field <*> fromRow
+
+instance ToRow a => ToRow (Note a) where
+	toRow (Note mloc rgn sev n) = concat [
+		[toField $ mloc ^? moduleFile],
+		toRow rgn,
+		[toField sev],
+		toRow n]
