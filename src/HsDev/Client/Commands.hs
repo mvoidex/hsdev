@@ -431,7 +431,7 @@ runCommand (Types fs ghcs' clear) = toValue $ do
 			sess <- getSession
 			m <- setFileSourceSession ghcs' file
 			types' <- inSessionGhc $ do
-				when clear $ clearTargets
+				when clear clearTargets
 				Update.cacheGhcWarnings sess [m ^. moduleId . moduleLocation] $
 					Types.fileTypes m msrc
 			updateProcess def [Update.setModTypes (m ^. moduleId) types']
@@ -441,7 +441,7 @@ runCommand (Refactor ns rest isPure) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
 	let
 		runFix file = do
-			when (not isPure) $ do
+			unless isPure $ do
 				liftIO $ readFileUtf8 (view path file) >>= writeFileUtf8 (view path file) . AutoFix.refact fixRefacts'
 			return newCorrs'
 			where
@@ -493,7 +493,7 @@ runCommand (GhcType exprs mfile) = toValue $ do
 			m <- setFileSourceSession [] f
 			inSessionGhc $ interpretModule m mcts
 	inSessionGhc $ mapM (tryRepl . expressionType) exprs
-runCommand Langs = toValue $ return $ Compat.languages
+runCommand Langs = toValue $ return Compat.languages
 runCommand Flags = toValue $ return ["-f" ++ prefix ++ f |
 	f <- Compat.flags,
 	prefix <- ["", "no-"]]
@@ -570,7 +570,7 @@ runCheck ghcs' clear = actualFileContents >=> check' where
 		m <- setFileSourceSession ghcs' file
 		Log.sendLog Log.Trace "file source session set"
 		ns <- inSessionGhc $ do
-			when clear $ clearTargets
+			when clear clearTargets
 			Update.cacheGhcWarnings sess [m ^. moduleId . moduleLocation] $
 				Check.check m mcts
 		if null ns
