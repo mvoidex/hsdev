@@ -19,6 +19,7 @@ import GhcMonad
 import GHC
 
 import HsDev.Tools.Ghc.Base
+import qualified HsDev.Tools.Ghc.Compat as C
 import HsDev.Util
 
 -- | Import some modules
@@ -38,7 +39,7 @@ evaluate expr = liftM fromDynamic (dynCompileExpr $ "show ({})" ~~ expr) >>=
 expressionType :: GhcMonad m => String -> m String
 expressionType expr = do
 	dflags <- getSessionDynFlags
-	ty <- exprType TM_Inst expr
+	ty <- C.exprType expr
 	return $ formatType dflags ty
 
 data ReplResult a = ReplError String | ReplOk a deriving (Eq, Ord, Read, Show)

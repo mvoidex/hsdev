@@ -21,7 +21,7 @@ import System.Log.Simple (MonadLog(..), scope)
 import GHC hiding (exprType, Module, moduleName)
 import GHC.SYB.Utils (everythingStaged, Stage(TypeChecker))
 import GhcPlugins (mkFunTys)
-import CoreUtils
+import CoreUtils as C
 import Desugar (deSugarExpr)
 import TcHsSyn (hsPatType)
 import Outputable
@@ -45,7 +45,7 @@ instance HasType (LHsExpr Id) where
 		mbe <- liftIO $ liftM snd $ deSugarExpr env e
 		return $ do
 			ex <- mbe
-			return (getLoc e, exprType ex)
+			return (getLoc e, C.exprType ex)
 
 instance HasType (LHsBind Id) where
 	getType (L _ FunBind { fun_id = fid, fun_matches = m}) = return $ Just (getLoc fid, typ) where

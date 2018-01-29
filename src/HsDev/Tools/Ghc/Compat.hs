@@ -10,12 +10,14 @@ module HsDev.Tools.Ghc.Compat (
 	recSelParent, recSelCtors,
 	getFixity,
 	unqualStyle,
-	exposedModuleName
+	exposedModuleName,
+	exprType
 	) where
 
 import qualified BasicTypes
 import qualified DynFlags as GHC
 import qualified ErrUtils
+import qualified InteractiveEval as Eval
 import qualified GHC
 import qualified Module
 import qualified Name
@@ -27,6 +29,7 @@ import Outputable
 #if __GLASGOW_HASKELL__ >= 800
 import Data.List (nub)
 import qualified IdInfo
+import TcRnDriver
 #endif
 
 #if __GLASGOW_HASKELL__ == 710
@@ -198,4 +201,11 @@ exposedModuleName = fst
 #else
 exposedModuleName :: GHC.ExposedModule unit mname -> mname
 exposedModuleName = GHC.exposedName
+#endif
+
+exprType :: GHC.GhcMonad m => String -> m GHC.Type
+#if __GLASGOW_HASKELL__ > 800
+exprType = Eval.exprType TM_Inst
+#else
+exprType = Eval.exprType
 #endif
