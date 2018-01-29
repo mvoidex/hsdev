@@ -190,7 +190,7 @@ packageDbModules = do
 	dflags <- GHC.getSessionDynFlags
 	return [(p, m) |
 		p <- pkgs,
-		mn <- map Compat.exposedModuleName (GHC.exposedModules p),
+		mn <- map Compat.exposedModuleName (GHC.exposedModules p) ++ GHC.hiddenModules p,
 		m <- lookupModule_ dflags mn]
 
 -- Lookup module everywhere
