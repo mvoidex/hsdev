@@ -306,8 +306,7 @@ scanCabal opts = Log.scope "cabal" $ scanPackageDbStack opts userDb
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
 prepareSandbox :: UpdateMonad m => Sandbox -> m ()
 prepareSandbox sbox@(Sandbox StackWork fpath) = Log.scope "prepare" $ runTasks_ [
-	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ S.buildDeps Nothing,
-	runTask "configuring" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ S.configure Nothing]
+	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ S.buildDeps Nothing]
 	where
 		dir = takeDirectory $ view path fpath
 prepareSandbox _ = return ()

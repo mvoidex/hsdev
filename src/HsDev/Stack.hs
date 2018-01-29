@@ -3,7 +3,7 @@
 module HsDev.Stack (
 	stack, yaml,
 	path, pathOf,
-	build, buildDeps, configure,
+	build, buildDeps,
 	StackEnv(..), stackRoot, stackProject, stackConfig, stackGhc, stackSnapshot, stackLocal,
 	getStackEnv, projectEnv,
 	stackPackageDbStack,
@@ -99,10 +99,6 @@ build opts mcfg = void $ stack $ "build" : (opts ++ yaml mcfg)
 -- | Build only dependencies
 buildDeps :: Maybe FilePath -> GhcM ()
 buildDeps = build ["--only-dependencies"]
-
--- | Configure project
-configure :: Maybe FilePath -> GhcM ()
-configure = build ["--only-configure"]
 
 data StackEnv = StackEnv {
 	_stackRoot :: FilePath,
