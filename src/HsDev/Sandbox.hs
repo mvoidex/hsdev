@@ -9,7 +9,7 @@ module HsDev.Sandbox (
 	userPackageDb,
 
 	-- * cabal-sandbox util
-	cabalSandboxLib, cabalSandboxPackageDb,
+	cabalSandboxPackageDb,
 
 	getModuleOpts, getProjectTargetOpts,
 
@@ -24,16 +24,18 @@ import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Control.Lens (view, makeLenses)
 import Data.Aeson
-import Data.List (find)
+import Data.List (find, intercalate)
 import Data.Maybe (isJust, fromMaybe)
+import Data.Maybe.JustIf
 import qualified Data.Text as T (unpack)
-import System.Directory (getAppUserDataDirectory)
+import System.Directory (getAppUserDataDirectory, doesDirectoryExist)
 import System.FilePath
 import System.Log.Simple (MonadLog(..))
 import Text.Format
 
 import System.Directory.Paths
 import HsDev.Display
+import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Project.Types
 import HsDev.Scan.Browse (browsePackages)
@@ -122,8 +124,8 @@ projectSandbox fpath = runMaybeT $ do
 -- | Get package-db stack for sandbox
 sandboxPackageDbStack :: Sandbox -> GhcM PackageDbStack
 sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
-	dir <- cabalSandboxPackageDb
-	return $ PackageDbStack [PackageDb $ fromFilePath $ view path fpath </> dir]
+	dir <- cabalSandboxPackageDb $ view path fpath
+	return $ PackageDbStack [PackageDb $ fromFilePath dir]
 sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory (view path fpath)
 
 -- | Search package-db stack with user-db as default
@@ -142,20 +144,26 @@ restorePackageDbStack (PackageDb p) = liftM (fromMaybe $ fromPackageDbs [p]) $ r
 	sbox <- MaybeT $ liftIO $ searchSandbox p
 	lift $ sandboxPackageDbStack sbox
 
--- | User package-db: <arch>-<platform>-<version>
+-- | User package-db: <arch>-<os>-<version>
 userPackageDb :: GhcM FilePath
 userPackageDb = do
 	root <- liftIO $ getAppUserDataDirectory "ghc"
-	dir <- buildPath "{arch}-{platform}-{version}"
+	dir <- buildPath "{arch}-{os}-{version}"
 	return $ root </> dir
 
--- | Get actual sandbox build path: <arch>-<platform>-<compiler>-<version>
-cabalSandboxLib :: GhcM FilePath
-cabalSandboxLib = buildPath "{arch}-{platform}-{compiler}-{version}"
-
--- | Get sandbox package-db: <arch>-<platform>-<compiler>-<version>-packages.conf.d
-cabalSandboxPackageDb :: GhcM FilePath
-cabalSandboxPackageDb = liftM (++ "-packages.conf.d") cabalSandboxLib
+-- | Get sandbox package-db: <arch>-<os>-<compiler>-<version>-packages.conf.d
+cabalSandboxPackageDb :: FilePath -> GhcM FilePath
+cabalSandboxPackageDb root = do
+	dirs <- mapM (fmap (root </>) . buildPath) [
+		"{arch}-{os}-{compiler}-{version}-packages.conf.d",
+		"{arch}-{os/cabal}-{compiler}-{version}-packages.conf.d"]
+	mdir <- liftM msum $ forM dirs $ \dir -> do
+		justIf dir <$> liftIO (doesDirectoryExist dir)
+	case mdir of
+		Nothing -> hsdevError $ OtherError $ unlines [
+			"No suitable package-db found in sandbox, is it configured?",
+			"Searched in: {}" ~~ intercalate ", " dirs]
+		Just dir -> return dir
 
 -- | Options for GHC for module and project
 getModuleOpts :: [String] -> Module -> GhcM (PackageDbStack, [String])

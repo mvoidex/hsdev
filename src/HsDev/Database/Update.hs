@@ -315,7 +315,7 @@ prepareSandbox _ = return ()
 -- | Scan sandbox modules, doesn't rescan if already scanned
 scanSandbox :: UpdateMonad m => [String] -> Sandbox -> m ()
 scanSandbox opts sbox = Log.scope "sandbox" $ do
-	prepareSandbox sbox
+	-- prepareSandbox sbox
 	pdbs <- inSessionGhc $ sandboxPackageDbStack sbox
 	scanPackageDbStack opts pdbs
 

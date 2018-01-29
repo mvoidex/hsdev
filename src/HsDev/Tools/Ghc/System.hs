@@ -11,6 +11,7 @@ import Control.Arrow
 import qualified Data.Map as M
 import Data.Maybe
 import Distribution.Text (display)
+import Distribution.System (buildOS)
 import qualified System.Info as Sys
 import Text.Format
 
@@ -23,12 +24,13 @@ import HsDev.Tools.Ghc.Worker (GhcM)
 
 data BuildInfo = BuildInfo {
 	targetArch :: String,
-	targetPlatform :: String,
+	targetOS :: String,
+	cabalOS :: String,
 	compilerName :: String,
 	compilerVersion :: String }
 
 buildInfo :: DynFlags -> BuildInfo
-buildInfo = BuildInfo Sys.arch Sys.os Sys.compilerName . examineCompilerVersion
+buildInfo = BuildInfo Sys.arch Sys.os (display buildOS) Sys.compilerName . examineCompilerVersion
 
 examineCompilerVersion :: DynFlags -> String
 examineCompilerVersion =
@@ -44,8 +46,8 @@ formatBuildPath :: String -> BuildInfo -> String
 formatBuildPath f = formats f . toArgs where
 	toArgs b = [
 		"arch" ~% targetArch b,
-		"os" ~% targetPlatform b,
-		"platform" ~% targetPlatform b,
+		"os" ~% targetOS b,
+		"os/cabal" ~% cabalOS b,
 		"compiler" ~% compilerName b,
 		"version" ~% compilerVersion b]
 
