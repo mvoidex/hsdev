@@ -22,7 +22,6 @@ import Control.Lens (set, traverseOf, view)
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Loops
-import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Catch (bracket_, bracket, finally)
 import Data.Aeson hiding (Result, Error)
@@ -63,6 +62,7 @@ import qualified HsDev.Watcher as W
 import HsDev.Util
 
 #if mingw32_HOST_OS
+import Control.Monad.Except
 import Data.Aeson.Types hiding (Result, Error)
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
