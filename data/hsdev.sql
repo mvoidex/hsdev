@@ -194,7 +194,7 @@ create table imports (
 	import_module_id -- `id` of imported module
 );
 
-create index imports_module_id_index on imports (module_id);
+create unique index imports_position_index on imports (module_id, line);
 
 -- symbols bringed into scope by import, with qualifier
 create view imported_scopes as
