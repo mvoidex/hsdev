@@ -62,7 +62,6 @@ import qualified HsDev.Watcher as W
 import HsDev.Util
 
 #if mingw32_HOST_OS
-import Control.Monad.Except
 import Data.Aeson.Types hiding (Result, Error)
 import System.Win32.FileMapping.Memory (withMapFile, readMapFile)
 import System.Win32.FileMapping.NamePool
