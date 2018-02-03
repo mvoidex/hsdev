@@ -1,8 +1,9 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings, TemplateHaskell, TypeApplications, LambdaCase #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Project.Types (
-	Project(..), projectName, projectPath, projectCabal, projectDescription, projectPackageDbStack, project,
+	BuildTool(..), Sandbox(..), sandboxType, sandbox,
+	Project(..), projectName, projectPath, projectCabal, projectDescription, projectSandbox, projectPackageDbStack, project,
 	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests, infos, targetInfos,
 	Target(..), TargetInfo(..), targetInfoName, targetBuildInfo, targetInfoMain, targetInfoModules, targetInfo,
 	Library(..), libraryModules, libraryBuildInfo,
@@ -30,16 +31,71 @@ import HsDev.Display
 import HsDev.PackageDb.Types
 import HsDev.Util
 
+-- | Project build tool
+data BuildTool = CabalTool | StackTool deriving (Eq, Ord, Read, Show, Enum, Bounded)
+
+instance NFData BuildTool where
+	rnf CabalTool = ()
+	rnf StackTool = ()
+
+instance Display BuildTool where
+	display CabalTool = "cabal"
+	display StackTool = "stack"
+	displayType _ = "build-tool"
+
+instance Formattable BuildTool where
+	formattable = formattable . display
+
+instance ToJSON BuildTool where
+	toJSON CabalTool = toJSON @String "cabal"
+	toJSON StackTool = toJSON @String "stack"
+
+instance FromJSON BuildTool where
+	parseJSON = withText "build-tool" $ \case
+		"cabal" -> return CabalTool
+		"stack" -> return StackTool
+		other -> fail $ "Can't parse BuildTool, unknown tool: {}" ~~ other
+
+data Sandbox = Sandbox { _sandboxType :: BuildTool, _sandbox :: Path } deriving (Eq, Ord)
+
+makeLenses ''Sandbox
+
+instance NFData Sandbox where
+	rnf (Sandbox t p) = rnf t `seq` rnf p
+
+instance Show Sandbox where
+	show (Sandbox _ p) = T.unpack p
+
+instance Display Sandbox where
+	display (Sandbox _ fpath) = display fpath
+	displayType (Sandbox CabalTool _) = "cabal-sandbox"
+	displayType (Sandbox StackTool _) = "stack-work"
+
+instance Formattable Sandbox where
+	formattable = formattable . display
+
+instance ToJSON Sandbox where
+	toJSON (Sandbox t p) = object ["type" .= t, "path" .= p]
+
+instance FromJSON Sandbox where
+	parseJSON = withObject "sandbox" $ \v -> Sandbox <$>
+		v .:: "type" <*>
+		v .:: "path"
+
+instance Paths Sandbox where
+	paths f (Sandbox st p) = Sandbox st <$> paths f p
+
 -- | Cabal project
 data Project = Project {
 	_projectName :: Text,
 	_projectPath :: Path,
 	_projectCabal :: Path,
 	_projectDescription :: Maybe ProjectDescription,
+	_projectSandbox :: Maybe Sandbox,
 	_projectPackageDbStack :: Maybe PackageDbStack }
 
 instance NFData Project where
-	rnf (Project n p c _ dbs) = rnf n `seq` rnf p `seq` rnf c `seq` rnf dbs
+	rnf (Project n p c _ s dbs) = rnf n `seq` rnf p `seq` rnf c `seq` rnf s `seq` rnf dbs
 
 instance Eq Project where
 	l == r = _projectCabal l == _projectCabal r
@@ -66,6 +122,7 @@ instance ToJSON Project where
 		"path" .= _projectPath p,
 		"cabal" .= _projectCabal p,
 		"description" .= _projectDescription p,
+		"sandbox" .= _projectSandbox p,
 		"package-db-stack" .= _projectPackageDbStack p]
 
 instance FromJSON Project where
@@ -74,10 +131,11 @@ instance FromJSON Project where
 		v .:: "path" <*>
 		v .:: "cabal" <*>
 		v .:: "description" <*>
-		v .:: "package-db-stack"
+		v .::? "sandbox" <*>
+		v .::? "package-db-stack"
 
 instance Paths Project where
-	paths f (Project nm p c desc dbs) = Project nm <$> paths f p <*> paths f c <*> traverse (paths f) desc <*> pure dbs
+	paths f (Project nm p c desc s dbs) = Project nm <$> paths f p <*> paths f c <*> traverse (paths f) desc <*> traverse (paths f) s <*> pure dbs
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
@@ -86,6 +144,7 @@ project file = Project {
 	_projectPath = fromFilePath . takeDirectory $ cabal,
 	_projectCabal = fromFilePath cabal,
 	_projectDescription = Nothing,
+	_projectSandbox = Nothing,
 	_projectPackageDbStack = Nothing }
 	where
 		file' = dropTrailingPathSeparator $ normalise file

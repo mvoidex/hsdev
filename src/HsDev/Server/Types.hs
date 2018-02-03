@@ -48,6 +48,7 @@ import HsDev.Error (hsdevError)
 import HsDev.Inspect.Types
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
+import HsDev.Project.Types
 import HsDev.Tools.Ghc.Worker (GhcWorker, GhcM)
 import HsDev.Tools.Types (Note, OutputMessage)
 import HsDev.Tools.AutoFix (Refact)
@@ -429,6 +430,9 @@ data Command =
 		scanGhcOpts :: [String],
 		scanDocs :: Bool,
 		scanInferTypes :: Bool } |
+	ScanProject {
+		scanProjectPath :: Path,
+		scanProjectBuildTool :: BuildTool } |
 	SetFileContents Path (Maybe Text) |
 	RefineDocs {
 		docsProjects :: [Path],

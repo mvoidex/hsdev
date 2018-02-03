@@ -1,7 +1,7 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Sandbox (
-	SandboxType(..), Sandbox(..), sandboxType, sandbox,
+	Sandbox(..), sandboxType, sandbox,
 	isSandbox, guessSandboxType, sandboxFromPath,
 	findSandbox, searchSandbox, projectSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
 
@@ -18,23 +18,19 @@ module HsDev.Sandbox (
 	) where
 
 import Control.Applicative
-import Control.DeepSeq (NFData(..))
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
-import Control.Lens (view, makeLenses)
-import Data.Aeson
+import Control.Lens (view)
 import Data.List (find, intercalate)
 import Data.Maybe (isJust, fromMaybe)
 import Data.Maybe.JustIf
-import qualified Data.Text as T (unpack)
 import System.Directory (getAppUserDataDirectory, doesDirectoryExist)
 import System.FilePath
 import System.Log.Simple (MonadLog(..))
 import Text.Format
 
 import System.Directory.Paths
-import HsDev.Display
 import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Project.Types
@@ -46,47 +42,13 @@ import HsDev.Tools.Ghc.Worker (GhcM)
 import HsDev.Tools.Ghc.System (buildPath)
 import HsDev.Util (searchPath, directoryContents, cabalFile)
 
-data SandboxType = CabalSandbox | StackWork deriving (Eq, Ord, Read, Show, Enum, Bounded)
-
-data Sandbox = Sandbox { _sandboxType :: SandboxType, _sandbox :: Path } deriving (Eq, Ord)
-
-makeLenses ''Sandbox
-
-instance NFData SandboxType where
-	rnf CabalSandbox = ()
-	rnf StackWork = ()
-
-instance NFData Sandbox where
-	rnf (Sandbox t p) = rnf t `seq` rnf p
-
-instance Show Sandbox where
-	show (Sandbox _ p) = T.unpack p
-
-instance Display Sandbox where
-	display (Sandbox _ fpath) = display fpath
-	displayType (Sandbox CabalSandbox _) = "cabal-sandbox"
-	displayType (Sandbox StackWork _) = "stack-work"
-
-instance Formattable Sandbox where
-	formattable = formattable . display
-
-instance ToJSON Sandbox where
-	toJSON (Sandbox _ p) = toJSON p
-
-instance FromJSON Sandbox where
-	parseJSON = withText "sandbox" sandboxPath where
-		sandboxPath = maybe (fail "Not a sandbox") return . sandboxFromPath
-
-instance Paths Sandbox where
-	paths f (Sandbox st p) = Sandbox st <$> paths f p
-
 isSandbox :: Path -> Bool
 isSandbox = isJust . guessSandboxType
 
-guessSandboxType :: Path -> Maybe SandboxType
+guessSandboxType :: Path -> Maybe BuildTool
 guessSandboxType fpath
-	| takeFileName (view path fpath) == ".cabal-sandbox" = Just CabalSandbox
-	| takeFileName (view path fpath) == ".stack-work" = Just StackWork
+	| takeFileName (view path fpath) == ".cabal-sandbox" = Just CabalTool
+	| takeFileName (view path fpath) == ".stack-work" = Just StackTool
 	| otherwise = Nothing
 
 sandboxFromPath :: Path -> Maybe Sandbox
@@ -123,10 +85,10 @@ projectSandbox fpath = runMaybeT $ do
 
 -- | Get package-db stack for sandbox
 sandboxPackageDbStack :: Sandbox -> GhcM PackageDbStack
-sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
+sandboxPackageDbStack (Sandbox CabalTool fpath) = do
 	dir <- cabalSandboxPackageDb $ view path fpath
 	return $ PackageDbStack [PackageDb $ fromFilePath dir]
-sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory (view path fpath)
+sandboxPackageDbStack (Sandbox StackTool fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory (view path fpath)
 
 -- | Search package-db stack with user-db as default
 searchPackageDbStack :: Path -> GhcM PackageDbStack
