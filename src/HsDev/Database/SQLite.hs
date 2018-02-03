@@ -240,11 +240,11 @@ updateModule im = scope "update-module" $ do
 
 removeModuleContents :: SessionMonad m => Int -> m ()
 removeModuleContents mid = scope "remove-module-contents" $ do
-	execute "delete from imports where module_id == ?;" (Only mid)
-	execute "delete from exports where module_id == ?;" (Only mid)
-	execute "delete from scopes where module_id == ?;" (Only mid)
-	execute "delete from names where module_id == ?;" (Only mid)
-	execute "delete from types where module_id == ?;" (Only mid)
+	execute "delete from imports where module_id = ?;" (Only mid)
+	execute "delete from exports where module_id = ?;" (Only mid)
+	execute "delete from scopes where module_id = ?;" (Only mid)
+	execute "delete from names where module_id = ?;" (Only mid)
+	execute "delete from types where module_id = ?;" (Only mid)
 	execute "delete from symbols where module_id = ?;" (Only mid)
 
 removeModule :: SessionMonad m => Int -> m ()
@@ -266,6 +266,49 @@ upsertModule im = scope "upsert-module" $ do
 			return mid'
 	where
 		moduleData = (
+			im ^? inspectedKey . moduleFile . path,
+			im ^? inspectedKey . moduleProject . _Just . projectCabal,
+			fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
+			im ^? inspectedKey . modulePackage . packageName,
+			im ^? inspectedKey . modulePackage . packageVersion,
+			im ^? inspectedKey . installedModuleName,
+			im ^? inspectedKey . otherLocationName)
+			:. (
+			msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
+			im ^? inspected . moduleDocs,
+			fmap encode $ im ^? inspected . moduleFixities,
+			encode $ asDict $ im ^. inspectionTags,
+			fmap show $ im ^? inspectionResult . _Left)
+			:.
+			fromMaybe InspectionNone (im ^? inspection)
+		asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
+
+upsertModules :: SessionMonad m => [InspectedModule] -> m [Int]
+upsertModules ims = scope "upsert-modules" $ bracket_ initTemp removeTemp $ do
+	executeMany "insert into upserted_modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ map moduleData ims
+	execute_ "update upserted_modules set id = (select m.id from modules as m where (m.file = upserted_modules.file) or ((m.package_name = upserted_modules.package_name) and (m.package_version = upserted_modules.package_version) and (m.installed_name = upserted_modules.installed_name)) or (m.other_location = upserted_modules.other_location));"
+	execute_ "insert or replace into modules (id, file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select id, file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is not null;"
+	execute_ "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is null;"
+	execute_ "update upserted_modules set id = (select m.id from modules as m where (m.file = upserted_modules.file) or ((m.package_name = upserted_modules.package_name) and (m.package_version = upserted_modules.package_version) and (m.installed_name = upserted_modules.installed_name)) or (m.other_location = upserted_modules.other_location)) where id is null;"
+
+	execute_ "delete from imports where module_id in (select id from upserted_modules);"
+	execute_ "delete from exports where module_id in (select id from upserted_modules);"
+	execute_ "delete from scopes where module_id in (select id from upserted_modules);"
+	execute_ "delete from names where module_id in (select id from upserted_modules);"
+	execute_ "delete from types where module_id in (select id from upserted_modules);"
+	execute_ "delete from symbols where module_id in (select id from upserted_modules);"
+
+	liftM (map fromOnly) $ query_ "select id from upserted_modules;"
+	where
+		initTemp :: SessionMonad m => m ()
+		initTemp = do
+			execute_ "create temporary table upserted_modules as select * from modules where 0;"
+			execute_ "create index upserted_modules_id_index on upserted_modules (id);"
+
+		removeTemp :: SessionMonad m => m ()
+		removeTemp = execute_ "drop table if exists upserted_modules;"
+
+		moduleData im = (
 			im ^? inspectedKey . moduleFile . path,
 			im ^? inspectedKey . moduleProject . _Just . projectCabal,
 			fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
@@ -573,18 +616,14 @@ loadProject cabal = scope "load-project" $ do
 -- | Update a bunch of modules
 updateModules :: SessionMonad m => [InspectedModule] -> m ()
 updateModules ims = scope "update-modules" $ transaction_ Immediate $ do
-	mapM_ (upsertModule >=> removeModuleContents) ims
-	insertModulesSymbols ims
+	ids <- upsertModules ims
+	insertModulesSymbols $ zip ids ims
 
 -- | Update symbols of bunch of modules
-insertModulesSymbols :: SessionMonad m => [InspectedModule] -> m ()
+insertModulesSymbols :: SessionMonad m => [(Int, InspectedModule)] -> m ()
 insertModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ do
-	ids <- mapM lookupId (ims ^.. each . inspectedKey)
-	let
-		imods = zip ids ims
-
-	insertModulesDefs imods
-	insertModulesExports imods
+	insertModulesDefs ims
+	insertModulesExports ims
 	where
 		insertModulesDefs :: SessionMonad m => [(Int, InspectedModule)] -> m ()
 		insertModulesDefs imods = executeMany "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ do
