@@ -169,7 +169,7 @@ create table modules (
 	fixities json, -- list of fixities
 	tags json, -- dict of tags, value not used, tag is set if present; used by hsdev to mark if types was inferred or docs scanned
 	inspection_error text,
-	inspection_time integer,
+	inspection_time real,
 	inspection_opts json -- list of flags
 );
 
@@ -316,7 +316,7 @@ create unique index types_position_index on types (module_id, line, column, line
 create table file_contents (
 	file text not null, -- file path
 	contents text not null, -- file contents
-	mtime integer not null -- posix modification time
+	mtime real not null -- posix modification time
 );
 
 create unique index file_contents_index on file_contents (file);
@@ -324,7 +324,7 @@ create unique index file_contents_index on file_contents (file);
 -- table with last time of loading module
 create table load_times (
 	module_id integer not null, -- module affected
-	load_time integer not null -- timestamp
+	load_time real not null -- timestamp
 );
 
 create unique index load_times_module_id_index on load_times (module_id);
