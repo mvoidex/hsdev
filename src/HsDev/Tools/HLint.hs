@@ -14,7 +14,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Ord
 import Data.String (fromString)
-import Language.Haskell.HLint3 (autoSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
+import Language.Haskell.HLint3 (argsSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
 import Language.Haskell.Exts.SrcLoc
 import qualified Language.Haskell.HLint3 as HL (Severity(..))
 
@@ -23,11 +23,11 @@ import HsDev.Symbols.Location
 import HsDev.Tools.Base
 import HsDev.Util (readFileUtf8)
 
-hlint :: FilePath -> Maybe Text -> ExceptT String IO [Note OutputMessage]
-hlint file msrc = do
+hlint :: [String] -> FilePath -> Maybe Text -> ExceptT String IO [Note OutputMessage]
+hlint opts file msrc = do
 	file' <- liftIO $ canonicalize file
 	cts <- maybe (liftIO $ readFileUtf8 file') return msrc
-	(flags, classify, hint) <- liftIO autoSettings
+	(flags, classify, hint) <- liftIO $ argsSettings opts
 	p <- liftIO $ parseModuleEx (flags { cppFlags = CppSimple }) file' (Just $ T.unpack cts)
 	m <- either (throwError . parseErrorMessage) return p
 	return $ map (recalcTabs cts 8 . indentIdea cts . fromIdea) $

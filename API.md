@@ -279,6 +279,7 @@ Command: `lint`/`check`/`check-lint`/`types`
 Args:
   * `files` — list of `source-file` objects
   * `ghc-opts` — list of additional ghc options (not applied for `lint` command)
+  * `lint-opts` — list of hlint options
   * `clear` (except `lint`) — set to clear targets before running command
 Response: list of `note output-message` objects
 

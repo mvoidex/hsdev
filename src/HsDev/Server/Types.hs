@@ -464,7 +464,9 @@ data Command =
 	UnresolvedSymbols {
 		unresolvedFiles :: [Path] } |
 	Lint {
-		lintFiles :: [FileSource] } |
+		lintFiles :: [FileSource],
+		lintHlintOpts :: [String]
+	} |
 	Check {
 		checkFiles :: [FileSource],
 		checkGhcOpts :: [String],
@@ -472,6 +474,7 @@ data Command =
 	CheckLint {
 		checkLintFiles :: [FileSource],
 		checkLintGhcOpts :: [String],
+		checkLintOpts :: [String],
 		checkLinkClear :: Bool } |
 	Types {
 		typesFiles :: [FileSource],
@@ -529,9 +532,9 @@ instance Paths Command where
 	paths f (FindUsages l c fpath) = FindUsages <$> pure l <*> pure c <*> paths f fpath
 	paths f (Complete n g fpath) = Complete n g <$> paths f fpath
 	paths f (UnresolvedSymbols fs) = UnresolvedSymbols <$> traverse (paths f) fs
-	paths f (Lint fs) = Lint <$> traverse (paths f) fs
+	paths f (Lint fs lints) = Lint <$> traverse (paths f) fs <*> pure lints
 	paths f (Check fs ghcs c) = Check <$> traverse (paths f) fs <*> pure ghcs <*> pure c
-	paths f (CheckLint fs ghcs c) = CheckLint <$> traverse (paths f) fs <*> pure ghcs <*> pure c
+	paths f (CheckLint fs ghcs lints c) = CheckLint <$> traverse (paths f) fs <*> pure ghcs <*> pure lints <*> pure c
 	paths f (Types fs ghcs c) = Types <$> traverse (paths f) fs <*> pure ghcs <*> pure c
 	paths f (GhcEval e mf) = GhcEval e <$> traverse (paths f) mf
 	paths f (GhcType e mf) = GhcType e <$> traverse (paths f) mf
@@ -586,9 +589,9 @@ instance FromCmd Command where
 		cmd "hayoo" "find declarations online via Hayoo" (Hayoo <$> strArgument idm <*> hayooPageArg <*> hayooPagesArg),
 		cmd "cabal" "cabal commands" (subparser $ cmd "list" "list cabal packages" (CabalList <$> many (textArgument idm))),
 		cmd "unresolveds" "list unresolved symbols in source file" (UnresolvedSymbols <$> many fileArg),
-		cmd "lint" "lint source files or file contents" (Lint <$> many cmdP),
+		cmd "lint" "lint source files or file contents" (Lint <$> many cmdP <*> lintOpts),
 		cmd "check" "check source files or file contents" (Check <$> many cmdP <*> ghcOpts <*> clearFlag),
-		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many cmdP <*> ghcOpts <*> clearFlag),
+		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many cmdP <*> ghcOpts <*> lintOpts <*> clearFlag),
 		cmd "types" "get types for file expressions" (Types <$> many cmdP <*> ghcOpts <*> clearFlag),
 		cmd "autofixes" "get autofixes by output messages" (AutoFix <$> option readJSON (long "data" <> metavar "message" <> help "messages to make fixes for")),
 		cmd "refactor" "apply some refactors and get rest updated" (Refactor <$>
@@ -647,6 +650,7 @@ headerFlag :: Parser Bool
 holdFlag :: Parser Bool
 inferFlag :: Parser Bool
 inspectionFlag :: Parser Bool
+lintOpts :: Parser [String]
 localsFlag :: Parser Bool
 moduleArg :: Parser Text
 packageArg :: Parser Text
@@ -669,6 +673,7 @@ headerFlag = switch (long "header" <> short 'h' <> help "show only header of mod
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
 inspectionFlag = switch (long "inspection" <> short 'i' <> help "return inspection data")
+lintOpts = many (strOption (long "lint" <> metavar "option" <> short 'l' <> help "options for hlint"))
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = textOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
 packageArg = textOption (long "package" <> metavar "name" <> help "module package")
@@ -713,9 +718,9 @@ instance ToJSON Command where
 	toJSON (Hayoo q p ps) = cmdJson "hayoo" ["query" .= q, "page" .= p, "pages" .= ps]
 	toJSON (CabalList ps) = cmdJson "cabal list" ["packages" .= ps]
 	toJSON (UnresolvedSymbols fs) = cmdJson "unresolveds" ["files" .= fs]
-	toJSON (Lint fs) = cmdJson "lint" ["files" .= fs]
+	toJSON (Lint fs lints) = cmdJson "lint" ["files" .= fs, "lint-opts" .= lints]
 	toJSON (Check fs ghcs c) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
-	toJSON (CheckLint fs ghcs c) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
+	toJSON (CheckLint fs ghcs lints c) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "lint-opts" .= lints, "clear" .= c]
 	toJSON (Types fs ghcs c) = cmdJson "types" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
 	toJSON (AutoFix ns) = cmdJson "autofixes" ["messages" .= ns]
 	toJSON (Refactor ns rests pure') = cmdJson "refactor" ["messages" .= ns, "rest" .= rests, "pure" .= pure']
@@ -768,9 +773,9 @@ instance FromJSON Command where
 		guardCmd "hayoo" v *> (Hayoo <$> v .:: "query" <*> (v .:: "page" <|> pure 0) <*> (v .:: "pages" <|> pure 1)),
 		guardCmd "cabal list" v *> (CabalList <$> v .::?! "packages"),
 		guardCmd "unresolveds" v *> (UnresolvedSymbols <$> v .::?! "files"),
-		guardCmd "lint" v *> (Lint <$> v .::?! "files"),
+		guardCmd "lint" v *> (Lint <$> v .::?! "files" <*> v .::?! "lint-opts"),
 		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
-		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
+		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> v .::?! "lint-opts" <*> (v .:: "clear" <|> pure False)),
 		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
 		guardCmd "autofixes" v *> (AutoFix <$> v .:: "messages"),
 		guardCmd "refactor" v *> (Refactor <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True)),

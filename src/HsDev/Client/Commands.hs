@@ -387,15 +387,15 @@ runCommand (UnresolvedSymbols fs) = toValue $ liftM concat $ forM fs $ \f -> do
 		"name" .= nm,
 		"line" .= line,
 		"column" .= column]) rs
-runCommand (Lint fs) = toValue $ liftM concat $ forM fs $ \fsrc -> do
+runCommand (Lint fs lints) = toValue $ liftM concat $ forM fs $ \fsrc -> do
 	FileSource f c <- actualFileContents fsrc
-	liftIO $ hsdevLift $ HLint.hlint (view path f) c
+	liftIO $ hsdevLift $ HLint.hlint lints (view path f) c
 runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $
 	liftM concat $ mapM (runCheck ghcs' clear) fs
-runCommand (CheckLint fs ghcs' clear) = toValue $ do
+runCommand (CheckLint fs ghcs' lints clear) = toValue $ do
 	fs' <- mapM actualFileContents fs
 	checkMsgs <- liftM concat $ mapM (runCheck ghcs' clear) fs'
-	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint (view path f) c) fs'
+	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint lints (view path f) c) fs'
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs' clear) = toValue $ do
 	liftM concat $ forM fs $ \fsrc@(FileSource file msrc) -> do
