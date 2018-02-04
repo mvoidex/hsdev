@@ -99,7 +99,7 @@ loadEnv mcabal = do
 saveEnv :: SessionMonad m => Maybe Path -> Environment -> FixitiesTable -> m ()
 saveEnv mcabal env fixities = do
 	envTable <- askSession sessionResolveEnvironment
-	void $ lookupTable mcabal (env, fixities) envTable
+	void $ insertTable mcabal (env, fixities) envTable
 
 -- | Load environment from sql
 loadEnvironment :: SessionMonad m => Maybe Path -> m Environment

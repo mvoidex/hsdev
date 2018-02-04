@@ -73,6 +73,7 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `types` — get types for all source spans
 * `flags`, `langs` — list ghc flags and language extensions
 * `ghc eval` — evaluate expression
+* `ghc type` — get type of expression
 * `autofixes` — get suggestions to fix some warnings and errors
 * `rename` — get regions to rename some symbol
 * `refactor` — apply suggestions/renames from previous commands

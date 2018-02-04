@@ -3,7 +3,8 @@ module Data.LookupTable (
 	newLookupTable,
 	lookupTable, lookupTableM, cacheInTableM,
 	hasLookupTable,
-	cachedInTable
+	cachedInTable,
+	insertTable, insertTableM, storeInTable, storeInTableM
 	) where
 
 import Control.Monad.IO.Class
@@ -44,3 +45,21 @@ hasLookupTable key tbl = liftIO $ withMVar tbl $ return . M.lookup key
 -- | Make function caching results in @LookupTable@
 cachedInTable :: (Ord k, MonadIO m) => LookupTable k v -> (k -> m v) -> k -> m v
 cachedInTable tbl fn key = cacheInTableM tbl key (fn key)
+
+-- | Insert value into table and return it
+insertTable :: (Ord k, MonadIO m) => k -> v -> LookupTable k v -> m v
+insertTable key value tbl = liftIO $ modifyMVar tbl $ \tbl' -> return (M.insert key value tbl', value)
+
+-- | Insert value into table and return it
+insertTableM :: (Ord k, MonadIO m) => k -> m v -> LookupTable k v -> m v
+insertTableM key mvalue tbl = do
+	value <- mvalue
+	insertTable key value tbl
+
+-- | @insertTable@ with flipped args
+storeInTable :: (Ord k, MonadIO m) => LookupTable k v -> k -> v -> m v
+storeInTable tbl key value = insertTable key value tbl
+
+-- | @insertTable@ with flipped args
+storeInTableM :: (Ord k, MonadIO m) => LookupTable k v -> k -> m v -> m v
+storeInTableM tbl key mvalue = insertTableM key mvalue tbl
