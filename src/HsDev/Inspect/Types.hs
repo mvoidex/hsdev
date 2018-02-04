@@ -1,7 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 module HsDev.Inspect.Types (
-	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, preloaded,
+	Preloaded(..), preloadedId, preloadedMode, preloadedModule, asModule, toImport, preloaded,
 	InspectedPreloaded,
 	Environment, FixitiesTable,
 	Resolved(..), resolvedModule, resolvedSource, resolvedDefs, resolvedImports, resolvedExports, resolvedScope, resolvedFixities,
@@ -14,16 +14,16 @@ module HsDev.Inspect.Types (
 
 import Control.DeepSeq
 import Control.Lens
-import Data.Functor
 import Data.Map (Map)
 import qualified Data.Map as M
+import Data.String
 import Data.Text (Text)
 import qualified Language.Haskell.Exts as H
 import qualified Language.Haskell.Names as N
 import qualified Language.Haskell.Names.GlobalSymbolTable as N
 
 import HsDev.Symbols.Types
-import HsDev.Symbols.Parsed (Parsed)
+import HsDev.Symbols.Parsed (Parsed, pos)
 
 -- | Preloaded module with contents and extensions
 data Preloaded = Preloaded {
@@ -41,7 +41,7 @@ asModule = lens g' s' where
 	g' p = Module {
 		_moduleId = _preloadedId p,
 		_moduleDocs = Nothing,
-		_moduleImports = map (fromModuleName_ . void . H.importModule) idecls,
+		_moduleImports = map toImport idecls,
 		_moduleExports = mempty,
 		_moduleFixities = mempty,
 		_moduleScope = mempty,
@@ -51,6 +51,10 @@ asModule = lens g' s' where
 	s' p m = p {
 		_preloadedId = _moduleId m,
 		_preloadedModule = maybe (_preloadedModule p) dropScope (_moduleSource m) }
+
+toImport :: H.ImportDecl H.SrcSpanInfo -> Import
+toImport idecl@(H.ImportDecl _ mname qual _ _ _ alias _) = Import (idecl ^. pos) (fromString $ getModuleName mname) qual (fmap (fromString . getModuleName) alias) where
+	getModuleName (H.ModuleName _ s) = s
 
 type InspectedPreloaded = Inspected ModuleLocation ModuleTag Preloaded
 
@@ -65,7 +69,7 @@ data Resolved = Resolved {
 	_resolvedModule :: H.ModuleName (),
 	_resolvedSource :: Parsed,
 	_resolvedDefs :: [Symbol],
-	_resolvedImports :: [Text],
+	_resolvedImports :: [Import],
 	_resolvedExports :: [N.Symbol],
 	_resolvedScope :: N.Table,
 	_resolvedFixities :: [H.Fixity] }

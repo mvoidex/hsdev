@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
+	Import(..), importPosition, importName, importQualified, importAs,
 	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleImports, moduleExports, moduleScope, moduleSource,
 	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolInfoType, symbolType, patternType, patternConstructor,
@@ -88,11 +89,35 @@ instance NFData l => NFData (QName l) where
 	rnf (UnQual l n) = rnf l `seq` rnf n
 	rnf (Special l s) = rnf l `seq` rnf s
 
+-- | Import
+data Import = Import {
+	_importPosition :: Position, -- source line of import
+	_importName :: Text, -- imported module name
+	_importQualified :: Bool, -- is import qualified
+	_importAs :: Maybe Text } -- alias of import
+
+instance NFData Import where
+	rnf (Import p n q a) = rnf p `seq` rnf n `seq` rnf q `seq` rnf a
+
+instance ToJSON Import where
+	toJSON (Import p n q a) = object [
+		"pos" .= p,
+		"name" .= n,
+		"qualified" .= q,
+		"as" .= a]
+
+instance FromJSON Import where
+	parseJSON = withObject "import" $ \v -> Import <$>
+		v .:: "pos" <*>
+		v .:: "name" <*>
+		v .:: "qualified" <*>
+		v .:: "as"
+
 -- | Module
 data Module = Module {
 	_moduleId :: ModuleId,
 	_moduleDocs :: Maybe Text,
-	_moduleImports :: [Text], -- list of module names imported
+	_moduleImports :: [Import], -- list of module names imported
 	_moduleExports :: [Symbol], -- exported module symbols
 	_moduleFixities :: [Fixity], -- fixities of operators
 	_moduleScope :: Map Name [Symbol], -- symbols in scope, only for source modules
@@ -148,6 +173,7 @@ instance ToJSON Module where
 	toJSON m = object $ noNulls [
 		"id" .= _moduleId m,
 		"docs" .= _moduleDocs m,
+		"imports" .= _moduleImports m,
 		"exports" .= _moduleExports m,
 		"fixities" .= _moduleFixities m]
 
@@ -155,7 +181,7 @@ instance FromJSON Module where
 	parseJSON = withObject "module" $ \v -> Module <$>
 		v .:: "id" <*>
 		v .::? "docs" <*>
-		pure mempty <*>
+		v .::?! "imports" <*>
 		v .::?! "exports" <*>
 		v .::?! "fixities" <*>
 		pure mempty <*>
@@ -552,6 +578,7 @@ instance Documented Symbol where
 			PatConstructor args p -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "pattern constructor", Just $ "args: {}" ~~ T.unwords args, fmap ("pat-type: {}" ~~) p])
 			PatSelector t p _ -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "pattern selector", fmap ("type: {}" ~~) t, fmap ("pat-type: {}" ~~) p])
 
+makeLenses ''Import
 makeLenses ''Module
 makeLenses ''Symbol
 makeLenses ''SymbolInfo

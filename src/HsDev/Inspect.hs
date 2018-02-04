@@ -52,7 +52,6 @@ import HsDev.Inspect.Types
 import HsDev.Inspect.Resolve
 import HsDev.Sandbox (searchPackageDbStack)
 import HsDev.Symbols
-import HsDev.Symbols.Name (fromModuleName_)
 import HsDev.Symbols.Resolve (refineSymbol, refineTable, RefineTable)
 import qualified HsDev.Symbols.HaskellNames as HN
 import HsDev.Tools.Base
@@ -135,7 +134,7 @@ analyzeResolve :: AnalyzeEnv -> Module -> Module
 analyzeResolve (AnalyzeEnv env _ rtable) m = case m ^. moduleSource of
 	Nothing -> m
 	Just msrc -> over moduleSymbols (refineSymbol stbl) $ m {
-		_moduleImports = map (fromModuleName_ . void . H.importModule) idecls',
+		_moduleImports = map (toImport . dropScope) idecls',
 		_moduleExports = map HN.fromSymbol $ N.exportedSymbols tbl msrc,
 		_moduleFixities = [Fixity (void assoc) (fromMaybe 0 pr) (fixName opName)
 			| H.InfixDecl _ assoc pr ops <- decls', opName <- map getOpName ops],

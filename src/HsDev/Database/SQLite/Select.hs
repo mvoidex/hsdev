@@ -2,7 +2,7 @@
 
 module HsDev.Database.SQLite.Select (
 	Select(..), select_, from_, where_, buildQuery, toQuery,
-	qSymbolId, qSymbol, qModuleLocation, qModuleId, qBuildInfo,
+	qSymbolId, qSymbol, qModuleLocation, qModuleId, qImport, qBuildInfo,
 	qNSymbol, qNote
 	) where
 
@@ -100,6 +100,15 @@ qModuleId = mconcat [
 		"mu.other_location"],
 	from_ ["modules as mu"],
 	where_ ["mu.name is not null"]]
+
+qImport :: Text -> Select Text
+qImport i = template ["i" ~% i] [
+	select_ [
+		"{i}.line", "{i}.column",
+		"{i}.module_name",
+		"{i}.qualified",
+		"{i}.alias"],
+	from_ ["imports as {i}"]]
 
 qBuildInfo :: Select Text
 qBuildInfo = mconcat [

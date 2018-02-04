@@ -100,6 +100,12 @@ instance FromRow ModuleId where
 instance ToRow ModuleId where
 	toRow mid = toField (mid ^. moduleName) : toRow (mid ^. moduleLocation)
 
+instance FromRow Import where
+	fromRow = Import <$> fromRow <*> field <*> field <*> field
+
+instance ToRow Import where
+	toRow (Import p n q a) = toRow p ++ [toField n, toField q, toField a]
+
 instance FromRow SymbolId where
 	fromRow = SymbolId <$> field <*> fromRow
 

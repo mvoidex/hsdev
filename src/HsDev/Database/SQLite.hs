@@ -351,12 +351,13 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 						importRow idecl@(ImportDecl _ mname qual _ _ _ alias specList) = (
 							mid,
 							idecl ^. pos . positionLine,
+							idecl ^. pos . positionColumn,
 							getModuleName mname,
 							qual,
 							fmap getModuleName alias,
 							maybe False getHiding specList,
 							fmap makeImportList specList)
-					executeMany "insert into imports (module_id, line, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?);"
+					executeMany "insert into imports (module_id, line, column, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?, ?);"
 						(map importRow imps)
 					executeNamed "update imports set import_module_id = (select im.id from modules as im, projects_modules_scope as ps where ((ps.cabal is null and :cabal is null) or (ps.cabal == :cabal)) and ps.module_id == im.id and im.name == imports.module_name) where module_id == :module_id;" [
 					 ":cabal" := im ^? inspectedKey . moduleProject . _Just . projectCabal,
@@ -533,11 +534,11 @@ loadModule mid = scope "load-module" $ do
 					from_ ["exports as e"],
 					where_ ["e.module_id == ?", "e.symbol_id == s.id"]])
 				(Only mid)
-			inames <- query @_ @(Only Text) "select distinct module_name from imports where module_id == ?;" (Only mid)
+			imps <- query @_ @Import "select line, column, module_name, qualified, alias from imports where module_id == ?;" (Only mid)
 			return $ Module {
 				_moduleId = mid',
 				_moduleDocs = mdocs,
-				_moduleImports = map fromOnly inames,
+				_moduleImports = imps,
 				_moduleExports = syms,
 				_moduleFixities = fromMaybe [] (mfixities >>= fromJSON'),
 				_moduleScope = mempty,
@@ -558,11 +559,11 @@ loadModules selectExpr args = scope "load-modules" $ do
 				from_ ["exports as e"],
 				where_ ["e.module_id == ?", "e.symbol_id == s.id"]])
 			(Only mid)
-		inames <- query @_ @(Only Text) "select distinct module_name from imports where module_id == ?;" (Only mid)
+		imps <- query @_ @Import "select line, column, module_name, qualified, alias from imports where module_id == ?;" (Only mid)
 		return $ Module {
 			_moduleId = mid',
 			_moduleDocs = mdocs,
-			_moduleImports = map fromOnly inames,
+			_moduleImports = imps,
 			_moduleExports = syms,
 			_moduleFixities = fromMaybe [] (mfixities >>= fromJSON'),
 			_moduleScope = mempty,

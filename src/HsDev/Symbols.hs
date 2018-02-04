@@ -73,7 +73,7 @@ standaloneInfo pkgs m = mempty { _infoDepends = pkgDeps ^.. each . package . pac
 	pkgMap = M.unionsWith mergePkgs [M.singleton m' [p] | p <- pkgs, m' <- view packageModules p]
 	mergePkgs ls rs = if null es then hs else es where
 		(es, hs) = partition (view packageExposed) $ uniqueBy (view package) (ls ++ rs)
-	imps = delete (view (moduleId . moduleName) m) (m ^. moduleImports)
+	imps = delete (view (moduleId . moduleName) m) (m ^.. moduleImports . each . importName)
 
 -- | Options for GHC of module and project
 moduleOpts :: [PackageConfig] -> Module -> [String]

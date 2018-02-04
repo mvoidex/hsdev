@@ -93,7 +93,7 @@ file :: Annotated ast => Lens' (ast Ann) FilePath
 file = annL . fileL
 
 -- | Get source location
-pos :: Annotated ast => Lens' (ast Ann) Position
+pos :: (Annotated ast, SrcInfo isrc, Data isrc) => Lens' (ast isrc) Position
 pos = annL . positionL
 
 -- | Definition position, if binder - returns current position

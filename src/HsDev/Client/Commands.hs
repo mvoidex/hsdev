@@ -181,13 +181,12 @@ runCommand InfoSandboxes = toValue $ do
 runCommand (InfoSymbol sq filters True _) = toValue $ do
 	let
 		(conds, params) = targetFilters "m" (Just "s") filters
-	rs <- queryNamed @SymbolId
+	queryNamed @SymbolId
 		(toQuery $ mconcat [
 			qSymbolId,
 			where_ ["s.name like :pattern escape '\\'"],
 			where_ conds])
 		([":pattern" := likePattern sq] ++ params)
-	return rs
 runCommand (InfoSymbol sq filters False _) = toValue $ do
 	let
 		(conds, params) = targetFilters "m" (Just "s") filters
@@ -214,12 +213,16 @@ runCommand (InfoModule sq filters h _) = toValue $ do
 				(Only mid)
 			let
 				fixities' = fromMaybe [] (fixities >>= fromJSON')
+			imports' <- query @_ @Import (toQuery $ mconcat [
+				qImport "i",
+				where_ ["i.module_id = ?"]])
+				(Only mid)
 			exports' <- query @_ @Symbol (toQuery $ mconcat [
 				qSymbol,
 				from_ ["exports as e"],
 				where_ ["e.module_id == ?", "e.symbol_id == s.id"]])
 				(Only mid)
-			return $ Module mheader docs mempty exports' fixities' mempty Nothing
+			return $ Module mheader docs imports' exports' fixities' mempty Nothing
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
@@ -420,7 +423,7 @@ runCommand (Types fs ghcs' clear) = toValue $ do
 			if actual' && hasTypes'
 				then do
 					types' <- query @_ @(Region :. Types.TypedExpr) "select line, column, line_to, column_to, expr, type from types where module_id = ?;" (Only mid')
-					liftM Just $ forM types' $ \(rgn :. texpr) -> return $ Tools.Note {
+					liftM Just $ forM types' $ \(rgn :. texpr) -> return Tools.Note {
 						Tools._noteSource = modId ^. moduleLocation,
 						Tools._noteRegion = rgn,
 						Tools._noteLevel = Nothing,
@@ -576,7 +579,7 @@ runCheck ghcs' clear = actualFileContents >=> check' where
 		if null ns
 			then do
 				ns' <- Update.cachedWarnings [m ^. moduleId . moduleLocation]
-				when (not $ null ns') $
+				unless (null ns') $
 					Log.sendLog Log.Trace $ "returning {} cached warnings for {}" ~~ length ns' ~~ file
 				return ns'
 			else return ns
@@ -649,7 +652,7 @@ refineSourceModule fpath = do
 
 -- | Get file contents
 actualFileContents :: CommandMonad m => FileSource -> m FileSource
-actualFileContents (FileSource fpath Nothing) = fmap (FileSource fpath) (fmap (fmap snd) $ getFileContents fpath)
+actualFileContents (FileSource fpath Nothing) = fmap (FileSource fpath . fmap snd) (getFileContents fpath)
 actualFileContents fcts = return fcts
 
 -- | Set session by source

@@ -67,7 +67,7 @@ resolve env m = Resolved {
 	_resolvedModule = void mn,
 	_resolvedSource = annotated,
 	_resolvedDefs = getSymbols decls',
-	_resolvedImports = map (fromModuleName_ . void . H.importModule) idecls',
+	_resolvedImports = map (toImport . dropScope) idecls',
 	_resolvedExports = N.exportedSymbols tbl m,
 	_resolvedScope = tbl,
 	_resolvedFixities = [H.Fixity (void assoc) (fromMaybe 0 pr) (fixName opName)
@@ -218,12 +218,13 @@ insertResolvedSymbols im = do
 				importRow idecl@(H.ImportDecl _ mname qual _ _ _ alias specList) = (
 					mid,
 					idecl ^. pos . positionLine,
+					idecl ^. pos . positionColumn,
 					getModuleName mname,
 					qual,
 					fmap getModuleName alias,
 					maybe False getHiding specList,
 					fmap makeImportList specList)
-			executeMany "insert into imports (module_id, line, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?);"
+			executeMany "insert into imports (module_id, line, column, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?, ?);"
 				(map importRow imps)
 			executeNamed "update imports set import_module_id = (select im.id from modules as im, projects_modules_scope as ps where ((ps.cabal is null and :cabal is null) or (ps.cabal == :cabal)) and ps.module_id == im.id and im.name == imports.module_name) where module_id == :module_id;" [
 			 ":cabal" := im ^? inspectedKey . moduleProject . _Just . projectCabal,
@@ -391,7 +392,7 @@ updateResolvedsSymbols ims = bracket_ initTemps dropTemps $ do
 
 		insertModulesImports :: SessionMonad m => [(Int, InspectedResolved)] -> m ()
 		insertModulesImports imods = scope "imports" $ do
-			executeMany "insert into imports (module_id, line, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?);" $ do
+			executeMany "insert into imports (module_id, line, column, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?, ?);" $ do
 				(mid, im) <- imods
 				let
 					p = im ^?! inspected . resolvedSource
@@ -399,6 +400,7 @@ updateResolvedsSymbols ims = bracket_ initTemps dropTemps $ do
 				return (
 					mid,
 					idecl ^. pos . positionLine,
+					idecl ^. pos . positionColumn,
 					getModuleName mname,
 					qual,
 					fmap getModuleName alias,

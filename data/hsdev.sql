@@ -186,6 +186,7 @@ create unique index modules_other_locations_index on modules (other_location) wh
 create table imports (
 	module_id integer not null,
 	line integer not null, -- line number of import
+	column integer not null, -- column of impoty
 	module_name text not null, -- import module name
 	qualified integer not null, -- is import qualified
 	alias text, -- imported with `as`
@@ -194,7 +195,7 @@ create table imports (
 	import_module_id -- `id` of imported module
 );
 
-create unique index imports_position_index on imports (module_id, line);
+create unique index imports_position_index on imports (module_id, line, column);
 
 -- symbols bringed into scope by import, with qualifier
 create view imported_scopes as
