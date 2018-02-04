@@ -25,10 +25,10 @@ group by package_db, package_name;
 
 -- sandboxes
 create table sandboxes (
-	path text not null, -- sandbox path, should include `.cabal-sandbox`/`.stack-work`
 	type text not null, -- cabal/stack
+	path text not null, -- sandbox path, should include `.cabal-sandbox`/`.stack-work`
 	package_db_stack json -- list of package-db of sandbox
-)
+);
 
 create unique index sandboxes_path_index on sandboxes (path);
 
@@ -39,8 +39,6 @@ create table projects (
 	cabal text not null, -- path to `.cabal` file
 	version text,
 	build_tool text not null, -- cabal/stack
-	sandbox_path text, -- sandbox path if any
-	sandbox_type text, -- sandbox type, should be equal to `build_tool`
 	package_db_stack json -- list of package-db
 );
 

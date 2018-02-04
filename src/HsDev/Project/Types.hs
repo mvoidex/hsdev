@@ -3,7 +3,7 @@
 
 module HsDev.Project.Types (
 	BuildTool(..), Sandbox(..), sandboxType, sandbox,
-	Project(..), projectName, projectPath, projectCabal, projectDescription, projectSandbox, projectPackageDbStack, project,
+	Project(..), projectName, projectPath, projectCabal, projectDescription, projectBuildTool, projectPackageDbStack, project,
 	ProjectDescription(..), projectVersion, projectLibrary, projectExecutables, projectTests, infos, targetInfos,
 	Target(..), TargetInfo(..), targetInfoName, targetBuildInfo, targetInfoMain, targetInfoModules, targetInfo,
 	Library(..), libraryModules, libraryBuildInfo,
@@ -91,11 +91,11 @@ data Project = Project {
 	_projectPath :: Path,
 	_projectCabal :: Path,
 	_projectDescription :: Maybe ProjectDescription,
-	_projectSandbox :: Maybe Sandbox,
+	_projectBuildTool :: BuildTool,
 	_projectPackageDbStack :: Maybe PackageDbStack }
 
 instance NFData Project where
-	rnf (Project n p c _ s dbs) = rnf n `seq` rnf p `seq` rnf c `seq` rnf s `seq` rnf dbs
+	rnf (Project n p c _ t dbs) = rnf n `seq` rnf p `seq` rnf c `seq` rnf t `seq` rnf dbs
 
 instance Eq Project where
 	l == r = _projectCabal l == _projectCabal r
@@ -122,7 +122,7 @@ instance ToJSON Project where
 		"path" .= _projectPath p,
 		"cabal" .= _projectCabal p,
 		"description" .= _projectDescription p,
-		"sandbox" .= _projectSandbox p,
+		"build-tool" .= _projectBuildTool p,
 		"package-db-stack" .= _projectPackageDbStack p]
 
 instance FromJSON Project where
@@ -131,11 +131,11 @@ instance FromJSON Project where
 		v .:: "path" <*>
 		v .:: "cabal" <*>
 		v .:: "description" <*>
-		v .::? "sandbox" <*>
+		v .:: "build-tool" <*>
 		v .::? "package-db-stack"
 
 instance Paths Project where
-	paths f (Project nm p c desc s dbs) = Project nm <$> paths f p <*> paths f c <*> traverse (paths f) desc <*> traverse (paths f) s <*> pure dbs
+	paths f (Project nm p c desc t dbs) = Project nm <$> paths f p <*> paths f c <*> traverse (paths f) desc <*> pure t <*> pure dbs
 
 -- | Make project by .cabal file
 project :: FilePath -> Project
@@ -144,7 +144,7 @@ project file = Project {
 	_projectPath = fromFilePath . takeDirectory $ cabal,
 	_projectCabal = fromFilePath cabal,
 	_projectDescription = Nothing,
-	_projectSandbox = Nothing,
+	_projectBuildTool = CabalTool,
 	_projectPackageDbStack = Nothing }
 	where
 		file' = dropTrailingPathSeparator $ normalise file

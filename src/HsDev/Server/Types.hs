@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances, GeneralizedNewtypeDeriving, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, TypeFamilies, ConstraintKinds #-}
+{-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances, GeneralizedNewtypeDeriving, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, TypeFamilies, ConstraintKinds, TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Types (
@@ -42,7 +42,7 @@ import System.Log.Simple as Log
 import Control.Concurrent.Worker
 import Data.LookupTable
 import System.Directory.Paths
-import Text.Format (Formattable(..))
+import Text.Format (Formattable(..), (~~))
 
 import HsDev.Error (hsdevError)
 import HsDev.Inspect.Types
@@ -432,7 +432,8 @@ data Command =
 		scanInferTypes :: Bool } |
 	ScanProject {
 		scanProjectPath :: Path,
-		scanProjectBuildTool :: BuildTool } |
+		scanProjectBuildTool :: BuildTool,
+		scanProjectDeps :: Bool } |
 	SetFileContents Path (Maybe Text) |
 	RefineDocs {
 		docsProjects :: [Path],
@@ -519,6 +520,7 @@ instance Paths Command where
 		pure ghcs <*>
 		pure docs <*>
 		pure infer
+	paths f (ScanProject proj tool deps) = ScanProject <$> paths f proj <*> pure tool <*> pure deps
 	paths f (SetFileContents p cts) = SetFileContents <$> paths f p <*> pure cts
 	paths f (RefineDocs projs fs) = RefineDocs <$> traverse (paths f) projs <*> traverse (paths f) fs
 	paths f (InferTypes projs fs) = InferTypes <$> traverse (paths f) projs <*> traverse (paths f) fs
@@ -556,15 +558,17 @@ instance FromCmd Command where
 		cmd "ping" "ping server" (pure Ping),
 		cmd "listen" "listen server log" (Listen <$> optional logLevelArg),
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
-		cmd "scan" "scan sources" $ Scan <$>
-			many projectArg <*>
-			cabalFlag <*>
-			many sandboxArg <*>
-			many cmdP <*>
-			many (pathArg $ help "path") <*>
-			ghcOpts <*>
-			docsFlag <*>
-			inferFlag,
+		cmd "scan" "scan sources" (
+			subparser (cmd "project" "scan project" (ScanProject <$> textArgument idm <*> toolArg <*> depsArg)) <|>
+			(Scan <$>
+				many projectArg <*>
+				cabalFlag <*>
+				many sandboxArg <*>
+				many cmdP <*>
+				many (pathArg $ help "path") <*>
+				ghcOpts <*>
+				docsFlag <*>
+				inferFlag)),
 		cmd "set-file-contents" "set edited file contents, which will be used instead of contents in file until it updated" $
 			SetFileContents <$> fileArg <*> optional contentsArg,
 		cmd "docs" "scan docs" $ RefineDocs <$> many projectArg <*> many fileArg,
@@ -645,6 +649,7 @@ cabalFlag :: Parser Bool
 clearFlag :: Parser Bool
 contentsArg :: Parser Text
 ctx :: Parser Path
+depsArg :: Parser Bool
 docsFlag :: Parser Bool
 fileArg :: Parser Path
 ghcOpts :: Parser [String]
@@ -662,12 +667,14 @@ pathArg :: Mod OptionFields String -> Parser Path
 projectArg :: Parser Path
 pureFlag :: Parser Bool
 sandboxArg :: Parser Path
+toolArg :: Parser BuildTool
 wideFlag :: Parser Bool
 
 cabalFlag = switch (long "cabal")
 clearFlag = switch (long "clear" <> short 'c' <> help "clear run, drop previous state")
 contentsArg = textOption (long "contents" <> help "text contents")
 ctx = fileArg
+depsArg = fmap not $ switch (long "no-deps" <> help "don't scan dependent package-dbs")
 docsFlag = switch (long "docs" <> help "scan source file docs")
 fileArg = textOption (long "file" <> metavar "path" <> short 'f')
 ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "options to pass to GHC"))
@@ -685,6 +692,19 @@ pathArg f = textOption (long "path" <> metavar "path" <> short 'p' <> f)
 projectArg = textOption (long "project" <> long "proj" <> metavar "project")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
 sandboxArg = textOption (long "sandbox" <> metavar "path" <> help "path to cabal sandbox")
+toolArg =
+	flag' CabalTool (long "cabal" <> help "use cabal as build tool") <|>
+	flag' StackTool (long "stack" <> help "use stack as build tool") <|>
+	option readTool (long "tool" <> help "specify build tool")
+	where
+		readTool :: ReadM BuildTool
+		readTool = do
+			s <- str @String
+			msum [
+				guard (s == "cabal") >> return CabalTool,
+				guard (s == "stack") >> return StackTool,
+				readerError ("unknown build tool: {}" ~~ s)]
+
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
 
 instance ToJSON Command where
@@ -700,6 +720,10 @@ instance ToJSON Command where
 		"ghc-opts" .= ghcs,
 		"docs" .= docs',
 		"infer" .= infer']
+	toJSON (ScanProject proj tool deps) = cmdJson "scan project" [
+		"project" .= proj,
+		"build-tool" .= tool,
+		"scan-deps" .= deps]
 	toJSON (SetFileContents f cts) = cmdJson "set-file-contents" ["file" .= f, "contents" .= cts]
 	toJSON (RefineDocs projs fs) = cmdJson "docs" ["projects" .= projs, "files" .= fs]
 	toJSON (InferTypes projs fs) = cmdJson "infer" ["projects" .= projs, "files" .= fs]
@@ -751,6 +775,10 @@ instance FromJSON Command where
 			v .::?! "ghc-opts" <*>
 			(v .:: "docs" <|> pure False) <*>
 			(v .:: "infer" <|> pure False)),
+		guardCmd "scan project" v *> (ScanProject <$>
+			v .:: "project" <*>
+			v .:: "build-tool" <*>
+			(v .:: "deps" <|> pure True)),
 		guardCmd "set-file-contents" v *> (SetFileContents <$> v .:: "file" <*> v .:: "contents"),
 		guardCmd "docs" v *> (RefineDocs <$> v .::?! "projects" <*> v .::?! "files"),
 		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files"),

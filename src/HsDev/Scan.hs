@@ -167,7 +167,7 @@ enumDependent fpath = Log.scope "enum-dependent" $ do
 enumProject :: CommandMonad m => Project -> m ScanContents
 enumProject p = hsdevLiftIO $ do
 	p' <- liftIO $ loadProject p
-	pdbs <- inSessionGhc $ searchPackageDbStack (view projectPath p')
+	pdbs <- inSessionGhc $ searchPackageDbStack (view projectBuildTool p') (view projectPath p')
 	pkgs <- inSessionGhc $ liftM (S.fromList . map (view (package . packageName))) $ browsePackages [] pdbs
 	let
 		projOpts :: Path -> [Text]

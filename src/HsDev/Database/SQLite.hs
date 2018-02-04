@@ -194,7 +194,7 @@ removeProject proj = scope "remove-project" $ do
 
 insertProject :: SessionMonad m => Project -> m ()
 insertProject proj = scope "insert-project" $ do
-	execute "insert into projects (name, cabal, version, package_db_stack) values (?, ?, ?, ?);" proj
+	execute "insert into projects (name, cabal, version, build_tool, package_db_stack) values (?, ?, ?, ?, ?);" proj
 	projId <- lastRow
 
 	forM_ (proj ^? projectDescription . _Just . projectLibrary . _Just) $ \lib -> do
@@ -365,7 +365,7 @@ loadModules selectExpr args = scope "load-modules" $ do
 
 loadProject :: SessionMonad m => Path -> m Project
 loadProject cabal = scope "load-project" $ do
-	projs <- query @_ @(Only Int :. Project) "select id, name, cabal, version, package_db_stack from projects where cabal == ?;" (Only $ view path cabal)
+	projs <- query @_ @(Only Int :. Project) "select id, name, cabal, version, build_tool, package_db_stack from projects where cabal == ?;" (Only $ view path cabal)
 	(Only pid :. proj) <- case projs of
 		[] -> sqlFailure $ "project with cabal {} not found" ~~ view path cabal
 		_ -> do

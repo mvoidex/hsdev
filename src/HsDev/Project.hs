@@ -135,7 +135,9 @@ readProject file' = do
 loadProject :: Project -> IO Project
 loadProject p
 	| isJust (_projectDescription p) = return p
-	| otherwise = readProject (_projectCabal p ^. path)
+	| otherwise = do
+		p' <- readProject (_projectCabal p ^. path)
+		return $ set projectBuildTool (view projectBuildTool p) p'
 
 -- | Extensions for target
 withExtensions :: a -> Info -> Extensions a

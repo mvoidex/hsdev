@@ -190,7 +190,7 @@ inspectDocs opts m = do
 	let
 		hdocsWorkaround = False
 	pdbs <- case view (moduleId . moduleLocation) m of
-		FileModule fpath _ -> searchPackageDbStack fpath
+		FileModule fpath mproj -> searchPackageDbStack (maybe CabalTool (view projectBuildTool) mproj) fpath
 		InstalledModule{} -> return userDb
 		_ -> return userDb
 	docsMap <- if hdocsWorkaround

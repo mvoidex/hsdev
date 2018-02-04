@@ -10,7 +10,7 @@ module HsDev.Database.Update (
 
 	postStatus, updater, runTask, runTasks, runTasks_,
 
-	scanModules, scanFile, scanFiles, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory, scanContents,
+	scanModules, scanFile, scanFiles, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory,
 	scanPackageDbStackDocs, scanDocs,
 	setModTypes, inferModTypes,
 	scan,
@@ -305,7 +305,7 @@ scanCabal opts = Log.scope "cabal" $ scanPackageDbStack opts userDb
 
 -- | Prepare sandbox for scanning. This is used for stack project to build & configure.
 prepareSandbox :: UpdateMonad m => Sandbox -> m ()
-prepareSandbox sbox@(Sandbox StackWork fpath) = Log.scope "prepare" $ runTasks_ [
+prepareSandbox sbox@(Sandbox StackTool fpath) = Log.scope "prepare" $ runTasks_ [
 	runTask "building dependencies" sbox $ void $ Util.withCurrentDirectory dir $ inSessionGhc $ S.buildDeps Nothing]
 	where
 		dir = takeDirectory $ view path fpath
@@ -393,9 +393,9 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 				updater $ ms ^.. each . inspectedKey
 
 -- | Scan project file
-scanProjectFile :: UpdateMonad m => [String] -> Path -> m Project
-scanProjectFile opts cabal = runTask "scanning" cabal $ do
-	proj <- S.scanProjectFile opts cabal
+scanProjectFile :: UpdateMonad m => [String] -> BuildTool -> Path -> m Project
+scanProjectFile opts tool cabal = runTask "scanning" cabal $ do
+	proj <- fmap (set projectBuildTool tool) $ S.scanProjectFile opts cabal
 	pdbs <- inSessionGhc $ getProjectPackageDbStack proj
 	let
 		proj' = set projectPackageDbStack (Just pdbs) proj
@@ -421,17 +421,16 @@ locateProjectInfo :: UpdateMonad m => Path -> m (Maybe Project)
 locateProjectInfo cabal = liftIO (locateProject (view path cabal)) >>= traverse refineProjectInfo
 
 -- | Scan project and related package-db stack
-scanProjectStack :: UpdateMonad m => [String] -> Path -> m ()
-scanProjectStack opts cabal = do
-	proj <- scanProjectFile opts cabal
-	scanProject opts cabal
-	sbox <- liftIO $ projectSandbox (view projectPath proj)
+scanProjectStack :: UpdateMonad m => [String] -> BuildTool -> Path -> m ()
+scanProjectStack opts tool cabal = do
+	sbox <- liftIO $ projectSandbox tool cabal
 	maybe (scanCabal opts) (scanSandbox opts) sbox
+	scanProject opts tool cabal
 
 -- | Scan project
-scanProject :: UpdateMonad m => [String] -> Path -> m ()
-scanProject opts cabal = runTask "scanning" (project $ view path cabal) $ Log.scope "project" $ do
-	proj <- scanProjectFile opts cabal
+scanProject :: UpdateMonad m => [String] -> BuildTool -> Path -> m ()
+scanProject opts tool cabal = runTask "scanning" (project $ view path cabal) $ Log.scope "project" $ do
+	proj <- scanProjectFile opts tool cabal
 	watch (\w -> watchProject w proj opts)
 	S.ScanContents _ [(_, sources)] _ <- S.enumProject proj
 	let
@@ -454,23 +453,12 @@ scanProject opts cabal = runTask "scanning" (project $ view path cabal) $ Log.sc
 scanDirectory :: UpdateMonad m => [String] -> Path -> m ()
 scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 	S.ScanContents standSrcs projSrcs pdbss <- S.enumDirectory (view path dir)
-	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs]
+	runTasks_ [scanProject opts CabalTool (view projectCabal p) | (p, _) <- projSrcs]
 	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	let
 		standaloneMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.cabal is null and m.file is not null and m.file like ? escape '\\';" (SQLite.Only $ SQLite.escapeLike dir `T.append` "%")
 	scan standaloneMods standSrcs opts $ scanModules opts
-
-scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()
-scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
-	projs <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select cabal from projects;"
-	pdbs <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select package_db from package_dbs;"
-	let
-		filesMods = SQLite.query_ "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal is null;"
-	runTasks_ [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
-	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
-	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
-	scan filesMods standSrcs opts $ scanModules opts
 
 -- | Scan installed docs
 scanPackageDbStackDocs :: UpdateMonad m => [String] -> PackageDbStack -> m ()
@@ -592,7 +580,7 @@ updateEvents updates = Log.scope "updater" $ do
 			| isCabal e -> do
 				Log.sendLog Log.Info $ "Project {proj} changed"
 					~~ ("proj" ~% view projectName proj)
-				scanProject projOpts $ view projectCabal proj
+				scanProject projOpts (view projectBuildTool proj) (view projectCabal proj)
 				return []
 			| otherwise -> return []
 		WatchedPackageDb pdbs opts

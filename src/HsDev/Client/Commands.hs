@@ -86,8 +86,10 @@ runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
 		[Update.scanCabal ghcs' | cabal],
 		map (Update.scanSandbox ghcs') sboxes',
 		[Update.scanFiles (zip fs (repeat ghcs'))],
-		map (Update.scanProject ghcs') projs,
+		map (Update.scanProject ghcs' CabalTool) projs,
 		map (Update.scanDirectory ghcs') paths']
+runCommand (ScanProject proj tool deps) = toValue $ updateProcess def [
+	(if deps then Update.scanProjectStack else Update.scanProject) [] tool proj]
 runCommand (SetFileContents f mcts) = toValue $ serverSetFileContents f mcts
 runCommand (RefineDocs projs fs)
 	| HDocs.hdocsSupported = toValue $ do

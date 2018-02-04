@@ -190,24 +190,16 @@ instance FromRow Sandbox where
 	fromRow = Sandbox <$> field <*> field
 
 instance ToRow Project where
-	toRow (Project name _ cabal pdesc s dbs) = concat [
-		[toField name, toField cabal, toField $ pdesc ^? _Just . projectVersion],
-		maybe [SQLNull, SQLNull] toRow s,
-		[toField dbs]]
+	toRow (Project name _ cabal pdesc t dbs) = [toField name, toField cabal, toField $ pdesc ^? _Just . projectVersion, toField t, toField dbs]
 
 instance FromRow Project where
 	fromRow = do
 		name <- field
 		cabal <- field
 		ver <- field
-		msboxType <- field
-		msboxPath <- field
+		tool <- field
 		dbs <- field
-		sbox <- case (msboxType, msboxPath) of
-			(Nothing, Nothing) -> return Nothing
-			(Just sboxType, Just sboxPath) -> return $ Just $ Sandbox sboxType sboxPath
-			_ -> fail $ "invalid sandbox, both field must be null or not null, but have: type={}, path={}" ~~ maybe "null" display msboxType ~~ fromMaybe "null" msboxPath
-		return $ Project name (takeDir cabal) cabal (fmap (\v -> ProjectDescription v Nothing [] []) ver) sbox dbs
+		return $ Project name (takeDir cabal) cabal (fmap (\v -> ProjectDescription v Nothing [] []) ver) tool dbs
 
 instance FromRow Library where
 	fromRow = do
