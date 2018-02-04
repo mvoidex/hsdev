@@ -46,6 +46,7 @@ import Text.Format ((~~))
 
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
+import Data.LookupTable
 import System.Directory.Paths
 import qualified System.Directory.Watcher as Watcher
 
@@ -112,6 +113,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 							writeChan (W.watcherChan watcher) (W.WatchedModule, W.Event W.Modified (view path fpath) tm)
 
 		uw <- startWorker (withSession sess . withSqlConnection) id logAll
+		resolveEnvTable <- newLookupTable
 
 		return $ Session
 			sqlDb
@@ -124,6 +126,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 #endif
 			ghcw
 			uw
+			resolveEnvTable
 			(do
 				withLog (sessionLogger slog) $ Log.sendLog Log.Trace "stopping server"
 				signalQSem waitSem)

@@ -40,10 +40,12 @@ import Options.Applicative
 import System.Log.Simple as Log
 
 import Control.Concurrent.Worker
+import Data.LookupTable
 import System.Directory.Paths
 import Text.Format (Formattable(..))
 
 import HsDev.Error (hsdevError)
+import HsDev.Inspect.Types
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
 import HsDev.Tools.Ghc.Worker (GhcWorker, GhcM)
@@ -74,6 +76,7 @@ data Session = Session {
 #endif
 	sessionGhc :: GhcWorker,
 	sessionUpdater :: Worker (ServerM IO),
+	sessionResolveEnvironment :: LookupTable (Maybe Path) (Environment, FixitiesTable),
 	sessionExit :: IO (),
 	sessionWait :: IO (),
 	sessionClients :: F.Chan (IO ()),

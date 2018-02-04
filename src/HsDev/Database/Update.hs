@@ -29,12 +29,12 @@ import qualified Control.Concurrent.Async as A
 import Control.Concurrent.MVar
 import Control.DeepSeq
 import Control.Exception (ErrorCall, evaluate, displayException)
-import Control.Lens hiding ((.=))
+import Control.Lens
 import Control.Monad.Catch (catch, handle, MonadThrow, bracket_)
 import Control.Monad.Except
 import Control.Monad.Reader
 import Control.Monad.Writer
-import Control.Monad.State (get, modify, evalStateT)
+import Control.Monad.State (get, modify, runStateT)
 import Data.Aeson
 import Data.List (intercalate)
 import Data.String (fromString)
@@ -57,7 +57,7 @@ import HsDev.Project
 import HsDev.Sandbox
 import qualified HsDev.Stack as S
 import HsDev.Symbols
-import HsDev.Tools.Ghc.Session hiding (Session, wait, evaluate)
+import HsDev.Tools.Ghc.Session hiding (Session, evaluate)
 import HsDev.Tools.Ghc.Types (fileTypes, TypedExpr)
 import HsDev.Tools.Types
 import HsDev.Tools.HDocs
@@ -222,7 +222,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 				runInspect mloc $ withInspection (return inspection') $ dirtyTag' $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mcts'
 
 		ploaded <- runTasks (map pload ms')
-		sendUpdateAction $ Log.scope "preloaded" $ transact $ mapM_ SQLite.upsertModule $ map (fmap (view asModule)) ploaded
+		mapM_ (SQLite.upsertModule . fmap (view asModule)) ploaded
 		let
 			mlocs' = ploaded ^.. each . inspected . preloadedId . moduleLocation
 
@@ -231,14 +231,14 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		let
 			mcabal = mproj ^? _Just . projectCabal
 
-		env <- loadEnvironment mcabal
-		fixities <- loadFixities mcabal
+		(env, fixities) <- loadEnv mcabal
 
 		Log.sendLog Log.Trace $ "resolved environment: {} modules" ~~ M.size env
 		case orderBy (preview inspected) ploaded of
 			Left err -> Log.sendLog Log.Error ("failed order dependencies for files: {}" ~~ show err)
 			Right ordered -> do
-				ms'' <- flip evalStateT (env, fixities) $ runTasks (map inspect' ordered)
+				(ms'', (updEnv, updFixities)) <- flip runStateT (env, fixities) $ runTasks (map inspect' ordered)
+				saveEnv mcabal updEnv updFixities
 				mlocs'' <- timer "updated scanned modules" $ do
 					Log.sendLog Log.Trace $ case mproj of
 						Just proj -> "inserting data for resolved modules of project: {}" ~~ proj
@@ -290,7 +290,7 @@ scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ h
 	let
 		filesMods = liftM concat $ forM fpaths' $ \fpath' -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file == ?;" (SQLite.Only fpath')
 	scan filesMods [(mloc, opts, mcts) | (mloc, (FileSource _ mcts, opts)) <- zip mlocs fsrcs] [] $ \mlocs' -> do
-		mapM_ (watch . flip watchModule) (map (view _1) mlocs')
+		mapM_ ((watch . flip watchModule) . view _1) mlocs'
 		S.ScanContents dmods _ _ <- fmap mconcat $ mapM (S.enumDependent . view (_1 . moduleFile . path)) mlocs'
 		Log.sendLog Log.Trace $ "dependent modules: {}" ~~ length dmods
 		scanModules [] (mlocs' ++ dmods)
@@ -330,7 +330,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 
 	pkgs <- SQLite.query "select package_name, package_version from package_dbs where package_db == ?;" (SQLite.Only $ topPackageDb pdbs)
 	if S.fromList packages' == S.fromList pkgs
-		then Log.sendLog Log.Trace $ "nothing changes, all packages the same"
+		then Log.sendLog Log.Trace "nothing changes, all packages the same"
 		else do
 			mlocs <- liftM
 				(filter (`S.member` packageDbMods)) $
@@ -361,7 +361,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 
 	pkgs <- liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select package_name, package_version from package_dbs where package_db == ?;" (SQLite.Only pdb)
 	if S.fromList packages' == S.fromList pkgs
-		then Log.sendLog Log.Trace $ "nothing changes, all packages the same"
+		then Log.sendLog Log.Trace "nothing changes, all packages the same"
 		else do
 			mlocs <- liftM
 				(filter (`S.member` packageDbMods)) $
@@ -405,7 +405,7 @@ scanProjectFile opts cabal = runTask "scanning" cabal $ do
 -- | Refine project info and update if necessary
 refineProjectInfo :: UpdateMonad m => Project -> m Project
 refineProjectInfo proj = do
-	[(SQLite.Only exist)] <- SQLite.query "select count(*) > 0 from projects where cabal == ?;" (SQLite.Only (proj ^. projectCabal))
+	[SQLite.Only exist] <- SQLite.query "select count(*) > 0 from projects where cabal == ?;" (SQLite.Only (proj ^. projectCabal))
 	if exist
 		then SQLite.loadProject (proj ^. projectCabal)
 		else runTask "scanning" (proj ^. projectCabal) $ do
@@ -436,8 +436,7 @@ scanProject opts cabal = runTask "scanning" (project $ view path cabal) $ Log.sc
 	S.ScanContents _ [(_, sources)] _ <- S.enumProject proj
 	let
 		projMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal == ?;" (SQLite.Only $ proj ^. projectCabal)
-	scan projMods sources opts $ \mlocs' -> do
-		scanModules opts mlocs'
+	scan projMods sources opts $ scanModules opts
 
 		-- Scan docs
 		-- inSessionGhc $ do
@@ -486,13 +485,13 @@ scanPackageDbStackDocs opts pdbs
 			(nm, doc) <- M.toList mdocs
 			return (doc, nm, mname, pname, pver)
 		Log.sendLog Log.Trace "docs set"
-	| otherwise = Log.sendLog Log.Warning $ "hdocs not supported"
+	| otherwise = Log.sendLog Log.Warning "hdocs not supported"
 
 -- | Scan docs for inspected modules
 scanDocs :: UpdateMonad m => [Module] -> m ()
 scanDocs
 	| hdocsSupported = runTasks_ . map scanDocs'
-	| otherwise = const $ Log.sendLog Log.Warning $ "hdocs not supported"
+	| otherwise = const $ Log.sendLog Log.Warning "hdocs not supported"
 	where
 		scanDocs' m = runTask "scanning docs" (view (moduleId . moduleLocation) m) $ Log.scope "docs" $ do
 			mid <- SQLite.lookupModule (m ^. moduleId)
@@ -544,7 +543,7 @@ inferModTypes = runTasks_ . map inferModTypes' where
 
 -- | Generic scan function. Removed obsolete modules and calls callback on changed modules.
 scan :: UpdateMonad m
-	=> m [(SQLite.Only Int) SQLite.:. ModuleLocation SQLite.:. Inspection]
+	=> m [SQLite.Only Int SQLite.:. ModuleLocation SQLite.:. Inspection]
 	-- ^ Get affected modules, obsolete will be removed, changed will be updated
 	-> [S.ModuleToScan]
 	-- ^ Actual modules, other will be removed
@@ -554,7 +553,7 @@ scan :: UpdateMonad m
 	-- ^ Update function
 	-> m ()
 scan part' mlocs opts act = Log.scope "scan" $ do
-	mlocs' <- liftM (M.fromList . map (\((SQLite.Only mid) SQLite.:. (m SQLite.:. i)) -> (m, (mid, i)))) part'
+	mlocs' <- liftM (M.fromList . map (\(SQLite.Only mid SQLite.:. (m SQLite.:. i)) -> (m, (mid, i)))) part'
 	let
 		obsolete = M.filterWithKey (\k _ -> k `S.notMember` S.fromList (map (^. _1) mlocs)) mlocs'
 	changed <- S.changedModules (M.map snd mlocs') opts mlocs

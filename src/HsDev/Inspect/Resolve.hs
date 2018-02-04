@@ -2,6 +2,7 @@
 
 module HsDev.Inspect.Resolve (
 	-- * Prepare
+	loadEnv, saveEnv,
 	loadEnvironment, loadFixities, withEnv,
 	-- * Resolving
 	resolveModule, resolvePreloaded, resolve,
@@ -34,6 +35,7 @@ import qualified Language.Haskell.Names.SyntaxUtils as N
 import System.Log.Simple
 import Text.Format
 
+import Data.LookupTable
 import System.Directory.Paths
 import HsDev.Database.SQLite as SQLite
 import qualified HsDev.Display as Display
@@ -87,6 +89,18 @@ resolve env m = Resolved {
 		decls' = map (N.annotateDecl (N.initialScope (N.dropAnn mn) tbl)) decls
 		mn = N.getModuleName m
 
+-- | Load environment and fixities from cache or sql
+loadEnv :: SessionMonad m => Maybe Path -> m (Environment, FixitiesTable)
+loadEnv mcabal = do
+	envTable <- askSession sessionResolveEnvironment
+	cacheInTableM envTable mcabal $ (,) <$> loadEnvironment mcabal <*> loadFixities mcabal
+
+-- | Save environment and fixities to cache
+saveEnv :: SessionMonad m => Maybe Path -> Environment -> FixitiesTable -> m ()
+saveEnv mcabal env fixities = do
+	envTable <- askSession sessionResolveEnvironment
+	void $ lookupTable mcabal (env, fixities) envTable
+
 -- | Load environment from sql
 loadEnvironment :: SessionMonad m => Maybe Path -> m Environment
 loadEnvironment mcabal = transaction_ Deferred $ do
@@ -125,12 +139,21 @@ loadFixities mcabal = transaction_ Deferred $ do
 
 -- | Run with temporary table for environment
 withEnv :: SessionMonad m => Maybe Path -> m a -> m a
-withEnv mcabal = withTemporaryTable "env" ["module text not null", "name text not null", "what text not null", "id integer not null"] . (initEnv >>) where
-	initEnv = transaction_ Immediate $ do
-		execute_ "create unique index env_id_index on env (id);"
-		execute_ "create unique index env_symbol_index on env (module, name, what);"
-		executeNamed "insert into env select m.name, s.name, s.what, min(s.id) from modules as m, symbols as s where m.id = s.module_id and s.id in (select distinct e.symbol_id from exports as e where e.module_id in (select ps.module_id from projects_modules_scope as ps where ps.cabal is :cabal)) group by m.name, s.name, s.what;" [
-			":cabal" := mcabal]
+withEnv mcabal = (initEnv >>) where
+	initEnv = do
+		execute_ "create temporary table if not exists resolve (cabal text);"
+		execute_ "create temporary table if not exists env (module text not null, name text not null, what text not null, id integer not null);"
+		execute_ "create unique index if not exists env_id_index on env (id);"
+		execute_ "create unique index if not exists env_symbol_index on env (module, name, what);"
+
+		curEnv <- query_ "select cabal from resolve;"
+		unless (fmap fromOnly (listToMaybe curEnv) == Just mcabal) $ do
+			execute_ "delete from resolve;"
+			execute "insert into resolve values (?);" (Only mcabal)
+			execute_ "delete from env;"
+			executeNamed "insert into env select m.name, s.name, s.what, min(s.id) from modules as m, symbols as s where m.id = s.module_id and s.id in (select distinct e.symbol_id from exports as e where e.module_id in (select ps.module_id from projects_modules_scope as ps where ps.cabal is :cabal)) group by m.name, s.name, s.what;" [
+				":cabal" := mcabal]
+
 		[Only cnt] <- query_ @(Only Int) "select count(*) from env;"
 		sendLog Trace $ "created env table with {} symbols" ~~ cnt
 
