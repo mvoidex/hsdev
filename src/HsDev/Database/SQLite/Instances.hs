@@ -76,11 +76,12 @@ instance FromRow ModuleLocation where
 		pname <- field
 		pver <- field
 		iname <- field
+		iexposed <- field
 		other <- field
 
-		maybe (fail $ "Can't parse module location: {}" ~~ show (file, cabal, dirs, pname, pver, iname, other)) return $ msum [
+		maybe (fail $ "Can't parse module location: {}" ~~ show (file, cabal, dirs, pname, pver, iname, iexposed, other)) return $ msum [
 			FileModule <$> file <*> pure (project <$> cabal),
-			InstalledModule <$> maybe (pure []) fromJSON' dirs <*> (ModulePackage <$> pname <*> pver) <*> iname,
+			InstalledModule <$> maybe (pure []) fromJSON' dirs <*> (ModulePackage <$> pname <*> pver) <*> iname <*> iexposed,
 			OtherLocation <$> other,
 			pure NoLocation]
 
@@ -92,6 +93,7 @@ instance ToRow ModuleLocation where
 		toField $ mloc ^? modulePackage . packageName,
 		toField $ mloc ^? modulePackage . packageVersion,
 		toField $ mloc ^? installedModuleName,
+		toField $ mloc ^? installedModuleExposed,
 		toField $ mloc ^? otherLocationName]
 
 instance FromRow ModuleId where

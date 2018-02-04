@@ -170,7 +170,7 @@ getModuleOpts :: [String] -> Module -> GhcM (PackageDbStack, [String])
 getModuleOpts opts m = do
 	pdbs <- case view (moduleId . moduleLocation) m of
 		FileModule fpath _ -> searchPackageDbStack fpath
-		InstalledModule _ _ _ -> return userDb
+		InstalledModule{} -> return userDb
 		_ -> return userDb
 	pkgs <- browsePackages opts pdbs
 	return $ (pdbs, concat [

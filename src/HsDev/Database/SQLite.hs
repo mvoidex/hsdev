@@ -257,11 +257,11 @@ upsertModule im = scope "upsert-module" $ do
 	mmid <- lookupModuleLocation (im ^. inspectedKey)
 	case mmid of
 		Nothing -> do
-			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				moduleData
 			lastRow
 		Just mid' -> do
-			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
+			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, exposed = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
 				(moduleData :. Only mid')
 			return mid'
 	where
@@ -272,6 +272,7 @@ upsertModule im = scope "upsert-module" $ do
 			im ^? inspectedKey . modulePackage . packageName,
 			im ^? inspectedKey . modulePackage . packageVersion,
 			im ^? inspectedKey . installedModuleName,
+			im ^? inspectedKey . installedModuleExposed,
 			im ^? inspectedKey . otherLocationName)
 			:. (
 			msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
@@ -285,10 +286,10 @@ upsertModule im = scope "upsert-module" $ do
 
 upsertModules :: SessionMonad m => [InspectedModule] -> m [Int]
 upsertModules ims = scope "upsert-modules" $ bracket_ initTemp removeTemp $ do
-	executeMany "insert into upserted_modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ map moduleData ims
+	executeMany "insert into upserted_modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ map moduleData ims
 	execute_ "update upserted_modules set id = (select m.id from modules as m where (m.file = upserted_modules.file) or ((m.package_name = upserted_modules.package_name) and (m.package_version = upserted_modules.package_version) and (m.installed_name = upserted_modules.installed_name)) or (m.other_location = upserted_modules.other_location));"
-	execute_ "insert or replace into modules (id, file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select id, file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is not null;"
-	execute_ "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is null;"
+	execute_ "insert or replace into modules (id, file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select id, file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is not null;"
+	execute_ "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is null;"
 	execute_ "update upserted_modules set id = (select m.id from modules as m where (m.file = upserted_modules.file) or ((m.package_name = upserted_modules.package_name) and (m.package_version = upserted_modules.package_version) and (m.installed_name = upserted_modules.installed_name)) or (m.other_location = upserted_modules.other_location)) where id is null;"
 
 	execute_ "delete from imports where module_id in (select id from upserted_modules);"
@@ -315,6 +316,7 @@ upsertModules ims = scope "upsert-modules" $ bracket_ initTemp removeTemp $ do
 			im ^? inspectedKey . modulePackage . packageName,
 			im ^? inspectedKey . modulePackage . packageVersion,
 			im ^? inspectedKey . installedModuleName,
+			im ^? inspectedKey . installedModuleExposed,
 			im ^? inspectedKey . otherLocationName)
 			:. (
 			msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
@@ -444,7 +446,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 		symbolsColumns :: [String]
 		symbolsColumns = [
 			"name", "module_name",
-			"file", "cabal", "install_dirs", "package_name", "package_version", "installed_name", "other_location",
+			"file", "cabal", "install_dirs", "package_name", "package_version", "installed_name", "exposed", "other_location",
 			"docs",
 			"line", "column",
 			"what", "type", "parent", "constructors", "args", "context", "associate", "pat_type", "pat_constructor"]
@@ -472,7 +474,7 @@ insertModuleSymbols im = scope "insert-module-symbols" $ do
 
 		insertMissingModules :: SessionMonad m => String -> m ()
 		insertMissingModules tableName = scope "insert-missing-modules" $ do
-			execute_ (fromString ("insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name) select distinct file, cabal, install_dirs, package_name, package_version, installed_name, other_location, module_name from {} where module_id is null;" ~~ tableName))
+			execute_ (fromString ("insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name) select distinct file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, module_name from {} where module_id is null;" ~~ tableName))
 			updateModuleIds tableName
 
 		insertMissingSymbols :: SessionMonad m => String -> m ()

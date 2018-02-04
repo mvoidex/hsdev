@@ -1,7 +1,8 @@
 {-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
 
 module HsDev.Symbols.Location (
-	ModulePackage(..), mkPackage, PackageConfig(..), ModuleLocation(..), locationId, noLocation,
+	ModulePackage(..), mkPackage, PackageConfig(..),
+	ModuleLocation(..), locationId, noLocation,
 	ModuleId(..), moduleName, moduleLocation,
 	SymbolId(..), symbolName, symbolModule,
 	Position(..), Region(..), region, regionAt, regionLines, regionStr,
@@ -9,7 +10,7 @@ module HsDev.Symbols.Location (
 
 	packageName, packageVersion,
 	package, packageModules, packageExposed,
-	moduleFile, moduleProject, moduleInstallDirs, modulePackage, installedModuleName, otherLocationName,
+	moduleFile, moduleProject, moduleInstallDirs, modulePackage, installedModuleName, installedModuleExposed, otherLocationName,
 	positionLine, positionColumn,
 	regionFrom, regionTo,
 	locationModule, locationPosition,
@@ -104,13 +105,13 @@ instance FromJSON PackageConfig where
 -- | Location of module
 data ModuleLocation =
 	FileModule { _moduleFile :: Path, _moduleProject :: Maybe Project } |
-	InstalledModule { _moduleInstallDirs :: [Path], _modulePackage :: ModulePackage, _installedModuleName :: Text } |
+	InstalledModule { _moduleInstallDirs :: [Path], _modulePackage :: ModulePackage, _installedModuleName :: Text, _installedModuleExposed :: Bool } |
 	OtherLocation { _otherLocationName :: Text } |
 	NoLocation
 
 instance Eq ModuleLocation where
 	FileModule lfile _ == FileModule rfile _ = lfile == rfile
-	InstalledModule ldirs _ lname == InstalledModule rdirs _ rname = ldirs == rdirs && lname == rname
+	InstalledModule ldirs _ lname _ == InstalledModule rdirs _ rname _ = ldirs == rdirs && lname == rname
 	OtherLocation l == OtherLocation r = l == r
 	NoLocation == NoLocation = True
 	_ == _ = False
@@ -119,11 +120,11 @@ instance Ord ModuleLocation where
 	compare l r = compare (locType l, locNames l) (locType r, locNames r) where
 		locType :: ModuleLocation -> Int
 		locType (FileModule _ _) = 0
-		locType (InstalledModule _ _ _) = 1
+		locType (InstalledModule _ _ _ _) = 1
 		locType (OtherLocation _) = 2
 		locType NoLocation = 3
 		locNames (FileModule f _) = [f]
-		locNames (InstalledModule dirs _ nm) = nm : dirs
+		locNames (InstalledModule dirs _ nm _) = nm : dirs
 		locNames (OtherLocation n) = [n]
 		locNames NoLocation = []
 
@@ -131,13 +132,13 @@ makeLenses ''ModuleLocation
 
 locationId :: ModuleLocation -> Text
 locationId (FileModule fpath _) = fpath
-locationId (InstalledModule dirs mpack nm) = T.intercalate ":" (take 1 dirs ++ [pack (show mpack), nm])
+locationId (InstalledModule dirs mpack nm _) = T.intercalate ":" (take 1 dirs ++ [pack (show mpack), nm])
 locationId (OtherLocation src) = src
 locationId NoLocation = "<no-location>"
 
 instance NFData ModuleLocation where
 	rnf (FileModule f p) = rnf f `seq` rnf p
-	rnf (InstalledModule d p n) = rnf d `seq` rnf p `seq` rnf n
+	rnf (InstalledModule d p n e) = rnf d `seq` rnf p `seq` rnf n `seq` rnf e
 	rnf (OtherLocation s) = rnf s
 	rnf NoLocation = ()
 
@@ -146,7 +147,7 @@ instance Show ModuleLocation where
 
 instance Display ModuleLocation where
 	display (FileModule f _) = display f
-	display (InstalledModule _ _ n) = view unpacked n
+	display (InstalledModule _ _ n _) = view unpacked n
 	display (OtherLocation s) = view unpacked s
 	display NoLocation = "<no-location>"
 	displayType _ = "module"
@@ -156,14 +157,14 @@ instance Formattable ModuleLocation where
 
 instance ToJSON ModuleLocation where
 	toJSON (FileModule f p) = object $ noNulls ["file" .= f, "project" .= fmap (view projectCabal) p]
-	toJSON (InstalledModule c p n) = object $ noNulls ["dirs" .= c, "package" .= show p, "name" .= n]
+	toJSON (InstalledModule c p n e) = object $ noNulls ["dirs" .= c, "package" .= show p, "name" .= n, "exposed" .= e]
 	toJSON (OtherLocation s) = object ["source" .= s]
 	toJSON NoLocation = object []
 
 instance FromJSON ModuleLocation where
 	parseJSON = withObject "module location" $ \v ->
 		(FileModule <$> v .:: "file" <*> (fmap project <$> (v .::? "project"))) <|>
-		(InstalledModule <$> v .::?! "dirs" <*> (readPackage =<< (v .:: "package")) <*> v .:: "name") <|>
+		(InstalledModule <$> v .::?! "dirs" <*> (readPackage =<< (v .:: "package")) <*> v .:: "name" <*> v .:: "exposed") <|>
 		(OtherLocation <$> v .:: "source") <|>
 		(pure NoLocation)
 		where
@@ -171,7 +172,7 @@ instance FromJSON ModuleLocation where
 
 instance Paths ModuleLocation where
 	paths f (FileModule fpath p) = FileModule <$> paths f fpath <*> traverse (paths f) p
-	paths f (InstalledModule c p n) = InstalledModule <$> traverse (paths f) c <*> pure p <*> pure n
+	paths f (InstalledModule c p n e) = InstalledModule <$> traverse (paths f) c <*> pure p <*> pure n <*> pure e
 	paths _ (OtherLocation s) = pure $ OtherLocation s
 	paths _ NoLocation = pure NoLocation
 

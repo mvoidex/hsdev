@@ -288,7 +288,7 @@ scanFiles fsrcs = runTask "scanning" ("files" :: String) $ Log.scope "files" $ h
 				mproj <- locateProjectInfo fpath'
 				return $ FileModule fpath' mproj
 	let
-		filesMods = liftM concat $ forM fpaths' $ \fpath' -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file == ?;" (SQLite.Only fpath')
+		filesMods = liftM concat $ forM fpaths' $ \fpath' -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file == ?;" (SQLite.Only fpath')
 	scan filesMods [(mloc, opts, mcts) | (mloc, (FileSource _ mcts, opts)) <- zip mlocs fsrcs] [] $ \mlocs' -> do
 		mapM_ ((watch . flip watchModule) . view _1) mlocs'
 		S.ScanContents dmods _ _ <- fmap mconcat $ mapM (S.enumDependent . view (_1 . moduleFile . path)) mlocs'
@@ -337,7 +337,7 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 				(inSessionGhc $ listModules opts pdbs packages')
 			Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
 			let
-				packageDbMods' = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only (topPackageDb pdbs))
+				packageDbMods' = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only (topPackageDb pdbs))
 			scan packageDbMods' ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
@@ -368,7 +368,7 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 				(inSessionGhc $ listModules opts pdbs packages')
 			Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
 			let
-				packageDbStackMods = liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only pdb)
+				packageDbStackMods = liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only pdb)
 			scan packageDbStackMods ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
@@ -435,7 +435,7 @@ scanProject opts cabal = runTask "scanning" (project $ view path cabal) $ Log.sc
 	watch (\w -> watchProject w proj opts)
 	S.ScanContents _ [(_, sources)] _ <- S.enumProject proj
 	let
-		projMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal == ?;" (SQLite.Only $ proj ^. projectCabal)
+		projMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal == ?;" (SQLite.Only $ proj ^. projectCabal)
 	scan projMods sources opts $ scanModules opts
 
 		-- Scan docs
@@ -458,7 +458,7 @@ scanDirectory opts dir = runTask "scanning" dir $ Log.scope "directory" $ do
 	runTasks_ $ map (scanPackageDb opts) pdbss -- TODO: Don't rescan
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs
 	let
-		standaloneMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.cabal is null and m.file is not null and m.file like ? escape '\\';" (SQLite.Only $ SQLite.escapeLike dir `T.append` "%")
+		standaloneMods = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.cabal is null and m.file is not null and m.file like ? escape '\\';" (SQLite.Only $ SQLite.escapeLike dir `T.append` "%")
 	scan standaloneMods standSrcs opts $ scanModules opts
 
 scanContents :: UpdateMonad m => [String] -> S.ScanContents -> m ()
@@ -466,7 +466,7 @@ scanContents opts (S.ScanContents standSrcs projSrcs pdbss) = do
 	projs <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select cabal from projects;"
 	pdbs <- liftM (map SQLite.fromOnly) $ SQLite.query_ "select package_db from package_dbs;"
 	let
-		filesMods = SQLite.query_ "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal is null;"
+		filesMods = SQLite.query_ "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m where m.file is not null and m.cabal is null;"
 	runTasks_ [scanPackageDb opts pdbs' | pdbs' <- pdbss, topPackageDb pdbs' `notElem` pdbs]
 	runTasks_ [scanProject opts (view projectCabal p) | (p, _) <- projSrcs, view projectCabal p `notElem` projs]
 	mapMOf_ (each . _1) (watch . flip watchModule) standSrcs

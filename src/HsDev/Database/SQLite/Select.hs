@@ -54,6 +54,7 @@ qSymbolId = mconcat [
 		"m.package_name",
 		"m.package_version",
 		"m.installed_name",
+		"m.exposed",
 		"m.other_location"],
 	from_ ["modules as m", "symbols as s"],
 	where_ ["m.id == s.module_id"]]
@@ -84,6 +85,7 @@ qModuleLocation ml = template ["ml" ~% ml] [
 		"{ml}.package_name",
 		"{ml}.package_version",
 		"{ml}.installed_name",
+		"{ml}.exposed",
 		"{ml}.other_location"],
 	from_ ["modules as {ml}"]]
 
@@ -97,6 +99,7 @@ qModuleId = mconcat [
 		"mu.package_name",
 		"mu.package_version",
 		"mu.installed_name",
+		"mu.exposed",
 		"mu.other_location"],
 	from_ ["modules as mu"],
 	where_ ["mu.name is not null"]]

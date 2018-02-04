@@ -191,7 +191,7 @@ inspectDocs opts m = do
 		hdocsWorkaround = False
 	pdbs <- case view (moduleId . moduleLocation) m of
 		FileModule fpath _ -> searchPackageDbStack fpath
-		InstalledModule _ _ _ -> return userDb
+		InstalledModule{} -> return userDb
 		_ -> return userDb
 	docsMap <- if hdocsWorkaround
 		then liftIO $ hdocsProcess (fromMaybe (T.unpack $ view (moduleId . moduleName) m) (preview (moduleId . moduleLocation . moduleFile . path) m)) opts

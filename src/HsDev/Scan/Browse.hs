@@ -71,7 +71,7 @@ listModules :: [String] -> PackageDbStack -> [ModulePackage] -> GhcM [ModuleLoca
 listModules opts dbs pkgs = do
 	tmpSession dbs (opts ++ packagesOpts)
 	ms <- packageDbModules
-	return [ghcModuleLocation p m | (p, m) <- ms]
+	return [ghcModuleLocation p m e | (p, m, e) <- ms]
 	where
 		packagesOpts = ["-package " ++ show p | p <- pkgs]
 
@@ -90,19 +90,19 @@ browseModules' opts mlocs = do
 	midTbl <- newLookupTable
 	sidTbl <- newLookupTable
 	let
-		lookupModuleId p' m' = lookupTable (ghcModuleLocation p' m') (ghcModuleId p' m') midTbl
-	liftM catMaybes $ sequence [browseModule' lookupModuleId (cacheInTableM sidTbl) p m | (p, m) <- ms, ghcModuleLocation p m `S.member` mlocs']
+		lookupModuleId p' m' e' = lookupTable (ghcModuleLocation p' m' e') (ghcModuleId p' m' e') midTbl
+	liftM catMaybes $ sequence [browseModule' lookupModuleId (cacheInTableM sidTbl) p m e | (p, m, e) <- ms, ghcModuleLocation p m e `S.member` mlocs']
 	where
-		browseModule' :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM (Maybe InspectedModule)
-		browseModule' modId' sym' p m = tryT $ runInspect (ghcModuleLocation p m) $ inspect_ (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m)
+		browseModule' :: (GHC.PackageConfig -> GHC.Module -> Bool -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> Bool -> GhcM (Maybe InspectedModule)
+		browseModule' modId' sym' p m e = tryT $ runInspect (ghcModuleLocation p m e) $ inspect_ (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m e)
 		mlocs' = S.fromList mlocs
 
-browseModule :: (GHC.PackageConfig -> GHC.Module -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> GhcM Module
-browseModule modId lookSym package' m = do
+browseModule :: (GHC.PackageConfig -> GHC.Module -> Bool -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> Bool -> GhcM Module
+browseModule modId lookSym package' m exposed' = do
 	df <- GHC.getSessionDynFlags
 	mi <- GHC.getModuleInfo m >>= maybe (hsdevError $ BrowseNoModuleInfo thisModule) return
 	ds <- mapM (\n -> lookSym n (toDecl df mi n)) (GHC.modInfoExports mi)
-	myModId <- modId package' m
+	myModId <- modId package' m exposed'
 	let
 		dirAssoc GHC.InfixL = AssocLeft ()
 		dirAssoc GHC.InfixR = AssocRight ()
@@ -121,7 +121,7 @@ browseModule modId lookSym package' m = do
 		mloc df m' = do
 			pkg' <- maybe (hsdevError $ OtherError $ "Error getting module package: " ++ GHC.moduleNameString (GHC.moduleName m')) return $
 				GHC.lookupPackage df (moduleUnitId m')
-			modId pkg' m'
+			modId pkg' m' (GHC.moduleName m `notElem` GHC.hiddenModules pkg')
 		toDecl df minfo n = do
 			tyInfo <- GHC.modInfoLookupName minfo n
 			tyResult <- maybe (GHC.lookupName n) (return . Just) tyInfo
@@ -174,23 +174,23 @@ readPackageConfig pc = PackageConfig
 	(map (fromString . GHC.moduleNameString . Compat.exposedModuleName) $ GHC.exposedModules pc)
 	(GHC.exposed pc)
 
-ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> ModuleLocation
+ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> Bool -> ModuleLocation
 ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
 
-ghcModuleId :: GHC.PackageConfig -> GHC.Module -> ModuleId
-ghcModuleId p m = ModuleId (fromString mname') (ghcModuleLocation p m) where
+ghcModuleId :: GHC.PackageConfig -> GHC.Module -> Bool -> ModuleId
+ghcModuleId p m e = ModuleId (fromString mname') (ghcModuleLocation p m e) where
 	mname' = GHC.moduleNameString $ GHC.moduleName m
 
 packageConfigs :: GhcM [GHC.PackageConfig]
 packageConfigs = liftM (fromMaybe [] . pkgDatabase) GHC.getSessionDynFlags
 
-packageDbModules :: GhcM [(GHC.PackageConfig, GHC.Module)]
+packageDbModules :: GhcM [(GHC.PackageConfig, GHC.Module, Bool)]
 packageDbModules = do
 	pkgs <- packageConfigs
 	dflags <- GHC.getSessionDynFlags
-	return [(p, m) |
+	return [(p, m, exposed') |
 		p <- pkgs,
-		mn <- map Compat.exposedModuleName (GHC.exposedModules p) ++ GHC.hiddenModules p,
+		(mn, exposed') <- zip (map Compat.exposedModuleName (GHC.exposedModules p)) (repeat True) ++ zip (GHC.hiddenModules p) (repeat False),
 		m <- lookupModule_ dflags mn]
 
 -- Lookup module everywhere

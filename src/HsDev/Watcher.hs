@@ -54,7 +54,7 @@ unwatchProject w proj = do
 unwatchModule :: Watcher -> ModuleLocation -> IO ()
 unwatchModule w (FileModule f Nothing) = void $ unwatchDir w (takeDirectory $ view path f)
 unwatchModule _ (FileModule _ (Just _)) = return ()
-unwatchModule _ (InstalledModule _ _ _) = return ()
+unwatchModule _ InstalledModule{} = return ()
 unwatchModule _ _ = return ()
 
 -- | Unwatch package-db

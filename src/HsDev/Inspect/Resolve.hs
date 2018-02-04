@@ -174,11 +174,11 @@ upsertResolved im = do
 	mmid <- lookupModuleLocation (im ^. inspectedKey)
 	case mmid of
 		Nothing -> do
-			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
+			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
 				moduleData
 			lastRow
 		Just mid' -> do
-			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
+			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, exposed = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
 				(moduleData :. Only mid')
 			return mid'
 	where
@@ -189,6 +189,7 @@ upsertResolved im = do
 			im ^? inspectedKey . modulePackage . packageName,
 			im ^? inspectedKey . modulePackage . packageVersion,
 			im ^? inspectedKey . installedModuleName,
+			im ^? inspectedKey . installedModuleExposed,
 			im ^? inspectedKey . otherLocationName)
 			:. (
 			msum [im ^? inspected . resolvedModule . moduleName_, im ^? inspectedKey . installedModuleName],

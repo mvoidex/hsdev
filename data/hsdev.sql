@@ -115,7 +115,8 @@ select pdbs.cabal, m.id
 from projects_deps as pdbs, modules as m
 where
 	(m.package_name == pdbs.package_name) and
-	(m.package_version == pdbs.package_version)
+	(m.package_version == pdbs.package_version) and
+	m.exposed
 union
 select p.cabal, m.id
 from projects as p, modules as m
@@ -126,6 +127,7 @@ from modules as m, latest_packages as ps
 where
 	(m.package_name == ps.package_name) and
 	(m.package_version == ps.package_version) and
+	m.exposed and
 	(ps.package_db in ('user-db', 'global-db'));
 
 -- symbols
@@ -161,6 +163,7 @@ create table modules (
 	package_name text, -- package name of module
 	package_version text, -- package version
 	installed_name text, -- if not null, should be equal to name
+	exposed integer, -- is module exposed or hidden
 	-- some other location
 	other_location text, -- anything
 

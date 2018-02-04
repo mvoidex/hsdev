@@ -71,7 +71,7 @@ hdocs pdbs mloc opts = (force . HDocs.formatDocs) <$> docs' mloc where
 		haddockSession pdbs opts
 		liftGhc $ case mloc' of
 			(FileModule fpath _) -> hsdevLiftWith (ToolError "hdocs") $ liftM snd $ HDocs.readSourceGhc opts (view path fpath)
-			(InstalledModule _ _ mname) -> do
+			(InstalledModule _ _ mname _) -> do
 				df <- GHC.getSessionDynFlags
 				liftIO $ hsdevLiftWith (ToolError "hdocs") $ HDocs.moduleDocsF df (T.unpack mname)
 			_ -> hsdevError $ ToolError "hdocs" $ "Can't get docs for: " ++ show mloc'

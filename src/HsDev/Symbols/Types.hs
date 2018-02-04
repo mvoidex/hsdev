@@ -8,6 +8,7 @@ module HsDev.Symbols.Types (
 	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolInfoType, symbolType, patternType, patternConstructor,
 	Scoped(..), scopeQualifier, scoped,
 	SymbolUsage(..), symbolUsed, symbolUsedQualifier, symbolUsedIn, symbolUsedRegion,
+	ImportedSymbol(..), importedSymbol, importedFrom,
 	infoOf, nullifyInfo,
 	Inspection(..), inspectionAt, inspectionOpts, fresh, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
 	InspectM(..), runInspect, continueInspect, inspect, inspect_, withInspection,
@@ -369,6 +370,24 @@ instance FromJSON SymbolUsage where
 		v .:: "in" <*>
 		v .:: "at"
 
+-- | Symbol with module it's exported from
+data ImportedSymbol = ImportedSymbol {
+	_importedSymbol :: Symbol,
+	_importedFrom :: ModuleId }
+		deriving (Eq, Ord)
+
+instance Show ImportedSymbol where
+	show (ImportedSymbol s m) = show s ++ " imported from " ++ show m
+
+instance ToJSON ImportedSymbol where
+	toJSON (ImportedSymbol s m) = objectUnion (toJSON s) $ object [
+		"imported" .= m]
+
+instance FromJSON ImportedSymbol where
+	parseJSON = withObject "imported-symbol" $ \v -> ImportedSymbol <$>
+		parseJSON (Object v) <*>
+		v .:: "imported"
+
 -- | Inspection data
 data Inspection =
 	-- | No inspection
@@ -540,7 +559,7 @@ instance Show InspectedModule where
 		showError :: HsDevError -> String
 		showError e = unlines $ ("\terror: " ++ show e) : case mi of
 			FileModule f p -> ["file: " ++ f ^. path, "project: " ++ maybe "" (view (projectPath . path)) p]
-			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ show p, "name: " ++ T.unpack n]
+			InstalledModule c p n _  -> ["cabal: " ++ show c, "package: " ++ show p, "name: " ++ T.unpack n]
 			OtherLocation src -> ["other location: " ++ T.unpack src]
 			NoLocation -> ["no location"]
 
@@ -584,6 +603,7 @@ makeLenses ''Symbol
 makeLenses ''SymbolInfo
 makeLenses ''Scoped
 makeLenses ''SymbolUsage
+makeLenses ''ImportedSymbol
 makeLenses ''Inspection
 makeLenses ''Inspected
 

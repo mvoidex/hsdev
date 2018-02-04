@@ -227,16 +227,18 @@ runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
 runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
 runCommand (Lookup nm fpath) = toValue $
-	query @_ @Symbol (toQuery $ mconcat [
+	fmap (map (\(s :. m) -> ImportedSymbol s m)) $ query @_ @(Symbol :. ModuleId) (toQuery $ mconcat [
 		qSymbol,
+		qModuleId,
 		from_ ["projects_modules_scope as pms", "modules as srcm", "exports as e"],
 		where_ [
 			"pms.cabal is srcm.cabal",
-			"srcm.file == ?",
-			"pms.module_id == e.module_id",
-			"m.id == s.module_id",
-			"s.id == e.symbol_id",
-			"s.name == ?"]])
+			"srcm.file = ?",
+			"pms.module_id = e.module_id",
+			"m.id = s.module_id",
+			"s.id = e.symbol_id",
+			"e.module_id = mu.id",
+			"s.name = ?"]])
 		(fpath ^. path, nm)
 runCommand (Whois nm fpath) = toValue $ do
 	let
