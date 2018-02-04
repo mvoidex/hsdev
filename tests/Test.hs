@@ -164,5 +164,14 @@ main = hspec $ do
 			tys <- send s ["ghc", "type", "twice twice", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
 			tys ^.. traverseArray . key @String "ok" . _Just `shouldBe` ["(a -> a) -> a -> a"]
 
+		it "shouldn't lose module info if unsaved source is broken" $ do
+			brokenContents <- fmap unpack $ readFileUtf8 $ dir </> "tests/data/ModuleTwo.broken.hs"
+			void $ send s ["set-file-contents", "--file", dir </> "tests/test-package/ModuleTwo.hs", "--contents", brokenContents]
+			-- Call scan to wait until file updated
+			void $ send s ["scan", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
+
+			two <- send s ["module", "ModuleTwo", "--exact"]
+			exports two `shouldBe` mkSet ["untypedFoo", "twice", "overloadedStrings", "useUntypedFoo"]
+
 		_ <- runIO $ send s ["exit"]
 		return ()

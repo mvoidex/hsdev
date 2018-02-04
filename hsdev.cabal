@@ -17,6 +17,7 @@ extra-source-files:
   tests/test-package/test-package.cabal
   tests/data/base.sql
   tests/data/ModuleTwo.modified.hs
+  tests/data/ModuleTwo.broken.hs
   data/hsdev.sql
 
 source-repository head
