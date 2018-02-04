@@ -33,13 +33,18 @@ send srv args = do
 exports :: Maybe Value -> S.Set String
 exports v = mkSet (v ^.. traverseArray . key "exports" . traverseArray . key "id" . key "name" . _Just)
 
+imports :: Maybe Value -> S.Set Import
+imports v = mkSet $ do
+	is <- v ^.. traverseArray . key "imports" . traverseArray
+	maybeToList $ Import <$> pos (is ^. key "pos") <*> (is ^. key "name") <*> (is ^. key "qualified") <*> (is ^. key "as")
+
 rgn :: Maybe Value -> Maybe Region
 rgn v = Region <$> pos (v ^. key "from") <*> pos (v ^. key "to")
 
 pos :: Maybe Value -> Maybe Position
 pos v = Position <$> (v ^. key "line") <*> (v ^. key "column")
 
-mkSet :: [String] -> S.Set String
+mkSet :: Ord a => [a] -> S.Set a
 mkSet = S.fromList
 
 
@@ -72,6 +77,13 @@ main = hspec $ do
 			void $ send s ["infer", "--file", dir </> "tests/test-package/ModuleThree.hs"]
 			checks <- send s ["check", "--file", dir </> "tests/test-package/ModuleThree.hs"]
 			checks `shouldNotSatisfy` null
+
+		it "should return module imports" $ do
+			three <- send s ["module", "ModuleThree", "--exact"]
+			imports three `shouldBe` mkSet [
+				Import (Position 8 1) "Control.Concurrent.Chan" False Nothing,
+				Import (Position 10 1) "ModuleOne" False Nothing,
+				Import (Position 11 1) "ModuleTwo" False (Just "T")]
 
 		it "should pass extensions when checks" $ do
 			checks <- send s ["check", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
@@ -172,6 +184,10 @@ main = hspec $ do
 
 			two <- send s ["module", "ModuleTwo", "--exact"]
 			exports two `shouldBe` mkSet ["untypedFoo", "twice", "overloadedStrings", "useUntypedFoo"]
+
+		it "should complete qualified names" $ do
+			comps <- send s ["complete", "T.o", "--file", dir </> "tests/test-package/ModuleThree.hs"]
+			comps ^.. traverseArray . key "id" . key @String "name" . _Just `shouldBe` ["overloadedStrings"]
 
 		_ <- runIO $ send s ["exit"]
 		return ()

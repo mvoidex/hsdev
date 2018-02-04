@@ -36,6 +36,7 @@ import Data.Aeson
 import Data.Aeson.Types (Pair, Parser)
 import Data.List (intercalate)
 import Data.Maybe (catMaybes)
+import Data.Maybe.JustIf
 import Data.Monoid (Any(..))
 import Data.Function
 import Data.Ord
@@ -96,9 +97,17 @@ data Import = Import {
 	_importName :: Text, -- imported module name
 	_importQualified :: Bool, -- is import qualified
 	_importAs :: Maybe Text } -- alias of import
+		deriving (Eq, Ord)
 
 instance NFData Import where
 	rnf (Import p n q a) = rnf p `seq` rnf n `seq` rnf q `seq` rnf a
+
+instance Show Import where
+	show (Import _ n q a) = concat $ catMaybes [
+		Just "import",
+		"qualified" `justIf` q,
+		Just $ show n,
+		fmap (("as " ++) . show) a]
 
 instance ToJSON Import where
 	toJSON (Import p n q a) = object [
