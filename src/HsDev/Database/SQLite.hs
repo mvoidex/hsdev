@@ -410,7 +410,7 @@ loadProject cabal = scope "load-project" $ do
 
 -- | Update a bunch of modules
 updateModules :: SessionMonad m => [InspectedModule] -> m ()
-updateModules ims = scope "update-modules" $ transaction_ Immediate $ do
+updateModules ims = scope "update-modules" $ do
 	ids <- upsertModules ims
 	updateModulesSymbols $ zip ids ims
 
@@ -420,8 +420,8 @@ updateModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ br
 	initUpdatedIds ims
 
 	removeModulesContents
-	insertModulesDefs ims
-	insertModulesExports ims
+	transaction_ Immediate $ insertModulesDefs ims
+	transaction_ Immediate $ insertModulesExports ims
 	where
 		initTemps :: SessionMonad m => m ()
 		initTemps = execute_ "create temporary table updated_ids (id integer not null, cabal text, module text not null, only_header int not null, dirty int not null);"
