@@ -7,10 +7,7 @@ module HsDev.Database.SQLite (
 	withTemporaryTable,
 	updatePackageDb, removePackageDb, insertPackageDb,
 	updateProject, removeProject, insertProject, insertBuildInfo,
-	updateModule,
 	removeModuleContents, removeModule,
-	insertModuleSymbols,
-	upsertModule,
 	lookupModuleLocation, lookupModule,
 	lookupSymbol,
 	lastRow,
@@ -18,7 +15,7 @@ module HsDev.Database.SQLite (
 	loadModule, loadModules,
 	loadProject,
 
-	updateModules,
+	updateModules, upsertModules,
 
 	-- * Utils
 	lookupId,
@@ -36,10 +33,8 @@ import Control.Monad
 import Control.Monad.Catch
 import Control.Monad.IO.Class
 import Data.Aeson hiding (Error)
-import Data.Generics.Uniplate.Operations
 import Data.List (intercalate)
 import Data.Maybe
-import qualified Data.Map as M
 import Data.String
 import qualified Data.Set as S
 import Data.Text (Text)
@@ -47,7 +42,6 @@ import qualified Data.Text as T
 import Database.SQLite.Simple hiding (query, query_, queryNamed, execute, execute_, executeNamed, executeMany, withTransaction)
 import qualified Database.SQLite.Simple as SQL (query, query_, queryNamed, execute, execute_, executeNamed, executeMany, withTransaction)
 import Distribution.Text (display)
-import Language.Haskell.Exts.Syntax hiding (Name, Module)
 import Language.Haskell.Extension ()
 import System.Directory
 import System.Log.Simple
@@ -63,12 +57,8 @@ import qualified HsDev.Display as Display
 import HsDev.Error
 import HsDev.PackageDb.Types
 import HsDev.Project.Types
-import HsDev.Symbols.Name
-import qualified HsDev.Symbols.HaskellNames as HN
-import HsDev.Symbols.Parsed
+import HsDev.Symbols (hasTag)
 import HsDev.Symbols.Types hiding (loadProject)
-import qualified HsDev.Symbols.Parsed as P
-import qualified HsDev.Symbols.Name as Name
 import HsDev.Server.Types
 import HsDev.Util
 
@@ -233,11 +223,6 @@ insertBuildInfo info = scope "insert-build-info" $ do
 			encode $ info ^. infoOtherModules)
 	lastRow
 
-updateModule :: SessionMonad m => InspectedModule -> m ()
-updateModule im = scope "update-module" $ do
-	_ <- upsertModule im
-	insertModuleSymbols im
-
 removeModuleContents :: SessionMonad m => Int -> m ()
 removeModuleContents mid = scope "remove-module-contents" $ do
 	execute "delete from imports where module_id = ?;" (Only mid)
@@ -252,38 +237,6 @@ removeModule mid = scope "remove-module" $ do
 	removeModuleContents mid
 	execute "delete from modules where id == ?;" (Only mid)
 
-upsertModule :: SessionMonad m => InspectedModule -> m Int
-upsertModule im = scope "upsert-module" $ do
-	mmid <- lookupModuleLocation (im ^. inspectedKey)
-	case mmid of
-		Nothing -> do
-			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-				moduleData
-			lastRow
-		Just mid' -> do
-			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, exposed = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
-				(moduleData :. Only mid')
-			return mid'
-	where
-		moduleData = (
-			im ^? inspectedKey . moduleFile . path,
-			im ^? inspectedKey . moduleProject . _Just . projectCabal,
-			fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
-			im ^? inspectedKey . modulePackage . packageName,
-			im ^? inspectedKey . modulePackage . packageVersion,
-			im ^? inspectedKey . installedModuleName,
-			im ^? inspectedKey . installedModuleExposed,
-			im ^? inspectedKey . otherLocationName)
-			:. (
-			msum [im ^? inspected . moduleId . moduleName, im ^? inspectedKey . installedModuleName],
-			im ^? inspected . moduleDocs,
-			fmap encode $ im ^? inspected . moduleFixities,
-			encode $ asDict $ im ^. inspectionTags,
-			fmap show $ im ^? inspectionResult . _Left)
-			:.
-			fromMaybe InspectionNone (im ^? inspection)
-		asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
-
 upsertModules :: SessionMonad m => [InspectedModule] -> m [Int]
 upsertModules ims = scope "upsert-modules" $ bracket_ initTemp removeTemp $ do
 	executeMany "insert into upserted_modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ map moduleData ims
@@ -292,14 +245,7 @@ upsertModules ims = scope "upsert-modules" $ bracket_ initTemp removeTemp $ do
 	execute_ "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is null;"
 	execute_ "update upserted_modules set id = (select m.id from modules as m where (m.file = upserted_modules.file) or ((m.package_name = upserted_modules.package_name) and (m.package_version = upserted_modules.package_version) and (m.installed_name = upserted_modules.installed_name)) or (m.other_location = upserted_modules.other_location)) where id is null;"
 
-	execute_ "delete from imports where module_id in (select id from upserted_modules);"
-	execute_ "delete from exports where module_id in (select id from upserted_modules);"
-	execute_ "delete from scopes where module_id in (select id from upserted_modules);"
-	execute_ "delete from names where module_id in (select id from upserted_modules);"
-	execute_ "delete from types where module_id in (select id from upserted_modules);"
-	execute_ "delete from symbols where module_id in (select id from upserted_modules);"
-
-	liftM (map fromOnly) $ query_ "select id from upserted_modules;"
+	liftM (map fromOnly) $ query_ "select id from upserted_modules order by rowid;"
 	where
 		initTemp :: SessionMonad m => m ()
 		initTemp = do
@@ -327,160 +273,6 @@ upsertModules ims = scope "upsert-modules" $ bracket_ initTemp removeTemp $ do
 			:.
 			fromMaybe InspectionNone (im ^? inspection)
 		asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
-
-insertModuleSymbols :: SessionMonad m => InspectedModule -> m ()
-insertModuleSymbols im = scope "insert-module-symbols" $ do
-	[Only mid] <- queryNamed "select id from modules where ((file is null and :file is null) or file = :file) and ((package_name is null and :package_name is null) or package_name = :package_name) and ((package_version is null and :package_version is null) or package_version = :package_version) and ((other_location is null and :other_location is null) or other_location = :other_location) and ((installed_name is null and :installed_name is null) or installed_name = :installed_name);" [
-		":file" := im ^? inspectedKey . moduleFile . path,
-		":package_name" := im ^? inspectedKey . modulePackage . packageName,
-		":package_version" := im ^? inspectedKey . modulePackage . packageVersion,
-		":other_location" := im ^? inspectedKey . otherLocationName,
-		":installed_name" := im ^? inspectedKey . installedModuleName]
-	-- TODO: Delete obsolete symbols (note, that they can be referenced from another modules)
-	removeModuleContents mid
-	insertModuleImports mid
-	insertExportSymbols mid (im ^.. inspected . moduleExports . each)
-	insertScopeSymbols mid (M.toList (im ^. inspected . moduleScope))
-	maybe (return ()) (insertResolvedNames mid) (im ^? inspected . moduleSource . _Just)
-	where
-		insertModuleImports :: SessionMonad m => Int -> m ()
-		insertModuleImports mid = scope "insert-module-imports" $ do
-			case im ^? inspected . moduleSource . _Just of
-				Nothing -> return ()
-				Just psrc -> do
-					let
-						imps = childrenBi psrc :: [ImportDecl Ann]
-						importRow idecl@(ImportDecl _ mname qual _ _ _ alias specList) = (
-							mid,
-							idecl ^. pos . positionLine,
-							idecl ^. pos . positionColumn,
-							getModuleName mname,
-							qual,
-							fmap getModuleName alias,
-							maybe False getHiding specList,
-							fmap makeImportList specList)
-					executeMany "insert into imports (module_id, line, column, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?, ?);"
-						(map importRow imps)
-					executeNamed "update imports set import_module_id = (select im.id from modules as im, projects_modules_scope as ps where ((ps.cabal is null and :cabal is null) or (ps.cabal == :cabal)) and ps.module_id == im.id and im.name == imports.module_name) where module_id == :module_id;" [
-					 ":cabal" := im ^? inspectedKey . moduleProject . _Just . projectCabal,
-					 ":module_id" := mid]
-			where
-				getModuleName (ModuleName _ s) = s
-				getHiding (ImportSpecList _ h _) = h
-
-				makeImportList (ImportSpecList _ _ specs) = encode $ map asJson specs
-				asJson (IVar _ nm) = object ["name" .= fromName_ (void nm), "what" .= str' "var"]
-				asJson (IAbs _ ns nm) = object ["name" .= fromName_ (void nm), "what" .= str' "abs", "ns" .= fromNamespace ns] where
-					fromNamespace :: Namespace l -> Maybe String
-					fromNamespace (NoNamespace _) = Nothing
-					fromNamespace (TypeNamespace _) = Just "type"
-					fromNamespace (PatternNamespace _) = Just "pat"
-				asJson (IThingAll _ nm) = object ["name" .= fromName_ (void nm), "what" .= str' "all"]
-				asJson (IThingWith _ nm cs) = object ["name" .= fromName_ (void nm), "what" .= str' "with", "list" .= map (fromName_ . void . toName') cs] where
-					toName' (VarName _ n') = n'
-					toName' (ConName _ n') = n'
-
-				str' :: String -> String
-				str' = id
-
-		insertExportSymbols :: SessionMonad m => Int -> [Symbol] -> m ()
-		insertExportSymbols _ [] = return ()
-		insertExportSymbols mid syms = scope "insert-export-symbols" $ withTemporaryTable "export_symbols" (symbolsColumns ++ idColumns) $ do
-			dumpSymbols "export_symbols" symbolsColumns syms
-			insertMissingModules "export_symbols"
-			insertMissingSymbols "export_symbols"
-			execute "insert into exports (module_id, symbol_id) select ?, symbol_id from export_symbols;" (Only mid)
-
-		insertScopeSymbols :: SessionMonad m => Int -> [(Name, [Symbol])] -> m ()
-		insertScopeSymbols _ [] = return ()
-		insertScopeSymbols mid snames = scope "insert-scope-symbols" $ withTemporaryTable "scope_symbols" (symbolsColumns ++ scopeNameColumns ++ idColumns) $ do
-			dumpSymbols "scope_symbols" (symbolsColumns ++ scopeNameColumns)
-				[(s :. (Name.nameModule nm, Name.nameIdent nm)) | (nm, syms) <- snames, s <- syms]
-			insertMissingModules "scope_symbols"
-			insertMissingSymbols "scope_symbols"
-			execute "insert into scopes (module_id, qualifier, name, symbol_id) select ?, qualifier, ident, symbol_id from scope_symbols;" (Only mid)
-
-		insertResolvedNames :: SessionMonad m => Int -> Parsed -> m ()
-		insertResolvedNames mid p = scope "insert-resolved-names" $ do
-			insertNames
-			replaceQNames
-			setResolvedSymbolIds
-			where
-				insertNames = executeMany insertQuery namesData
-				replaceQNames = executeMany insertQuery qnamesData
-				setResolvedSymbolIds = execute "update names set symbol_id = (select sc.symbol_id from scopes as sc, symbols as s, modules as m where names.module_id == sc.module_id and ((names.qualifier is null and sc.qualifier is null) or (names.qualifier == sc.qualifier)) and names.name == sc.name and s.id == sc.symbol_id and m.id == s.module_id and s.name == names.resolved_name and s.what == names.resolved_what and m.name == names.resolved_module) where module_id == ? and resolved_module is not null and resolved_name is not null and resolved_what is not null;" (Only mid)
-				insertQuery = "insert or replace into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolved_what, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-				namesData = map toData $ p ^.. P.names
-				qnamesData = map toQData $ p ^.. P.qnames
-				toData name = (
-					mid,
-					Nothing :: Maybe Text,
-					Name.fromName_ $ void name,
-					name ^. P.pos . positionLine,
-					name ^. P.pos . positionColumn,
-					name ^. P.regionL . regionTo . positionLine,
-					name ^. P.regionL . regionTo . positionColumn)
-					:. (
-					name ^? P.defPos . positionLine,
-					name ^? P.defPos . positionColumn,
-					(name ^? P.resolvedName) >>= Name.nameModule,
-					Name.nameIdent <$> (name ^? P.resolvedName),
-					fmap (symbolType . HN.fromSymbol) $ name ^? P.symbolL,
-					P.resolveError name)
-				toQData qname = (
-					mid,
-					Name.nameModule $ void qname,
-					Name.nameIdent $ void qname,
-					qname ^. P.pos . positionLine,
-					qname ^. P.pos . positionColumn,
-					qname ^. P.regionL . regionTo . positionLine,
-					qname ^. P.regionL . regionTo . positionColumn)
-					:. (
-					qname ^? P.defPos . positionLine,
-					qname ^? P.defPos . positionColumn,
-					(qname ^? P.resolvedName) >>= Name.nameModule,
-					Name.nameIdent <$> (qname ^? P.resolvedName),
-					fmap (symbolType . HN.fromSymbol) $ qname ^? P.symbolL,
-					P.resolveError qname)
-
-		symbolsColumns :: [String]
-		symbolsColumns = [
-			"name", "module_name",
-			"file", "cabal", "install_dirs", "package_name", "package_version", "installed_name", "exposed", "other_location",
-			"docs",
-			"line", "column",
-			"what", "type", "parent", "constructors", "args", "context", "associate", "pat_type", "pat_constructor"]
-
-		scopeNameColumns :: [String]
-		scopeNameColumns = ["qualifier", "ident"]
-
-		idColumns :: [String]
-		idColumns = ["module_id", "symbol_id"]
-
-		-- Dumps symbol data to temporary row and fills with 'module_id' and 'symbol_id' fields
-		dumpSymbols :: (SessionMonad m, ToRow q) => String -> [String] -> [q] -> m ()
-		dumpSymbols tableName columnNames rows = scope "dump-symbols" $ do
-			executeMany (fromString ("insert into {} ({}) values ({});" ~~ tableName ~~ intercalate ", " columnNames ~~ intercalate ", " (replicate (length columnNames) "?"))) (map toRow rows)
-			updateModuleIds tableName
-			updateSymbolIds tableName
-
-		updateModuleIds :: SessionMonad m => String -> m ()
-		updateModuleIds tableName = scope "update-module-ids" $
-			execute_ (fromString ("update {table} set module_id = (select m.id from modules as m where (m.file = {table}.file) or (m.package_name = {table}.package_name and m.package_version = {table}.package_version and m.installed_name = {table}.installed_name) or (m.other_location = {table}.other_location)) where module_id is null;" ~~ ("table" ~% tableName)))
-
-		updateSymbolIds :: SessionMonad m => String -> m ()
-		updateSymbolIds tableName = scope "update-symbol-ids" $
-			execute_ (fromString ("update {table} set symbol_id = (select s.id from symbols as s where s.name = {table}.name and s.what = {table}.what and s.module_id = {table}.module_id) where symbol_id is null;" ~~ ("table" ~% tableName)))
-
-		insertMissingModules :: SessionMonad m => String -> m ()
-		insertMissingModules tableName = scope "insert-missing-modules" $ do
-			execute_ (fromString ("insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name) select distinct file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, module_name from {} where module_id is null;" ~~ tableName))
-			updateModuleIds tableName
-
-		insertMissingSymbols :: SessionMonad m => String -> m ()
-		insertMissingSymbols tableName = scope "insert-missing-symbols" $ do
-			execute_ (fromString ("insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) select distinct name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor from {} where module_id is not null and symbol_id is null;" ~~ tableName))
-			updateSymbolIds tableName
 
 lookupModuleLocation :: SessionMonad m => ModuleLocation -> m (Maybe Int)
 lookupModuleLocation m = do
@@ -537,7 +329,7 @@ loadModule mid = scope "load-module" $ do
 					where_ ["e.module_id == ?", "e.symbol_id == s.id"]])
 				(Only mid)
 			imps <- query @_ @Import "select line, column, module_name, qualified, alias from imports where module_id == ?;" (Only mid)
-			return $ Module {
+			return Module {
 				_moduleId = mid',
 				_moduleDocs = mdocs,
 				_moduleImports = imps,
@@ -562,7 +354,7 @@ loadModules selectExpr args = scope "load-modules" $ do
 				where_ ["e.module_id == ?", "e.symbol_id == s.id"]])
 			(Only mid)
 		imps <- query @_ @Import "select line, column, module_name, qualified, alias from imports where module_id == ?;" (Only mid)
-		return $ Module {
+		return Module {
 			_moduleId = mid',
 			_moduleDocs = mdocs,
 			_moduleImports = imps,
@@ -620,14 +412,48 @@ loadProject cabal = scope "load-project" $ do
 updateModules :: SessionMonad m => [InspectedModule] -> m ()
 updateModules ims = scope "update-modules" $ transaction_ Immediate $ do
 	ids <- upsertModules ims
-	insertModulesSymbols $ zip ids ims
+	updateModulesSymbols $ zip ids ims
 
 -- | Update symbols of bunch of modules
-insertModulesSymbols :: SessionMonad m => [(Int, InspectedModule)] -> m ()
-insertModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ do
+updateModulesSymbols :: SessionMonad m => [(Int, InspectedModule)] -> m ()
+updateModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ bracket_ initTemps dropTemps $ do
+	initUpdatedIds ims
+
+	removeModulesContents
 	insertModulesDefs ims
 	insertModulesExports ims
 	where
+		initTemps :: SessionMonad m => m ()
+		initTemps = execute_ "create temporary table updated_ids (id integer not null, cabal text, module text not null, only_header int not null, dirty int not null);"
+
+		dropTemps :: SessionMonad m => m ()
+		dropTemps = execute_ "drop table if exists updated_ids;" 
+
+		initUpdatedIds :: SessionMonad m => [(Int, InspectedModule)] -> m ()
+		initUpdatedIds imods = transaction_ Immediate $ do
+			execute_ "create unique index updated_ids_id_index on updated_ids (id);"
+			execute_ "create index updated_ids_module_index on updated_ids (module);"
+			executeMany "insert into updated_ids (id, cabal, module, only_header, dirty) values (?, ?, ?, ?, ?);" $ do
+				(mid, im) <- imods
+				return (
+					mid,
+					im ^? inspectedKey . moduleProject . _Just . projectCabal,
+					im ^?! inspected . moduleId . moduleName,
+					hasTag OnlyHeaderTag im,
+					hasTag DirtyTag im)
+
+		removeModulesContents :: SessionMonad m => m ()
+		removeModulesContents = scope "remove-modules-contents" $ do
+			transaction_ Immediate $ do
+				execute_ "delete from symbols where module_id in (select id from updated_ids where not only_header or not dirty);"
+				execute_ "update symbols set line = null, column = null where module_id in (select id from updated_ids where only_header and dirty);"
+				execute_ "delete from imports where module_id in (select id from updated_ids);"
+				execute_ "delete from exports where module_id in (select id from updated_ids);"
+
+			transaction_ Immediate $ execute_ "delete from scopes where module_id in (select id from updated_ids);"
+			transaction_ Immediate $ execute_ "delete from names where module_id in (select id from updated_ids);"
+			transaction_ Immediate $ execute_ "delete from types where module_id in (select id from updated_ids);"
+
 		insertModulesDefs :: SessionMonad m => [(Int, InspectedModule)] -> m ()
 		insertModulesDefs imods = executeMany "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ do
 			(mid, im) <- imods

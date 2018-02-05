@@ -222,7 +222,7 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 				runInspect mloc $ withInspection (return inspection') $ dirtyTag' $ preload (mloc ^?! moduleFile) defines (opts ++ mopts) mcts'
 
 		ploaded <- runTasks (map pload ms')
-		mapM_ (SQLite.upsertModule . fmap (view asModule)) ploaded
+		sendUpdateAction $ void $ SQLite.upsertModules $ map (fmap (view asModule)) ploaded
 		let
 			mlocs' = ploaded ^.. each . inspected . preloadedId . moduleLocation
 

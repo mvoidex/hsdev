@@ -15,7 +15,7 @@ module HsDev.Util (
 	-- * Helper
 	(.::), (.::?), (.::?!), objectUnion, noNulls, fromJSON',
 	-- * Exceptions
-	liftException, liftE, tries, triesMap, liftExceptionM, liftIOErrors,
+	liftException, liftE, tries, triesMap, liftIOErrors,
 	logAll,
 	-- * UTF-8
 	fromUtf8, toUtf8, readFileUtf8, writeFileUtf8,
@@ -221,11 +221,6 @@ tries acts = liftM catMaybes $ sequence [liftM Just act `mplus` return Nothing |
 
 triesMap :: MonadPlus m => (a -> m b) -> [a] -> m [b]
 triesMap f = tries . map f
-
--- | Lift IO exception to MonadError
-liftExceptionM :: (C.MonadCatch m, MonadError String m) => m a -> m a
-liftExceptionM act = C.catch act onError where
-	onError = throwError . (\(SomeException e) -> displayException e)
 
 -- | Lift IO exceptions to ExceptT
 liftIOErrors :: C.MonadCatch m => ExceptT String m a -> ExceptT String m a
