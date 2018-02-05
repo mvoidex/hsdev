@@ -10,7 +10,7 @@ module HsDev.Database.Update (
 
 	postStatus, updater, runTask, runTasks, runTasks_,
 
-	scanModules, scanFile, scanFiles, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanProjectFile, scanProjectStack, scanProject, scanDirectory,
+	scanModules, scanFile, scanFiles, scanFileContents, scanCabal, prepareSandbox, scanSandbox, scanPackageDb, scanPackageDbStack, scanProjectFile, scanProjectStack, scanProject, scanDirectory,
 	scanPackageDbStackDocs, scanDocs,
 	setModTypes, inferModTypes,
 	scan,

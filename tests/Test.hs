@@ -59,7 +59,7 @@ main = hspec $ do
 			inServer s $ mapM_ (execute_ . fromString) inserts
 
 		it "should scan project" $ do
-			void $ send s ["scan", "--project", dir </> "tests/test-package"]
+			void $ send s ["scan", "project", dir </> "tests/test-package", "--cabal", "--no-deps"]
 
 		it "should resolve export list" $ do
 			one <- send s ["module", "ModuleOne", "--exact"]

@@ -48,6 +48,7 @@ import HsDev.Error (hsdevError)
 import HsDev.Inspect.Types
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
+import HsDev.PackageDb.Types
 import HsDev.Project.Types
 import HsDev.Tools.Ghc.Worker (GhcWorker, GhcM)
 import HsDev.Tools.Types (Note, OutputMessage)
@@ -427,6 +428,7 @@ data Command =
 		scanSandboxes :: [Path],
 		scanFiles :: [FileSource],
 		scanPaths :: [Path],
+		scanBuildTool :: BuildTool,
 		scanGhcOpts :: [String],
 		scanDocs :: Bool,
 		scanInferTypes :: Bool } |
@@ -434,6 +436,8 @@ data Command =
 		scanProjectPath :: Path,
 		scanProjectBuildTool :: BuildTool,
 		scanProjectDeps :: Bool } |
+	ScanPackageDbs {
+		scanPackageDbStack :: PackageDbStack } |
 	SetFileContents Path (Maybe Text) |
 	RefineDocs {
 		docsProjects :: [Path],
@@ -511,16 +515,18 @@ data SearchQuery = SearchQuery Text SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix deriving (Show)
 
 instance Paths Command where
-	paths f (Scan projs c cs fs ps ghcs docs infer) = Scan <$>
+	paths f (Scan projs c cs fs ps btool ghcs docs infer) = Scan <$>
 		traverse (paths f) projs <*>
 		pure c <*>
 		traverse (paths f) cs <*>
 		traverse (paths f) fs <*>
 		traverse (paths f) ps <*>
+		pure btool <*>
 		pure ghcs <*>
 		pure docs <*>
 		pure infer
 	paths f (ScanProject proj tool deps) = ScanProject <$> paths f proj <*> pure tool <*> pure deps
+	paths f (ScanPackageDbs pdbs) = ScanPackageDbs <$> paths f pdbs
 	paths f (SetFileContents p cts) = SetFileContents <$> paths f p <*> pure cts
 	paths f (RefineDocs projs fs) = RefineDocs <$> traverse (paths f) projs <*> traverse (paths f) fs
 	paths f (InferTypes projs fs) = InferTypes <$> traverse (paths f) projs <*> traverse (paths f) fs
@@ -560,12 +566,14 @@ instance FromCmd Command where
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
 		cmd "scan" "scan sources" (
 			subparser (cmd "project" "scan project" (ScanProject <$> textArgument idm <*> toolArg <*> depsArg)) <|>
+			subparser (cmd "package-dbs" "scan package-dbs; note, that order of package-dbs matters - dependent package-dbs should go first" (ScanPackageDbs <$> (mkPackageDbStack <$> many packageDbArg))) <|>
 			(Scan <$>
 				many projectArg <*>
 				cabalFlag <*>
 				many sandboxArg <*>
 				many cmdP <*>
 				many (pathArg $ help "path") <*>
+				(toolArg <|> pure CabalTool) <*>
 				ghcOpts <*>
 				docsFlag <*>
 				inferFlag)),
@@ -663,6 +671,7 @@ lintOpts :: Parser [String]
 localsFlag :: Parser Bool
 moduleArg :: Parser Text
 packageArg :: Parser Text
+packageDbArg :: Parser PackageDb
 pathArg :: Mod OptionFields String -> Parser Path
 projectArg :: Parser Path
 pureFlag :: Parser Bool
@@ -688,6 +697,10 @@ lintOpts = many (strOption (long "lint" <> metavar "option" <> short 'l' <> help
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = textOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
 packageArg = textOption (long "package" <> metavar "name" <> help "module package")
+packageDbArg =
+	flag' GlobalDb (long "global-db" <> help "global package-db") <|>
+	flag' UserDb (long "user-db" <> help "per-user package-db") <|>
+	fmap PackageDb (textOption (long "package-db" <> metavar "path" <> help "custom package-db"))
 pathArg f = textOption (long "path" <> metavar "path" <> short 'p' <> f)
 projectArg = textOption (long "project" <> long "proj" <> metavar "project")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
@@ -711,12 +724,13 @@ instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
 	toJSON (Listen lev) = cmdJson "listen" ["level" .= lev]
 	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
-	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
+	toJSON (Scan projs cabal sboxes fs ps btool ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
 		"sandboxes" .= sboxes,
 		"files" .= fs,
 		"paths" .= ps,
+		"build-tool" .= btool,
 		"ghc-opts" .= ghcs,
 		"docs" .= docs',
 		"infer" .= infer']
@@ -724,6 +738,8 @@ instance ToJSON Command where
 		"project" .= proj,
 		"build-tool" .= tool,
 		"scan-deps" .= deps]
+	toJSON (ScanPackageDbs pdbs) = cmdJson "scan package-dbs" [
+		"package-db-stack" .= pdbs]
 	toJSON (SetFileContents f cts) = cmdJson "set-file-contents" ["file" .= f, "contents" .= cts]
 	toJSON (RefineDocs projs fs) = cmdJson "docs" ["projects" .= projs, "files" .= fs]
 	toJSON (InferTypes projs fs) = cmdJson "infer" ["projects" .= projs, "files" .= fs]
@@ -772,13 +788,15 @@ instance FromJSON Command where
 			v .::?! "sandboxes" <*>
 			v .::?! "files" <*>
 			v .::?! "paths" <*>
+			v .:: "build-tool" <*>
 			v .::?! "ghc-opts" <*>
 			(v .:: "docs" <|> pure False) <*>
 			(v .:: "infer" <|> pure False)),
 		guardCmd "scan project" v *> (ScanProject <$>
 			v .:: "project" <*>
 			v .:: "build-tool" <*>
-			(v .:: "deps" <|> pure True)),
+			(v .:: "scan-deps" <|> pure True)),
+		guardCmd "scan package-dbs" v *> (ScanPackageDbs <$> v .:: "package-db-stack"),
 		guardCmd "set-file-contents" v *> (SetFileContents <$> v .:: "file" <*> v .:: "contents"),
 		guardCmd "docs" v *> (RefineDocs <$> v .::?! "projects" <*> v .::?! "files"),
 		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files"),

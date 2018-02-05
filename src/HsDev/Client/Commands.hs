@@ -80,16 +80,18 @@ runCommand (SetLogLevel l) = case Log.level (pack l) of
 		lev' <- serverSetLogLevel lev
 		Log.sendLog Log.Debug $ "log level changed from '{}' to '{}'" ~~ show lev' ~~ show lev
 		Log.sendLog Log.Info $ "log level updated to: {}" ~~ show lev
-runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
+runCommand (Scan projs cabal sboxes fs paths' btool ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
 		[Update.scanCabal ghcs' | cabal],
 		map (Update.scanSandbox ghcs') sboxes',
 		[Update.scanFiles (zip fs (repeat ghcs'))],
-		map (Update.scanProject ghcs' CabalTool) projs,
+		map (Update.scanProject ghcs' btool) projs,
 		map (Update.scanDirectory ghcs') paths']
 runCommand (ScanProject proj tool deps) = toValue $ updateProcess def [
 	(if deps then Update.scanProjectStack else Update.scanProject) [] tool proj]
+runCommand (ScanPackageDbs pdbs) = toValue $ updateProcess def [
+	Update.scanPackageDbStack [] pdbs]
 runCommand (SetFileContents f mcts) = toValue $ serverSetFileContents f mcts
 runCommand (RefineDocs projs fs)
 	| HDocs.hdocsSupported = toValue $ do
