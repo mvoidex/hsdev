@@ -90,6 +90,8 @@ runCommand (Scan projs cabal sboxes fs paths' btool ghcs' docs' infer') = toValu
 		map (Update.scanDirectory ghcs') paths']
 runCommand (ScanProject proj tool deps) = toValue $ updateProcess def [
 	(if deps then Update.scanProjectStack else Update.scanProject) [] tool proj]
+runCommand (ScanFile fpath tool scanProj deps) = toValue $ updateProcess def [
+	Update.scanFile [] fpath tool scanProj deps]
 runCommand (ScanPackageDbs pdbs) = toValue $ updateProcess def [
 	Update.scanPackageDbStack [] pdbs]
 runCommand (SetFileContents f mcts) = toValue $ serverSetFileContents f mcts

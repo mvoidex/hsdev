@@ -436,6 +436,11 @@ data Command =
 		scanProjectPath :: Path,
 		scanProjectBuildTool :: BuildTool,
 		scanProjectDeps :: Bool } |
+	ScanFile {
+		scanFilePath :: Path,
+		scanFileBuildTool :: BuildTool,
+		scanFileProject :: Bool,
+		scanFileDeps :: Bool } |
 	ScanPackageDbs {
 		scanPackageDbStack :: PackageDbStack } |
 	SetFileContents Path (Maybe Text) |
@@ -526,6 +531,7 @@ instance Paths Command where
 		pure docs <*>
 		pure infer
 	paths f (ScanProject proj tool deps) = ScanProject <$> paths f proj <*> pure tool <*> pure deps
+	paths f (ScanFile file' tool scanProj deps) = ScanFile <$> paths f file' <*> pure tool <*> pure scanProj <*> pure deps
 	paths f (ScanPackageDbs pdbs) = ScanPackageDbs <$> paths f pdbs
 	paths f (SetFileContents p cts) = SetFileContents <$> paths f p <*> pure cts
 	paths f (RefineDocs projs fs) = RefineDocs <$> traverse (paths f) projs <*> traverse (paths f) fs
@@ -566,6 +572,7 @@ instance FromCmd Command where
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
 		cmd "scan" "scan sources" (
 			subparser (cmd "project" "scan project" (ScanProject <$> textArgument idm <*> toolArg <*> depsArg)) <|>
+			subparser (cmd "file" "scan file" (ScanFile <$> textArgument idm <*> (toolArg <|> pure CabalTool) <*> depProjArg <*> depsArg)) <|>
 			subparser (cmd "package-dbs" "scan package-dbs; note, that order of package-dbs matters - dependent package-dbs should go first" (ScanPackageDbs <$> (mkPackageDbStack <$> many packageDbArg))) <|>
 			(Scan <$>
 				many projectArg <*>
@@ -573,7 +580,7 @@ instance FromCmd Command where
 				many sandboxArg <*>
 				many cmdP <*>
 				many (pathArg $ help "path") <*>
-				(toolArg <|> pure CabalTool) <*>
+				(toolArg' <|> pure CabalTool) <*>
 				ghcOpts <*>
 				docsFlag <*>
 				inferFlag)),
@@ -657,6 +664,7 @@ cabalFlag :: Parser Bool
 clearFlag :: Parser Bool
 contentsArg :: Parser Text
 ctx :: Parser Path
+depProjArg :: Parser Bool
 depsArg :: Parser Bool
 docsFlag :: Parser Bool
 fileArg :: Parser Path
@@ -677,12 +685,14 @@ projectArg :: Parser Path
 pureFlag :: Parser Bool
 sandboxArg :: Parser Path
 toolArg :: Parser BuildTool
+toolArg' :: Parser BuildTool
 wideFlag :: Parser Bool
 
 cabalFlag = switch (long "cabal")
 clearFlag = switch (long "clear" <> short 'c' <> help "clear run, drop previous state")
 contentsArg = textOption (long "contents" <> help "text contents")
 ctx = fileArg
+depProjArg = fmap not $ switch (long "no-project" <> help "don't scan related project")
 depsArg = fmap not $ switch (long "no-deps" <> help "don't scan dependent package-dbs")
 docsFlag = switch (long "docs" <> help "scan source file docs")
 fileArg = textOption (long "file" <> metavar "path" <> short 'f')
@@ -708,15 +718,15 @@ sandboxArg = textOption (long "sandbox" <> metavar "path" <> help "path to cabal
 toolArg =
 	flag' CabalTool (long "cabal" <> help "use cabal as build tool") <|>
 	flag' StackTool (long "stack" <> help "use stack as build tool") <|>
-	option readTool (long "tool" <> help "specify build tool")
-	where
-		readTool :: ReadM BuildTool
-		readTool = do
-			s <- str @String
-			msum [
-				guard (s == "cabal") >> return CabalTool,
-				guard (s == "stack") >> return StackTool,
-				readerError ("unknown build tool: {}" ~~ s)]
+	toolArg'
+toolArg' = option readTool (long "tool" <> help "specify build tool, `cabal` or `stack`") where
+	readTool :: ReadM BuildTool
+	readTool = do
+		s <- str @String
+		msum [
+			guard (s == "cabal") >> return CabalTool,
+			guard (s == "stack") >> return StackTool,
+			readerError ("unknown build tool: {}" ~~ s)]
 
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
 
@@ -737,6 +747,11 @@ instance ToJSON Command where
 	toJSON (ScanProject proj tool deps) = cmdJson "scan project" [
 		"project" .= proj,
 		"build-tool" .= tool,
+		"scan-deps" .= deps]
+	toJSON (ScanFile file' tool scanProj deps) = cmdJson "scan file" [
+		"file" .= file',
+		"build-tool" .= tool,
+		"scan-project" .= scanProj,
 		"scan-deps" .= deps]
 	toJSON (ScanPackageDbs pdbs) = cmdJson "scan package-dbs" [
 		"package-db-stack" .= pdbs]
@@ -795,6 +810,11 @@ instance FromJSON Command where
 		guardCmd "scan project" v *> (ScanProject <$>
 			v .:: "project" <*>
 			v .:: "build-tool" <*>
+			(v .:: "scan-deps" <|> pure True)),
+		guardCmd "scan file" v *> (ScanFile <$>
+			v .:: "file" <*>
+			v .:: "build-tool" <*>
+			(v .:: "scan-project" <|> pure True) <*>
 			(v .:: "scan-deps" <|> pure True)),
 		guardCmd "scan package-dbs" v *> (ScanPackageDbs <$> v .:: "package-db-stack"),
 		guardCmd "set-file-contents" v *> (SetFileContents <$> v .:: "file" <*> v .:: "contents"),

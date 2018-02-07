@@ -47,6 +47,7 @@ import qualified Data.Text as T
 import System.FilePath
 import qualified System.Log.Simple as Log
 
+import Data.Maybe.JustIf
 import HsDev.Error
 import qualified HsDev.Database.SQLite as SQLite
 import HsDev.Display
@@ -268,9 +269,17 @@ scanModules opts ms = Log.scope "scan-modules" $ mapM_ (uncurry scanModules') gr
 		onError :: MonadThrow m => ErrorCall -> m a
 		onError = hsdevError . OtherError . displayException
 
--- | Scan source file, resolve dependent modules
-scanFile :: UpdateMonad m => [String] -> Path -> m ()
-scanFile opts fpath = scanFiles [(FileSource fpath Nothing, opts)]
+-- | Scan source file, possibly scanning also related project and installed modules
+scanFile :: UpdateMonad m => [String] -> Path -> BuildTool -> Bool -> Bool -> m ()
+scanFile opts fpath tool scanProj scanDb = do
+	mproj <- fmap (set (_Just . projectBuildTool) tool) $ locateProjectInfo fpath
+	sbox <- maybe (return userDb) (inSessionGhc . getProjectPackageDbStack) mproj
+	when scanDb $ do
+		[SQLite.Only scanned] <- SQLite.query @_ @(SQLite.Only Bool) "select count(*) > 0 from package_dbs as pdbs where pdbs.package_db = ?;" (SQLite.Only (topPackageDb sbox))
+		unless scanned $ scanPackageDbStack opts sbox
+	case join (mproj `justIf` scanProj) of
+		Nothing -> scanFiles [(FileSource fpath Nothing, opts)]
+		Just proj -> scanProject opts tool (view projectCabal proj)
 
 -- | Scan source files, resolving dependent modules
 scanFiles :: UpdateMonad m => [(FileSource, [String])] -> m ()
