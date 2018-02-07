@@ -3,7 +3,8 @@
 module HsDev.Sandbox (
 	Sandbox(..), sandboxType, sandbox,
 	isSandbox, guessSandboxType, sandboxFromPath,
-	findSandbox, searchSandbox, projectSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
+	findSandbox, searchSandbox, searchSandboxes,
+	projectSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
 
 	-- * package-db
 	userPackageDb,
@@ -17,13 +18,12 @@ module HsDev.Sandbox (
 	getProjectPackageDbStack
 	) where
 
-import Control.Applicative
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
 import Control.Lens (view)
 import Data.List (find, intercalate)
-import Data.Maybe (isJust, fromMaybe)
+import Data.Maybe (isJust, fromMaybe, catMaybes)
 import Data.Maybe.JustIf
 import System.Directory (getAppUserDataDirectory, doesDirectoryExist)
 import System.FilePath
@@ -74,18 +74,28 @@ findSandbox fpath = do
 searchSandbox :: Path -> IO (Maybe Sandbox)
 searchSandbox p = runMaybeT $ searchPath (view path p) (MaybeT . findSandbox . fromFilePath)
 
+-- | Search sandboxes up from current directory
+searchSandboxes :: Path -> IO [Sandbox]
+searchSandboxes p = do
+	mcabal <- searchFor CabalTool ".cabal-sandbox" ".cabal-sandbox"
+	mstack <- searchFor StackTool "stack.yaml" ".stack-work"
+	return $ catMaybes [mcabal, mstack]
+	where
+		searchFor :: BuildTool -> FilePath -> FilePath -> IO (Maybe Sandbox)
+		searchFor tool lookFor sandboxDir = runMaybeT $ do
+			root <- searchPath (view path p) (MaybeT . getRoot)
+			return $ Sandbox tool $ fromFilePath (takeDirectory root </> sandboxDir)
+			where
+				getRoot = directoryContents >=> return . find ((== lookFor) . takeFileName)
+
 -- | Get project sandbox: search up for .cabal, then search for stack.yaml in current directory and cabal sandbox in current + parents
 projectSandbox :: BuildTool -> Path -> IO (Maybe Sandbox)
 projectSandbox tool fpath = runMaybeT $ do
 	p <- searchPath (view path fpath) (MaybeT . getCabalFile)
-	root <- searchPath (takeDirectory p) (MaybeT . getSandboxRoot tool)
-	return $ Sandbox tool $ fromFilePath $ toSandbox tool $ takeDirectory root
+	sboxes <- liftIO $ searchSandboxes (fromFilePath $ takeDirectory p)
+	MaybeT $ return $ find ((== tool) . view sandboxType) sboxes
 	where
 		getCabalFile = directoryContents >=> return . find cabalFile
-		getSandboxRoot CabalTool = directoryContents >=> return . find ((== ".cabal-sandbox") . takeFileName)
-		getSandboxRoot StackTool = directoryContents >=> return . find ((== "stack.yaml") . takeFileName)
-		toSandbox CabalTool root' = root' </> ".cabal-sandbox"
-		toSandbox StackTool root' = root' </> ".stack-work"
 
 -- | Get package-db stack for sandbox
 sandboxPackageDbStack :: Sandbox -> GhcM PackageDbStack

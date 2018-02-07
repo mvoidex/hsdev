@@ -231,7 +231,7 @@ runCommand (InfoModule sq filters h _) = toValue $ do
 			return $ Module mheader docs imports' exports' fixities' mempty Nothing
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
-runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
+runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandboxes sandbox'
 runCommand (Lookup nm fpath) = toValue $
 	fmap (map (\(s :. m) -> ImportedSymbol s m)) $ query @_ @(Symbol :. ModuleId) (toQuery $ mconcat [
 		qSymbol,

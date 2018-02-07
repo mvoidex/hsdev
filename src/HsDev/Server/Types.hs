@@ -803,7 +803,7 @@ instance FromJSON Command where
 			v .::?! "sandboxes" <*>
 			v .::?! "files" <*>
 			v .::?! "paths" <*>
-			v .:: "build-tool" <*>
+			(v .:: "build-tool" <|> pure CabalTool) <*>
 			v .::?! "ghc-opts" <*>
 			(v .:: "docs" <|> pure False) <*>
 			(v .:: "infer" <|> pure False)),
@@ -813,7 +813,7 @@ instance FromJSON Command where
 			(v .:: "scan-deps" <|> pure True)),
 		guardCmd "scan file" v *> (ScanFile <$>
 			v .:: "file" <*>
-			v .:: "build-tool" <*>
+			(v .:: "build-tool" <|> pure CabalTool) <*>
 			(v .:: "scan-project" <|> pure True) <*>
 			(v .:: "scan-deps" <|> pure True)),
 		guardCmd "scan package-dbs" v *> (ScanPackageDbs <$> v .:: "package-db-stack"),

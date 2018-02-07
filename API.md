@@ -194,12 +194,12 @@ Response: `project` object
 
 #### Sandbox
 
-Get sandbox info
+Get sandboxes info
 
 Command: `sandbox`  
 Args:
-  * `path` — path to sandbox
-Response: `sandbox` object
+  * `path` — path to search sandbox in
+Response: list of `sandbox` object
 
 #### Lookup
 
