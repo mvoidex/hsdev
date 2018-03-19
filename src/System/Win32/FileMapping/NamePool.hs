@@ -1,3 +1,5 @@
+{-# LANGUAGE LambdaCase #-}
+
 module System.Win32.FileMapping.NamePool (
 	Pool(..),
 	createPool, withName
@@ -25,7 +27,7 @@ createPool baseName = liftM2 Pool (newMVar []) mkNewName where
 -- | Use free name from pool
 withName :: Pool -> (String -> IO a) -> IO a
 withName p = bracket getName freeName where
-	getName = modifyMVar (poolFreeNames p) $ \names -> case names of
+	getName = modifyMVar (poolFreeNames p) $ \case
 		[] -> liftM ((,) []) $ poolNewName p
-		(n:ns) -> return (ns, n)
+		(n : ns) -> return (ns, n)
 	freeName name = modifyMVar_ (poolFreeNames p) (return . (name:))

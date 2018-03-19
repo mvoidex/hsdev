@@ -1,88 +1,48 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Tools.Ghc.Check (
-	checkFiles, check, checkFile, checkSource,
+	check,
 
 	Ghc,
 	module HsDev.Tools.Types,
 	module HsDev.Symbols.Types,
 	PackageDb(..), PackageDbStack(..), Project(..),
 
-	recalcNotesTabs,
-
 	module Control.Monad.Except
 	) where
 
-import Control.Lens (preview, view, each, _Just, (^..))
+import Control.Lens (view, (^.))
 import Control.Monad.Except
-import Data.Maybe (fromMaybe)
-import System.FilePath (makeRelative)
-import System.Directory (doesDirectoryExist)
-import System.Log.Simple (MonadLog(..), scope)
+import qualified Data.Map as M
+import Data.Text (Text)
+import System.Log.Simple (MonadLog(..), scope, sendLog, Level(Trace))
 
-import GHC hiding (Warning, Module, moduleName)
+import GHC hiding (Warning, Module)
 
-import Control.Concurrent.FiniteChan
 import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
-import HsDev.Project (fileTarget)
 import HsDev.Tools.Base
 import HsDev.Tools.Ghc.Worker
-import HsDev.Tools.Ghc.Compat as C
 import HsDev.Tools.Types
-import HsDev.Util (readFileUtf8, ordNub)
-
--- | Check files and collect warnings and errors
-checkFiles :: (MonadLog m, GhcMonad m) => [String] -> [FilePath] -> Maybe Project -> m [Note OutputMessage]
-checkFiles opts files _ = scope "check-files" $ do
-	ch <- liftIO newChan
-	withFlags $ do
-		modifyFlags $ C.setLogAction $ logToChan ch
-		addCmdOpts opts
-		clearTargets
-		mapM (`makeTarget` Nothing) files >>= loadTargets
-	notes <- liftIO $ stopChan ch
-	liftIO $ recalcNotesTabs notes
+import HsDev.Tools.Tabs
+import System.Directory.Paths
 
 -- | Check module source
-check :: (MonadLog m, GhcMonad m) => [String] -> Module -> Maybe String -> m [Note OutputMessage]
-check opts m msrc = scope "check" $ case view moduleLocation m of
-	FileModule file proj -> do
-		ch <- liftIO newChan
+check :: (MonadLog m, GhcMonad m) => Module -> Maybe Text -> m [Note OutputMessage]
+check m msrc = scope "check" $ case view (moduleId . moduleLocation) m of
+	FileModule file _ -> do
 		let
-			dir = fromMaybe
-				(sourceModuleRoot (view moduleName m) file) $
-				preview (_Just . projectPath) proj
-		dirExist <- liftIO $ doesDirectoryExist dir
-		withFlags $ (if dirExist then withCurrentDirectory dir else id) $ do
-			addCmdOpts opts
-			modifyFlags $ C.setLogAction $ logToChan ch
-			clearTargets
-			target <- makeTarget (makeRelative dir file) msrc
+			dir = sourceRoot_ (m ^. moduleId)
+			-- FIXME: There can be dependent modules with modified file contents
+			-- Their contents should be set here too
+			srcs = maybe mempty (M.singleton file) msrc
+		ex <- liftIO $ dirExists dir
+		sendLog Trace "loading targets"
+		notes <- withFlags $ (if ex then withCurrentDirectory (dir ^. path) else id) $ collectMessages_ $ do
+			target <- makeTarget (relPathTo dir file) msrc
 			loadTargets [target]
-		notes <- liftIO $ stopChan ch
-		liftIO $ recalcNotesTabs notes
-	_ -> scope "check" $ hsdevError $ ModuleNotSource (view moduleLocation m)
-
--- | Check module and collect warnings and errors
-checkFile :: (MonadLog m, GhcMonad m) => [String] -> Module -> m [Note OutputMessage]
-checkFile opts m = check opts m Nothing
-
--- | Check module and collect warnings and errors
-checkSource :: (MonadLog m, GhcMonad m) => [String] -> Module -> String -> m [Note OutputMessage]
-checkSource opts m src = check opts m (Just src)
-
--- Recalc tabs for notes
-recalcNotesTabs :: [Note OutputMessage] -> IO [Note OutputMessage]
-recalcNotesTabs notes = do
-	cts <- mapM readFileUtf8 files
-	let
-		recalc' n = fromMaybe n $ do
-			fname <- preview (noteSource . moduleFile) n
-			cts' <- lookup fname (zip files cts)
-			return $ recalcTabs cts' 8 n
-	return $ map recalc' notes
-	where
-		files = ordNub $ notes ^.. each . noteSource . moduleFile
+		sendLog Trace "targets checked"
+		liftIO $ recalcNotesTabs srcs notes
+	_ -> scope "check" $ hsdevError $ ModuleNotSource (view (moduleId . moduleLocation) m)

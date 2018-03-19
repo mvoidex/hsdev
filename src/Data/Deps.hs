@@ -4,18 +4,22 @@ module Data.Deps (
 	Deps(..), depsMap,
 	mapDeps,
 	dep, deps,
-	inverse, flatten
+	inverse,
+	DepsError(..), flatten,
+	selfDepend,
+	linearize
 	) where
 
 import Control.Lens
 import Control.Monad.State
-import Data.List (nub)
-import Data.Map (Map)
-import qualified Data.Map as M
+import Control.Monad.Except
+import Data.List (nub, intercalate)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe)
 
 -- | Dependency map
-data Deps a = Deps {
+newtype Deps a = Deps {
 	_depsMap :: Map a [a] }
 
 depsMap :: Lens (Deps a) (Deps b) (Map a [a]) (Map b [b])
@@ -24,6 +28,9 @@ depsMap = lens _depsMap (const Deps)
 instance Ord a => Monoid (Deps a) where
 	mempty = Deps mempty
 	mappend (Deps l) (Deps r) = Deps $ M.unionWith nubConcat l r
+
+instance Show a => Show (Deps a) where
+	show (Deps ds) = unlines [show d ++ " -> " ++ intercalate ", " (map show s) | (d, s) <- M.toList ds]
 
 type instance Index (Deps a) = a
 type instance IxValue (Deps a) = [a]
@@ -51,20 +58,44 @@ inverse = mconcat . map (uncurry dep) . concatMap inverse' . M.toList . _depsMap
 	inverse' :: (a, [a]) -> [(a, a)]
 	inverse' (m, ds) = zip ds (repeat m)
 
+newtype DepsError a =
+	CyclicDeps [a]
+	-- ^ Dependency cycle, list is cycle, where last item depends on first
+		deriving (Eq, Ord, Read)
+
+instance Show a => Show (DepsError a) where
+	show (CyclicDeps c) = "dependencies forms a cycle: " ++ concat [show d ++ " -> " | d <- c] ++ "..."
+
 -- | Flatten dependencies so that there will be no indirect dependencies
-flatten :: Ord a => Deps a -> Deps a
-flatten (Deps ds) = flip execState mempty . mapM_ flatten' . M.keys $ ds where
-	-- flatten' :: a -> State (Deps a) [a]
-	flatten' n = do
-		d <- gets (M.lookup n . _depsMap)
+flatten :: Ord a => Deps a -> Either (DepsError a) (Deps a)
+flatten s@(Deps ds) = fmap snd . flip execStateT mempty . mapM_ (flatten' s) . M.keys $ ds where
+	flatten' :: Ord a => Deps a -> a -> StateT ([a], Deps a) (Either (DepsError a)) [a]
+	flatten' s' n = do
+		path <- gets (view _1)
+		when (preview (reversed . each) path == Just n) $ throwError (CyclicDeps $ reverse path)
+		d <- gets (preview $ _2 . ix n)
 		case d of
 			Just d' -> return d'
-			Nothing -> do
-				let
-					deps' = fromMaybe [] $ M.lookup n ds
-				d'' <- (nub . concat . (++ [deps'])) <$> mapM flatten' deps'
-				modify $ mappend (deps n d'')
+			Nothing -> pushPath n $ do
+				d'' <- (nub . concat . (++ [deps'])) <$> mapM (flatten' s') deps'
+				modify (over _2 $ mappend (deps n d''))
 				return d''
+				where
+					deps' = fromMaybe [] $ preview (ix n) s'
+	pushPath :: MonadState ([a], Deps a) m => a -> m b -> m b
+	pushPath p act = do
+		modify (over _1 (p:))
+		r <- act
+		modify (over _1 tail)
+		return r
+
+selfDepend :: Deps a -> Deps a
+selfDepend = Deps . M.mapWithKey (\s d -> d ++ [s]) . _depsMap
+
+-- | Linearize dependencies so that all items can be processed in this order,
+-- i.e. for each item all its dependencies goes before
+linearize :: Ord a => Deps a -> Either (DepsError a) [a]
+linearize = fmap (nub . concat . toListOf (depsMap . each) . selfDepend) . flatten
 
 nubConcat :: Ord a => [a] -> [a] -> [a]
 nubConcat xs ys = nub $ xs ++ ys

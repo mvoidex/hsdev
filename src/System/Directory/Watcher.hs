@@ -7,22 +7,27 @@ module System.Directory.Watcher (
 	watchDir, watchDir_, unwatchDir, isWatchingDir,
 	watchTree, watchTree_, unwatchTree, isWatchingTree,
 	-- * Working with events
-	readEvent, events, onEvent
+	readEvent, eventGroup, onEvents, onEvents_
 	) where
 
 import Control.Lens (makeLenses)
 import Control.Arrow
-import Control.Concurrent.MVar
-import Control.Concurrent.Chan
+import Control.Concurrent
+import Control.Concurrent.Async
+import Control.Concurrent.STM
 import Control.Monad
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Maybe (isJust)
+import Data.Ratio ((%))
 import Data.String (fromString)
+import Data.Time.Clock (NominalDiffTime)
 import Data.Time.Clock.POSIX
 import System.FilePath (takeDirectory, isDrive)
 import System.Directory
 import qualified System.FSNotify as FS
+
+import HsDev.Util (uniqueBy)
 
 -- | Event type
 data EventType = Added | Modified | Removed deriving (Eq, Ord, Enum, Bounded, Read, Show)
@@ -32,6 +37,7 @@ data Event = Event {
 	_eventType :: EventType,
 	_eventPath :: FilePath,
 	_eventTime :: POSIXTime }
+		deriving (Eq, Ord, Show)
 
 makeLenses ''Event
 
@@ -80,7 +86,7 @@ isWatchingDir :: Watcher a -> FilePath -> IO Bool
 isWatchingDir w f = do
 	f' <- canonicalizePath f
 	dirs <- readMVar (watcherDirs w)
-	return $ isWatchingDir' dirs f' || isWatchingParents' dirs f'
+	return $ isWatchingDir' dirs f'
 
 -- | Watch directory tree
 watchTree :: Watcher a -> FilePath -> (Event -> Bool) -> a -> IO ()
@@ -113,19 +119,40 @@ isWatchingTree :: Watcher a -> FilePath -> IO Bool
 isWatchingTree w f = do
 	f' <- canonicalizePath f
 	dirs <- readMVar (watcherDirs w)
-	return $ isWatchingTree' dirs f' || isWatchingParents' dirs f'
+	return $ isWatchingTree' dirs f'
 
 -- | Read next event
 readEvent :: Watcher a -> IO (a, Event)
 readEvent = readChan . watcherChan
 
--- | Get lazy list of events
-events :: Watcher a -> IO [(a, Event)]
-events = getChanContents . watcherChan
+-- | Get event group
+eventGroup :: Watcher a -> NominalDiffTime -> ([(a, Event)] -> IO ()) -> IO ()
+eventGroup w tm onGroup = do
+	groupVar <- newTMVarIO []
+	syncVar <- newEmptyTMVarIO
+	_ <- async $ forever $ do
+		ev <- readChan (watcherChan w)
+		_ <- atomically $ tryPutTMVar syncVar ()
+		atomically $ do
+			evs <- takeTMVar groupVar
+			putTMVar groupVar (ev : evs)
+	forever $ do
+		_ <- atomically $ takeTMVar syncVar
+		threadDelay $ floor (tm * 1e6)
+		evs' <- atomically $ do
+			evs <- takeTMVar groupVar
+			putTMVar groupVar []
+			_ <- tryTakeTMVar syncVar
+			return $ reverse evs
+		onGroup $ uniqueBy (\(_, ev') -> (_eventType ev', _eventPath ev')) evs'
 
 -- | Process all events
-onEvent :: Watcher a -> (a -> Event -> IO ()) -> IO ()
-onEvent w act = events w >>= mapM_ (uncurry act)
+onEvents :: Watcher a -> NominalDiffTime -> ([(a, Event)] -> IO ()) -> IO ()
+onEvents = eventGroup
+
+-- | Process all events
+onEvents_ :: Watcher a -> ([(a, Event)] -> IO ()) -> IO ()
+onEvents_ w = onEvents w (fromRational (1 % 5))
 
 fromEvent :: FS.Event -> Event
 fromEvent e = Event t (FS.eventPath e) (utcTimeToPOSIXSeconds $ FS.eventTime e) where
@@ -138,14 +165,10 @@ isWatchingDir' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
 isWatchingDir' m dir
 	| Just (_, _) <- M.lookup dir m = True
 	| isDrive dir = False
-	| otherwise = isWatchingDir' m (takeDirectory dir)
+	| otherwise = isWatchingTree' m (takeDirectory dir)
 
 isWatchingTree' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
 isWatchingTree' m dir
 	| Just (True, _) <- M.lookup dir m = True
 	| isDrive dir = False
 	| otherwise = isWatchingTree' m (takeDirectory dir)
-
-isWatchingParents' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
-isWatchingParents' m dir = or (map (isWatchingTree' m) parents) where
-	parents = takeWhile (not . isDrive) $ iterate takeDirectory dir

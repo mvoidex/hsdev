@@ -5,49 +5,50 @@ module HsDev.Util (
 	withCurrentDirectory,
 	directoryContents,
 	traverseDirectory, searchPath,
-	isParent,
 	haskellSource,
 	cabalFile,
 	-- * String utils
-	tab, tabs, trim, split,
+	tab,
+	trim, split,
 	-- * Other utils
 	ordNub, uniqueBy, mapBy,
 	-- * Helper
-	(.::), (.::?), (.::?!), objectUnion, jsonUnion, noNulls,
+	(.::), (.::?), (.::?!), objectUnion, noNulls, fromJSON',
 	-- * Exceptions
-	liftException, liftE, liftEIO, tries, triesMap, liftExceptionM, liftIOErrors,
-	eitherT,
-	liftThrow,
+	liftException, liftE, tries, triesMap, liftExceptionM, liftIOErrors,
+	logAll,
 	-- * UTF-8
 	fromUtf8, toUtf8, readFileUtf8, writeFileUtf8,
 	-- * IO
-	hGetLineBS, logException, logIO, ignoreIO, logAsync,
-	-- * Async
-	liftAsync,
+	hGetLineBS, logIO, ignoreIO, logAsync,
 	-- * Command line
 	FromCmd(..),
-	cmdJson, withCmd, guardCmd,
+	cmdJson, guardCmd,
 	withHelp, cmd, parseArgs,
 	-- * Version stuff
-	version, cutVersion, sameVersion, strVersion,
+	version,
+	-- * Parse
+	parseDT,
+
+	-- * Log utils
+	timer,
 
 	-- * Reexportss
 	module Control.Monad.Except,
 	MonadIO(..)
 	) where
 
-import Control.Applicative
 import Control.Arrow (second, left, (&&&))
 import Control.Exception
-import Control.Concurrent.Async
+import Control.DeepSeq
 import Control.Monad
 import Control.Monad.Except
 import qualified Control.Monad.Catch as C
 import Data.Aeson hiding (Result(..), Error)
 import qualified Data.Aeson.Types as A
 import Data.Char (isSpace)
-import Data.List (isPrefixOf, unfoldr, intercalate)
-import qualified Data.Map as M
+import Data.List (unfoldr)
+import qualified Data.Map.Strict as M
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Monoid ((<>))
 import qualified Data.Set as Set
@@ -56,12 +57,18 @@ import qualified Data.ByteString.Char8 as B
 import Data.ByteString.Lazy (ByteString)
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Text (Text)
+import qualified Data.Text.IO as ST
 import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
+import Data.Time.Clock.POSIX
+import Distribution.Text (simpleParse)
+import qualified Distribution.Text (Text)
 import Options.Applicative
 import qualified System.Directory as Dir
 import System.FilePath
+import System.Log.Simple
 import System.IO
+import Text.Format
 import Text.Read (readMaybe)
 
 #if !MIN_VERSION_directory(1,2,6)
@@ -82,7 +89,9 @@ withCurrentDirectory cur act = C.bracket (liftIO Dir.getCurrentDirectory) (liftI
 
 -- | Is directory symbolic link
 dirIsSymLink :: FilePath -> IO Bool
-#if MIN_VERSION_directory(1,2,6)
+#if MIN_VERSION_directory(1,3,0)
+dirIsSymLink = Dir.pathIsSymbolicLink
+#elif MIN_VERSION_directory(1,2,6)
 dirIsSymLink = Dir.isSymbolicLink
 #else
 dirIsSymLink path = do
@@ -110,8 +119,8 @@ directoryContents p = handle ignore $ do
 
 -- | Collect all file names in directory recursively
 traverseDirectory :: FilePath -> IO [FilePath]
-traverseDirectory path = handle onError $ do
-	cts <- directoryContents path
+traverseDirectory p = handle onError $ do
+	cts <- directoryContents p
 	liftM concat $ forM cts $ \c -> do
 		isDir <- Dir.doesDirectoryExist c
 		if isDir
@@ -123,21 +132,14 @@ traverseDirectory path = handle onError $ do
 
 -- | Search something up
 searchPath :: (MonadIO m, MonadPlus m) => FilePath -> (FilePath -> m a) -> m a
-searchPath path f = do
-	path' <- liftIO $ Dir.canonicalizePath path
-	isDir <- liftIO $ Dir.doesDirectoryExist path'
-	search' (if isDir then path' else takeDirectory path')
+searchPath p f = do
+	p' <- liftIO $ Dir.canonicalizePath p
+	isDir <- liftIO $ Dir.doesDirectoryExist p'
+	search' (if isDir then p' else takeDirectory p')
 	where
 		search' dir
 			| isDrive dir = f dir
 			| otherwise = f dir `mplus` search' (takeDirectory dir)
-
--- | Is one path parent of another
-isParent :: FilePath -> FilePath -> Bool
-isParent dir file = norm dir `isPrefixOf` norm file where
-	norm = dropDot . splitDirectories . normalise
-	dropDot ("." : chs) = chs
-	dropDot chs = chs
 
 -- | Is haskell source?
 haskellSource :: FilePath -> Bool
@@ -150,10 +152,6 @@ cabalFile f = takeExtension f == ".cabal"
 -- | Add N tabs to line
 tab :: Int -> String -> String
 tab n s = replicate n '\t' ++ s
-
--- | Add N tabs to multiline
-tabs :: Int -> String -> String
-tabs n = unlines . map (tab n) . lines
 
 -- | Trim string
 trim :: String -> String
@@ -197,15 +195,17 @@ objectUnion (Object l) _ = Object l
 objectUnion _ (Object r) = Object r
 objectUnion _ _ = Null
 
--- | Union two JSON objects
-jsonUnion :: (ToJSON a, ToJSON b) => a -> b -> Value
-jsonUnion x y = objectUnion (toJSON x) (toJSON y)
-
 -- | No Nulls in JSON object
 noNulls :: [A.Pair] -> [A.Pair]
 noNulls = filter (not . isNull . snd) where
 	isNull Null = True
-	isNull v = v == A.emptyArray || v == A.emptyObject
+	isNull v = v == A.emptyArray || v == A.emptyObject || v == A.String ""
+
+-- | Try convert json to value
+fromJSON' :: FromJSON a => Value -> Maybe a
+fromJSON' v = case fromJSON v of
+	A.Success r -> Just r
+	_ -> Nothing
 
 -- | Lift IO exception to ExceptT
 liftException :: C.MonadCatch m => m a -> ExceptT String m a
@@ -214,10 +214,6 @@ liftException = ExceptT . liftM (left $ \(SomeException e) -> displayException e
 -- | Same as @liftException@
 liftE :: C.MonadCatch m => m a -> ExceptT String m a
 liftE = liftException
-
--- | @liftE@ for IO
-liftEIO :: (C.MonadCatch m, MonadIO m) => IO a -> ExceptT String m a
-liftEIO = liftE . liftIO
 
 -- | Run actions ignoring errors
 tries :: MonadPlus m => [m a] -> m [a]
@@ -235,12 +231,10 @@ liftExceptionM act = C.catch act onError where
 liftIOErrors :: C.MonadCatch m => ExceptT String m a -> ExceptT String m a
 liftIOErrors act = liftException (runExceptT act) >>= either throwError return
 
-eitherT :: MonadError String m => Either String a -> m a
-eitherT = either throwError return
-
--- | Throw error as exception
-liftThrow :: (Show e, MonadError e m, C.MonadCatch m) => m a -> m a
-liftThrow act = catchError act (C.throwM . userError . show)
+-- | Log exceptions and ignore
+logAll :: (MonadLog m, C.MonadCatch m) => m () -> m ()
+logAll = C.handleAll logExc' where
+	logExc' e = sendLog Warning $ "exception: {}" ~~ displayException e
 
 fromUtf8 :: ByteString -> String
 fromUtf8 = T.unpack . T.decodeUtf8
@@ -249,24 +243,19 @@ toUtf8 :: String -> ByteString
 toUtf8 = T.encodeUtf8 . T.pack
 
 -- | Read file in UTF8
-readFileUtf8 :: FilePath -> IO String
+readFileUtf8 :: FilePath -> IO Text
 readFileUtf8 f = withFile f ReadMode $ \h -> do
 	hSetEncoding h utf8
-	cts <- hGetContents h
-	length cts `seq` return cts
+	cts <- ST.hGetContents h
+	cts `deepseq` return cts
 
-writeFileUtf8 :: FilePath -> String -> IO ()
+writeFileUtf8 :: FilePath -> Text -> IO ()
 writeFileUtf8 f cts = withFile f WriteMode $ \h -> do
 	hSetEncoding h utf8
-	hPutStr h cts
+	ST.hPutStr h cts
 
 hGetLineBS :: Handle -> IO ByteString
 hGetLineBS = fmap L.fromStrict . B.hGetLine
-
-logException :: String -> (String -> IO ()) -> IO () -> IO ()
-logException pre out = handle onErr where
-	onErr :: SomeException -> IO ()
-	onErr e = out $ pre ++ displayException e
 
 logIO :: C.MonadCatch m => String -> (String -> m ()) -> m () -> m ()
 logIO pre out = flip C.catch (onIO out) where
@@ -283,17 +272,11 @@ ignoreIO = C.handle ignore' where
 	ignore' :: Monad m => IOException -> m ()
 	ignore' _ = return ()
 
-liftAsync :: (C.MonadThrow m, C.MonadCatch m, MonadIO m) => IO (Async a) -> ExceptT String m a
-liftAsync = liftExceptionM . ExceptT . liftIO . liftM (left displayException) . join . liftM waitCatch
-
 class FromCmd a where
 	cmdP :: Parser a
 
 cmdJson :: String -> [A.Pair] -> Value
 cmdJson nm ps = object $ ("command" .= nm) : ps
-
-withCmd :: String -> (Object -> A.Parser a) -> Value -> A.Parser a
-withCmd nm fn = withObject ("command " ++ nm) $ \v -> guardCmd nm v *> fn v
 
 guardCmd :: String -> Object -> A.Parser ()
 guardCmd nm obj = do
@@ -324,15 +307,16 @@ parseArgs nm p = handle' . execParserPure (prefs mempty) (p { infoParser = withH
 version :: Maybe [Int]
 version = mapM readMaybe $ split (== '.') $cabalVersion
 
--- | Cut version to contain only significant numbers (currently 3)
-cutVersion :: Maybe [Int] -> Maybe [Int]
-cutVersion = fmap (take 3)
+-- | Parse Distribution.Text
+parseDT :: (Monad m, Distribution.Text.Text a) => String -> String -> m a
+parseDT typeName v = maybe err return (simpleParse v) where
+	err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
 
--- | Check if version is the same
-sameVersion :: Maybe [Int] -> Maybe [Int] -> Bool
-sameVersion l r = fromMaybe False $ liftA2 (==) l r
-
--- | Version to string
-strVersion :: Maybe [Int] -> String
-strVersion Nothing = "unknown"
-strVersion (Just vers) = intercalate "." $ map show vers
+-- | Measure time of action
+timer :: MonadLog m => Text -> m a -> m a
+timer msg act = do
+	s <- liftIO getPOSIXTime
+	r <- act
+	e <- liftIO getPOSIXTime
+	sendLog Trace $ "{}: {}" ~~ msg ~~ show (e - s)
+	return r

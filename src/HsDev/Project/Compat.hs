@@ -7,6 +7,7 @@ module HsDev.Project.Compat (
 	) where
 
 import Data.Maybe (maybeToList)
+import Data.Text (Text, pack)
 import qualified Distribution.PackageDescription as PD
 import Distribution.PackageDescription.Parse
 import Distribution.Version (Version)
@@ -31,11 +32,11 @@ showVer = showVersion
 #endif
 
 #if MIN_VERSION_Cabal(2,0,0)
-componentName :: UnqualComponentName -> String
-componentName = unUnqualComponentName
+componentName :: UnqualComponentName -> Text
+componentName = pack . unUnqualComponentName
 #else
-componentName :: String -> String
-componentName = id
+componentName :: String -> Text
+componentName = pack
 #endif
 
 testSuiteEnabled :: PD.TestSuite -> Bool

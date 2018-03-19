@@ -2,12 +2,13 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.MGhc (
+	Session(..), sessionKey, sessionData,
 	SessionState(..), sessionActive, sessionMap,
 	MGhcT(..), runMGhcT, liftGhc,
-	hasSession, findSession, findSessionBy, saveSession,
+	currentSession, getSessionData, setSessionData, hasSession, findSession, findSessionBy, saveSession,
 	initSession, newSession,
 	switchSession, switchSession_,
-	deleteSession, restoreSession, usingSession
+	deleteSession, restoreSession, usingSession, tempSession
 	) where
 
 import Control.Lens
@@ -17,33 +18,49 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Data.Default
 import Data.IORef
-import Data.List (find)
-import Data.Map (Map)
-import qualified Data.Map as M
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe, isJust)
 import System.Log.Simple.Monad (MonadLog(..))
 
 import DynFlags
-import Exception hiding (catch, mask, uninterruptibleMask, bracket)
+import Exception hiding (catch, mask, uninterruptibleMask, bracket, finally)
 import GHC
-import GhcMonad
+import GHCi
+import GhcMonad hiding (Session(..))
+import qualified GhcMonad (Session(..))
 import HscTypes
 import Outputable
 import SysTools
 
-data SessionState s = SessionState {
-	_sessionActive :: Maybe s,
-	_sessionMap :: Map s HscEnv }
+data Session s d = Session {
+	_sessionKey :: s,
+	_sessionData :: d }
+		deriving (Eq, Ord, Read, Show)
 
-instance Default (SessionState s) where
+sessionKey :: Lens' (Session s d) s
+sessionKey = lens g s where
+	g = _sessionKey
+	s sess k = sess { _sessionKey = k }
+
+sessionData :: Lens' (Session s d) d
+sessionData = lens g s where
+	g = _sessionData
+	s sess dat = sess { _sessionData = dat }
+
+data SessionState s d = SessionState {
+	_sessionActive :: Maybe (Session s d),
+	_sessionMap :: Map s (HscEnv, d) }
+
+instance Default (SessionState s d) where
 	def = SessionState Nothing M.empty
 
-sessionActive :: Lens' (SessionState s) (Maybe s)
+sessionActive :: Lens' (SessionState s d) (Maybe (Session s d))
 sessionActive = lens g s where
 	g = _sessionActive
 	s st nm = st { _sessionActive = nm }
 
-sessionMap :: Lens' (SessionState s) (Map s HscEnv)
+sessionMap :: Lens' (SessionState s d) (Map s (HscEnv, d))
 sessionMap = lens g s where
 	g = _sessionMap
 	s st m = st { _sessionMap = m }
@@ -61,8 +78,8 @@ instance ExceptionMonad m => ExceptionMonad (ReaderT r m) where
 			act v = ReaderT $ act' . runReaderT v
 
 -- | Multi-session ghc monad
-newtype MGhcT s m a = MGhcT { unMGhcT :: GhcT (ReaderT (Maybe FilePath) (StateT (SessionState s) m)) a }
-	deriving (Functor, Applicative, Monad, MonadIO, ExceptionMonad, HasDynFlags, GhcMonad, MonadState (SessionState s), MonadReader (Maybe FilePath), MonadThrow, MonadCatch, MonadMask, MonadLog)
+newtype MGhcT s d m a = MGhcT { unMGhcT :: GhcT (ReaderT (Maybe FilePath) (StateT (SessionState s d) m)) a }
+	deriving (Functor, Applicative, Monad, MonadIO, ExceptionMonad, HasDynFlags, GhcMonad, MonadState (SessionState s d), MonadReader (Maybe FilePath), MonadThrow, MonadCatch, MonadMask, MonadLog)
 
 instance MonadTrans GhcT where
 	lift = liftGhcT
@@ -92,75 +109,88 @@ instance MonadMask m => MonadMask (GhcT m) where
 		q g' act = GhcT $ g' . unGhcT act
 
 -- | Run multi-session ghc
-runMGhcT :: (MonadIO m, ExceptionMonad m, Ord s) => Maybe FilePath -> MGhcT s m a -> m a
+runMGhcT :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => Maybe FilePath -> MGhcT s d m a -> m a
 runMGhcT lib act = do
 	ref <- liftIO $ newIORef (panic "empty session")
 	let
-		session = Session ref
+		session = GhcMonad.Session ref
 	flip evalStateT def $ flip runReaderT lib $ flip unGhcT session $ unMGhcT $ act `gfinally` cleanup
 	where
-		cleanup :: (MonadIO m, ExceptionMonad m, Ord s) => MGhcT s m ()
+		cleanup :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => MGhcT s d m ()
 		cleanup = do
 			void saveSession
 			sessions <- gets (M.elems . view sessionMap)
-			liftIO $ mapM_ cleanupSession sessions
+			liftIO $ mapM_ (cleanupSession . view _1) sessions
 			modify (set sessionMap M.empty)
 
 -- | Lift `Ghc` monad onto `MGhc`
-liftGhc :: MonadIO m => Ghc a -> MGhcT s m a
+liftGhc :: MonadIO m => Ghc a -> MGhcT s d m a
 liftGhc (Ghc act) = MGhcT $ GhcT $ liftIO . act
 
+-- | Get current session
+currentSession :: MonadIO m => MGhcT s d m (Maybe (Session s d))
+currentSession = gets (view sessionActive)
+
+-- | Get current session data
+getSessionData :: MonadIO m => MGhcT s d m (Maybe d)
+getSessionData = gets (preview (sessionActive . _Just . sessionData))
+
+-- | Set current session data
+setSessionData :: MonadIO m => d -> MGhcT s d m ()
+setSessionData sdata = modify (set (sessionActive . _Just . sessionData) sdata)
+
 -- | Does session exist
-hasSession :: (MonadIO m, Ord s) => s -> MGhcT s m Bool
+hasSession :: (MonadIO m, Ord s) => s -> MGhcT s d m Bool
 hasSession key = do
-	msess <- gets (preview (sessionMap . ix key))
+	msess <- findSession key
 	return $ isJust msess
 
 -- | Find session
-findSession :: (MonadIO m, Ord s) => s -> MGhcT s m (Maybe s)
+findSession :: (MonadIO m, Ord s) => s -> MGhcT s d m (Maybe (Session s d))
 findSession key = do
-	mkeys <- gets (M.keys . view sessionMap)
-	return $ find (== key) mkeys
+	sdata <- gets (preview (sessionMap . ix key . _2))
+	return $ fmap (Session key) sdata
 
 -- | Find session by
-findSessionBy :: MonadIO m => (s -> Bool) -> MGhcT s m [s]
+findSessionBy :: MonadIO m => (s -> Bool) -> MGhcT s d m [Session s d]
 findSessionBy p = do
-	mkeys <- gets (M.keys . view sessionMap)
-	return $ filter p mkeys
+	sessions <- gets (M.toList . view sessionMap)
+	return [Session key sdata | (key, (_, sdata)) <- sessions, p key]
 
 -- | Save current session
-saveSession :: (MonadIO m, ExceptionMonad m, Ord s) => MGhcT s m (Maybe s)
+saveSession :: (MonadIO m, ExceptionMonad m, Ord s) => MGhcT s d m (Maybe (Session s d))
 saveSession = do
-	key <- gets (view sessionActive)
-	case key of
-		Just key' -> do
+	msess <- currentSession
+	case msess of
+		Just (Session key' dat') -> do
 			sess <- getSession
-			modify (set (sessionMap . at key') (Just sess))
+			modify (set (sessionMap . at key') (Just (sess, dat')))
 		Nothing -> return ()
-	return key
+	return msess
 
 -- | Initialize new session
-initSession :: (MonadIO m, ExceptionMonad m, Ord s) => MGhcT s m ()
+initSession :: (MonadIO m, ExceptionMonad m, Ord s) => MGhcT s d m ()
 initSession = do
 	lib <- ask
 	initGhcMonad lib
 	void saveSession
 
-activateSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m (Maybe HscEnv)
+activateSession :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => s -> MGhcT s d m (Maybe HscEnv)
 activateSession key = do
 	void saveSession
-	modify (set sessionActive $ Just key)
-	gets (view (sessionMap . at key))
+	sdata <- gets (view (sessionMap . ix key . _2))
+	modify (set sessionActive $ Just (Session key sdata))
+	gets (preview (sessionMap . ix key . _1))
 
 -- | Create new named session, deleting existing session
-newSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m ()
+newSession :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => s -> MGhcT s d m ()
 newSession key = do
 	msess <- activateSession key
 	maybe (return ()) (liftIO . cleanupSession) msess
 	initSession
 
 -- | Switch to session, creating if not exist, returns True if session was created
-switchSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m Bool
+switchSession :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => s -> MGhcT s d m Bool
 switchSession key = do
 	msess <- activateSession key
 	case msess of
@@ -168,37 +198,44 @@ switchSession key = do
 		Just sess -> setSession sess >> return False
 
 -- | Switch to session, creating if not exist and initializing with passed function
-switchSession_ :: (MonadIO m, ExceptionMonad m, Ord s) => s -> Maybe (MGhcT s m ()) -> MGhcT s m ()
+switchSession_ :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => s -> Maybe (MGhcT s d m ()) -> MGhcT s d m ()
 switchSession_ key f = do
 	new <- switchSession key
 	when new $ fromMaybe (return ()) f
 
 -- | Delete existing session
-deleteSession :: (MonadIO m, ExceptionMonad m, Ord s) => s -> MGhcT s m ()
+deleteSession :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => s -> MGhcT s d m ()
 deleteSession key = do
 	cur <- saveSession
-	when (cur == Just key) $
+	when (preview (_Just . sessionKey) cur == Just key) $
 		modify (set sessionActive Nothing)
-	msess <- gets (view (sessionMap . at key))
+	msess <- gets (preview (sessionMap . ix key . _1))
 	modify (set (sessionMap . at key) Nothing)
 	case msess of
 		Nothing -> return ()
 		Just sess -> liftIO $ cleanupSession sess
 
 -- | Save and restore session
-restoreSession :: (MonadIO m, MonadMask m, ExceptionMonad m, Ord s) => MGhcT s m a -> MGhcT s m a
-restoreSession act = bracket saveSession (maybe (return ()) (void . switchSession)) $ const act
+restoreSession :: (MonadIO m, MonadMask m, ExceptionMonad m, Ord s, Monoid d) => MGhcT s d m a -> MGhcT s d m a
+restoreSession act = bracket saveSession (maybe (return ()) (void . switchSession . view sessionKey)) $ const act
 
 -- | Run action using session, restoring session back
-usingSession :: (MonadIO m, MonadMask m, ExceptionMonad m, Ord s) => s -> MGhcT s m a -> MGhcT s m a
+usingSession :: (MonadIO m, MonadMask m, ExceptionMonad m, Ord s, Monoid d) => s -> MGhcT s d m a -> MGhcT s d m a
 usingSession key act = restoreSession $ do
 	void $ switchSession key
 	act
+
+-- | Run with temporary session, like @usingSession@, but deletes self session
+tempSession :: (MonadIO m, MonadMask m, ExceptionMonad m, Ord s, Monoid d) => s -> MGhcT s d m a -> MGhcT s d m a
+tempSession key act = do
+	exist' <- hasSession key
+	usingSession key act `finally` unless exist' (deleteSession key)
 
 -- | Cleanup session
 cleanupSession :: HscEnv -> IO ()
 cleanupSession env = do
 	cleanTempFiles df
 	cleanTempDirs df
+	stopIServ env
 	where
 		df = hsc_dflags env

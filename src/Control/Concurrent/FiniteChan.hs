@@ -1,73 +1,57 @@
 module Control.Concurrent.FiniteChan (
 	Chan,
-	newChan, dupChan, openedChan, closedChan, doneChan, sendChan, putChan, getChan, readChan, closeChan, stopChan
+	newChan, openedChan, closedChan, doneChan, sendChan, getChan, closeChan, stopChan
 	) where
 
 import Control.Monad (void, when, liftM2)
-import qualified Control.Concurrent.Chan as C
-import Control.Concurrent.MVar
-import Data.Maybe
+import Control.Monad.Loops
+import Control.Concurrent.STM
 
-data State = Opened | Closing | Closed deriving (Eq, Ord, Enum, Bounded, Read, Show)
+-- | 'Chan' is stoppable channel
+data Chan a = Chan {
+	chanOpened :: TMVar Bool,
+	chanQueue :: TQueue a }
 
--- | 'Chan' is stoppable channel unline 'Control.Concurrent.Chan'
-data Chan a = Chan (C.Chan (Maybe a)) (MVar State)
-
--- | Create channel
+-- -- | Create new channel
 newChan :: IO (Chan a)
-newChan = liftM2 Chan C.newChan (newMVar Opened)
-
--- | Duplicate channel
-dupChan :: Chan a -> IO (Chan a)
-dupChan (Chan ch st) = liftM2 Chan (C.dupChan ch) (return st)
+newChan = liftM2 Chan (newTMVarIO True) newTQueueIO
 
 -- | Is channel opened
 openedChan :: Chan a -> IO Bool
-openedChan (Chan _ st) = (== Opened) <$> readMVar st
+openedChan = atomically . readTMVar . chanOpened
 
--- | Is channel closing/closed
+-- | Is channel closed
 closedChan :: Chan a -> IO Bool
-closedChan (Chan _ st) = (/= Opened) <$> readMVar st
+closedChan = fmap not . openedChan
 
--- | Is channed closed and all data allready read from it
+-- | Is channel closed and all data consumed
 doneChan :: Chan a -> IO Bool
-doneChan (Chan _ st) = (== Closed) <$> readMVar st
+doneChan ch = atomically $ do
+	o <- readTMVar $ chanOpened ch
+	e <- isEmptyTQueue (chanQueue ch)
+	return $ not o && e
 
--- | Write data to channel
+-- | Write data to channel if it is open
 sendChan :: Chan a -> a -> IO Bool
-sendChan (Chan ch st) v = do
-	state <- readMVar st
-	if state == Opened
-		then do
-			C.writeChan ch (Just v)
-			return True
-		else return False
-
--- | Put data to channel
-putChan :: Chan a -> a -> IO ()
-putChan ch = void . sendChan ch
+sendChan ch v = atomically $ do
+	o <- readTMVar $ chanOpened ch
+	when o $ writeTQueue (chanQueue ch) v
+	return o
 
 -- | Get data from channel
 getChan :: Chan a -> IO (Maybe a)
-getChan (Chan ch st) = do
-	state <- readMVar st
-	if state == Closed then return Nothing else do
-		r <- C.readChan ch
-		when (isNothing r) (void $ swapMVar st Closed)
-		return r
+getChan ch = atomically $ do
+	o <- readTMVar $ chanOpened ch
+	if o
+		then fmap Just (readTQueue (chanQueue ch))
+		else tryReadTQueue (chanQueue ch)
 
--- | Read channel contents
-readChan :: Chan a -> IO [a]
-readChan (Chan ch _) = (catMaybes . takeWhile isJust) <$> C.getChanContents ch
-
--- | Close channel. 'putChan' will still work, but no data will be available on other ending
+-- | Close channel
 closeChan :: Chan a -> IO ()
-closeChan (Chan ch st) = do
-	state <- readMVar st
-	when (state == Opened) $ do
-		_ <- swapMVar st Closing
-		C.writeChan ch Nothing
+closeChan ch = atomically $ void $ swapTMVar (chanOpened ch) False
 
--- | Stop channel and return all data
+-- | Close channel and read all messages
 stopChan :: Chan a -> IO [a]
-stopChan ch = closeChan ch >> readChan ch
+stopChan ch = do
+	closeChan ch
+	whileJust (getChan ch) return

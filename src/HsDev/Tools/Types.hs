@@ -10,10 +10,11 @@ import Control.DeepSeq (NFData(..))
 import Control.Lens (makeLenses)
 import Control.Monad
 import Data.Aeson hiding (Error)
+import Data.Text (Text)
 
 import System.Directory.Paths
 import HsDev.Symbols.Location
-import HsDev.Util ((.::), (.::?))
+import HsDev.Util ((.::), (.::?), noNulls)
 
 -- | Note severity
 data Severity = Error | Warning | Hint deriving (Enum, Bounded, Eq, Ord, Read, Show)
@@ -54,7 +55,7 @@ instance NFData a => NFData (Note a) where
 	rnf (Note s r l n) = rnf s `seq` rnf r `seq` rnf l `seq` rnf n
 
 instance ToJSON a => ToJSON (Note a) where
-	toJSON (Note s r l n) = object [
+	toJSON (Note s r l n) = object $ noNulls [
 		"source" .= s,
 		"region" .= r,
 		"level" .= l,
@@ -76,8 +77,8 @@ instance Paths (Note a) where
 
 -- | Output message from some tool (ghc, ghc-mod, hlint) with optional suggestion
 data OutputMessage = OutputMessage {
-	_message :: String,
-	_messageSuggestion :: Maybe String }
+	_message :: Text,
+	_messageSuggestion :: Maybe Text }
 		deriving (Eq, Ord, Read, Show)
 
 instance NFData OutputMessage where
@@ -93,7 +94,7 @@ instance FromJSON OutputMessage where
 		v .:: "message" <*>
 		v .:: "suggestion"
 
-outputMessage :: String -> OutputMessage
+outputMessage :: Text -> OutputMessage
 outputMessage msg = OutputMessage msg Nothing
 
 makeLenses ''OutputMessage

@@ -9,9 +9,8 @@
 
 Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
 Uses [fsnotify](http://hackage.haskell.org/package/fsnotify) to watch for changes.
-There are also several utils `hsinspect`, `hsclearimports`, `hscabal`, `hshayoo`, `hsautofix`
 
-Main idea is to hold in memory scanned sourced and installed modules, so that getting info about symbols and modules is fast and simple.
+Main idea is to hold in memory scanned sourced and installed modules, so that getting info about symbols and modules is fast.
 It also doesn't require much work to integrate with some editor:
 
 1. Create `hsdev run ...` process
@@ -26,8 +25,8 @@ It also doesn't require much work to integrate with some editor:
 
 ## Usage
 
-Use `hsdev start` to start remote server. Specify `--cache`, where `hsdev` will store information.
-Then you can connect to server and send requests (see [requests/responses](MESSAGES.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
+Use `hsdev start` to start remote server. Specify `--db`, where `hsdev` will store information (SQLite database, see [hsdev.sql](data/hsdev.sql) for schema).
+Then you can connect to server and send requests (see [requests/responses](API.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
 Scan sources, installed modules and you're ready to request various information: scope, completions, info about symbols etc.
 
 Typical usage is:
@@ -36,13 +35,17 @@ PS> hsdev start
 Server started at port 4567
 PS> hsdev scan --path /projects/haskell --project /projects/hsdev --cabal --silent
 []
-PS> hsdev complete DB.r -f /projects/hsdev/src/HsDev/Server/Commands.hs | jq -r '.[] | .name + """ :: """ + .decl.type'
-readAsync :: Async a -> IO a
+PS> hsdev complete runC -f ./src/HsDev/Server/Commands.hs | jq -r '.[] | .id.name + """ :: """ + .info.type'
+runClientM :: ServerM (ReaderT CommandOptions m) a
 </pre>
 
 ## Stack support
 
 `hsdev` uses `stack` to build dependencies and to get corresponding package-dbs. As long as `hsdev` uses `ghc` as library, it passes `--compiler` and `--arch` options (since `0.1.7.2`) to `stack` in order to get compatible package-dbs built with same compiler.
+
+## Build without `haddock`/`hdocs` dependency
+
+Disable flag `docs` to build without these dependencies: `cabal configure -f-docs`
 
 ### Commands
 
@@ -53,15 +56,16 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `connect` — connect to server to send commands from command line (for debug)
 * `ping` — ping server
 * `listen` — connect to server and listen for its log (for debug)
-* `add` — add info to database
+* `set-log` — set log level
 * `scan` — scan installed modules, cabal projects and files
+* `set-file-contents` — set data to use as file contents, used to work with unsaved files
 * `docs`, `infer` — scan docs or infer types for sources
 * `remove`, `remove-all` — unload data
-* `modules`, `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
-* `resolve` — resolve scope symbols and exports for sources module, it takes reexports, export and import lists into account
-* `symbol`, `module`, `project` — find symbol, module or project
-* `lookup`, `whois` — find project-visible or imported symbol
+* `packages`, `projects`, `sandboxes` — list information about specified modules, packages, projects or sandboxes
+* `symbol`, `module`, `project`, `sandbox` — get info about symbol, module, project or sandbox
+* `whoat`, `whois`, `lookup` — find project-visible or imported symbol
 * `scope`, `scope modules` — get modules or declarations, accessible from file
+* `usages` — find usages of symbol
 * `complete` — get completions for file and input
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
@@ -69,7 +73,10 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `types` — get types for all source spans
 * `flags`, `langs` — list ghc flags and language extensions
 * `ghc eval` — evaluate expression
-* `autofix show`, `autofix fix` — commands to fix some warnings and apply `hlint` suggestions, see description below
+* `ghc type` — get type of expression
+* `autofixes` — get suggestions to fix some warnings and errors
+* `rename` — get regions to rename some symbol
+* `refactor` — apply suggestions/renames from previous commands
 
 #### TODO: Detailed commands description with examples
 
@@ -80,140 +87,72 @@ Scans sources, projects, directories, sandboxes and installed modules. After sca
 PS> hsdev scan --cabal --path path/to/projects --project path/to/some/project --file File.hs
 </pre>
 
-#### Resolve
+#### Whois/whoat
 
-Resolve source module scope, taking into account reexports and import/export lists. When flag `--exports` set, resolve only exported declarations.
+Get information for symbol in context of source file. Understand qualified names and also names qualified with module shortcut (`import ... as`), note `M.` qualified for `map`, and local definition `toResult`:
 <pre>
-PS> hsdev resolve --file .\src\HsDev\Cabal.hs --exports | json | % { $_.declarations.name }
-Cabal
-Sandbox
-cabalOpt
-findPackageDb
-getSandbox
-isPackageDb
-locateSandbox
-sandbox
-searchSandbox
+PS> dev whois M.lookup --file .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+lookup :: Ord k => k -> Map k a -> Maybe a
+PS> hsdev whoat 64 1 -f .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+toValue :: m a -> m Value
+PS> hsdev whoat 55 32 -f .\src\HsDev\Client\Commands.hs | json | % { $_.id.name + ' :: ' + $_.info.type }
+toResult :: ReaderT CommandOptions m a -> m Result
 </pre>
 
-#### Whois
+#### Usages
 
-Get information for symbol in context of source file. Understand qualified names and also names qualified with module shortcut (`import ... as`), note `M.` qualified for `map`:
+Returns all places where symbol is used
 <pre>
-PS> hsdev whois M.map --file .\src\HsDev\Symbols\Resolve.hs | json | % { $_.declaration.decl.type }
-(a -> b) -> Map k a -> Map k b
+PS> hsdev usages Data.Map.toList | json | % { $_.in.name, $_.at.line, $_.at.column -join ':' }
+Data.Deps:33:90
+Data.Deps:57:62
+HsDev.Symbols.Types:93:12
+HsDev.Symbols.Types:95:54
+HsDev.Symbols.Types:104:74
+HsDev.Symbols.Types:104:94
+...
 </pre>
 
-#### AutoFix
+#### AutoFixes/Rename/Refactor
 
-Autofix commands used to assist for automatic fix of some warnings and hints from `hlint`. `autofix show` command parses `check` and `lint` command output, and returns `corrections` — data with regions and suggestions to fix. `autofix fix` command perform fix of selected corrections and also updates positions of other corrections, such that they stay relevant. These updated corrections can be used to pass them to `autofix fix` again.
+Autofix commands used to assist for automatic fix of some warnings and hints from `hlint`. `autofixes` command parses `check` and `lint` command output, and returns `corrections` — data with regions and suggestions to fix. `refactor` command perform fix of selected corrections and also updates positions of other corrections, such that they stay relevant. These updated corrections can be used to pass them to `refactor` again.
 Example of interactive command, based on this command in SublimeHaskell:
 ![autofix](https://raw.githubusercontent.com/SublimeHaskell/SublimeHaskell/hsdev/Commands/AutoFix.gif)
 
+Rename generates corrections to rename symbol
+
 <pre>
 # Get corrections
-PS> $corrs = hsdev check-lint ..\haskell\Test.hs | hsdev autofix show --stdin
+PS> $corrs = hsdev check-lint ..\haskell\Test.hs | hsdev autofixes --stdin
 # Apply first correction, other corrections passed as --rest param to update their positions
 # Result is updated --rest corrections, which can be used again
-PS> $corrs2 = ($corrs | jq '[.[1]]' -c -r) | hsdev autofix fix --pure --rest (escape ($corrs | jq '.[1:5]' -c -r)) --stdin
+PS> $corrs2 = ($corrs | jq '[.[1]]' -c -r) | hsdev refactor --pure --rest (escape ($corrs | jq '.[1:5]' -c -r)) --stdin
 # One more
-PS> $corrs2 | hsdev autofix fix --stdin --pure
+PS> $corrs2 | hsdev refactor --stdin --pure
 </pre>
 
 
 ### Examples
 
 <pre>
-PS> hsdev start --cache cache
+PS> hsdev start --db hsdev.db
 Server started at port 4567
 PS> hsdev scan --cabal
 {}
 PS> hsdev scan --project hsdev
 {}
-PS> hsdev modules --project hsdev | json | % { $_.result.name } | select -first 3
-Data.Async
-Data.Group
-HsDev
-PS> hsdev symbol enumProject | json | % { $_.result.declaration } | % { $_.name + ' :: ' + $_.decl.type }
-enumProject :: Project -> ErrorT String IO ProjectToScan
-PS> hsdev complete C -f .\hsdev\tools\hsdev.hs | json | % { $_.result.declaration.name }
-ClientOpts
-CommandAction
-CommandOptions
-CommandResult
-PS> hsdev symbol foldr | json | % result | % { $_.declaration.name + ' :: ' + $_.declaration.decl.type + ' -- ' + $_.'module-id'.name } | select -first 3
-foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString
-foldr :: (Char -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Char8
-foldr :: (Word8 -> a -> a) -> a -> ByteString -> a -- Data.ByteString.Lazy
+PS> hsdev module --project hsdev -h | json | % { $_.name } | select -first 3
+HsDev.Database.Update
+HsDev.Client.Commands
+HsDev.Scan
+PS> hsdev symbol enumProject --src | json | % { $_.id.name + ' :: ' + $_.info.type }
+enumProject :: Project -> m ScanContents
+PS> hsdev complete tr -f .\tools\hsdev.hs | json | % { $_.id.name }
+traverse
+traverseDirectory
+...
 PS> hsdev stop
 {}
-</pre>
-
-## Tools
-
-### HsInspect
-
-Tool to inspect source files, .cabal files and installed modules. For source files it also scan docs and try infer types.
-
-<pre>
-PS> hsinspect .\hsdev.cabal | json | % { $_.description.library.modules[3] }
-HsDev.Cache
-PS> hsinspect .\tools\hsdev.hs | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
-main :: IO ()
-printMainUsage :: IO ()
-printUsage :: IO ()
-PS> hsinspect Data.Either | json | % { $_.module.declarations } | % { $_.name + ' :: ' + $_.decl.type }
-Either :: data Either a b
-Left :: a -> Either a b
-Right :: b -> Either a b
-either :: (a -> c) -> (b -> c) -> Either a b -> c
-isLeft :: Either a b -> Bool
-isRight :: Either a b -> Bool
-lefts :: [Either a b] -> [a]
-partitionEithers :: [Either a b] -> ([a], [b])
-rights :: [Either a b] -> [b]
-</pre>
-
-### HsCabal
-
-Cabal helper with JSON output. For now only `list` command supported
-
-<pre>
-PS> hscabal list aeson | json | ? { $_.'installed-versions' } | % { $_.name + ' - ' + $_.'installed-versions' }
-aeson - 0.7.0.3
-aeson-pretty - 0.7.1
-</pre>
-
-### HsHayoo
-
-Search in hayoo
-
-<pre>
-PS> hshayoo "(a -> b) -> c" | json | % { $_.declaration } | % { $_.name + ' :: ' + $_.decl.type } | select -first 5
-unC :: (tau -> a) -> b
-map3 :: (a -> b) -> f (g (h a)) -> f (g (h b))
-map2 :: (a -> b) -> f (g a) -> f (g b)
-map' :: (a -> b) -> map a -> map b
-map :: (a -> b) -> map a -> map b
-</pre>
-
-### HsAutoFix
-
-Tool to fix some build warnings and to apply hlint suggestions
-
-* `hsautofix show` — read output messages and return suggestions
-* `hsautofix fix -n <i> -n ...` — fix selected suggestions (by index) and return updated rest suggestions, so this command can be chained. There are also flag `--pure`. If set, files will not be modified. Use it, if you don't want `hsautofix` to apply fixes itself.
-
-Here's how you can apply first three suggestions sequentically. On each step suggestion is removed, so we just apply first suggestion three times.
-We can do the same in reverse order, and in that case indices will be 3, 2, 1. And we can apply all three in one call.
-Three commands below have same effect
-<pre>
-PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 1 | hsautofix fix -n 1 | hsautofix fix -n 1
-...
-PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 3 | hsautofix fix -n 2 | hsautofix fix -n 1
-...
-PS> ghc-mod Test.hs | hsautofix show | hsautofix fix -n 1 -n 2 -n 3
-...
 </pre>
 
 ### Hayoo in GHCi

@@ -14,6 +14,7 @@ import Control.Monad.Except
 import Data.Char
 import Data.List
 import Data.Maybe (mapMaybe)
+import Data.Text (unpack)
 import System.Directory
 import System.FilePath
 import qualified Language.Haskell.Exts as Exts
@@ -29,7 +30,7 @@ dumpMinimalImports :: [String] -> FilePath -> ExceptT String IO String
 dumpMinimalImports opts f = do
 	cur <- liftE getCurrentDirectory
 	file <- liftE $ canonicalizePath f
-	cts <- liftE $ readFileUtf8 file
+	cts <- liftE $ fmap unpack $ readFileUtf8 file
 
 	mname <- case Exts.parseFileContentsWithMode (pmode file) cts of
 		Exts.ParseFailed loc err -> throwError $

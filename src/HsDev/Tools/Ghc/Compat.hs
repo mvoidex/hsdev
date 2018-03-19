@@ -5,20 +5,32 @@ module HsDev.Tools.Ghc.Compat (
 	pkgDatabase,
 	UnitId, InstalledUnitId, toInstalledUnitId,
 	unitId, moduleUnitId, depends, getPackageDetails, patSynType, cleanupHandler, renderStyle,
-	LogAction, setLogAction,
+	LogAction, setLogAction, addLogAction,
 	languages, flags,
+	recSelParent, recSelCtors,
+	getFixity,
 	unqualStyle,
-	exposedModuleName
+	exposedModuleName,
+	exprType
 	) where
 
+import qualified BasicTypes
 import qualified DynFlags as GHC
 import qualified ErrUtils
+import qualified InteractiveEval as Eval
 import qualified GHC
 import qualified Module
+import qualified Name
 import qualified Packages as GHC
 import qualified PatSyn as GHC
 import qualified Pretty
 import Outputable
+
+#if __GLASGOW_HASKELL__ >= 800
+import Data.List (nub)
+import qualified IdInfo
+import TcRnDriver
+#endif
 
 #if __GLASGOW_HASKELL__ == 710
 import Exception (ExceptionMonad)
@@ -31,7 +43,7 @@ import qualified GHC.PackageDb as GHC
 
 pkgDatabase :: GHC.DynFlags -> Maybe [GHC.PackageConfig]
 #if __GLASGOW_HASKELL__ >= 800
-pkgDatabase = fmap (concatMap snd) . GHC.pkgDatabase
+pkgDatabase = fmap (nub . concatMap snd) . GHC.pkgDatabase
 #elif __GLASGOW_HASKELL__ == 710
 pkgDatabase = GHC.pkgDatabase
 #endif
@@ -112,6 +124,19 @@ setLogAction act fs = fs { GHC.log_action = act' } where
 	act' df sev src _ msg = act df sev src msg
 #endif
 
+addLogAction :: LogAction -> GHC.DynFlags -> GHC.DynFlags
+addLogAction act fs = fs { GHC.log_action = logBoth } where
+	logBoth :: GHC.LogAction
+#if __GLASGOW_HASKELL__ >= 800
+	logBoth df wreason sev src style msg = do
+		GHC.log_action fs df wreason sev src style msg
+		GHC.log_action (setLogAction act fs) df wreason sev src style msg
+#elif __GLASGOW_HASKELL__ == 710
+	logBoth df sev src style ms = do
+		GHC.log_action fs df sev src style msg
+		GHC.log_action (setLogAction act fs) df sev src style msg
+#endif
+
 #if __GLASGOW_HASKELL__ == 710
 instance (Monad m, GHC.HasDynFlags m) => GHC.HasDynFlags (ReaderT r m) where
 	getDynFlags = lift GHC.getDynFlags
@@ -135,6 +160,31 @@ flags = concat [
 	[option | (option, _, _) <- GHC.fLangFlags]]
 #endif
 
+#if __GLASGOW_HASKELL__ >= 800
+recSelParent :: IdInfo.RecSelParent -> String
+recSelParent (IdInfo.RecSelData p) = Name.getOccString p
+recSelParent (IdInfo.RecSelPatSyn p) = Name.getOccString p
+#else
+recSelParent :: GHC.TyCon -> String
+recSelParent = Name.getOccString
+#endif
+
+#if __GLASGOW_HASKELL__ >= 800
+recSelCtors :: IdInfo.RecSelParent -> [String]
+recSelCtors (IdInfo.RecSelData p) = map Name.getOccString (GHC.tyConDataCons p)
+recSelCtors (IdInfo.RecSelPatSyn p) = [Name.getOccString p]
+#else
+recSelCtors :: GHC.TyCon -> [String]
+recSelCtors = return . Name.getOccString
+#endif
+
+getFixity :: BasicTypes.Fixity -> (Int, BasicTypes.FixityDirection)
+#if __GLASGOW_HASKELL__ >= 800
+getFixity (BasicTypes.Fixity _ i d) = (i, d)
+#else
+getFixity (BasicTypes.Fixity i d) = (i, d)
+#endif
+
 languages :: [String]
 languages = GHC.supportedLanguagesAndExtensions
 
@@ -151,4 +201,11 @@ exposedModuleName = fst
 #else
 exposedModuleName :: GHC.ExposedModule unit mname -> mname
 exposedModuleName = GHC.exposedName
+#endif
+
+exprType :: GHC.GhcMonad m => String -> m GHC.Type
+#if __GLASGOW_HASKELL__ > 800
+exprType = Eval.exprType TM_Inst
+#else
+exprType = Eval.exprType
 #endif

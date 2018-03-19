@@ -1,5 +1,5 @@
 module HsDev.Tools.Ghc.Prelude (
-	reduce, one, trim,
+	reduce, trim,
 	-- * Regexes
 	rx, srx, splitRx,
 	-- * Case
@@ -21,10 +21,6 @@ import Text.Regex.PCRE
 -- | Reduce list to one element
 reduce :: ([a] -> a) -> [a] -> [a]
 reduce = (return .)
-
--- | Make list from single element
-one :: a -> [a]
-one = return
 
 -- | Trim string
 trim :: String -> String

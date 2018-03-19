@@ -2,9 +2,9 @@
 language: c
 
 env:
- - CABALVER=1.22 GHCVER=7.10.3
- - CABALVER=1.24 GHCVER=8.0.2
- - CABALVER=2.0 GHCVER=8.2.1
+ - CABALVER=1.24 GHCVER=8.0.2 FLAGS=-fdocs
+ - CABALVER=2.0 GHCVER=8.2.2 FLAGS=-fdocs
+ - CABALVER=2.0 GHCVER=8.2.2 FLAGS=-f-docs
 
 before_install:
  - travis_retry sudo add-apt-repository -y ppa:hvr/ghc
@@ -16,11 +16,16 @@ install:
  - cabal --version
  - echo "$(ghc --version)"
  - travis_retry cabal update
+ # install latest version of deps within sandbox
+ - git clone https://github.com/haskell-suite/haskell-src-exts ~/haskell-suite/haskell-src-exts
+ - cabal sandbox init
+ - cabal sandbox add-source ~/haskell-suite/haskell-src-exts
+ # end
  - cabal install happy
- - cabal install --only-dependencies --enable-tests
+ - cabal install --only-dependencies --enable-tests $FLAGS
 
 script:
- - cabal configure --enable-tests
+ - cabal configure --enable-tests $FLAGS
  - cabal build
  - cabal test
  - cabal sdist

@@ -4,8 +4,11 @@ module HsDev.Server.Message (
 	Message(..), messageId, message,
 	messagesById,
 	Notification(..), Result(..), ResultPart(..),
-	Response(..), isNotification, notification, result, responseError, resultPart,
-	groupResponses, responsesById
+	Response(..), isNotification, result, responseError,
+	groupResponses,
+	decodeMessage, encodeMessage,
+
+	module HsDev.Server.Message.Lisp
 	) where
 
 import Control.Applicative
@@ -14,9 +17,11 @@ import Control.Monad (join)
 import Data.Aeson hiding (Error, Result)
 import Data.Either (lefts, isRight)
 import Data.List (unfoldr)
+import Data.ByteString.Lazy.Char8 (ByteString)
 
 import HsDev.Types
 import HsDev.Util ((.::), (.::?), objectUnion)
+import HsDev.Server.Message.Lisp
 
 -- | Message with id to link request and response
 data Message a = Message {
@@ -44,7 +49,7 @@ messagesById :: Maybe String -> [Message a] -> [a]
 messagesById i = map _message . filter ((== i) . _messageId)
 
 -- | Notification from server
-data Notification = Notification Value deriving (Eq, Show)
+newtype Notification = Notification Value deriving (Eq, Show)
 
 instance ToJSON Notification where
 	toJSON (Notification v) = object ["notify" .= v]
@@ -68,7 +73,7 @@ instance FromJSON Result where
 	parseJSON j = (withObject "result" (\v -> (Result <$> v .:: "result")) j) <|> (Error <$> parseJSON j)
 
 -- | Part of result list, returns via notification
-data ResultPart = ResultPart Value
+newtype ResultPart = ResultPart Value
 
 instance ToJSON ResultPart where
 	toJSON (ResultPart r) = object ["result-part" .= r]
@@ -81,17 +86,11 @@ newtype Response = Response { unResponse :: Either Notification Result } derivin
 isNotification :: Response -> Bool
 isNotification = either (const True) (const False) . unResponse
 
-notification :: ToJSON a => a -> Response
-notification = Response . Left . Notification . toJSON
-
 result :: ToJSON a => a -> Response
 result = Response . Right . Result . toJSON
 
 responseError :: HsDevError -> Response
 responseError = Response . Right . Error
-
-resultPart :: ToJSON a => a  -> Notification
-resultPart = Notification . toJSON . ResultPart . toJSON
 
 instance ToJSON Response where
 	toJSON (Response (Left n)) = toJSON n
@@ -111,5 +110,9 @@ groupResponses = unfoldr break' where
 			[] -> Error $ OtherError "groupResponses: no result"
 			_ -> error "groupResponses: impossible happened"
 
-responsesById :: Maybe String -> [Message Response] -> [([Notification], Result)]
-responsesById i = groupResponses . messagesById i
+-- | Decode lisp or json request
+decodeMessage :: FromJSON a => ByteString -> Either (Msg String) (Msg (Message a))
+decodeMessage = decodeMsg
+
+encodeMessage :: ToJSON a => Msg (Message a) -> ByteString
+encodeMessage = encodeMsg

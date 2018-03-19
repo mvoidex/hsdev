@@ -1,445 +1,401 @@
-{-# LANGUAGE TemplateHaskell, TypeSynonymInstances, FlexibleInstances, OverloadedStrings #-}
+{-# LANGUAGE CPP, TemplateHaskell, TypeSynonymInstances, FlexibleInstances, OverloadedStrings, GeneralizedNewtypeDeriving, MultiParamTypeClasses, TypeFamilies, UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Symbols.Types (
-	ThingPart(..),
-	Export(..), exportQualified, exportName, exportPart, exportModule,
-	ImportSpec(..), importSpecName, importSpecPart,
-	ImportList(..), hidingList, importSpecs,
-	Import(..), importModuleName, importIsQualified, importAs, importList, importPosition,
-	ModuleId(..), moduleIdName, moduleIdLocation,
-	Module(..), moduleName, moduleDocs, moduleLocation, moduleExports, moduleImports, moduleDeclarations, moduleContents, moduleId,
-	Declaration(..), declarationName, declarationDefined, declarationImported, declarationDocs, declarationPosition, declaration, minimalDecl,
-	TypeInfo(..), typeInfoContext, typeInfoArgs, typeInfoDefinition, typeInfoFunctions, showTypeInfo,
-	DeclarationInfo(..), functionType, localDeclarations, related, typeInfo, declarationInfo, declarationTypeCtor, declarationTypeName,
-	ModuleDeclaration(..), declarationModuleId, moduleDeclaration,
-	ExportedDeclaration(..), exportedBy, exportedDeclaration,
-	Inspection(..), inspectionAt, inspectionOpts,
-	Inspected(..), inspection, inspectedId, inspectionTags, inspectionResult, noTags,
-	ModuleTag(..),
-	InspectedModule, notInspected,
+	Import(..), importPosition, importName, importQualified, importAs,
+	Module(..), moduleSymbols, exportedSymbols, scopeSymbols, fixitiesMap, moduleFixities, moduleId, moduleDocs, moduleImports, moduleExports, moduleScope, moduleSource,
+	Symbol(..), symbolId, symbolDocs, symbolPosition, symbolInfo,
+	SymbolInfo(..), functionType, parentClass, parentType, selectorConstructors, typeArgs, typeContext, familyAssociate, symbolInfoType, symbolType, patternType, patternConstructor,
+	Scoped(..), scopeQualifier, scoped,
+	SymbolUsage(..), symbolUsed, symbolUsedQualifier, symbolUsedIn, symbolUsedRegion,
+	ImportedSymbol(..), importedSymbol, importedFrom,
+	infoOf, nullifyInfo,
+	Inspection(..), inspectionAt, inspectionOpts, fresh, Inspected(..), inspection, inspectedKey, inspectionTags, inspectionResult, inspected,
+	InspectM(..), runInspect, continueInspect, inspect, inspect_, withInspection,
+	inspectedTup, noTags, tag, ModuleTag(..), InspectedModule, notInspected,
 
-	module HsDev.PackageDb,
+	module HsDev.PackageDb.Types,
 	module HsDev.Project,
+	module HsDev.Symbols.Name,
 	module HsDev.Symbols.Class,
+	module HsDev.Symbols.Location,
 	module HsDev.Symbols.Documented
 	) where
 
-import Control.Applicative
 import Control.Arrow
-import Control.Lens (makeLenses, view, set, Simple, Lens, Lens', lens)
+import Control.Applicative
+import Control.Lens hiding ((.=))
 import Control.Monad
+import Control.Monad.Morph
+import Control.Monad.Catch
+import Control.Monad.Except
+import Control.Monad.Reader
+import Control.Monad.State
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
+import Data.Aeson.Types (Pair, Parser)
 import Data.List (intercalate)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (catMaybes)
+import Data.Maybe.JustIf
+import Data.Monoid (Any(..))
 import Data.Function
 import Data.Ord
-import Data.Text (Text, unpack)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as M
+import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Set (Set)
 import qualified Data.Set as S
 import Data.Time.Clock.POSIX (POSIXTime)
+import Language.Haskell.Exts (QName(..), ModuleName(..), Boxed(..), SpecialCon(..), Fixity(..), Assoc(..))
+import qualified Language.Haskell.Exts as Exts (Name(..))
+import Text.Format
 
-import HsDev.PackageDb
+import Control.Apply.Util (chain)
+import HsDev.Display
+import HsDev.Error
+import HsDev.PackageDb.Types
 import HsDev.Project
+import HsDev.Symbols.Name
 import HsDev.Symbols.Class
+import HsDev.Symbols.Location
 import HsDev.Symbols.Documented
-import HsDev.Types
-import HsDev.Util (tab, tabs, (.::), (.::?), (.::?!), noNulls)
+import HsDev.Symbols.Parsed
+import HsDev.Util ((.::), (.::?), (.::?!), noNulls, objectUnion)
+import System.Directory.Paths
 
--- | What to export/import for data/class etc
-data ThingPart = ThingNothing | ThingAll | ThingWith [Text] deriving (Eq, Ord)
+instance NFData l => NFData (ModuleName l) where
+	rnf (ModuleName l n) = rnf l `seq` rnf n
 
-instance NFData ThingPart where
-	rnf ThingNothing = ()
-	rnf ThingAll = ()
-	rnf (ThingWith ns) = rnf ns
+instance NFData l => NFData (Exts.Name l) where
+	rnf (Exts.Ident l s) = rnf l `seq` rnf s
+	rnf (Exts.Symbol l s) = rnf l `seq` rnf s
 
-instance Show ThingPart where
-	show ThingNothing = ""
-	show ThingAll = "(..)"
-	show (ThingWith ns) = "(" ++ intercalate ", " (map unpack ns) ++ ")"
+instance NFData Boxed where
+	rnf Boxed = ()
+	rnf Unboxed = ()
 
-instance ToJSON ThingPart where
-	toJSON ThingNothing = toJSON ("nothing" :: String)
-	toJSON ThingAll = toJSON ("all" :: String)
-	toJSON (ThingWith ns) = object [
-		"with" .= ns]
+instance NFData l => NFData (SpecialCon l) where
+	rnf (UnitCon l) = rnf l
+	rnf (ListCon l) = rnf l
+	rnf (FunCon l) = rnf l
+	rnf (TupleCon l b i) = rnf l `seq` rnf b `seq` rnf i
+	rnf (Cons l) = rnf l
+	rnf (UnboxedSingleCon l) = rnf l
+#if MIN_VERSION_haskell_src_exts(1,20,0)
+	rnf (ExprHole l) = rnf l
+#endif
 
-instance FromJSON ThingPart where
-	parseJSON v = parse' <|> parseWith v where
-		parse' = do
-			s <- parseJSON v
-			mplus
-				(guard (s == ("nothing" :: String)) >> return ThingNothing)
-				(guard (s == ("all" :: String)) >> return ThingAll)
-		parseWith = withObject "export part" $ \v' -> ThingWith <$> v' .:: "with"
+instance NFData l => NFData (QName l) where
+	rnf (Qual l m n) = rnf l `seq` rnf m `seq` rnf n
+	rnf (UnQual l n) = rnf l `seq` rnf n
+	rnf (Special l s) = rnf l `seq` rnf s
 
--- | Module export
-data Export =
-	ExportName {
-		_exportQualified :: Maybe Text,
-		_exportName :: Text,
-		_exportPart :: ThingPart } |
-	ExportModule { _exportModule :: Text }
-		deriving (Eq, Ord)
-
-instance NFData Export where
-	rnf (ExportName q n w) = rnf q `seq` rnf n `seq` rnf w
-	rnf (ExportModule m) = rnf m
-
-instance Show Export where
-	show (ExportName Nothing n w) = unpack n ++ show w
-	show (ExportName (Just q) n w) = unpack q ++ "." ++ unpack n ++ show w
-	show (ExportModule m) = "module " ++ unpack m
-
-instance ToJSON Export where
-	toJSON (ExportName q n w) = object ["module" .= q, "name" .= n, "part" .= w]
-	toJSON (ExportModule m) = object ["module" .= m]
-
-instance FromJSON Export where
-	parseJSON = withObject "export" $ \v ->
-		(ExportName <$> (v .:: "module") <*> (v .:: "name") <*> (v .:: "part")) <|>
-		(ExportModule <$> (v .:: "module"))
-
--- | Import spec
-data ImportSpec = ImportSpec {
-	_importSpecName :: Text,
-	_importSpecPart :: ThingPart }
-		deriving (Eq, Ord)
-
-instance NFData ImportSpec where
-	rnf (ImportSpec n p) = rnf n `seq` rnf p
-
-instance Show ImportSpec where
-	show (ImportSpec n p) = unpack n ++ show p
-
-instance ToJSON ImportSpec where
-	toJSON (ImportSpec n p) = object ["name" .= n, "part" .= p]
-
-instance FromJSON ImportSpec where
-	parseJSON = withObject "import-spec" $ \v -> ImportSpec <$> (v .:: "name") <*> (v .:: "part")
-
--- | Import list
-data ImportList = ImportList {
-	_hidingList :: Bool,
-	_importSpecs :: [ImportSpec] }
-		deriving (Eq, Ord)
-
-instance NFData ImportList where
-	rnf (ImportList h ls) = rnf h `seq` rnf ls
-
-instance Show ImportList where
-	show (ImportList h ls) = (if h then ("hiding " ++) else id) $ "(" ++ intercalate ", " (map show ls) ++ ")"
-
-instance ToJSON ImportList where
-	toJSON (ImportList h ls) = object [
-		"hiding" .= h,
-		"specs" .= ls]
-
-instance FromJSON ImportList where
-	parseJSON = withObject "import-list" $ \v -> ImportList <$>
-		v .:: "hiding" <*>
-		v .:: "specs"
-
--- | Module import
+-- | Import
 data Import = Import {
-	_importModuleName :: Text,
-	_importIsQualified :: Bool,
-	_importAs :: Maybe Text,
-	_importList :: Maybe ImportList,
-	_importPosition :: Maybe Position }
+	_importPosition :: Position, -- source line of import
+	_importName :: Text, -- imported module name
+	_importQualified :: Bool, -- is import qualified
+	_importAs :: Maybe Text } -- alias of import
 		deriving (Eq, Ord)
 
 instance NFData Import where
-	rnf (Import m q a il l) = rnf m `seq` rnf q `seq` rnf a `seq` rnf il `seq` rnf l
+	rnf (Import p n q a) = rnf p `seq` rnf n `seq` rnf q `seq` rnf a
 
 instance Show Import where
-	show i = concat [
-		"import ",
-		if _importIsQualified i then "qualified " else "",
-		unpack $ _importModuleName i,
-		maybe "" ((" as " ++) . unpack) (_importAs i),
-		maybe "" ((" " ++) . show) (_importList i)]
+	show (Import _ n q a) = concat $ catMaybes [
+		Just "import",
+		"qualified" `justIf` q,
+		Just $ show n,
+		fmap (("as " ++) . show) a]
 
 instance ToJSON Import where
-	toJSON i = object $ noNulls [
-		"name" .= _importModuleName i,
-		"qualified" .= _importIsQualified i,
-		"as" .= _importAs i,
-		"import-list" .= _importList i,
-		"pos" .= _importPosition i]
+	toJSON (Import p n q a) = object [
+		"pos" .= p,
+		"name" .= n,
+		"qualified" .= q,
+		"as" .= a]
 
 instance FromJSON Import where
 	parseJSON = withObject "import" $ \v -> Import <$>
+		v .:: "pos" <*>
 		v .:: "name" <*>
 		v .:: "qualified" <*>
-		v .::? "as" <*>
-		v .::? "import-list" <*>
-		v .::? "pos"
-
--- | Module id
-data ModuleId = ModuleId {
-	_moduleIdName :: Text,
-	_moduleIdLocation :: ModuleLocation }
-		deriving (Eq, Ord)
-
-instance NFData ModuleId where
-	rnf (ModuleId n l) = rnf n `seq` rnf l
-
-instance Show ModuleId where
-	show (ModuleId n l) = "module " ++ unpack n ++ " from " ++ show l
-
-instance ToJSON ModuleId where
-	toJSON m = object [
-		"name" .= _moduleIdName m,
-		"location" .= _moduleIdLocation m]
-
-instance FromJSON ModuleId where
-	parseJSON = withObject "module id" $ \v -> ModuleId <$>
-		v .:: "name" <*>
-		v .:: "location"
+		v .:: "as"
 
 -- | Module
 data Module = Module {
-	_moduleName :: Text,
+	_moduleId :: ModuleId,
 	_moduleDocs :: Maybe Text,
-	_moduleLocation :: ModuleLocation,
-	_moduleExports :: Maybe [Export],
-	_moduleImports :: [Import],
-	_moduleDeclarations :: [Declaration] }
-		deriving (Ord)
+	_moduleImports :: [Import], -- list of module names imported
+	_moduleExports :: [Symbol], -- exported module symbols
+	_moduleFixities :: [Fixity], -- fixities of operators
+	_moduleScope :: Map Name [Symbol], -- symbols in scope, only for source modules
+	_moduleSource :: Maybe Parsed } -- source of module
+
+-- | Make each symbol appear only once
+moduleSymbols :: Traversal' Module Symbol
+moduleSymbols f m = getBack <$> (each . _1) f revList where
+	revList = M.toList $ M.unionsWith mappend $ concat [
+		[M.singleton sym ([], Any True) | sym <- _moduleExports m],
+		[M.singleton sym ([nm], Any False) | (nm, syms) <- M.toList (_moduleScope m), sym <- syms]]
+	getBack syms = m {
+		_moduleExports = [sym' | (sym', (_, Any True)) <- syms],
+		_moduleScope = M.unionsWith (++) [M.singleton n [sym'] | (sym', (ns, _)) <- syms, n <- ns] }
+
+exportedSymbols :: Traversal' Module Symbol
+exportedSymbols f m = (\e -> m { _moduleExports = e }) <$> traverse f (_moduleExports m)
+
+scopeSymbols :: Traversal' Module (Symbol, [Name])
+scopeSymbols f m = (\s -> m { _moduleScope = invMap s }) <$> traverse f (M.toList . invMap . M.toList $ _moduleScope m) where
+	invMap :: Ord b => [(a, [b])] -> Map b [a]
+	invMap es = M.unionsWith (++) [M.singleton v [k] | (k, vs) <- es, v <- vs]
+
+fixitiesMap :: Lens' Module (Map Name Fixity)
+fixitiesMap = lens g' s' where
+	g' m = mconcat [M.singleton n f | f@(Fixity _ _ n) <- _moduleFixities m]
+	s' m m' = m { _moduleFixities = M.elems m' }
+
+instance ToJSON (Assoc ()) where
+	toJSON (AssocNone _) = toJSON ("none" :: String)
+	toJSON (AssocLeft _) = toJSON ("left" :: String)
+	toJSON (AssocRight _) = toJSON ("right" :: String)
+
+instance FromJSON (Assoc ()) where
+	parseJSON = withText "assoc" $ \txt -> msum [
+		guard (txt == "none") >> return (AssocNone ()),
+		guard (txt == "left") >> return (AssocLeft ()),
+		guard (txt == "right") >> return (AssocRight ())]
+
+instance ToJSON Fixity where
+	toJSON (Fixity assoc pr n) = object $ noNulls [
+		"assoc" .= assoc,
+		"prior" .= pr,
+		"name" .= fromName n]
+
+instance FromJSON Fixity where
+	parseJSON = withObject "fixity" $ \v -> Fixity <$>
+		v .:: "assoc" <*>
+		v .:: "prior" <*>
+		(toName <$> v .:: "name")
 
 instance ToJSON Module where
 	toJSON m = object $ noNulls [
-		"name" .= _moduleName m,
+		"id" .= _moduleId m,
 		"docs" .= _moduleDocs m,
-		"location" .= _moduleLocation m,
-		"exports" .= _moduleExports m,
 		"imports" .= _moduleImports m,
-		"declarations" .= _moduleDeclarations m]
+		"exports" .= _moduleExports m,
+		"fixities" .= _moduleFixities m]
 
 instance FromJSON Module where
 	parseJSON = withObject "module" $ \v -> Module <$>
-		v .:: "name" <*>
+		v .:: "id" <*>
 		v .::? "docs" <*>
-		v .:: "location" <*>
-		v .::? "exports" <*>
 		v .::?! "imports" <*>
-		v .::?! "declarations"
+		v .::?! "exports" <*>
+		v .::?! "fixities" <*>
+		pure mempty <*>
+		pure Nothing
+
+instance NFData (Assoc ()) where
+	rnf (AssocNone _) = ()
+	rnf (AssocLeft _) = ()
+	rnf (AssocRight _) = ()
+
+instance NFData Fixity where
+	rnf (Fixity assoc pr n) = rnf assoc `seq` rnf pr `seq` rnf n
 
 instance NFData Module where
-	rnf (Module n d s e i ds) = rnf n `seq` rnf d `seq` rnf s `seq` rnf e `seq` rnf i `seq` rnf ds
+	rnf (Module i d is e fs s msrc) = msrc `seq` rnf i `seq` rnf d `seq` rnf is `seq` rnf e `seq` rnf fs `seq` rnf s
 
 instance Eq Module where
-	l == r = _moduleName l == _moduleName r && _moduleLocation l == _moduleLocation r
+	l == r = _moduleId l == _moduleId r
+
+instance Ord Module where
+	compare l r = compare (_moduleId l) (_moduleId r)
 
 instance Show Module where
-	show m = unlines $ filter (not . null) [
-		"module " ++ unpack (_moduleName m),
-		"\tlocation: " ++ show (_moduleLocation m),
-		"\texports: " ++ maybe "*" (intercalate ", " . map show) (_moduleExports m),
-		"\timports:",
-		unlines $ map (tab 2 . show) $ _moduleImports m,
-		"\tdeclarations:",
-		unlines $ map (tabs 2 . show) $ _moduleDeclarations m,
-		maybe "" (("\tdocs: " ++) . unpack) (_moduleDocs m)]
+	show = show . _moduleId
 
-moduleId :: Simple Lens Module ModuleId
-moduleId = lens
-	(uncurry ModuleId . (_moduleName &&& _moduleLocation))
-	(\m mi -> m { _moduleName = _moduleIdName mi, _moduleLocation = _moduleIdLocation mi })
+data Symbol = Symbol {
+	_symbolId :: SymbolId,
+	_symbolDocs :: Maybe Text,
+	_symbolPosition :: Maybe Position,
+	_symbolInfo :: SymbolInfo }
 
--- | Module contents
-moduleContents :: Module -> [String]
-moduleContents = map showDecl . _moduleDeclarations where
-	showDecl d = brief d ++ maybe "" ((" -- " ++) . unpack) (_declarationDocs d)
+instance Eq Symbol where
+	l == r = (_symbolId l, symbolType l) == (_symbolId r, symbolType r)
 
--- | Declaration
-data Declaration = Declaration {
-	_declarationName :: Text,
-	_declarationDefined :: Maybe ModuleId, -- ^ Where declaration defined, @Nothing@ if here
-	_declarationImported :: Maybe [Import], -- ^ Declaration imported with. @Nothing@ if unknown (cabal modules) or here (source file)
-	_declarationDocs :: Maybe Text,
-	_declarationPosition :: Maybe Position,
-	_declaration :: DeclarationInfo }
-		deriving (Eq, Ord)
+instance Ord Symbol where
+	compare l r = compare (_symbolId l, symbolType l) (_symbolId r, symbolType r)
 
-instance NFData Declaration where
-	rnf (Declaration n def is d l x) = rnf n `seq` rnf def `seq` rnf is `seq` rnf d `seq` rnf l `seq` rnf x
+instance NFData Symbol where
+	rnf (Symbol i d l info) = rnf i `seq` rnf d `seq` rnf l `seq` rnf info
 
-instance Show Declaration where
-	show d = unlines $ filter (not . null) [
-		brief d,
-		maybe "" (("\tdocs: " ++) . unpack) $ _declarationDocs d,
-		maybe "" (("\tdefined in: " ++) . show) $ _declarationDefined d,
-		maybe "" (("\tlocation: " ++ ) . show) $ _declarationPosition d]
+instance Show Symbol where
+	show = show . _symbolId
 
-instance ToJSON Declaration where
-	toJSON d = object $ noNulls [
-		"name" .= _declarationName d,
-		"defined" .= _declarationDefined d,
-		"imported" .= _declarationImported d,
-		"docs" .= _declarationDocs d,
-		"pos" .= _declarationPosition d,
-		"decl" .= _declaration d]
+instance ToJSON Symbol where
+	toJSON s = object $ noNulls [
+		"id" .= _symbolId s,
+		"docs" .= _symbolDocs s,
+		"pos" .= _symbolPosition s,
+		"info" .= _symbolInfo s]
 
-instance FromJSON Declaration where
-	parseJSON = withObject "declaration" $ \v -> Declaration <$>
-		v .:: "name" <*>
-		v .::? "defined" <*>
-		v .::? "imported" <*>
+instance FromJSON Symbol where
+	parseJSON = withObject "symbol" $ \v -> Symbol <$>
+		v .:: "id" <*>
 		v .::? "docs" <*>
 		v .::? "pos" <*>
-		v .:: "decl"
+		v .:: "info"
 
--- | Minimal declaration info without defined, docs and position
-minimalDecl :: Lens' Declaration Declaration
-minimalDecl = lens to' from' where
-	to' :: Declaration -> Declaration
-	to' decl' = decl' { _declarationDefined = Nothing, _declarationDocs = Nothing, _declarationPosition = Nothing }
-	from' :: Declaration -> Declaration -> Declaration
-	from' decl' mdecl = decl' { _declarationName = _declarationName mdecl, _declarationImported = _declarationImported mdecl, _declaration = _declaration mdecl }
-
--- | Common info for type, newtype, data and class
-data TypeInfo = TypeInfo {
-	_typeInfoContext :: Maybe Text, -- FIXME: Why not list of contexts?
-	_typeInfoArgs :: [Text],
-	_typeInfoDefinition :: Maybe Text,
-	_typeInfoFunctions :: [Text] }
+data SymbolInfo =
+	Function { _functionType :: Maybe Text } |
+	Method { _functionType :: Maybe Text, _parentClass :: Text } |
+	Selector { _functionType :: Maybe Text, _parentType :: Text, _selectorConstructors :: [Text] } |
+	Constructor { _typeArgs :: [Text], _parentType :: Text } |
+	Type { _typeArgs :: [Text], _typeContext :: [Text] } |
+	NewType { _typeArgs :: [Text], _typeContext :: [Text] } |
+	Data { _typeArgs :: [Text], _typeContext :: [Text] } |
+	Class { _typeArgs :: [Text], _typeContext :: [Text] } |
+	TypeFam { _typeArgs :: [Text], _typeContext :: [Text], _familyAssociate :: Maybe Text } |
+	DataFam { _typeArgs :: [Text], _typeContext :: [Text], _familyAssociate :: Maybe Text } |
+	PatConstructor { _typeArgs :: [Text], _patternType :: Maybe Text } |
+	PatSelector { _functionType :: Maybe Text, _patternType :: Maybe Text, _patternConstructor :: Text }
 		deriving (Eq, Ord, Read, Show)
 
-instance NFData TypeInfo where
-	rnf (TypeInfo c a d f) = rnf c `seq` rnf a `seq` rnf d `seq` rnf f
+instance NFData SymbolInfo where
+	rnf (Function ft) = rnf ft
+	rnf (Method ft cls) = rnf ft `seq` rnf cls
+	rnf (Selector ft t cs) = rnf ft `seq` rnf t `seq` rnf cs
+	rnf (Constructor as t) = rnf as `seq` rnf t
+	rnf (Type as ctx) = rnf as `seq` rnf ctx
+	rnf (NewType as ctx) = rnf as `seq` rnf ctx
+	rnf (Data as ctx) = rnf as `seq` rnf ctx
+	rnf (Class as ctx) = rnf as `seq` rnf ctx
+	rnf (TypeFam as ctx a) = rnf as `seq` rnf ctx `seq` rnf a
+	rnf (DataFam as ctx a) = rnf as `seq` rnf ctx `seq` rnf a
+	rnf (PatConstructor as t) = rnf as `seq` rnf t
+	rnf (PatSelector ft t c) = rnf ft `seq` rnf t `seq` rnf c
 
-instance ToJSON TypeInfo where
-	toJSON t = object $ noNulls [
-		"ctx" .= _typeInfoContext t,
-		"args" .= _typeInfoArgs t,
-		"def" .= _typeInfoDefinition t,
-		"funs" .= _typeInfoFunctions t]
+instance ToJSON SymbolInfo where
+	toJSON (Function ft) = object [what "function", "type" .= ft]
+	toJSON (Method ft cls) = object [what "method", "type" .= ft, "class" .= cls]
+	toJSON (Selector ft t cs) = object [what "selector", "type" .= ft, "parent" .= t, "constructors" .= cs]
+	toJSON (Constructor as t) = object [what "ctor", "args" .= as, "type" .= t]
+	toJSON (Type as ctx) = object [what "type", "args" .= as, "ctx" .= ctx]
+	toJSON (NewType as ctx) = object [what "newtype", "args" .= as, "ctx" .= ctx]
+	toJSON (Data as ctx) = object [what "data", "args" .= as, "ctx" .= ctx]
+	toJSON (Class as ctx) = object [what "class", "args" .= as, "ctx" .= ctx]
+	toJSON (TypeFam as ctx a) = object [what "type-family", "args" .= as, "ctx" .= ctx, "associate" .= a]
+	toJSON (DataFam as ctx a) = object [what "data-family", "args" .= as, "ctx" .= ctx, "associate" .= a]
+	toJSON (PatConstructor as t) = object [what "pat-ctor", "args" .= as, "pat-type" .= t]
+	toJSON (PatSelector ft t c) = object [what "pat-selector", "type" .= ft, "pat-type" .= t, "constructor" .= c]
 
-instance FromJSON TypeInfo where
-	parseJSON = withObject "type info" $ \v -> TypeInfo <$>
-		v .::? "ctx" <*>
-		v .::?! "args" <*>
-		v .::? "def" <*>
-		v .::?! "funs"
+class EmptySymbolInfo a where
+	infoOf :: a -> SymbolInfo
 
-showTypeInfo :: TypeInfo -> String -> String -> String
-showTypeInfo ti pre name = concat [
-	pre,
-	maybe "" ((++ " =>") . unpack) (_typeInfoContext ti), " ",
-	name, " ",
-	unwords (map unpack $ _typeInfoArgs ti),
-	maybe "" ((" = " ++) . unpack) (_typeInfoDefinition ti)]
+instance EmptySymbolInfo SymbolInfo where
+	infoOf = id
 
--- | Declaration info
-data DeclarationInfo =
-	Function { _functionType :: Maybe Text, _localDeclarations :: [Declaration], _related :: Maybe Text } |
-	Type { _typeInfo :: TypeInfo } |
-	NewType { _typeInfo :: TypeInfo } |
-	Data { _typeInfo :: TypeInfo } |
-	Class { _typeInfo :: TypeInfo }
-		deriving (Ord)
+instance (Monoid a, EmptySymbolInfo r) => EmptySymbolInfo (a -> r) where
+	infoOf f = infoOf $ f mempty
 
--- | Get function type of type info
-declarationInfo :: DeclarationInfo -> Either (Maybe Text, [Declaration], Maybe Text) TypeInfo
-declarationInfo (Function t ds r) = Left (t, ds, r)
-declarationInfo (Type ti) = Right ti
-declarationInfo (NewType ti) = Right ti
-declarationInfo (Data ti) = Right ti
-declarationInfo (Class ti) = Right ti
+symbolInfoType :: SymbolInfo -> String
+symbolInfoType (Function{}) = "function"
+symbolInfoType (Method{}) = "method"
+symbolInfoType (Selector{}) = "selector"
+symbolInfoType (Constructor{}) = "ctor"
+symbolInfoType (Type{}) = "type"
+symbolInfoType (NewType{}) = "newtype"
+symbolInfoType (Data{}) = "data"
+symbolInfoType (Class{}) = "class"
+symbolInfoType (TypeFam{}) = "type-family"
+symbolInfoType (DataFam{}) = "data-family"
+symbolInfoType (PatConstructor{}) = "pat-ctor"
+symbolInfoType (PatSelector{}) = "pat-selector"
 
-declarationTypeCtor :: String -> TypeInfo -> DeclarationInfo
-declarationTypeCtor "type" = Type
-declarationTypeCtor "newtype" = NewType
-declarationTypeCtor "data" = Data
-declarationTypeCtor "class" = Class
-declarationTypeCtor _ = error "Invalid type constructor name"
+symbolType :: Symbol -> String
+symbolType = symbolInfoType . _symbolInfo
 
-declarationTypeName :: DeclarationInfo -> Maybe String
-declarationTypeName (Type _) = Just "type"
-declarationTypeName (NewType _) = Just "newtype"
-declarationTypeName (Data _) = Just "data"
-declarationTypeName (Class _) = Just "class"
-declarationTypeName _ = Nothing
+what :: String -> Pair
+what n = "what" .= n
 
-instance NFData DeclarationInfo where
-	rnf (Function f ds r) = rnf f `seq` rnf ds `seq` rnf r
-	rnf (Type i) = rnf i
-	rnf (NewType i) = rnf i
-	rnf (Data i) = rnf i
-	rnf (Class i) = rnf i
+instance FromJSON SymbolInfo where
+	parseJSON = withObject "symbol info" $ \v -> msum [
+		gwhat "function" v >> (Function <$> v .::? "type"),
+		gwhat "method" v >> (Method <$> v .::? "type" <*> v .:: "class"),
+		gwhat "selector" v >> (Selector <$> v .::? "type" <*> v .:: "parent" <*> v .::?! "constructors"),
+		gwhat "ctor" v >> (Constructor <$> v .::?! "args" <*> v .:: "type"),
+		gwhat "type" v >> (Type <$> v .::?! "args" <*> v .::?! "ctx"),
+		gwhat "newtype" v >> (NewType <$> v .::?! "args" <*> v .::?! "ctx"),
+		gwhat "data" v >> (Data <$> v .::?! "args" <*> v .::?! "ctx"),
+		gwhat "class" v >> (Class <$> v .::?! "args" <*> v .::?! "ctx"),
+		gwhat "type-family" v >> (TypeFam <$> v .::?! "args" <*> v .::?! "ctx" <*> v .::? "associate"),
+		gwhat "data-family" v >> (DataFam <$> v .::?! "args" <*> v .::?! "ctx" <*> v .::? "associate"),
+		gwhat "pat-ctor" v >> (PatConstructor <$> v .::?! "args" <*> v .::? "pat-type"),
+		gwhat "pat-selector" v >> (PatSelector <$> v .::? "type" <*> v .::? "pat-type" <*> v .:: "constructor")]
 
-instance Eq DeclarationInfo where
-	(Function l lds lr) == (Function r rds rr) = l == r && lds == rds && lr == rr
-	(Type _) == (Type _) = True
-	(NewType _) == (NewType _) = True
-	(Data _) == (Data _) = True
-	(Class _) == (Class _) = True
-	_ == _ = False
+gwhat :: String -> Object -> Parser ()
+gwhat n v = do
+	s <- v .:: "what"
+	guard (s == n)
 
-instance ToJSON DeclarationInfo where
-	toJSON i = case declarationInfo i of
-		Left (t, ds, r) -> object $ noNulls ["what" .= ("function" :: String), "type" .= t, "locals" .= ds, "related" .= r]
-		Right ti -> object ["what" .= declarationTypeName i, "info" .= ti]
-
-instance FromJSON DeclarationInfo where
-	parseJSON = withObject "declaration info" $ \v -> do
-		w <- fmap (id :: String -> String) $ v .:: "what"
-		if w == "function"
-			then Function <$> v .::? "type" <*> v .::?! "locals" <*> v .::? "related"
-			else declarationTypeCtor w <$> v .:: "info"
-
--- | Symbol in context of some module
-data ModuleDeclaration = ModuleDeclaration {
-	_declarationModuleId :: ModuleId,
-	_moduleDeclaration :: Declaration }
+-- | Scoped entity with qualifier
+data Scoped a = Scoped {
+	_scopeQualifier :: Maybe Text,
+	_scoped :: a }
 		deriving (Eq, Ord)
 
-instance NFData ModuleDeclaration where
-	rnf (ModuleDeclaration m s) = rnf m `seq` rnf s
+instance Show a => Show (Scoped a) where
+	show (Scoped q s) = maybe "" (\q' -> T.unpack q' ++ ".") q ++ show s
 
-instance Show ModuleDeclaration where
-	show (ModuleDeclaration m s) = unlines $ filter (not . null) [
-		show s,
-		"\tmodule: " ++ show (_moduleIdLocation m)]
+instance ToJSON a => ToJSON (Scoped a) where
+	toJSON (Scoped q s) = toJSON s `objectUnion` object (noNulls ["qualifier" .= q])
 
-instance ToJSON ModuleDeclaration where
-	toJSON d = object [
-		"module-id" .= _declarationModuleId d,
-		"declaration" .= _moduleDeclaration d]
+instance FromJSON a => FromJSON (Scoped a) where
+	parseJSON = withObject "scope-symbol" $ \v -> Scoped <$>
+		(v .::? "qualifier") <*>
+		parseJSON (Object v)
 
-instance FromJSON ModuleDeclaration where
-	parseJSON = withObject "module declaration" $ \v -> ModuleDeclaration <$>
-		v .:: "module-id" <*>
-		v .:: "declaration"
-
--- | Symbol exported with
-data ExportedDeclaration = ExportedDeclaration {
-	_exportedBy :: [ModuleId],
-	_exportedDeclaration :: Declaration }
+-- | Symbol usage
+data SymbolUsage = SymbolUsage {
+	_symbolUsed :: Symbol,
+	_symbolUsedQualifier :: Maybe Text,
+	_symbolUsedIn :: ModuleId,
+	_symbolUsedRegion :: Region }
 		deriving (Eq, Ord)
 
-instance NFData ExportedDeclaration where
-	rnf (ExportedDeclaration m s) = rnf m `seq` rnf s
+instance Show SymbolUsage where
+	show (SymbolUsage s _ m p) = show s ++ " at " ++ show m ++ ":" ++ show p
 
-instance Show ExportedDeclaration where
-	show (ExportedDeclaration m s) = unlines $ filter (not . null) [
-		show s,
-		"\tmodules: " ++ intercalate ", " (map (show . _moduleIdLocation) m)]
+instance ToJSON SymbolUsage where
+	toJSON (SymbolUsage s q m p) = object $ noNulls ["symbol" .= s, "qualifier" .= q, "in" .= m, "at" .= p]
 
-instance ToJSON ExportedDeclaration where
-	toJSON d = object [
-		"exported-by" .= _exportedBy d,
-		"declaration" .= _exportedDeclaration d]
+instance FromJSON SymbolUsage where
+	parseJSON = withObject "symbol-usage" $ \v -> SymbolUsage <$>
+		v .:: "symbol" <*>
+		v .::? "qualifier" <*>
+		v .:: "in" <*>
+		v .:: "at"
 
-instance FromJSON ExportedDeclaration where
-	parseJSON = withObject "exported declaration" $ \v -> ExportedDeclaration <$>
-		v .:: "exported-by" <*>
-		v .:: "declaration"
+-- | Symbol with module it's exported from
+data ImportedSymbol = ImportedSymbol {
+	_importedSymbol :: Symbol,
+	_importedFrom :: ModuleId }
+		deriving (Eq, Ord)
+
+instance Show ImportedSymbol where
+	show (ImportedSymbol s m) = show s ++ " imported from " ++ show m
+
+instance ToJSON ImportedSymbol where
+	toJSON (ImportedSymbol s m) = objectUnion (toJSON s) $ object [
+		"imported" .= m]
+
+instance FromJSON ImportedSymbol where
+	parseJSON = withObject "imported-symbol" $ \v -> ImportedSymbol <$>
+		parseJSON (Object v) <*>
+		v .:: "imported"
 
 -- | Inspection data
 data Inspection =
@@ -448,7 +404,7 @@ data Inspection =
 	-- | Time and flags of inspection
 	InspectionAt {
 		_inspectionAt :: POSIXTime,
-		_inspectionOpts :: [String] }
+		_inspectionOpts :: [Text] }
 			deriving (Eq, Ord)
 
 instance NFData Inspection where
@@ -457,7 +413,7 @@ instance NFData Inspection where
 
 instance Show Inspection where
 	show InspectionNone = "none"
-	show (InspectionAt tm fs) = "mtime " ++ show tm ++ ", flags [" ++ intercalate ", " fs ++ "]"
+	show (InspectionAt tm fs) = "mtime " ++ show tm ++ ", flags [" ++ intercalate ", " (map T.unpack fs) ++ "]"
 
 instance Read POSIXTime where
 	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
@@ -473,61 +429,136 @@ instance Monoid Inspection where
 instance ToJSON Inspection where
 	toJSON InspectionNone = object ["inspected" .= False]
 	toJSON (InspectionAt tm fs) = object [
-		"mtime" .= (floor tm :: Integer),
+		"mtime" .= (fromRational (toRational tm) :: Double),
 		"flags" .= fs]
 
 instance FromJSON Inspection where
 	parseJSON = withObject "inspection" $ \v ->
 		((const InspectionNone :: Bool -> Inspection) <$> v .:: "inspected") <|>
-		(InspectionAt <$> (fromInteger <$> v .:: "mtime") <*> (v .:: "flags"))
+		(InspectionAt <$> ((fromRational . (toRational :: Double -> Rational)) <$> v .:: "mtime") <*> (v .:: "flags"))
+
+-- | Is left @Inspection@ fresh comparing to right one
+fresh :: Inspection -> Inspection -> Bool
+fresh InspectionNone InspectionNone = True
+fresh InspectionNone _ = False
+fresh _ InspectionNone = True
+fresh (InspectionAt tm _) (InspectionAt tm' _) = tm' - tm < 0.01
 
 -- | Inspected entity
-data Inspected i t a = Inspected {
+data Inspected k t a = Inspected {
 	_inspection :: Inspection,
-	_inspectedId :: i,
+	_inspectedKey :: k,
 	_inspectionTags :: Set t,
 	_inspectionResult :: Either HsDevError a }
 
-inspectedTup :: Inspected i t a -> (Inspection, i, Set t, Maybe a)
+inspectedTup :: Inspected k t a -> (Inspection, k, Set t, Maybe a)
 inspectedTup (Inspected insp i tags res) = (insp, i, tags, either (const Nothing) Just res)
 
-instance (Eq i, Eq t, Eq a) => Eq (Inspected i t a) where
+instance (Eq k, Eq t, Eq a) => Eq (Inspected k t a) where
 	(==) = (==) `on` inspectedTup
 
-instance (Ord i, Ord t, Ord a) => Ord (Inspected i t a) where
+instance (Ord k, Ord t, Ord a) => Ord (Inspected k t a) where
 	compare = comparing inspectedTup
 
-instance Functor (Inspected i t) where
+instance Functor (Inspected k t) where
 	fmap f insp = insp {
 		_inspectionResult = fmap f (_inspectionResult insp) }
 
-instance Foldable (Inspected i t) where
+instance Foldable (Inspected k t) where
 	foldMap f = either mempty f . _inspectionResult
 
-instance Traversable (Inspected i t) where
+instance Traversable (Inspected k t) where
 	traverse f (Inspected insp i ts r) = Inspected insp i ts <$> either (pure . Left) (liftA Right . f) r
 
-instance (NFData i, NFData t, NFData a) => NFData (Inspected i t a) where
+instance (NFData k, NFData t, NFData a) => NFData (Inspected k t a) where
 	rnf (Inspected t i ts r) = rnf t `seq` rnf i `seq` rnf ts `seq` rnf r
+
+instance (ToJSON k, ToJSON t, ToJSON a) => ToJSON (Inspected k t a) where
+	toJSON im = object [
+		"inspection" .= _inspection im,
+		"location" .= _inspectedKey im,
+		"tags" .= S.toList (_inspectionTags im),
+		either ("error" .=) ("result" .=) (_inspectionResult im)]
+
+instance (FromJSON k, Ord t, FromJSON t, FromJSON a) => FromJSON (Inspected k t a) where
+	parseJSON = withObject "inspected" $ \v -> Inspected <$>
+		v .:: "inspection" <*>
+		v .:: "location" <*>
+		(S.fromList <$> (v .::?! "tags")) <*>
+		((Left <$> v .:: "error") <|> (Right <$> v .:: "result"))
+
+newtype InspectM k t m a = InspectM { runInspectM :: ReaderT k (ExceptT HsDevError (StateT (Inspection, S.Set t) m)) a }
+	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadReader k, MonadError HsDevError, MonadState (Inspection, S.Set t))
+
+instance MonadTrans (InspectM k t) where
+	lift = InspectM . lift . lift . lift
+
+runInspect :: (Monad m, Ord t) => k -> InspectM k t m a -> m (Inspected k t a)
+runInspect key act = do
+	(res, (insp, ts)) <- flip runStateT (InspectionNone, mempty) . runExceptT . flip runReaderT key . runInspectM $ act
+	return $ Inspected insp key ts res
+
+-- | Continue inspection
+continueInspect :: (Monad m, Ord t) => Inspected k t a -> (a -> InspectM k t m b) -> m (Inspected k t b)
+continueInspect start act = runInspect (_inspectedKey start) $ do
+	put (_inspection start, _inspectionTags start)
+	val <- either throwError return $ _inspectionResult start
+	act val
+
+inspect :: MonadCatch m => m Inspection -> (k -> m a) -> InspectM k t m a
+inspect insp act = withInspection insp $ do
+	key <- ask
+	lift (hsdevCatch (hsdevLiftIO $ act key)) >>= either throwError return
+
+withInspection :: MonadCatch m => m Inspection -> InspectM k t m a -> InspectM k t m a
+withInspection insp inner = do
+	insp' <- lift insp
+	let
+		setInsp = modify (set _1 insp')
+	catchError (inner <* setInsp) (\e -> setInsp >> throwError e)
+
+inspect_ :: MonadCatch m => m Inspection -> m a -> InspectM k t m a
+inspect_ insp = inspect insp . const
 
 -- | Empty tags
 noTags :: Set t
 noTags = S.empty
 
-data ModuleTag = InferredTypesTag | RefinedDocsTag deriving (Eq, Ord, Read, Show, Enum, Bounded)
+-- | One tag
+tag :: t -> Set t
+tag = S.singleton
+
+data ModuleTag = InferredTypesTag | RefinedDocsTag | OnlyHeaderTag | DirtyTag | ResolvedNamesTag deriving (Eq, Ord, Read, Show, Enum, Bounded)
 
 instance NFData ModuleTag where
 	rnf InferredTypesTag = ()
 	rnf RefinedDocsTag = ()
+	rnf OnlyHeaderTag = ()
+	rnf DirtyTag = ()
+	rnf ResolvedNamesTag = ()
+
+instance Display ModuleTag where
+	display InferredTypesTag = "types"
+	display RefinedDocsTag = "docs"
+	display OnlyHeaderTag = "header"
+	display DirtyTag = "dirty"
+	display ResolvedNamesTag = "resolved"
+	displayType _ = "module-tag"
 
 instance ToJSON ModuleTag where
 	toJSON InferredTypesTag = toJSON ("types" :: String)
 	toJSON RefinedDocsTag = toJSON ("docs" :: String)
+	toJSON OnlyHeaderTag = toJSON ("header" :: String)
+	toJSON DirtyTag = toJSON ("dirty" :: String)
+	toJSON ResolvedNamesTag = toJSON ("resolved" :: String)
 
 instance FromJSON ModuleTag where
 	parseJSON = withText "module-tag" $ \txt -> msum [
 		guard (txt == "types") >> return InferredTypesTag,
-		guard (txt == "docs") >> return RefinedDocsTag]
+		guard (txt == "docs") >> return RefinedDocsTag,
+		guard (txt == "header") >> return OnlyHeaderTag,
+		guard (txt == "dirty") >> return DirtyTag,
+		guard (txt == "resolved") >> return ResolvedNamesTag]
 
 -- | Inspected module
 type InspectedModule = Inspected ModuleLocation ModuleTag Module
@@ -536,85 +567,77 @@ instance Show InspectedModule where
 	show (Inspected i mi ts m) = unlines [either showError show m, "\tinspected: " ++ show i, "\ttags: " ++ intercalate ", " (map show $ S.toList ts)] where
 		showError :: HsDevError -> String
 		showError e = unlines $ ("\terror: " ++ show e) : case mi of
-			FileModule f p -> ["file: " ++ f, "project: " ++ maybe "" (view projectPath) p]
-			InstalledModule c p n -> ["cabal: " ++ show c, "package: " ++ maybe "" show p, "name: " ++ n]
-			ModuleSource src -> ["source: " ++ fromMaybe "" src]
-
-instance ToJSON InspectedModule where
-	toJSON im = object [
-		"inspection" .= _inspection im,
-		"location" .= _inspectedId im,
-		"tags" .= S.toList (_inspectionTags im),
-		either ("error" .=) ("module" .=) (_inspectionResult im)]
-
-instance FromJSON InspectedModule where
-	parseJSON = withObject "inspected module" $ \v -> Inspected <$>
-		v .:: "inspection" <*>
-		v .:: "location" <*>
-		(S.fromList <$> (v .::?! "tags")) <*>
-		((Left <$> v .:: "error") <|> (Right <$> v .:: "module"))
+			FileModule f p -> ["file: " ++ f ^. path, "project: " ++ maybe "" (view (projectPath . path)) p]
+			InstalledModule c p n _  -> ["cabal: " ++ show c, "package: " ++ show p, "name: " ++ T.unpack n]
+			OtherLocation src -> ["other location: " ++ T.unpack src]
+			NoLocation -> ["no location"]
 
 notInspected :: ModuleLocation -> InspectedModule
 notInspected mloc = Inspected mempty mloc noTags (Left $ NotInspected mloc)
 
-instance Symbol Module where
-	symbolName = _moduleName
-	symbolQualifiedName = _moduleName
-	symbolDocs = _moduleDocs
-	symbolLocation m = Location (_moduleLocation m) Nothing
-
-instance Symbol ModuleId where
-	symbolName = _moduleIdName
-	symbolQualifiedName = _moduleIdName
-	symbolDocs = const Nothing
-	symbolLocation m = Location (_moduleIdLocation m) Nothing
-
-instance Symbol Declaration where
-	symbolName = _declarationName
-	symbolQualifiedName = _declarationName
-	symbolDocs = _declarationDocs
-	symbolLocation d = Location (ModuleSource Nothing) (_declarationPosition d)
-
-instance Symbol ModuleDeclaration where
-	symbolName = _declarationName . _moduleDeclaration
-	symbolQualifiedName d = qualifiedName (_declarationModuleId d) (_moduleDeclaration d) where
-		qualifiedName :: ModuleId -> Declaration -> Text
-		qualifiedName m' d' = T.concat [_moduleIdName m', ".", _declarationName d']
-	symbolDocs = _declarationDocs . _moduleDeclaration
-	symbolLocation d = set locationPosition (_declarationPosition $ _moduleDeclaration d)
-		(symbolLocation . _declarationModuleId $ d)
-
 instance Documented ModuleId where
-	brief m = unpack (_moduleIdName m) ++ " in " ++ show (_moduleIdLocation m)
+	brief m = brief $ _moduleLocation m
+	detailed = brief
+
+instance Documented SymbolId where
+	brief s = "{} from {}" ~~ _symbolName s ~~ brief (_symbolModule s)
+	detailed = brief
 
 instance Documented Module where
-	brief m = unpack (_moduleName m) ++ " in " ++ show (_moduleLocation m)
-	detailed m = unlines $ header ++ docs ++ cts where
-		header = [brief m, ""]
-		docs = maybe [] (return . unpack) $ _moduleDocs m
-		cts = moduleContents m
+	brief = brief . _moduleId
+	detailed m = T.unlines (brief m : info) where
+		info = [
+			"\texports: {}" ~~ T.intercalate ", " (map brief (_moduleExports m))]
 
-instance Documented Declaration where
-	brief d = case declarationInfo $ _declaration d of
-		Left (f, _, _) -> name ++ maybe "" ((" :: " ++) . unpack) f
-		Right ti -> showTypeInfo ti (fromMaybe err $ declarationTypeName $ _declaration d) name
-		where
-			name = unpack $ _declarationName d
-			err = error "Impossible happened: declarationTypeName"
+instance Documented Symbol where
+	brief = brief . _symbolId
+	detailed s = T.unlines [brief s, info] where
+		info = case _symbolInfo s of
+			Function t -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "function", fmap ("type: {}" ~~) t])
+			Method t p -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "method", fmap ("type: {}" ~~) t, Just $ "parent: {}" ~~ p])
+			Selector t p _ -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "selector", fmap ("type: {}" ~~) t, Just $ "parent: {}" ~~ p])
+			Constructor args p -> "\t" `T.append` T.intercalate ", " ["constructor", "args: {}" ~~ T.unwords args, "parent: {}" ~~ p]
+			Type args ctx -> "\t" `T.append` T.intercalate ", " ["type", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			NewType args ctx -> "\t" `T.append` T.intercalate ", " ["newtype", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			Data args ctx -> "\t" `T.append` T.intercalate ", " ["data", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			Class args ctx -> "\t" `T.append` T.intercalate ", " ["class", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			TypeFam args ctx _ -> "\t" `T.append` T.intercalate ", " ["type family", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			DataFam args ctx _ -> "\t" `T.append` T.intercalate ", " ["data family", "args: {}" ~~ T.unwords args, "ctx: {}" ~~ T.unwords ctx]
+			PatConstructor args p -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "pattern constructor", Just $ "args: {}" ~~ T.unwords args, fmap ("pat-type: {}" ~~) p])
+			PatSelector t p _ -> "\t" `T.append` T.intercalate ", " (catMaybes [Just "pattern selector", fmap ("type: {}" ~~) t, fmap ("pat-type: {}" ~~) p])
 
-instance Documented ModuleDeclaration where
-	brief = brief . _moduleDeclaration
-
-makeLenses ''Export
-makeLenses ''ImportSpec
-makeLenses ''ImportList
 makeLenses ''Import
-makeLenses ''ModuleId
-makeLenses ''DeclarationInfo
-makeLenses ''TypeInfo
-makeLenses ''Declaration
 makeLenses ''Module
-makeLenses ''ModuleDeclaration
-makeLenses ''ExportedDeclaration
+makeLenses ''Symbol
+makeLenses ''SymbolInfo
+makeLenses ''Scoped
+makeLenses ''SymbolUsage
+makeLenses ''ImportedSymbol
 makeLenses ''Inspection
 makeLenses ''Inspected
+
+inspected :: Traversal (Inspected k t a) (Inspected k t b) a b
+inspected = inspectionResult . _Right
+
+nullifyInfo :: SymbolInfo -> SymbolInfo
+nullifyInfo = chain [
+	set functionType mempty,
+	set parentClass mempty,
+	set parentType mempty,
+	set selectorConstructors mempty,
+	set typeArgs mempty,
+	set typeContext mempty,
+	set familyAssociate mempty,
+	set patternType mempty,
+	set patternConstructor mempty]
+
+instance Sourced Module where
+	sourcedName = moduleId . moduleName
+	sourcedDocs = moduleDocs . _Just
+	sourcedModule = moduleId
+
+instance Sourced Symbol where
+	sourcedName = symbolId . symbolName
+	sourcedDocs = symbolDocs . _Just
+	sourcedModule = symbolId . symbolModule
+	sourcedLocation = symbolPosition . _Just

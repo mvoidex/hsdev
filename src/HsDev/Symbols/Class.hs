@@ -1,20 +1,30 @@
 module HsDev.Symbols.Class (
-	Symbol(..),
-	symbolModuleLocation,
+	Sourced(..),
+	sourcedModuleName,
 
 	module HsDev.Symbols.Location
 	) where
 
-import Control.Lens (view)
+import Control.Lens (Lens', Traversal')
 import Data.Text (Text)
 
 import HsDev.Symbols.Location
 
-class Symbol a where
-	symbolName :: a -> Text
-	symbolQualifiedName :: a -> Text
-	symbolDocs :: a -> Maybe Text
-	symbolLocation :: a -> Location
+class Sourced a where
+	sourcedName :: Lens' a Text
+	sourcedDocs :: Traversal' a Text
+	sourcedModule :: Lens' a ModuleId
+	sourcedLocation :: Traversal' a Position
+	sourcedDocs _ = pure
+	sourcedLocation _ = pure
 
-symbolModuleLocation :: Symbol a => a -> ModuleLocation
-symbolModuleLocation = view locationModule . symbolLocation
+instance Sourced ModuleId where
+	sourcedName = moduleName
+	sourcedModule = id
+
+instance Sourced SymbolId where
+	sourcedName = symbolName
+	sourcedModule = symbolModule
+
+sourcedModuleName :: Sourced a => Lens' a Text
+sourcedModuleName = sourcedModule . sourcedName

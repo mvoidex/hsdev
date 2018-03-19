@@ -5,28 +5,21 @@ module HsDev.Tools.Base (
 	tool, tool_,
 	matchRx, splitRx, replaceRx,
 	at, at_,
-	inspect,
-	-- * Read parse utils
-	ReadM,
-	readParse, parseReads, parseRead,
 
 	module HsDev.Tools.Types
 	) where
 
-import Control.Lens (set)
-import Control.Monad.Catch (MonadCatch)
 import Control.Monad.Except
-import Control.Monad.State
 import Data.Array (assocs)
 import Data.List (unfoldr, intercalate)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe)
+import Data.String
 import System.Exit
 import System.Process
 import Text.Regex.PCRE ((=~), MatchResult(..))
 
 import HsDev.Error
 import HsDev.Tools.Types
-import HsDev.Symbols
 import HsDev.Util (liftIOErrors)
 
 -- | Run tool, throwing HsDevError on fail
@@ -87,31 +80,8 @@ splitRx pat = unfoldr split' . Just where
 replaceRx :: String -> String -> String -> String
 replaceRx pat w = intercalate w . splitRx pat
 
-at :: (Int -> Maybe String) -> Int -> String
+at :: (Int -> Maybe a) -> Int -> a
 at g i = fromMaybe (error $ "Can't find group " ++ show i) $ g i
 
-at_ :: (Int -> Maybe String) -> Int -> String
-at_ g = fromMaybe "" . g
-
-inspect :: MonadCatch m => ModuleLocation -> m Inspection -> m Module -> m InspectedModule
-inspect mloc insp act = execStateT inspect' (notInspected mloc) where
-	inspect' = do
-		r <- hsdevCatch $ hsdevLiftIO $ do
-			i <- lift insp
-			modify (set inspection i)
-			lift act
-		modify (set inspectionResult r)
-
-type ReadM a = StateT String [] a
-
--- | Parse readable value
-readParse :: Read a => ReadM a
-readParse = StateT reads
-
--- | Run parser
-parseReads :: String -> ReadM a -> [a]
-parseReads = flip evalStateT
-
--- | Run parser and select first result
-parseRead :: String -> ReadM a -> Maybe a
-parseRead s = listToMaybe . parseReads s
+at_ :: IsString s => (Int -> Maybe s) -> Int -> s
+at_ g = fromMaybe (fromString "") . g

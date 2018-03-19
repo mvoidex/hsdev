@@ -1,5 +1,5 @@
 module HsDev.Tools.HLint (
-	hlint, hlintFile, hlintSource,
+	hlint,
 
 	module Control.Monad.Except
 	) where
@@ -10,59 +10,56 @@ import Control.Monad.Except
 import Data.Char
 import Data.List
 import Data.Maybe (mapMaybe)
+import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Ord
-import Language.Haskell.HLint3 (autoSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
+import Data.String (fromString)
+import Language.Haskell.HLint3 (argsSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
 import Language.Haskell.Exts.SrcLoc
 import qualified Language.Haskell.HLint3 as HL (Severity(..))
 
-import System.Directory.Paths (canonicalize)
+import System.Directory.Paths
 import HsDev.Symbols.Location
 import HsDev.Tools.Base
-import HsDev.Util (readFileUtf8, split)
+import HsDev.Util (readFileUtf8)
 
-hlint :: FilePath -> Maybe String -> ExceptT String IO [Note OutputMessage]
-hlint file msrc = do
+hlint :: [String] -> FilePath -> Maybe Text -> ExceptT String IO [Note OutputMessage]
+hlint opts file msrc = do
 	file' <- liftIO $ canonicalize file
 	cts <- maybe (liftIO $ readFileUtf8 file') return msrc
-	(flags, classify, hint) <- liftIO autoSettings
-	p <- liftIO $ parseModuleEx (flags { cppFlags = CppSimple }) file' (Just cts)
+	(flags, classify, hint) <- liftIO $ argsSettings opts
+	p <- liftIO $ parseModuleEx (flags { cppFlags = CppSimple }) file' (Just $ T.unpack cts)
 	m <- either (throwError . parseErrorMessage) return p
 	return $ map (recalcTabs cts 8 . indentIdea cts . fromIdea) $
 		filter (not . ignoreIdea) $
 		applyHints classify hint [m]
-
-hlintFile :: FilePath -> ExceptT String IO [Note OutputMessage]
-hlintFile f = hlint f Nothing
-
-hlintSource :: FilePath -> String -> ExceptT String IO [Note OutputMessage]
-hlintSource f = hlint f . Just
 
 ignoreIdea :: Idea -> Bool
 ignoreIdea idea = ideaSeverity idea == HL.Ignore
 
 fromIdea :: Idea -> Note OutputMessage
 fromIdea idea = Note {
-	_noteSource = FileModule (srcSpanFilename src) Nothing,
+	_noteSource = FileModule (fromFilePath $ srcSpanFilename src) Nothing,
 	_noteRegion = Region (Position (srcSpanStartLine src) (srcSpanStartColumn src)) (Position (srcSpanEndLine src) (srcSpanEndColumn src)),
 	_noteLevel = Just $ case ideaSeverity idea of
 		HL.Warning -> Warning
 		HL.Error -> Error
 		_ -> Hint,
 	_note = OutputMessage {
-		_message = ideaHint idea,
-		_messageSuggestion = ideaTo idea } }
+		_message = fromString $ ideaHint idea,
+		_messageSuggestion = fmap fromString $ ideaTo idea } }
 	where
 		src = ideaSpan idea
 
-indentIdea :: String -> Note OutputMessage -> Note OutputMessage
+indentIdea :: Text -> Note OutputMessage -> Note OutputMessage
 indentIdea cts idea = case analyzeIndent cts of
 	Nothing -> idea
 	Just i -> over (note . messageSuggestion . _Just) (indent' i) idea
 	where
-		indent' i' = intercalate "\n" . indentTail . map (uncurry (++) . first (concat . (`replicate` i') . (`div` 2) . length) . span isSpace) . split (== '\n')
+		indent' i' = T.intercalate (fromString "\n") . indentTail . map (uncurry T.append . first ((`T.replicate` i') . (`div` 2) . T.length) . T.span isSpace) . T.split (== '\n')
 		indentTail [] = []
-		indentTail (h : hs) = h : map (firstIndent ++) hs
-		firstIndent = takeWhile isSpace firstLine
+		indentTail (h : hs) = h : map (firstIndent `T.append`) hs
+		firstIndent = T.takeWhile isSpace firstLine
 		firstLine = regionStr (Position firstLineNum 1 `region` Position (succ firstLineNum) 1) cts
 		firstLineNum = view (noteRegion . regionFrom . positionLine) idea
 
@@ -75,13 +72,13 @@ instance Show Indent where
 
 -- | Analyze source indentation to convert suggestion to same indentation
 -- Returns one indent
-analyzeIndent :: String -> Maybe String
+analyzeIndent :: Text -> Maybe Text
 analyzeIndent =
-	fmap show . selectIndent . map fst . dropUnusual .
+	fmap (fromString . show) . selectIndent . map fst . dropUnusual .
 	sortBy (comparing $ negate . snd) .
 	map (head &&& length) .
 	group . sort .
-	mapMaybe (guessIndent . takeWhile isSpace) . lines
+	mapMaybe (guessIndent . T.takeWhile isSpace) . T.lines
 	where
 		selectIndent :: [Indent] -> Maybe Indent
 		selectIndent [] = Nothing
@@ -95,8 +92,8 @@ analyzeIndent =
 		dropUnusual is@((_, freq):_) = takeWhile ((> freq `div` 5) . snd) is
 
 -- | Guess indent of one line
-guessIndent :: String -> Maybe Indent
+guessIndent :: Text -> Maybe Indent
 guessIndent s
-	| all (== ' ') s = Just $ Spaces $ length s
-	| all (== '\t') s = Just Tabs
+	| T.all (== ' ') s = Just $ Spaces $ T.length s
+	| T.all (== '\t') s = Just Tabs
 	| otherwise = Nothing

@@ -1,0 +1,12 @@
+flags: {}
+packages:
+- '.'
+- 'tests/test-package/'
+extra-deps:
+- git: https://github.com/mvoidex/haskell-names.git
+  commit: 00ff7c63d314a952273550953e1bae82223d17f1
+- aeson-lens-0.5.0.0
+- haddock-api-2.18.1
+- haddock-library-1.4.4
+- hdocs-0.5.2.1
+resolver: nightly-2018-01-15

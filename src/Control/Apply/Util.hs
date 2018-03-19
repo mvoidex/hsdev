@@ -1,5 +1,5 @@
 module Control.Apply.Util (
-	(&), chain, with
+	(&), chain
 	) where
 
 (&) :: a -> (a -> b) -> b
@@ -7,9 +7,3 @@ module Control.Apply.Util (
 
 chain :: [a -> a] -> a -> a
 chain = foldr (.) id
-
--- | Flipped version of 'chain', which can be used like this:
---
--- >foo `with` [f, g, h]
-with :: a -> [a -> a] -> a
-with = flip chain
