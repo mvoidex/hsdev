@@ -3,5 +3,6 @@ extra-package-dbs: []
 packages:
 - .
 - tests/test-package/
-extra-deps: []
+extra-deps:
+  - haskell-names-0.9.0
 resolver: lts-9.21
