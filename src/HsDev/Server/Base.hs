@@ -75,12 +75,16 @@ initLog :: ServerOpts -> IO SessionLog
 initLog sopts = do
 	msgs <- C.newChan
 	l <- newLog (logCfg [("", Log.level_ . T.pack . serverLogLevel $ sopts)]) $ concat [
-		[handler text coloredConsole | not $ serverSilent sopts],
+		[logHandler | not $ serverSilent sopts],
 		[chaner msgs],
 		[handler text (file f) | f <- maybeToList (serverLog sopts)]]
 	let
 		listenLog = C.dupChan msgs >>= C.getChanContents
 	return $ SessionLog l listenLog (stopLog l)
+	where
+		logHandler
+			| serverLogNoColor sopts = handler text console
+			| otherwise = handler text coloredConsole
 
 -- | Run server
 runServer :: ServerOpts -> ServerM IO () -> IO ()
