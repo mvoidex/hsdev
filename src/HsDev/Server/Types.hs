@@ -300,12 +300,13 @@ data ServerOpts = ServerOpts {
 	serverTimeout :: Int,
 	serverLog :: Maybe FilePath,
 	serverLogLevel :: String,
+	serverLogNoColor :: Bool,
 	serverDbFile :: Maybe FilePath,
 	serverSilent :: Bool }
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts def 0 Nothing "info" Nothing False
+	def = ServerOpts def 0 Nothing "info" False Nothing False
 
 -- | Silent server with no connection, useful for ghci
 silentOpts :: ServerOpts
@@ -339,6 +340,7 @@ instance FromCmd ServerOpts where
 		(timeoutArg <|> pure (serverTimeout def)) <*>
 		optional logArg <*>
 		(logLevelArg <|> pure (serverLogLevel def)) <*>
+		noColorFlag <*>
 		optional dbFileArg <*>
 		serverSilentFlag
 
@@ -355,6 +357,7 @@ connectionArg :: Parser ConnectionPort
 timeoutArg :: Parser Int
 logArg :: Parser FilePath
 logLevelArg :: Parser String
+noColorFlag :: Parser Bool
 noFileFlag :: Parser Bool
 prettyFlag :: Parser Bool
 serverSilentFlag :: Parser Bool
@@ -373,6 +376,7 @@ connectionArg = portArg <|> unixArg
 timeoutArg = option auto (long "timeout" <> metavar "msec" <> help "query timeout")
 logArg = strOption (long "log" <> short 'l' <> metavar "file" <> help "log file")
 logLevelArg = strOption (long "log-level" <> metavar "level" <> help "log level: trace/debug/info/warning/error/fatal")
+noColorFlag = switch (long "no-color" <> help "don't use colorized log output")
 noFileFlag = switch (long "no-file" <> help "don't use mmap files")
 prettyFlag = switch (long "pretty" <> help "pretty json output")
 serverSilentFlag = switch (long "silent" <> help "no stdout/stderr")
