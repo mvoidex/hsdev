@@ -7,4 +7,5 @@ extra-deps:
 - haddock-api-2.18.1
 - haddock-library-1.4.4
 - hdocs-0.5.2.1
+- aeson-lens-0.5.0.0
 flags: {}
