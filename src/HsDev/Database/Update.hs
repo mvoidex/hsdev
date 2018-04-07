@@ -685,6 +685,4 @@ cachedWarnings mlocs = liftM concat $ forM (mlocs ^.. each . moduleFile) $ \f ->
 	(SQLite.Only f)
 
 watch :: SessionMonad m => (Watcher -> IO ()) -> m ()
-watch f = do
-	w <- askSession sessionWatcher
-	liftIO $ f w
+watch f = whenJustM (askSession sessionWatcher) $ liftIO . f

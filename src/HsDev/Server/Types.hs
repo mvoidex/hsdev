@@ -71,7 +71,7 @@ data Session = Session {
 	sessionSqlDatabase :: SQL.Connection,
 	sessionSqlPath :: String,
 	sessionLog :: SessionLog,
-	sessionWatcher :: Watcher,
+	sessionWatcher :: Maybe Watcher,
 	sessionFileContents :: Path -> Maybe Text -> IO (),
 #if mingw32_HOST_OS
 	sessionMmapPool :: Maybe Pool,
@@ -304,11 +304,12 @@ data ServerOpts = ServerOpts {
 	serverLogLevel :: String,
 	serverLogNoColor :: Bool,
 	serverDbFile :: Maybe FilePath,
+	serverWatchFS :: Bool,
 	serverSilent :: Bool }
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts def 0 Nothing "info" False Nothing False
+	def = ServerOpts def 0 Nothing "info" False Nothing True False
 
 -- | Silent server with no connection, useful for ghci
 silentOpts :: ServerOpts
@@ -344,6 +345,7 @@ instance FromCmd ServerOpts where
 		(logLevelArg <|> pure (serverLogLevel def)) <*>
 		noColorFlag <*>
 		optional dbFileArg <*>
+		(not <$> noWatchFlag) <*>
 		serverSilentFlag
 
 instance FromCmd ClientOpts where
@@ -366,6 +368,7 @@ serverSilentFlag :: Parser Bool
 stdinFlag :: Parser Bool
 silentFlag :: Parser Bool
 dbFileArg :: Parser FilePath
+noWatchFlag :: Parser Bool
 
 portArg = NetworkPort <$> option auto (long "port" <> metavar "number" <> help "connection port")
 #if mingw32_HOST_OS
@@ -385,6 +388,7 @@ serverSilentFlag = switch (long "silent" <> help "no stdout/stderr")
 stdinFlag = switch (long "stdin" <> help "pass data to stdin")
 silentFlag = switch (long "silent" <> help "supress notifications")
 dbFileArg = strOption (long "db" <> metavar "path" <> help "path to sql database")
+noWatchFlag = switch (long "no-watch" <> help "don't watch filesystem for source changes")
 
 serverOptsArgs :: ServerOpts -> [String]
 serverOptsArgs sopts = concat [
