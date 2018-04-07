@@ -11,7 +11,10 @@ packages:
 - tests/test-package/
 
 extra-deps:
-- haskell-names-0.9.0
+- aeson-1.2.4.0
+- haskell-names-0.9.1
+- haskell-src-exts-1.20.2
+- hlint-2.1.1
 
 # Override default flag values for local packages and extra-deps
 flags: {}
