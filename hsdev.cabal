@@ -28,12 +28,19 @@ flag docs
   description: build with haddock/hdocs to support scanning docs
   default: True
 
+flag hlint
+  description: build with hlint to support linting
+  default: True
+
 library
   hs-source-dirs: src
   ghc-options: -Wall -fno-warn-tabs
 
   if !flag(docs)
     cpp-options: -DNODOCS
+
+  if !flag(hlint)
+    cpp-options: -DNOHLINT
 
   exposed-modules:
     Control.Apply.Util
@@ -138,6 +145,10 @@ library
       haddock-api >= 2.17.4,
       haddock-library >= 1.4.3
 
+  if flag(hlint)
+    build-depends:
+      hlint >= 2.0.11 && < 2.2
+
   build-depends:
     base                              >= 4.7 && < 5,
     Cabal                             >= 1.24.2 && < 2.1,
@@ -164,7 +175,6 @@ library
     haskell-names                     >= 0.9.0 && < 0.10.0,
     haskell-src-exts                  >= 1.18.0 && < 1.21.0,
     hformat                           >= 0.3.1 && < 0.4,
-    hlint                             >= 2.0.11 && < 2.2,
     lens                              >= 4.15.4 && < 4.17,
     lifted-base                       >= 0.2.3 && < 0.3,
     mmorph                            >= 1.0 && < 1.2,

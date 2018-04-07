@@ -1,29 +1,37 @@
+{-# LANGUAGE CPP #-}
+
 module HsDev.Tools.HLint (
 	hlint,
+	hlintSupported,
 
 	module Control.Monad.Except
 	) where
 
+import Control.Monad.Except
+import Data.Text (Text)
+
+import HsDev.Tools.Base
+
+#ifndef NOHLINT
 import Control.Arrow
 import Control.Lens (over, view, _Just)
-import Control.Monad.Except
 import Data.Char
 import Data.List
 import Data.Maybe (mapMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Ord
 import Data.String (fromString)
-import Language.Haskell.HLint3 (argsSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
 import Language.Haskell.Exts.SrcLoc
+import Language.Haskell.HLint3 (argsSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
 import qualified Language.Haskell.HLint3 as HL (Severity(..))
 
 import System.Directory.Paths
 import HsDev.Symbols.Location
-import HsDev.Tools.Base
 import HsDev.Util (readFileUtf8)
+#endif
 
 hlint :: [String] -> FilePath -> Maybe Text -> ExceptT String IO [Note OutputMessage]
+#ifndef NOHLINT
 hlint opts file msrc = do
 	file' <- liftIO $ canonicalize file
 	cts <- maybe (liftIO $ readFileUtf8 file') return msrc
@@ -33,7 +41,11 @@ hlint opts file msrc = do
 	return $ map (recalcTabs cts 8 . indentIdea cts . fromIdea) $
 		filter (not . ignoreIdea) $
 		applyHints classify hint [m]
+#else
+hlint _ _ _ = throwError "Compiled with no hlint support"
+#endif
 
+#ifndef NOHLINT
 ignoreIdea :: Idea -> Bool
 ignoreIdea idea = ideaSeverity idea == HL.Ignore
 
@@ -97,3 +109,11 @@ guessIndent s
 	| T.all (== ' ') s = Just $ Spaces $ T.length s
 	| T.all (== '\t') s = Just Tabs
 	| otherwise = Nothing
+#endif
+
+hlintSupported :: Bool
+#ifndef NOHLINT
+hlintSupported = True
+#else
+hlintSupported = False
+#endif
