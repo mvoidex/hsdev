@@ -1,10 +1,11 @@
-flags: {}
+resolver: lts-11.2
+extra-package-dbs: []
 packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
-- aeson-lens-0.5.0.0
 - haddock-api-2.18.1
 - haddock-library-1.4.4
 - hdocs-0.5.2.1
-resolver: lts-10.3
+- aeson-lens-0.5.0.0
+flags: {}

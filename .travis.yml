@@ -2,9 +2,10 @@
 language: c
 
 env:
- - CABALVER=1.24 GHCVER=8.0.2 FLAGS=-fdocs
- - CABALVER=2.0 GHCVER=8.2.2 FLAGS=-fdocs
- - CABALVER=2.0 GHCVER=8.2.2 FLAGS=-f-docs
+ - CABALVER=1.24 GHCVER=8.0.2 FLAGS=-fdocs HAPPYVER=1.19.8 MTL=mtl-2.2.1
+ - CABALVER=1.24 GHCVER=8.0.2 FLAGS=-f-docs HAPPYVER=1.19.8 MTL=mtl-2.2.1
+ - CABALVER=2.0 GHCVER=8.2.2 FLAGS=-fdocs HAPPYVER=1.19.9 MTL=
+ - CABALVER=2.0 GHCVER=8.2.2 FLAGS=-f-docs HAPPYVER=1.19.9 MTL=
 
 before_install:
  - travis_retry sudo add-apt-repository -y ppa:hvr/ghc
@@ -21,7 +22,7 @@ install:
  - cabal sandbox init
  - cabal sandbox add-source ~/haskell-suite/haskell-src-exts
  # end
- - cabal install happy
+ - cabal install $MTL happy-$HAPPYVER
  - cabal install --only-dependencies --enable-tests $FLAGS
 
 script:
