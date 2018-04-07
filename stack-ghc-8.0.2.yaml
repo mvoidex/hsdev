@@ -4,20 +4,14 @@
 # For advanced use and comprehensive documentation of the format, please see:
 # http://docs.haskellstack.org/en/stable/yaml_configuration/
 
-resolver: lts-7.21
+resolver: lts-9.21
 
 packages:
 - '.'
 - tests/test-package/
 
 extra-deps:
-- aeson-lens-0.5.0.0
-- haskell-src-exts-1.19.1
-- hdocs-0.5.2.0
-- hformat-0.2.0.0
-- hlint-1.9.41
-- simple-log-0.8.5
-- text-region-0.2.0.0
+- haskell-names-0.9.0
 
 # Override default flag values for local packages and extra-deps
 flags: {}

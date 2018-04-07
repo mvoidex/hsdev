@@ -65,7 +65,7 @@ runClient copts = mapServerM toResult . runClientM where
 	errorToResult = either (Error . UnhandledError . displayException) (either Error (Result . toJSON))
 
 toValue :: (ToJSON a, Monad m) => m a -> m Value
-toValue = liftM toJSON
+toValue = fmap toJSON
 
 runCommand :: ServerMonadBase m => Command -> ClientM m Value
 runCommand Ping = toValue $ return $ object ["message" .= ("pong" :: String)]
