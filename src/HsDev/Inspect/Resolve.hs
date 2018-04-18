@@ -7,7 +7,7 @@ module HsDev.Inspect.Resolve (
 	-- * Resolving
 	resolveModule, resolvePreloaded, resolve,
 	-- * Saving results
-	updateResolved, updateResolveds
+	updateResolveds
 	) where
 
 import Control.Lens hiding ((.=))
@@ -157,32 +157,31 @@ withEnv mcabal = (initEnv >>) where
 		[Only cnt] <- query_ @(Only Int) "select count(*) from env;"
 		sendLog Trace $ "created env table with {} symbols" ~~ cnt
 
--- | Save results in sql, also updates temporary environment table
-updateResolved :: SessionMonad m => InspectedResolved -> m ()
-updateResolved im = scope "update-resolved" $ do
-	_ <- upsertResolved im
-	insertResolvedSymbols im
-
 -- | Save results in sql, updated temporary env table
 updateResolveds :: SessionMonad m => Maybe Path -> [InspectedResolved] -> m ()
 updateResolveds mcabal ims = scope "update-resolveds" $ withEnv mcabal $ do
-	ids <- transaction_ Immediate $ mapM upsertResolved ims
+	ids <- upsertResolveds ims
 	updateResolvedsSymbols (zip ids ims)
 
-upsertResolved :: SessionMonad m => InspectedResolved -> m Int
-upsertResolved im = do
-	mmid <- lookupModuleLocation (im ^. inspectedKey)
-	case mmid of
-		Nothing -> do
-			execute "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-				moduleData
-			lastRow
-		Just mid' -> do
-			execute "update modules set file = ?, cabal = ?, install_dirs = ?, package_name = ?, package_version = ?, installed_name = ?, exposed = ?, other_location = ?, name = ?, docs = ?, fixities = ?, tags = ?, inspection_error = ?, inspection_time = ?, inspection_opts = ? where id == ?;"
-				(moduleData :. Only mid')
-			return mid'
+upsertResolveds :: SessionMonad m => [InspectedResolved] -> m [Int]
+upsertResolveds ims = scope "upsert-resolveds" $ bracket_ initTemp removeTemp $ do
+	executeMany "insert into upserted_modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ map moduleData ims
+	execute_ "update upserted_modules set id = (select m.id from modules as m where (m.file = upserted_modules.file) or ((m.package_name = upserted_modules.package_name) and (m.package_version = upserted_modules.package_version) and (m.installed_name = upserted_modules.installed_name)) or (m.other_location = upserted_modules.other_location));"
+	execute_ "insert or replace into modules (id, file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select id, file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is not null;"
+	execute_ "insert into modules (file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts) select file, cabal, install_dirs, package_name, package_version, installed_name, exposed, other_location, name, docs, fixities, tags, inspection_error, inspection_time, inspection_opts from upserted_modules where id is null;"
+	execute_ "update upserted_modules set id = (select m.id from modules as m where (m.file = upserted_modules.file) or ((m.package_name = upserted_modules.package_name) and (m.package_version = upserted_modules.package_version) and (m.installed_name = upserted_modules.installed_name)) or (m.other_location = upserted_modules.other_location)) where id is null;"
+
+	liftM (map fromOnly) $ query_ "select id from upserted_modules order by rowid;"
 	where
-		moduleData = (
+		initTemp :: SessionMonad m => m ()
+		initTemp = do
+			execute_ "create temporary table upserted_modules as select * from modules where 0;"
+			execute_ "create index upserted_modules_id_index on upserted_modules (id);"
+
+		removeTemp :: SessionMonad m => m ()
+		removeTemp = execute_ "drop table if exists upserted_modules;"
+
+		moduleData im = (
 			im ^? inspectedKey . moduleFile . path,
 			im ^? inspectedKey . moduleProject . _Just . projectCabal,
 			fmap (encode . map (view path)) (im ^? inspectedKey . moduleInstallDirs),
@@ -200,138 +199,6 @@ upsertResolved im = do
 			:.
 			fromMaybe InspectionNone (im ^? inspection)
 		asDict tags = object [fromString (Display.display t) .= True | t <- S.toList tags]
-
-insertResolvedSymbols :: SessionMonad m => InspectedResolved -> m ()
-insertResolvedSymbols im = do
-	Just mid <- lookupModuleLocation (im ^. inspectedKey)
-	removeModuleContents mid
-	insertModuleImports mid (im ^?! inspected . resolvedSource)
-	insertModuleDefs mid (im ^.. inspected . resolvedDefs . each)
-	insertExportSymbols mid (im ^.. inspected . resolvedExports . each)
-	insertScopeSymbols mid (M.toList (im ^?! inspected . resolvedScope))
-	insertResolvedNames mid (im ^?! inspected . resolvedSource)
-	updateEnvironment mid
-	where
-		insertModuleImports :: SessionMonad m => Int -> Parsed -> m ()
-		insertModuleImports mid p = scope "imports" $ do
-			let
-				imps = childrenBi p :: [H.ImportDecl Ann]
-				importRow idecl@(H.ImportDecl _ mname qual _ _ _ alias specList) = (
-					mid,
-					idecl ^. pos . positionLine,
-					idecl ^. pos . positionColumn,
-					getModuleName mname,
-					qual,
-					fmap getModuleName alias,
-					maybe False getHiding specList,
-					fmap makeImportList specList)
-			executeMany "insert into imports (module_id, line, column, module_name, qualified, alias, hiding, import_list) values (?, ?, ?, ?, ?, ?, ?, ?);"
-				(map importRow imps)
-			executeNamed "update imports set import_module_id = (select im.id from modules as im, projects_modules_scope as ps where ((ps.cabal is null and :cabal is null) or (ps.cabal == :cabal)) and ps.module_id == im.id and im.name == imports.module_name) where module_id == :module_id;" [
-			 ":cabal" := im ^? inspectedKey . moduleProject . _Just . projectCabal,
-			 ":module_id" := mid]
-			where
-				getModuleName (H.ModuleName _ s) = s
-				getHiding (H.ImportSpecList _ h _) = h
-
-				makeImportList (H.ImportSpecList _ _ specs) = encode $ map asJson specs
-				asJson (H.IVar _ nm) = object ["name" .= fromName_ (void nm), "what" .= id @String "var"]
-				asJson (H.IAbs _ ns nm) = object ["name" .= fromName_ (void nm), "what" .= id @String "abs", "ns" .= fromNamespace ns] where
-					fromNamespace :: H.Namespace l -> Maybe String
-					fromNamespace (H.NoNamespace _) = Nothing
-					fromNamespace (H.TypeNamespace _) = Just "type"
-					fromNamespace (H.PatternNamespace _) = Just "pat"
-				asJson (H.IThingAll _ nm) = object ["name" .= fromName_ (void nm), "what" .= id @String "all"]
-				asJson (H.IThingWith _ nm cs) = object ["name" .= fromName_ (void nm), "what" .= id @String "with", "list" .= map (fromName_ . void . toName') cs] where
-					toName' (H.VarName _ n') = n'
-					toName' (H.ConName _ n') = n'
-
-		insertModuleDefs :: SessionMonad m => Int -> [Symbol] -> m ()
-		insertModuleDefs mid syms = scope "defs" $ do
-			executeMany "insert into symbols (name, module_id, docs, line, column, what, type, parent, constructors, args, context, associate, pat_type, pat_constructor) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);" $ do
-				sym <- syms
-				return $ (
-					sym ^. symbolId . symbolName,
-					mid,
-					sym ^. symbolDocs,
-					sym ^? symbolPosition . _Just . positionLine,
-					sym ^? symbolPosition . _Just . positionColumn)
-					:.
-					(sym ^. symbolInfo)
-			execute "insert or replace into env (module, name, what, id) select ?, s.name, s.what, s.id from symbols as s where s.module_id = ?;" (im ^?! inspected . resolvedModule . moduleName_, mid)
-
-		insertExportSymbols :: SessionMonad m => Int -> [N.Symbol] -> m ()
-		insertExportSymbols mid syms = scope "exports" $ do
-			executeMany "insert into exports (module_id, symbol_id) select ?, env.id from env where env.module = ? and env.name = ? and env.what = ?;" $ do
-				sym <- syms
-				return (
-					mid,
-					N.symbolModule sym,
-					N.symbolName sym,
-					symbolType (HN.fromSymbol sym))
-
-		insertScopeSymbols :: SessionMonad m => Int -> [(Name, [N.Symbol])] -> m ()
-		insertScopeSymbols mid snames = scope "scope" $ do
-			executeMany "insert into scopes (module_id, qualifier, name, symbol_id) select ?, ?, ?, env.id from env where env.module = ? and env.name = ? and env.what = ?;" $ do
-				(qn, syms) <- snames
-				sym <- syms
-				return (
-					mid,
-					nameModule qn,
-					nameIdent qn,
-					N.symbolModule sym,
-					N.symbolName sym,
-					symbolType (HN.fromSymbol sym))
-
-		insertResolvedNames :: SessionMonad m => Int -> Parsed -> m ()
-		insertResolvedNames mid p = scope "resolved" $ do
-			insertNames
-			replaceQNames
-			executeNamed "update names set resolved_module = :module, (resolved_name, resolved_what) = (select s.name, s.what from symbols as s where s.module_id = names.module_id and s.line = names.line and s.column = names.column) where module_id = :module_id and (line, column) = (def_line, def_column) and resolved_module is null and resolved_name is null;" [
-				":module" := im ^?! inspected . resolvedModule . moduleName_,
-				":module_id" := mid]
-			setResolvedSymbolIds
-			where
-				insertNames = executeMany insertQuery namesData
-				replaceQNames = executeMany insertQuery qnamesData
-				setResolvedSymbolIds = execute "update names set symbol_id = (select sc.symbol_id from scopes as sc, symbols as s, modules as m where names.module_id == sc.module_id and ((names.qualifier is null and sc.qualifier is null) or (names.qualifier == sc.qualifier)) and names.name == sc.name and s.id == sc.symbol_id and m.id == s.module_id and s.name == names.resolved_name and s.what == names.resolved_what and m.name == names.resolved_module) where module_id == ? and resolved_module is not null and resolved_name is not null and resolved_what is not null;" (Only mid)
-				insertQuery = "insert or replace into names (module_id, qualifier, name, line, column, line_to, column_to, def_line, def_column, resolved_module, resolved_name, resolved_what, resolve_error) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
-				namesData = map toData $ p ^.. P.names
-				qnamesData = map toQData $ p ^.. P.qnames
-				toData name = (
-					mid,
-					Nothing :: Maybe Text,
-					fromName_ $ void name,
-					name ^. P.pos . positionLine,
-					name ^. P.pos . positionColumn,
-					name ^. P.regionL . regionTo . positionLine,
-					name ^. P.regionL . regionTo . positionColumn)
-					:. (
-					name ^? P.defPos . positionLine,
-					name ^? P.defPos . positionColumn,
-					(name ^? P.resolvedName) >>= nameModule,
-					nameIdent <$> (name ^? P.resolvedName),
-					fmap (symbolType . HN.fromSymbol) $ name ^? P.symbolL,
-					P.resolveError name)
-				toQData qname = (
-					mid,
-					nameModule $ void qname,
-					nameIdent $ void qname,
-					qname ^. P.pos . positionLine,
-					qname ^. P.pos . positionColumn,
-					qname ^. P.regionL . regionTo . positionLine,
-					qname ^. P.regionL . regionTo . positionColumn)
-					:. (
-					qname ^? P.defPos . positionLine,
-					qname ^? P.defPos . positionColumn,
-					(qname ^? P.resolvedName) >>= nameModule,
-					nameIdent <$> (qname ^? P.resolvedName),
-					fmap (symbolType . HN.fromSymbol) $ qname ^? P.symbolL,
-					P.resolveError qname)
-
-		updateEnvironment :: SessionMonad m => Int -> m ()
-		updateEnvironment mid = do
-			execute "insert or replace into env (module, name, what, id) select m.name, s.name, s.what, min(s.id) from modules as m, symbols as s, exports as e where m.id = s.module_id and s.id = e.symbol_id and e.module_id = ? group by m.name, s.name, s.what;" (Only mid)
 
 updateResolvedsSymbols :: SessionMonad m => [(Int, InspectedResolved)] -> m ()
 updateResolvedsSymbols ims = bracket_ initTemps dropTemps $ do

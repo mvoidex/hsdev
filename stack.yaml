@@ -1,18 +1,11 @@
-resolver: nightly-2018-04-04
-
+resolver: lts-11.2
+extra-package-dbs: []
 packages:
 - '.'
 - 'tests/test-package/'
-
 extra-deps:
-- direct-sqlite-2.3.23
-- fsnotify-0.2.1.1
-- ghc-paths-0.1.0.9
-- ghc-syb-utils-0.2.3.3
-- haddock-api-2.19.0.1
-- haskell-names-0.9.1
+- haddock-api-2.18.1
+- haddock-library-1.4.4
 - hdocs-0.5.2.1
-
-extra-package-dbs: []
-
+- aeson-lens-0.5.0.0
 flags: {}
