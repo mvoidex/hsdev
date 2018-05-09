@@ -38,8 +38,7 @@ import System.Log.Simple hiding (Level(..), Message)
 import qualified System.Log.Simple.Base as Log (level_)
 import qualified System.Log.Simple as Log
 import Network.Socket
-import qualified Network.Socket.ByteString as Net (send)
-import qualified Network.Socket.ByteString.Lazy as Net (getContents)
+import qualified Network.Socket.ByteString.Lazy as Net (getContents, sendAll)
 import System.FilePath
 import System.IO
 import Text.Format ((~~))
@@ -348,17 +347,8 @@ processClientSocket name s = do
 		(F.closeChan recvChan)
 	processClient name recvChan (sendLine s)
 	where
-		-- NOTE: Network version of `sendAll` goes to infinite loop on client socket close
-		-- when server's send is blocked, see https://github.com/haskell/network/issues/155
-		-- After that issue fixed we may revert to `processClientHandle`
 		sendLine :: Socket -> ByteString -> IO ()
-		sendLine sock bs = sendAll sock $ L.toStrict $ L.snoc bs '\n'
-		sendAll :: Socket -> BS.ByteString -> IO ()
-		sendAll sock bs
-			| BS.null bs = return ()
-			| otherwise = do
-				sent <- Net.send sock bs
-				when (sent > 0) $ sendAll sock (BS.drop sent bs)
+		sendLine sock bs = Net.sendAll sock $ L.snoc bs '\n'
 
 #if mingw32_HOST_OS
 newtype MmapFile = MmapFile String
