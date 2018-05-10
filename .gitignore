@@ -2,9 +2,10 @@
 *.hi
 *.log
 *.o
+.cabal-sandbox
 .ghc.environment.*
 .stack-work/
 cabal.project.local
 cabal.sandbox.config
-dist/
 dist-newstyle/
+dist/
