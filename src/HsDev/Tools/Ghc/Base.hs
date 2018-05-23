@@ -109,7 +109,7 @@ loadInteractive fpath mcts = do
 		t <- makeTarget (over path takeFileName fpath') mcts
 		loadTargets [t]
 		g <- getModuleGraph
-		setContext [IIModule (ms_mod_name m) | m <- g]
+		setContext [IIModule (ms_mod_name m) | m <- modSummaries g]
 
 -- | Reload targets
 reload :: GhcMonad m => m ()

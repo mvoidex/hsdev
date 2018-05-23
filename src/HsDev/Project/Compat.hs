@@ -9,9 +9,17 @@ module HsDev.Project.Compat (
 import Data.Maybe (maybeToList)
 import Data.Text (Text, pack)
 import qualified Distribution.PackageDescription as PD
-import Distribution.PackageDescription.Parse
 import Distribution.Version (Version)
 import Distribution.Text (display)
+
+#if MIN_VERSION_Cabal(2,2,0)
+import Distribution.PackageDescription.Parsec
+import Distribution.Parsec.Common (showPError)
+import qualified Data.ByteString.Char8 as C8 (pack)
+#else
+import Distribution.PackageDescription.Parse
+#endif
+
 #if MIN_VERSION_Cabal(2,0,0)
 import Distribution.Types.CondTree
 #else 
@@ -55,9 +63,17 @@ flattenCondTree f (PD.CondNode x cs cmps) = f cs x `mappend` mconcat (concatMap 
 #endif
 	go t mb = flattenCondTree f t : map (flattenCondTree f) (maybeToList mb)
 
-parsePackageDesc :: String -> ParseResult PD.GenericPackageDescription
-#if MIN_VERSION_Cabal(2,0,0)
-parsePackageDesc = parseGenericPackageDescription
+parsePackageDesc :: String -> Either String PD.GenericPackageDescription
+#if MIN_VERSION_Cabal(2,2,0)
+parsePackageDesc s = case snd . runParseResult . parseGenericPackageDescription . C8.pack $ s of
+	Left (_, errs) -> Left $ unlines $ map (showPError "cabal") errs
+	Right r -> Right r
+#elif MIN_VERSION_Cabal(2,0,0)
+parsePackageDesc s = case parseGenericPackageDescription s of
+	ParseOk _ r -> Right r
+	ParseFailed e -> Left $ show e
 #else
-parsePackageDesc = parsePackageDescription
+parsePackageDesc s = case parsePackageDescription s of
+	ParseOk _ r -> Right r
+	ParseFailed e -> Left $ show e
 #endif
