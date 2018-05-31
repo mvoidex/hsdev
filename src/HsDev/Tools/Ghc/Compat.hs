@@ -3,6 +3,7 @@
 
 module HsDev.Tools.Ghc.Compat (
 	pkgDatabase,
+	TcId,
 	UnitId, InstalledUnitId, toInstalledUnitId,
 	unitId, moduleUnitId, depends, getPackageDetails, patSynType, cleanupHandler, renderStyle,
 	LogAction, setLogAction, addLogAction,
@@ -11,7 +12,9 @@ module HsDev.Tools.Ghc.Compat (
 	getFixity,
 	unqualStyle,
 	exposedModuleName,
-	exprType
+	exprType,
+	modSummaries,
+	cleanTemps
 	) where
 
 import qualified BasicTypes
@@ -24,6 +27,7 @@ import qualified Name
 import qualified Packages as GHC
 import qualified PatSyn as GHC
 import qualified Pretty
+import qualified SysTools
 import Outputable
 
 #if __GLASGOW_HASKELL__ >= 800
@@ -48,20 +52,26 @@ pkgDatabase = fmap (nub . concatMap snd) . GHC.pkgDatabase
 pkgDatabase = GHC.pkgDatabase
 #endif
 
+#if __GLASGOW_HASKELL__ >= 804
+type TcId = GHC.GhcTc
+#else
+type TcId = GHC.Id
+#endif
+
 #if __GLASGOW_HASKELL__ >= 800
 type UnitId = Module.UnitId
 #elif __GLASGOW_HASKELL__ == 710
 type UnitId = Module.PackageKey
 #endif
 
-#if __GLASGOW_HASKELL__ == 802
+#if __GLASGOW_HASKELL__ >= 802
 type InstalledUnitId = Module.InstalledUnitId
 #else
 type InstalledUnitId = UnitId
 #endif
 
 toInstalledUnitId :: UnitId -> InstalledUnitId
-#if __GLASGOW_HASKELL__ == 802
+#if __GLASGOW_HASKELL__ >= 802
 toInstalledUnitId = Module.toInstalledUnitId
 #else
 toInstalledUnitId = id
@@ -89,7 +99,7 @@ depends df = map (GHC.resolveInstalledPackageId df) . GHC.depends
 #endif
 
 getPackageDetails :: GHC.DynFlags -> InstalledUnitId -> GHC.PackageConfig
-#if __GLASGOW_HASKELL__ == 802
+#if __GLASGOW_HASKELL__ >= 802
 getPackageDetails = GHC.getInstalledPackageDetails
 #else
 getPackageDetails = GHC.getPackageDetails
@@ -189,13 +199,13 @@ languages :: [String]
 languages = GHC.supportedLanguagesAndExtensions
 
 unqualStyle :: GHC.DynFlags -> PprStyle
-#if __GLASGOW_HASKELL__ == 802
+#if __GLASGOW_HASKELL__ >= 802
 unqualStyle df = mkUserStyle df neverQualify AllTheWay
 #else
 unqualStyle _ = mkUserStyle neverQualify AllTheWay
 #endif
 
-#if __GLASGOW_HASKELL__ == 802
+#if __GLASGOW_HASKELL__ > 800
 exposedModuleName :: (a, Maybe b) -> a
 exposedModuleName = fst
 #else
@@ -208,4 +218,20 @@ exprType :: GHC.GhcMonad m => String -> m GHC.Type
 exprType = Eval.exprType TM_Inst
 #else
 exprType = Eval.exprType
+#endif
+
+modSummaries :: GHC.ModuleGraph -> [GHC.ModSummary]
+#if __GLASGOW_HASKELL__ >= 804
+modSummaries = GHC.mgModSummaries
+#else
+modSummaries = id
+#endif
+
+cleanTemps :: GHC.DynFlags -> IO ()
+#if __GLASGOW_HASKELL__ >= 804
+cleanTemps _ = return ()
+#else
+cleanTemps df = do
+	SysTools.cleanTempFiles df
+	SysTools.cleanTempDirs df
 #endif

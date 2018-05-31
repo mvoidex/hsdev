@@ -129,76 +129,84 @@ library
       System.Win32.FileMapping.Memory
   else
     build-depends:
-      unix >= 2.7.2 && < 2.8
+      unix                              >= 2.7.2.0 && < 2.8
+
+  if impl(ghc >= 8.4) && impl(ghc < 8.5)
+    build-depends:
+      ghc   == 8.4.*,
+      Cabal == 2.2.0.1
 
   if impl(ghc >= 8.2) && impl(ghc < 8.3)
     build-depends:
-      ghc == 8.2.*
+      ghc   == 8.2.*,
+      Cabal == 2.0.1.1
 
   if impl(ghc >= 8.0) && impl(ghc < 8.2)
     build-depends:
-      ghc >= 8.0.0 && < 8.1.0
+      ghc >= 8.0.0 && < 8.1.0,
+      Cabal >= 1.24.2.0 && < 2.0
 
   if flag(docs)
     build-depends:
       hdocs >= 0.5.2,
       haddock-api >= 2.17.4,
-      haddock-library >= 1.4.3
+      haddock-library >= 1.4.3 && < 1.7
 
   if flag(hlint)
     build-depends:
       hlint >= 2.0.11 && < 2.2
 
+  -- Build dependency lower bound is set for GHC 8.0.1.
+  -- Upper bound is set for GHC 8.4
   build-depends:
-    base                              >= 4.7 && < 5,
-    Cabal                             >= 1.24.2 && < 2.1,
-    HTTP                              >= 4000.3.9 && < 4000.4,
-    aeson                             >= 1.1.2 && < 1.3,
-    aeson-pretty                      >= 0.8.5 && < 0.9,
-    array                             >= 0.5.1 && < 0.6,
+    base                              >= 4.9 && < 5,
+    HTTP                              >= 4000.3.7 && < 4000.4,
+    aeson                             >= 1.2.4.0 && < 1.4,
+    aeson-pretty                      >= 0.8.2 && < 0.9,
+    array                             >= 0.5.1.1 && < 0.6,
     async                             >= 2.1.1.1 && < 2.3,
-    attoparsec                        >= 0.13.1 && < 0.14,
-    bytestring                        >= 0.10.6 && < 0.11,
-    containers                        >= 0.5.7 && < 0.6,
-    cpphs                             >= 1.20.8 && < 1.21,
-    cpphs                             >= 1.20.0,
-    data-default                      >= 0.7.1 && < 0.8,
-    deepseq                           >= 1.4.1 && < 1.5,
-    direct-sqlite                     >= 2.3.21 && < 2.4,
-    directory                         >= 1.3.0 && < 1.4,
-    exceptions                        >= 0.8.3 && < 0.9,
-    filepath                          >= 1.4.1 && < 1.5,
+    attoparsec                        >= 0.13.1.0 && < 0.14,
+    bytestring                        >= 0.10.8.1 && < 0.11,
+    containers                        >= 0.5.7.1 && < 0.6,
+    cpphs                             >= 1.20.5 && < 1.21,
+    data-default                      >= 0.7.1.1 && < 0.8,
+    deepseq                           >= 1.4.2.0 && < 1.5,
+    direct-sqlite                     >= 2.3.19 && < 2.4,
+    directory                         >= 1.2.6.2 && < 1.4,
+    exceptions                        >= 0.8.3 && < 0.11,
+    filepath                          >= 1.4.1.0 && < 1.5,
     fsnotify                          >= 0.2.1 && < 0.3,
-    ghc-boot                          >= 8.0.2 && < 8.3,
-    ghc-paths                         >= 0.1.0 && < 0.2,
-    ghc-syb-utils                     >= 0.2.3 && < 0.3,
-    haskell-names                     >= 0.9.0 && < 0.10.0,
-    haskell-src-exts                  >= 1.18.0 && < 1.21.0,
-    hformat                           >= 0.3.1 && < 0.4,
-    lens                              >= 4.15.4 && < 4.17,
-    lifted-base                       >= 0.2.3 && < 0.3,
-    mmorph                            >= 1.0 && < 1.2,
-    monad-control                     >= 1.0.2 && < 1.1,
+    ghc-boot                          >= 8.0.1 && < 8.5,
+    ghc-paths                         >= 0.1.0.9 && < 0.2,
+    haskell-names                     >= 0.9.1 && < 0.10.0,
+    haskell-src-exts                  >= 1.19.1 && < 1.21.0,
+    hformat                           >= 0.1.0.1 && < 0.4,
+    hlint                             >= 2.0.11 && < 2.2,
+    lens                              >= 4.14 && < 4.17,
+    lifted-base                       >= 0.2.3.10 && < 0.3,
+    mmorph                            >= 1.0.9 && < 1.2,
+    monad-control                     >= 1.0.1.0 && < 1.1,
     monad-loops                       >= 0.4.3 && < 0.5,
     mtl                               >= 2.2.1 && < 2.3,
-    network                           >= 2.6.3 && < 2.7,
-    optparse-applicative              >= 0.13.2 && < 0.15,
-    process                           >= 1.4.3 && < 1.7,
+    network                           >= 2.6.3.1 && < 2.7,
+    optparse-applicative              >= 0.12.1.0 && < 0.15,
+    process                           >= 1.4.2.0 && < 1.7,
     regex-pcre-builtin                >= 0.94.4 && < 0.95,
-    scientific                        >= 0.3.5 && < 0.4,
+    scientific                        >= 0.3.4.9 && < 0.4,
     simple-log                        == 0.9.*,
-    sqlite-simple                     >= 0.4.14 && < 0.5,
+    sqlite-simple                     >= 0.4.13.0 && < 0.5,
     stm                               == 2.4.*,
-    syb                               >= 0.7 && < 0.8,
-    template-haskell                  >= 2.11.1 && < 2.13,
-    text                              >= 1.2.2 && < 1.3,
-    text-region                       >= 0.3.0 && < 0.4,
-    time                              >= 1.6.0 && < 1.9,
-    transformers                      >= 0.5.2 && < 0.6,
+    syb                               >= 0.6 && < 0.8,
+    template-haskell                  >= 2.11.0 && < 2.14,
+    text                              >= 1.2.2.2 && < 1.3,
+    text-region                       >= 0.1.0.1 && < 0.4,
+    time                              >= 1.6.0.1 && < 1.9,
+    transformers                      >= 0.5.2.0 && < 0.6,
     transformers-base                 >= 0.4.4 && < 0.5,
+    traverse-with-class               >= 1.0.0.0 && < 1.1,
     uniplate                          >= 1.6.12 && < 1.7,
-    unordered-containers              >= 0.2.8 && < 0.3,
-    vector                            >= 0.12.0 && < 0.13
+    unordered-containers              >= 0.2.8.0 && < 0.3,
+    vector                            >= 0.11.0.0 && < 0.13
 
 executable hsdev
   main-is: hsdev.hs
@@ -207,23 +215,23 @@ executable hsdev
 
   build-depends:
     hsdev,
-    base                              >= 4.7 && < 5,
-    aeson                             >= 1.1.2 && < 1.3,
-    aeson-pretty                      >= 0.8.5 && < 0.9,
-    bytestring                        >= 0.10.6 && < 0.11,
-    containers                        >= 0.5.7 && < 0.6,
-    deepseq                           >= 1.4.1 && < 1.5,
-    directory                         >= 1.3.0 && < 1.4,
-    exceptions                        >= 0.8.3 && < 0.9,
-    filepath                          >= 1.4.1 && < 1.5,
+    base                              >= 4.9 && < 5,
+    aeson                             >= 1.2.4.0 && < 1.4,
+    aeson-pretty                      >= 0.8.2 && < 0.9,
+    bytestring                        >= 0.10.8.1 && < 0.11,
+    containers                        >= 0.5.7.1 && < 0.6,
+    deepseq                           >= 1.4.2.0 && < 1.5,
+    directory                         >= 1.2.6.2 && < 1.4,
+    exceptions                        >= 0.8.3 && < 0.11,
+    filepath                          >= 1.4.1.0 && < 1.5,
     monad-loops                       >= 0.4.3 && < 0.5,
     mtl                               >= 2.2.1 && < 2.3,
-    network                           >= 2.6.3 && < 2.7,
-    optparse-applicative              >= 0.13.2 && < 0.15,
-    process                           >= 1.4.3 && < 1.7,
-    text                              >= 1.2.2 && < 1.3,
-    transformers                      >= 0.5.2 && < 0.6,
-    unordered-containers              >= 0.2.8 && < 0.3
+    network                           >= 2.6.3.1 && < 2.7,
+    optparse-applicative              >= 0.12.1.0 && < 0.15,
+    process                           >= 1.4.2.0 && < 1.7,
+    text                              >= 1.2.2.2 && < 1.3,
+    transformers                      >= 0.5.2.0 && < 0.6,
+    unordered-containers              >= 0.2.8.0 && < 0.3
 
 test-suite test
   main-is: Test.hs
@@ -232,17 +240,17 @@ test-suite test
   type: exitcode-stdio-1.0
   build-depends:
     hsdev,
-    base                              >= 4.7 && < 5,
-    aeson                             >= 1.1.2 && < 1.3,
+    base                              >= 4.9 && < 5,
+    aeson                             >= 1.2.4.0 && < 1.4,
     aeson-lens                        >= 0.5.0,
     async                             >= 2.1.1.1 && < 2.3,
-    data-default                      >= 0.7.1 && < 0.8,
-    deepseq                           >= 1.4.1 && < 1.5,
-    directory                         >= 1.3.0 && < 1.4,
-    filepath                          >= 1.4.1 && < 1.5,
-    containers                        >= 0.5.7 && < 0.6,
-    hformat                           >= 0.3.1.0,
-    hspec                             >= 2.4.4,
-    lens                              >= 4.15.4 && < 4.17,
+    containers                        >= 0.5.7.1 && < 0.6,
+    data-default                      >= 0.7.1.1 && < 0.8,
+    deepseq                           >= 1.4.2.0 && < 1.5,
+    directory                         >= 1.2.6.2 && < 1.4,
+    filepath                          >= 1.4.1.0 && < 1.5,
+    hformat                           >= 0.1.0.1 && < 0.4,
+    hspec                             >= 2.2.4,
+    lens                              >= 4.14 && < 4.17,
     mtl                               >= 2.2.1 && < 2.3,
-    text                              >= 1.2.2 && < 1.3
+    text                              >= 1.2.2.2 && < 1.3

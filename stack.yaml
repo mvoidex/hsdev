@@ -1,4 +1,4 @@
-resolver: lts-11.2
+resolver: lts-11.10
 extra-package-dbs: []
 packages:
 - '.'
@@ -6,6 +6,7 @@ packages:
 extra-deps:
 - haddock-api-2.18.1
 - haddock-library-1.4.4
-- hdocs-0.5.2.1
+- hdocs-0.5.3.0
 - aeson-lens-0.5.0.0
 flags: {}
+system-ghc: true

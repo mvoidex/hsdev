@@ -8,6 +8,7 @@ import Control.Exception
 import Control.DeepSeq (NFData(..))
 import Data.Aeson
 import Data.Aeson.Types (Pair, Parser)
+import Data.Semigroup
 import Data.Typeable
 import Data.Text (Text)
 import Text.Format
@@ -77,9 +78,12 @@ instance Show HsDevError where
 	show (OtherError e) = e
 	show (UnhandledError e) = e
 
+instance Semigroup HsDevError where
+	_ <> r = r
+
 instance Monoid HsDevError where
 	mempty = HsDevFailure
-	mappend _ r = r
+	mappend l r = l <> r
 
 instance Formattable HsDevError where
 

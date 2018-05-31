@@ -17,8 +17,9 @@ import Control.DeepSeq (NFData(..))
 import Control.Lens hiding ((.=), (<.>))
 import Data.Aeson
 import Data.Maybe
-import Data.Monoid
+import Data.Monoid hiding ((<>))
 import Data.Ord
+import Data.Semigroup (Semigroup(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Distribution.Text as D (display)
@@ -307,15 +308,18 @@ data Info = Info {
 	_infoOtherModules :: [[Text]] }
 		deriving (Eq, Read)
 
-instance Monoid Info where
-	mempty = Info [] Nothing [] [] [] []
-	mappend l r = Info
+instance Semigroup Info where
+	l <> r = Info
 		(ordNub $ _infoDepends l ++ _infoDepends r)
 		(getFirst $ First (_infoLanguage l) `mappend` First (_infoLanguage r))
 		(_infoExtensions l ++ _infoExtensions r)
 		(_infoGHCOptions l ++ _infoGHCOptions r)
 		(ordNub $ _infoSourceDirs l ++ _infoSourceDirs r)
 		(ordNub $ _infoOtherModules l ++ _infoOtherModules r)
+
+instance Monoid Info where
+	mempty = Info [] Nothing [] [] [] []
+	mappend l r = l <> r
 
 instance Ord Info where
 	compare l r = compare (_infoSourceDirs l, _infoDepends l, _infoGHCOptions l) (_infoSourceDirs r, _infoDepends r, _infoGHCOptions r)

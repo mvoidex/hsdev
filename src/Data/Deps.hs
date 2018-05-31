@@ -16,6 +16,7 @@ import Control.Monad.Except
 import Data.List (nub, intercalate)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
+import Data.Semigroup
 import Data.Maybe (fromMaybe)
 
 -- | Dependency map
@@ -24,6 +25,9 @@ newtype Deps a = Deps {
 
 depsMap :: Lens (Deps a) (Deps b) (Map a [a]) (Map b [b])
 depsMap = lens _depsMap (const Deps)
+
+instance Ord a => Semigroup (Deps a) where
+	Deps l <> Deps r = Deps $ M.unionWith nubConcat l r
 
 instance Ord a => Monoid (Deps a) where
 	mempty = Deps mempty

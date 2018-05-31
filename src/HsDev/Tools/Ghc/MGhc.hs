@@ -1,4 +1,4 @@
-{-# LANGUAGE UnicodeSyntax, GeneralizedNewtypeDeriving, ScopedTypeVariables, FlexibleInstances, MultiParamTypeClasses, UndecidableInstances #-}
+{-# LANGUAGE CPP, UnicodeSyntax, GeneralizedNewtypeDeriving, ScopedTypeVariables, FlexibleInstances, MultiParamTypeClasses, UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.MGhc (
@@ -16,12 +16,14 @@ import Control.Monad.Morph
 import Control.Monad.Catch
 import Control.Monad.Reader
 import Control.Monad.State
-import Data.Default
+import Data.Default as Def
 import Data.IORef
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromMaybe, isJust)
 import System.Log.Simple.Monad (MonadLog(..))
+
+import HsDev.Tools.Ghc.Compat (cleanTemps)
 
 import DynFlags
 import Exception hiding (catch, mask, uninterruptibleMask, bracket, finally)
@@ -31,7 +33,6 @@ import GhcMonad hiding (Session(..))
 import qualified GhcMonad (Session(..))
 import HscTypes
 import Outputable
-import SysTools
 
 data Session s d = Session {
 	_sessionKey :: s,
@@ -66,13 +67,13 @@ sessionMap = lens g s where
 	s st m = st { _sessionMap = m }
 
 instance ExceptionMonad m => ExceptionMonad (StateT s m) where
-	gcatch act onError = StateT $ \st -> gcatch (runStateT act st) (\e -> runStateT (onError e) st)
+	gcatch act onErr = StateT $ \st -> gcatch (runStateT act st) (\e -> runStateT (onErr e) st)
 	gmask f = StateT $ gmask . f' where
 		f' st' act' = runStateT (f act) st' where
 			act st = StateT $ act' . runStateT st
 
 instance ExceptionMonad m => ExceptionMonad (ReaderT r m) where
-	gcatch act onError = ReaderT $ \v -> gcatch (runReaderT act v) (\e -> runReaderT (onError e) v)
+	gcatch act onErr = ReaderT $ \v -> gcatch (runReaderT act v) (\e -> runReaderT (onErr e) v)
 	gmask f = ReaderT $ gmask . f' where
 		f' v' act' = runReaderT (f act) v' where
 			act v = ReaderT $ act' . runReaderT v
@@ -107,6 +108,21 @@ instance MonadMask m => MonadMask (GhcT m) where
 		q g' act = GhcT $ g' . unGhcT act
 	uninterruptibleMask f = GhcT $ \s -> uninterruptibleMask $ \g -> unGhcT (f $ q g) s where
 		q g' act = GhcT $ g' . unGhcT act
+#if MIN_VERSION_exceptions(0,10,0)
+	generalBracket acq rel act = GhcT $ \r -> generalBracket
+		(unGhcT acq r)
+		(\res exitCase -> case exitCase of
+			ExitCaseSuccess v -> unGhcT (rel res (ExitCaseSuccess v)) r
+			ExitCaseException e -> unGhcT (rel res (ExitCaseException e)) r
+			ExitCaseAbort -> unGhcT (rel res ExitCaseAbort) r)
+		(\res -> unGhcT (act res) r)
+#elif MIN_VERSION_exceptions(0,9,0)
+	generalBracket acq rel clean act = GhcT $ \r -> generalBracket
+		(unGhcT acq r)
+		(\res -> unGhcT (rel res) r)
+		(\res e -> unGhcT (clean res e) r)
+		(\res -> unGhcT (act res) r)
+#endif
 
 -- | Run multi-session ghc
 runMGhcT :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => Maybe FilePath -> MGhcT s d m a -> m a
@@ -114,7 +130,7 @@ runMGhcT lib act = do
 	ref <- liftIO $ newIORef (panic "empty session")
 	let
 		session = GhcMonad.Session ref
-	flip evalStateT def $ flip runReaderT lib $ flip unGhcT session $ unMGhcT $ act `gfinally` cleanup
+	flip evalStateT Def.def $ flip runReaderT lib $ flip unGhcT session $ unMGhcT $ act `gfinally` cleanup
 	where
 		cleanup :: (MonadIO m, ExceptionMonad m, Ord s, Monoid d) => MGhcT s d m ()
 		cleanup = do
@@ -234,8 +250,7 @@ tempSession key act = do
 -- | Cleanup session
 cleanupSession :: HscEnv -> IO ()
 cleanupSession env = do
-	cleanTempFiles df
-	cleanTempDirs df
+	cleanTemps df
 	stopIServ env
 	where
 		df = hsc_dflags env

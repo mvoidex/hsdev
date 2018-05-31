@@ -9,6 +9,7 @@ module HsDev.Database.SQLite.Select (
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Semigroup
 import Database.SQLite.Simple
 import Text.Format
 
@@ -18,12 +19,15 @@ data Select a = Select {
 	selectConditions :: [a] }
 		deriving (Eq, Ord, Read, Show, Functor, Foldable, Traversable)
 
+instance Semigroup (Select a) where
+	Select lc lt lcond <> Select rc rt rcond = Select
+		(lc <> rc)
+		(lt <> rt)
+		(lcond <> rcond)
+
 instance Monoid (Select a) where
 	mempty = Select mempty mempty mempty
-	Select lc lt lcond `mappend` Select rc rt rcond = Select
-		(lc `mappend` rc)
-		(lt `mappend` rt)
-		(lcond `mappend` rcond)
+	mappend l r = l <> r
 
 select_ :: [a] -> Select a
 select_ cols = Select cols [] []
