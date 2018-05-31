@@ -277,7 +277,7 @@ commandHold = join . liftM liftIO $ askOptions commandOptionsHold
 
 -- | Server control command
 data ServerCommand =
-	Version |
+	Version Bool |
 	Start ServerOpts |
 	Run ServerOpts |
 	Stop ClientOpts |
@@ -330,7 +330,7 @@ instance Default ClientOpts where
 instance FromCmd ServerCommand where
 	cmdP = serv <|> remote where
 		serv = subparser $ mconcat [
-			cmd "version" "hsdev version" (pure Version),
+			cmd "version" "hsdev version" (Version <$> compilerVersionFlag),
 			cmd "start" "start remote server" (Start <$> cmdP),
 			cmd "run" "run server" (Run <$> cmdP),
 			cmd "stop" "stop remote server" (Stop <$> cmdP),
@@ -357,6 +357,7 @@ instance FromCmd ClientOpts where
 		silentFlag
 
 portArg :: Parser ConnectionPort
+compilerVersionFlag :: Parser Bool
 connectionArg :: Parser ConnectionPort
 timeoutArg :: Parser Int
 logArg :: Parser FilePath
@@ -371,6 +372,7 @@ dbFileArg :: Parser FilePath
 noWatchFlag :: Parser Bool
 
 portArg = NetworkPort <$> option auto (long "port" <> metavar "number" <> help "connection port")
+compilerVersionFlag = switch (long "compiler" <> short 'c' <> help "show compiler version")
 #if mingw32_HOST_OS
 connectionArg = portArg
 #else

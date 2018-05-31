@@ -27,6 +27,8 @@ import System.Exit
 import System.IO
 import qualified System.Log.Simple as Log
 
+import GHC (getSessionDynFlags)
+
 import Text.Format ((~~), (~%))
 import Text.Format.Colored (coloredLine)
 
@@ -35,6 +37,9 @@ import HsDev.Server.Types
 import HsDev.Error
 import HsDev.Util
 import HsDev.Version
+import HsDev.PackageDb.Types (globalDb)
+import HsDev.Tools.Ghc.Worker
+import qualified HsDev.Tools.Ghc.System as System
 
 #if mingw32_HOST_OS
 import Data.List
@@ -88,7 +93,16 @@ sendCommand copts noFile c onNotification = do
 					Right res -> return res
 
 runServerCommand :: ServerCommand -> IO ()
-runServerCommand Version = putStrLn $cabalVersion
+runServerCommand (Version showCompiler)
+	| showCompiler = do
+		w <- Log.noLog ghcWorker
+		compVer <- inWorker w $ do
+			workerSession SessionGhc globalDb []
+			df <- getSessionDynFlags
+			return $ System.formatBuildPath "{compiler}-{version}" (System.buildInfo df)
+		putStrLn $ $cabalVersion ++ " " ++ compVer
+		joinWorker w
+	| otherwise = putStrLn $cabalVersion
 runServerCommand (Start sopts) = do
 #if mingw32_HOST_OS
 	let
