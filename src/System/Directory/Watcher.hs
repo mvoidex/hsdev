@@ -157,9 +157,9 @@ onEvents_ w = onEvents w (fromRational (1 % 5))
 fromEvent :: FS.Event -> Event
 fromEvent e = Event t (FS.eventPath e) (utcTimeToPOSIXSeconds $ FS.eventTime e) where
 	t = case e of
-		FS.Added _ _ -> Added
-		FS.Modified _ _ -> Modified
-		FS.Removed _ _ -> Removed
+		FS.Added{} -> Added
+		FS.Modified{} -> Modified
+		FS.Removed{} -> Removed
 
 isWatchingDir' :: Map FilePath (Bool, IO ()) -> FilePath -> Bool
 isWatchingDir' m dir

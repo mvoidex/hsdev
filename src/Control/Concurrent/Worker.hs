@@ -58,9 +58,9 @@ sendTask :: (MonadCatch m, MonadIO m) => Worker m -> m a -> IO (Async a)
 sendTask w act = mfix $ \async' -> do
 	var <- newEmptyMVar
 	let
-		act' = (act >>= liftIO . putMVar var . Right) `catch` onError
-		onError :: MonadIO m => SomeException -> m ()
-		onError = liftIO . putMVar var . Left
+		act' = (act >>= liftIO . putMVar var . Right) `catch` onErr
+		onErr :: MonadIO m => SomeException -> m ()
+		onErr = liftIO . putMVar var . Left
 		f = do
 			p <- sendChan (workerChan w) (void async', void act')
 			unless p $ putMVar var (Left $ SomeException WorkerStopped)
