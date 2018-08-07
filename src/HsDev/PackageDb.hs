@@ -1,10 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.PackageDb (
-        module HsDev.PackageDb.Types,
+		module HsDev.PackageDb.Types,
 
-        packageDbPath, readPackageDb
-        ) where
+		packageDbPath, readPackageDb
+		) where
 
 import Control.Lens
 import Data.Map.Strict (Map)
@@ -29,41 +29,42 @@ import System.Directory.Paths
 -- | Get path to package-db
 packageDbPath :: PackageDb -> IO Path
 packageDbPath GlobalDb = do
-        out <- fmap lines $ runTool_ ghc_pkg ["list", "--global"]
-        case out of
-                (fpath:_) -> return $ fromFilePath $ normalise fpath
-                [] -> hsdevError $ ToolError ghc_pkg "empty output, expecting path to global package-db"
+		out <- fmap lines $ runTool_ ghc_pkg ["list", "--global"]
+		case out of
+				(fpath:_) -> return $ fromFilePath $ normalise fpath
+				[] -> hsdevError $ ToolError ghc_pkg "empty output, expecting path to global package-db"
 packageDbPath UserDb = do
-        out <- fmap lines $ runTool_ ghc_pkg ["list", "--user"]
-        case out of
-                (fpath:_) -> return $ fromFilePath $ normalise fpath
-         -- Bailing on the user package db if there isn't one doesn't seem quite correct. 'stack' and 'cabal'
-         -- can report no path...
-         --     [] -> hsdevError $ ToolError ghc_pkg "empty output, expecting path to user package db"
-         -- Report an empty path instead.
-                [] -> return $ fromFilePath ""
+		out <- fmap lines $ runTool_ ghc_pkg ["list", "--user"]
+		case out of
+				(fpath:_) -> return $ fromFilePath $ normalise fpath
+		 -- Bailing on the user package db if there isn't one doesn't seem quite correct. 'stack' and 'cabal'
+		 -- can report no path...
+		 -- 	[] -> hsdevError $ ToolError ghc_pkg "empty output, expecting path to user package db"
+		 -- Report an empty path instead.
+				[] -> return $ fromFilePath ""
 packageDbPath (PackageDb fpath) = return fpath
 
 -- | Read package-db conf files
 readPackageDb :: PackageDb -> IO (Map ModulePackage [ModuleLocation])
 readPackageDb pdb = do
-        p <- packageDbPath pdb
-        mlibdir <- fmap (listToMaybe . lines) $ runTool_ ghc ["--print-libdir"]
-        confs <- fmap (filter isConf) $ directoryContents (p ^. path)
-        fmap M.unions $ forM confs $ \conf -> do
-                cts <- readFileUtf8 conf
-                case parseInstalledPackageInfo (unpack cts) of
-                        ParseFailed _ -> return M.empty  -- FIXME: Should log as warning
-                        ParseOk _ res -> return $ over (each . each . moduleInstallDirs . each) (subst mlibdir) $ listMods res
-        where
-                isConf f = takeExtension f == ".conf"
-                listMods pinfo = M.singleton pname pmods where
-                        pname = ModulePackage
-                                (pack . show . disp . pkgName $ sourcePackageId pinfo)
-                                (pack . show . disp . pkgVersion $ sourcePackageId pinfo)
-                        pmods = [InstalledModule (map fromFilePath $ libraryDirs pinfo) pname nm exposed' | (nm, exposed') <- names]
-                        names = zip (map (pack . show . disp) (exposedModules pinfo)) (repeat True) ++ zip (map (pack . show . disp) (hiddenModules pinfo)) (repeat False)
-                subst Nothing f = f
-                subst (Just libdir') f = case splitPaths f of
-                        ("$topdir":rest) -> joinPaths (fromFilePath libdir' : rest)
-                        _ -> f
+		p <- packageDbPath pdb
+		mlibdir <- fmap (listToMaybe . lines) $ runTool_ ghc ["--print-libdir"]
+		confs <- fmap (filter isConf) $ directoryContents (p ^. path)
+		fmap M.unions $ forM confs $ \conf -> do
+				cts <- readFileUtf8 conf
+				case parseInstalledPackageInfo (unpack cts) of
+						ParseFailed _ -> return M.empty  -- FIXME: Should log as warning
+						ParseOk _ res -> mapM (mapM canonicalize) $
+							over (each . each . moduleInstallDirs . each) (subst mlibdir) $ listMods res
+		where
+				isConf f = takeExtension f == ".conf"
+				listMods pinfo = M.singleton pname pmods where
+						pname = ModulePackage
+								(pack . show . disp . pkgName $ sourcePackageId pinfo)
+								(pack . show . disp . pkgVersion $ sourcePackageId pinfo)
+						pmods = [InstalledModule (map fromFilePath $ libraryDirs pinfo) pname nm exposed' | (nm, exposed') <- names]
+						names = zip (map (pack . show . disp) (exposedModules pinfo)) (repeat True) ++ zip (map (pack . show . disp) (hiddenModules pinfo)) (repeat False)
+				subst Nothing f = f
+				subst (Just libdir') f = case splitPaths f of
+						("$topdir":rest) -> joinPaths (fromFilePath libdir' : rest)
+						_ -> f
