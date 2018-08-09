@@ -242,7 +242,7 @@ test-suite test
     hsdev,
     base                              >= 4.9 && < 5,
     aeson                             >= 1.2.4.0 && < 1.5,
-    aeson-lens                        >= 0.5.0,
+    lens-aeson                        >= 1.0 && < 1.1,
     async                             >= 2.1.1.1 && < 2.3,
     containers                        >= 0.5.7.1 && < 0.6,
     data-default                      >= 0.7.1.1 && < 0.8,

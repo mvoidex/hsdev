@@ -9,6 +9,5 @@ extra-deps:
 - hformat-0.3.3.0
 - simple-log-0.9.5
 - text-region-0.3.1.0
-- aeson-lens-0.5.0.0
 - haskell-names-0.9.2
 resolver: nightly-2018-08-09

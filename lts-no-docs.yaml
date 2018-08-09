@@ -7,7 +7,6 @@ packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
-- aeson-lens-0.5.0.0
 - text-region-0.3.1.0
 - hformat-0.3.3.0
 - simple-log-0.9.5
