@@ -8,7 +8,7 @@ extra-deps:
 - haddock-library-1.6.0
 - hdocs-0.5.3.0
 - hformat-0.3.3.0
-- simple-log-0.9.5
+- simple-log-0.9.6
 - text-region-0.3.1.0
 - haskell-names-0.9.2
 flags: {}
