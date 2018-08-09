@@ -161,7 +161,7 @@ library
   build-depends:
     base                              >= 4.9 && < 5,
     HTTP                              >= 4000.3.7 && < 4000.4,
-    aeson                             >= 1.2.4.0 && < 1.4,
+    aeson                             >= 1.2.4.0 && < 1.5,
     aeson-pretty                      >= 0.8.2 && < 0.9,
     array                             >= 0.5.1.1 && < 0.6,
     async                             >= 2.1.1.1 && < 2.3,
@@ -216,7 +216,7 @@ executable hsdev
   build-depends:
     hsdev,
     base                              >= 4.9 && < 5,
-    aeson                             >= 1.2.4.0 && < 1.4,
+    aeson                             >= 1.2.4.0 && < 1.5,
     aeson-pretty                      >= 0.8.2 && < 0.9,
     bytestring                        >= 0.10.8.1 && < 0.11,
     containers                        >= 0.5.7.1 && < 0.6,
@@ -241,7 +241,7 @@ test-suite test
   build-depends:
     hsdev,
     base                              >= 4.9 && < 5,
-    aeson                             >= 1.2.4.0 && < 1.4,
+    aeson                             >= 1.2.4.0 && < 1.5,
     aeson-lens                        >= 0.5.0,
     async                             >= 2.1.1.1 && < 2.3,
     containers                        >= 0.5.7.1 && < 0.6,
