@@ -487,7 +487,7 @@ updateModulesSymbols ims = scope "update-modules" $ timer "updated modules" $ br
 
 
 escapeLike :: Text -> Text
-escapeLike = T.replace "\\" "\\\\" . T.replace "%" "\\%" . T.replace "_" "\\_"
+escapeLike = T.replace "%" "\\%" . T.replace "_" "\\_" . T.replace "\\" "\\\\"
 
 -- Util
 
