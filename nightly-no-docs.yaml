@@ -5,5 +5,8 @@ packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
-- haskell-names-0.9.2
-resolver: nightly-2018-08-09
+- haskell-names-0.9.3
+- simple-log-0.9.8
+- HTTP-4000.3.12
+- cpphs-1.20.8
+resolver: nightly-2018-10-08
