@@ -20,9 +20,7 @@ install:
  - echo "$(ghc --version)"
  - travis_retry cabal update
  # install latest version of deps within sandbox
- - git clone https://github.com/haskell-suite/haskell-src-exts ~/haskell-suite/haskell-src-exts
  - cabal sandbox init
- - cabal sandbox add-source ~/haskell-suite/haskell-src-exts
  # end
  - cabal install $MTL happy-$HAPPYVER
  - cabal install --only-dependencies --enable-tests $FLAGS
