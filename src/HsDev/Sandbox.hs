@@ -1,9 +1,10 @@
-{-# LANGUAGE OverloadedStrings, TemplateHaskell #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module HsDev.Sandbox (
-	SandboxType(..), Sandbox(..), sandboxType, sandbox,
+	Sandbox(..), sandboxType, sandbox,
 	isSandbox, guessSandboxType, sandboxFromPath,
-	findSandbox, searchSandbox, projectSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
+	findSandbox, searchSandbox, searchSandboxes,
+	projectSandbox, sandboxPackageDbStack, searchPackageDbStack, restorePackageDbStack,
 
 	-- * package-db
 	userPackageDb,
@@ -17,24 +18,19 @@ module HsDev.Sandbox (
 	getProjectPackageDbStack
 	) where
 
-import Control.Applicative
-import Control.DeepSeq (NFData(..))
 import Control.Monad
 import Control.Monad.Trans.Maybe
 import Control.Monad.Except
-import Control.Lens (view, makeLenses)
-import Data.Aeson
+import Control.Lens (view)
 import Data.List (find, intercalate)
-import Data.Maybe (isJust, fromMaybe)
+import Data.Maybe (isJust, fromMaybe, catMaybes)
 import Data.Maybe.JustIf
-import qualified Data.Text as T (unpack)
 import System.Directory (getAppUserDataDirectory, doesDirectoryExist)
 import System.FilePath
 import System.Log.Simple (MonadLog(..))
 import Text.Format
 
 import System.Directory.Paths
-import HsDev.Display
 import HsDev.Error
 import HsDev.PackageDb
 import HsDev.Project.Types
@@ -46,47 +42,13 @@ import HsDev.Tools.Ghc.Worker (GhcM)
 import HsDev.Tools.Ghc.System (buildPath)
 import HsDev.Util (searchPath, directoryContents, cabalFile)
 
-data SandboxType = CabalSandbox | StackWork deriving (Eq, Ord, Read, Show, Enum, Bounded)
-
-data Sandbox = Sandbox { _sandboxType :: SandboxType, _sandbox :: Path } deriving (Eq, Ord)
-
-makeLenses ''Sandbox
-
-instance NFData SandboxType where
-	rnf CabalSandbox = ()
-	rnf StackWork = ()
-
-instance NFData Sandbox where
-	rnf (Sandbox t p) = rnf t `seq` rnf p
-
-instance Show Sandbox where
-	show (Sandbox _ p) = T.unpack p
-
-instance Display Sandbox where
-	display (Sandbox _ fpath) = display fpath
-	displayType (Sandbox CabalSandbox _) = "cabal-sandbox"
-	displayType (Sandbox StackWork _) = "stack-work"
-
-instance Formattable Sandbox where
-	formattable = formattable . display
-
-instance ToJSON Sandbox where
-	toJSON (Sandbox _ p) = toJSON p
-
-instance FromJSON Sandbox where
-	parseJSON = withText "sandbox" sandboxPath where
-		sandboxPath = maybe (fail "Not a sandbox") return . sandboxFromPath
-
-instance Paths Sandbox where
-	paths f (Sandbox st p) = Sandbox st <$> paths f p
-
 isSandbox :: Path -> Bool
 isSandbox = isJust . guessSandboxType
 
-guessSandboxType :: Path -> Maybe SandboxType
+guessSandboxType :: Path -> Maybe BuildTool
 guessSandboxType fpath
-	| takeFileName (view path fpath) == ".cabal-sandbox" = Just CabalSandbox
-	| takeFileName (view path fpath) == ".stack-work" = Just StackWork
+	| takeFileName (view path fpath) == ".cabal-sandbox" = Just CabalTool
+	| takeFileName (view path fpath) == ".stack-work" = Just StackTool
 	| otherwise = Nothing
 
 sandboxFromPath :: Path -> Maybe Sandbox
@@ -112,26 +74,40 @@ findSandbox fpath = do
 searchSandbox :: Path -> IO (Maybe Sandbox)
 searchSandbox p = runMaybeT $ searchPath (view path p) (MaybeT . findSandbox . fromFilePath)
 
+-- | Search sandboxes up from current directory
+searchSandboxes :: Path -> IO [Sandbox]
+searchSandboxes p = do
+	mcabal <- searchFor CabalTool ".cabal-sandbox" ".cabal-sandbox"
+	mstack <- searchFor StackTool "stack.yaml" ".stack-work"
+	return $ catMaybes [mcabal, mstack]
+	where
+		searchFor :: BuildTool -> FilePath -> FilePath -> IO (Maybe Sandbox)
+		searchFor tool lookFor sandboxDir = runMaybeT $ do
+			root <- searchPath (view path p) (MaybeT . getRoot)
+			return $ Sandbox tool $ fromFilePath (takeDirectory root </> sandboxDir)
+			where
+				getRoot = directoryContents >=> return . find ((== lookFor) . takeFileName)
+
 -- | Get project sandbox: search up for .cabal, then search for stack.yaml in current directory and cabal sandbox in current + parents
-projectSandbox :: Path -> IO (Maybe Sandbox)
-projectSandbox fpath = runMaybeT $ do
+projectSandbox :: BuildTool -> Path -> IO (Maybe Sandbox)
+projectSandbox tool fpath = runMaybeT $ do
 	p <- searchPath (view path fpath) (MaybeT . getCabalFile)
-	MaybeT (findSandbox $ fromFilePath p) <|> searchPath p (MaybeT . findSbox')
+	sboxes <- liftIO $ searchSandboxes (fromFilePath $ takeDirectory p)
+	MaybeT $ return $ find ((== tool) . view sandboxType) sboxes
 	where
 		getCabalFile = directoryContents >=> return . find cabalFile
-		findSbox' = directoryContents >=> return . msum . map (sandboxFromPath . fromFilePath)
 
 -- | Get package-db stack for sandbox
 sandboxPackageDbStack :: Sandbox -> GhcM PackageDbStack
-sandboxPackageDbStack (Sandbox CabalSandbox fpath) = do
+sandboxPackageDbStack (Sandbox CabalTool fpath) = do
 	dir <- cabalSandboxPackageDb $ view path fpath
 	return $ PackageDbStack [PackageDb $ fromFilePath dir]
-sandboxPackageDbStack (Sandbox StackWork fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory (view path fpath)
+sandboxPackageDbStack (Sandbox StackTool fpath) = liftM (view stackPackageDbStack) $ projectEnv $ takeDirectory (view path fpath)
 
 -- | Search package-db stack with user-db as default
-searchPackageDbStack :: Path -> GhcM PackageDbStack
-searchPackageDbStack p = do
-	mbox <- liftIO $ projectSandbox p
+searchPackageDbStack :: BuildTool -> Path -> GhcM PackageDbStack
+searchPackageDbStack tool p = do
+	mbox <- liftIO $ projectSandbox tool p
 	case mbox of
 		Nothing -> return userDb
 		Just sbox -> sandboxPackageDbStack sbox
@@ -169,7 +145,7 @@ cabalSandboxPackageDb root = do
 getModuleOpts :: [String] -> Module -> GhcM (PackageDbStack, [String])
 getModuleOpts opts m = do
 	pdbs <- case view (moduleId . moduleLocation) m of
-		FileModule fpath _ -> searchPackageDbStack fpath
+		FileModule fpath mproj -> searchPackageDbStack (maybe CabalTool (view projectBuildTool) mproj) fpath
 		InstalledModule{} -> return userDb
 		_ -> return userDb
 	pkgs <- browsePackages opts pdbs
@@ -180,7 +156,7 @@ getModuleOpts opts m = do
 -- | Options for GHC for project target
 getProjectTargetOpts :: [String] -> Project -> Info -> GhcM (PackageDbStack, [String])
 getProjectTargetOpts opts proj t = do
-	pdbs <- searchPackageDbStack $ view projectPath proj
+	pdbs <- searchPackageDbStack (view projectBuildTool proj) (view projectPath proj)
 	pkgs <- browsePackages opts pdbs
 	return $ (pdbs, concat [
 		projectTargetOpts pkgs proj t,
@@ -188,7 +164,7 @@ getProjectTargetOpts opts proj t = do
 
 -- | Get sandbox of project (if any)
 getProjectSandbox :: MonadLog m => Project -> m (Maybe Sandbox)
-getProjectSandbox = liftIO . projectSandbox . view projectPath
+getProjectSandbox p = liftIO . projectSandbox (view projectBuildTool p) . view projectPath $ p
 
 -- | Get project package-db stack
 getProjectPackageDbStack :: Project -> GhcM PackageDbStack

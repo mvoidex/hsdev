@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances, GeneralizedNewtypeDeriving, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, TypeFamilies, ConstraintKinds #-}
+{-# LANGUAGE OverloadedStrings, CPP, TypeSynonymInstances, FlexibleInstances, GeneralizedNewtypeDeriving, FlexibleContexts, UndecidableInstances, MultiParamTypeClasses, TypeFamilies, ConstraintKinds, TypeApplications #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Server.Types (
@@ -42,12 +42,14 @@ import System.Log.Simple as Log
 import Control.Concurrent.Worker
 import Data.LookupTable
 import System.Directory.Paths
-import Text.Format (Formattable(..))
+import Text.Format (Formattable(..), (~~))
 
 import HsDev.Error (hsdevError)
 import HsDev.Inspect.Types
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
+import HsDev.PackageDb.Types
+import HsDev.Project.Types
 import HsDev.Tools.Ghc.Worker (GhcWorker, GhcM)
 import HsDev.Tools.Types (Note, OutputMessage)
 import HsDev.Tools.AutoFix (Refact)
@@ -69,7 +71,7 @@ data Session = Session {
 	sessionSqlDatabase :: SQL.Connection,
 	sessionSqlPath :: String,
 	sessionLog :: SessionLog,
-	sessionWatcher :: Watcher,
+	sessionWatcher :: Maybe Watcher,
 	sessionFileContents :: Path -> Maybe Text -> IO (),
 #if mingw32_HOST_OS
 	sessionMmapPool :: Maybe Pool,
@@ -275,7 +277,7 @@ commandHold = join . liftM liftIO $ askOptions commandOptionsHold
 
 -- | Server control command
 data ServerCommand =
-	Version |
+	Version Bool |
 	Start ServerOpts |
 	Run ServerOpts |
 	Stop ClientOpts |
@@ -302,11 +304,12 @@ data ServerOpts = ServerOpts {
 	serverLogLevel :: String,
 	serverLogNoColor :: Bool,
 	serverDbFile :: Maybe FilePath,
+	serverWatchFS :: Bool,
 	serverSilent :: Bool }
 		deriving (Show)
 
 instance Default ServerOpts where
-	def = ServerOpts def 0 Nothing "info" False Nothing False
+	def = ServerOpts def 0 Nothing "info" False Nothing True False
 
 -- | Silent server with no connection, useful for ghci
 silentOpts :: ServerOpts
@@ -327,7 +330,7 @@ instance Default ClientOpts where
 instance FromCmd ServerCommand where
 	cmdP = serv <|> remote where
 		serv = subparser $ mconcat [
-			cmd "version" "hsdev version" (pure Version),
+			cmd "version" "hsdev version" (Version <$> compilerVersionFlag),
 			cmd "start" "start remote server" (Start <$> cmdP),
 			cmd "run" "run server" (Run <$> cmdP),
 			cmd "stop" "stop remote server" (Stop <$> cmdP),
@@ -342,6 +345,7 @@ instance FromCmd ServerOpts where
 		(logLevelArg <|> pure (serverLogLevel def)) <*>
 		noColorFlag <*>
 		optional dbFileArg <*>
+		(not <$> noWatchFlag) <*>
 		serverSilentFlag
 
 instance FromCmd ClientOpts where
@@ -353,6 +357,7 @@ instance FromCmd ClientOpts where
 		silentFlag
 
 portArg :: Parser ConnectionPort
+compilerVersionFlag :: Parser Bool
 connectionArg :: Parser ConnectionPort
 timeoutArg :: Parser Int
 logArg :: Parser FilePath
@@ -364,8 +369,10 @@ serverSilentFlag :: Parser Bool
 stdinFlag :: Parser Bool
 silentFlag :: Parser Bool
 dbFileArg :: Parser FilePath
+noWatchFlag :: Parser Bool
 
 portArg = NetworkPort <$> option auto (long "port" <> metavar "number" <> help "connection port")
+compilerVersionFlag = switch (long "compiler" <> short 'c' <> help "show compiler version")
 #if mingw32_HOST_OS
 connectionArg = portArg
 #else
@@ -383,6 +390,7 @@ serverSilentFlag = switch (long "silent" <> help "no stdout/stderr")
 stdinFlag = switch (long "stdin" <> help "pass data to stdin")
 silentFlag = switch (long "silent" <> help "supress notifications")
 dbFileArg = strOption (long "db" <> metavar "path" <> help "path to sql database")
+noWatchFlag = switch (long "no-watch" <> help "don't watch filesystem for source changes")
 
 serverOptsArgs :: ServerOpts -> [String]
 serverOptsArgs sopts = concat [
@@ -430,9 +438,21 @@ data Command =
 		scanSandboxes :: [Path],
 		scanFiles :: [FileSource],
 		scanPaths :: [Path],
+		scanBuildTool :: BuildTool,
 		scanGhcOpts :: [String],
 		scanDocs :: Bool,
 		scanInferTypes :: Bool } |
+	ScanProject {
+		scanProjectPath :: Path,
+		scanProjectBuildTool :: BuildTool,
+		scanProjectDeps :: Bool } |
+	ScanFile {
+		scanFilePath :: Path,
+		scanFileBuildTool :: BuildTool,
+		scanFileProject :: Bool,
+		scanFileDeps :: Bool } |
+	ScanPackageDbs {
+		scanPackageDbStack :: PackageDbStack } |
 	SetFileContents Path (Maybe Text) |
 	RefineDocs {
 		docsProjects :: [Path],
@@ -510,15 +530,19 @@ data SearchQuery = SearchQuery Text SearchType deriving (Show)
 data SearchType = SearchExact | SearchPrefix | SearchInfix | SearchSuffix deriving (Show)
 
 instance Paths Command where
-	paths f (Scan projs c cs fs ps ghcs docs infer) = Scan <$>
+	paths f (Scan projs c cs fs ps btool ghcs docs infer) = Scan <$>
 		traverse (paths f) projs <*>
 		pure c <*>
 		traverse (paths f) cs <*>
 		traverse (paths f) fs <*>
 		traverse (paths f) ps <*>
+		pure btool <*>
 		pure ghcs <*>
 		pure docs <*>
 		pure infer
+	paths f (ScanProject proj tool deps) = ScanProject <$> paths f proj <*> pure tool <*> pure deps
+	paths f (ScanFile file' tool scanProj deps) = ScanFile <$> paths f file' <*> pure tool <*> pure scanProj <*> pure deps
+	paths f (ScanPackageDbs pdbs) = ScanPackageDbs <$> paths f pdbs
 	paths f (SetFileContents p cts) = SetFileContents <$> paths f p <*> pure cts
 	paths f (RefineDocs projs fs) = RefineDocs <$> traverse (paths f) projs <*> traverse (paths f) fs
 	paths f (InferTypes projs fs) = InferTypes <$> traverse (paths f) projs <*> traverse (paths f) fs
@@ -556,15 +580,20 @@ instance FromCmd Command where
 		cmd "ping" "ping server" (pure Ping),
 		cmd "listen" "listen server log" (Listen <$> optional logLevelArg),
 		cmd "set-log" "set log level" (SetLogLevel <$> strArgument idm),
-		cmd "scan" "scan sources" $ Scan <$>
-			many projectArg <*>
-			cabalFlag <*>
-			many sandboxArg <*>
-			many cmdP <*>
-			many (pathArg $ help "path") <*>
-			ghcOpts <*>
-			docsFlag <*>
-			inferFlag,
+		cmd "scan" "scan sources" (
+			subparser (cmd "project" "scan project" (ScanProject <$> textArgument idm <*> toolArg <*> depsArg)) <|>
+			subparser (cmd "file" "scan file" (ScanFile <$> textArgument idm <*> (toolArg <|> pure CabalTool) <*> depProjArg <*> depsArg)) <|>
+			subparser (cmd "package-dbs" "scan package-dbs; note, that order of package-dbs matters - dependent package-dbs should go first" (ScanPackageDbs <$> (mkPackageDbStack <$> many packageDbArg))) <|>
+			(Scan <$>
+				many projectArg <*>
+				cabalFlag <*>
+				many sandboxArg <*>
+				many cmdP <*>
+				many (pathArg $ help "path") <*>
+				(toolArg' <|> pure CabalTool) <*>
+				ghcOpts <*>
+				docsFlag <*>
+				inferFlag)),
 		cmd "set-file-contents" "set edited file contents, which will be used instead of contents in file until it updated" $
 			SetFileContents <$> fileArg <*> optional contentsArg,
 		cmd "docs" "scan docs" $ RefineDocs <$> many projectArg <*> many fileArg,
@@ -645,6 +674,8 @@ cabalFlag :: Parser Bool
 clearFlag :: Parser Bool
 contentsArg :: Parser Text
 ctx :: Parser Path
+depProjArg :: Parser Bool
+depsArg :: Parser Bool
 docsFlag :: Parser Bool
 fileArg :: Parser Path
 ghcOpts :: Parser [String]
@@ -658,16 +689,21 @@ lintOpts :: Parser [String]
 localsFlag :: Parser Bool
 moduleArg :: Parser Text
 packageArg :: Parser Text
+packageDbArg :: Parser PackageDb
 pathArg :: Mod OptionFields String -> Parser Path
 projectArg :: Parser Path
 pureFlag :: Parser Bool
 sandboxArg :: Parser Path
+toolArg :: Parser BuildTool
+toolArg' :: Parser BuildTool
 wideFlag :: Parser Bool
 
 cabalFlag = switch (long "cabal")
 clearFlag = switch (long "clear" <> short 'c' <> help "clear run, drop previous state")
 contentsArg = textOption (long "contents" <> help "text contents")
 ctx = fileArg
+depProjArg = fmap not $ switch (long "no-project" <> help "don't scan related project")
+depsArg = fmap not $ switch (long "no-deps" <> help "don't scan dependent package-dbs")
 docsFlag = switch (long "docs" <> help "scan source file docs")
 fileArg = textOption (long "file" <> metavar "path" <> short 'f')
 ghcOpts = many (strOption (long "ghc" <> metavar "option" <> short 'g' <> help "options to pass to GHC"))
@@ -681,25 +717,54 @@ lintOpts = many (strOption (long "lint" <> metavar "option" <> short 'l' <> help
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = textOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
 packageArg = textOption (long "package" <> metavar "name" <> help "module package")
+packageDbArg =
+	flag' GlobalDb (long "global-db" <> help "global package-db") <|>
+	flag' UserDb (long "user-db" <> help "per-user package-db") <|>
+	fmap PackageDb (textOption (long "package-db" <> metavar "path" <> help "custom package-db"))
 pathArg f = textOption (long "path" <> metavar "path" <> short 'p' <> f)
 projectArg = textOption (long "project" <> long "proj" <> metavar "project")
 pureFlag = switch (long "pure" <> help "don't modify actual file, just return result")
 sandboxArg = textOption (long "sandbox" <> metavar "path" <> help "path to cabal sandbox")
+toolArg =
+	flag' CabalTool (long "cabal" <> help "use cabal as build tool") <|>
+	flag' StackTool (long "stack" <> help "use stack as build tool") <|>
+	toolArg'
+toolArg' = option readTool (long "tool" <> help "specify build tool, `cabal` or `stack`") where
+	readTool :: ReadM BuildTool
+	readTool = do
+		s <- str @String
+		msum [
+			guard (s == "cabal") >> return CabalTool,
+			guard (s == "stack") >> return StackTool,
+			readerError ("unknown build tool: {}" ~~ s)]
+
 wideFlag = switch (long "wide" <> short 'w' <> help "wide mode - complete as if there were no import lists")
 
 instance ToJSON Command where
 	toJSON Ping = cmdJson "ping" []
 	toJSON (Listen lev) = cmdJson "listen" ["level" .= lev]
 	toJSON (SetLogLevel lev) = cmdJson "set-log" ["level" .= lev]
-	toJSON (Scan projs cabal sboxes fs ps ghcs docs' infer') = cmdJson "scan" [
+	toJSON (Scan projs cabal sboxes fs ps btool ghcs docs' infer') = cmdJson "scan" [
 		"projects" .= projs,
 		"cabal" .= cabal,
 		"sandboxes" .= sboxes,
 		"files" .= fs,
 		"paths" .= ps,
+		"build-tool" .= btool,
 		"ghc-opts" .= ghcs,
 		"docs" .= docs',
 		"infer" .= infer']
+	toJSON (ScanProject proj tool deps) = cmdJson "scan project" [
+		"project" .= proj,
+		"build-tool" .= tool,
+		"scan-deps" .= deps]
+	toJSON (ScanFile file' tool scanProj deps) = cmdJson "scan file" [
+		"file" .= file',
+		"build-tool" .= tool,
+		"scan-project" .= scanProj,
+		"scan-deps" .= deps]
+	toJSON (ScanPackageDbs pdbs) = cmdJson "scan package-dbs" [
+		"package-db-stack" .= pdbs]
 	toJSON (SetFileContents f cts) = cmdJson "set-file-contents" ["file" .= f, "contents" .= cts]
 	toJSON (RefineDocs projs fs) = cmdJson "docs" ["projects" .= projs, "files" .= fs]
 	toJSON (InferTypes projs fs) = cmdJson "infer" ["projects" .= projs, "files" .= fs]
@@ -748,9 +813,20 @@ instance FromJSON Command where
 			v .::?! "sandboxes" <*>
 			v .::?! "files" <*>
 			v .::?! "paths" <*>
+			(v .:: "build-tool" <|> pure CabalTool) <*>
 			v .::?! "ghc-opts" <*>
 			(v .:: "docs" <|> pure False) <*>
 			(v .:: "infer" <|> pure False)),
+		guardCmd "scan project" v *> (ScanProject <$>
+			v .:: "project" <*>
+			v .:: "build-tool" <*>
+			(v .:: "scan-deps" <|> pure True)),
+		guardCmd "scan file" v *> (ScanFile <$>
+			v .:: "file" <*>
+			(v .:: "build-tool" <|> pure CabalTool) <*>
+			(v .:: "scan-project" <|> pure True) <*>
+			(v .:: "scan-deps" <|> pure True)),
+		guardCmd "scan package-dbs" v *> (ScanPackageDbs <$> v .:: "package-db-stack"),
 		guardCmd "set-file-contents" v *> (SetFileContents <$> v .:: "file" <*> v .:: "contents"),
 		guardCmd "docs" v *> (RefineDocs <$> v .::?! "projects" <*> v .::?! "files"),
 		guardCmd "infer" v *> (InferTypes <$> v .::?! "projects" <*> v .::?! "files"),

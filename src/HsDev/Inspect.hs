@@ -26,6 +26,7 @@ import Control.Monad.Except
 import Data.List
 import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Semigroup
 import Data.String
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -116,12 +117,15 @@ data AnalyzeEnv = AnalyzeEnv {
 	_analyzeFixities :: M.Map Name H.Fixity,
 	_analyzeRefine :: RefineTable }
 
+instance Semigroup AnalyzeEnv where
+	AnalyzeEnv lenv lf lt <> AnalyzeEnv renv rf rt = AnalyzeEnv
+		(lenv <> renv)
+		(lf <> rf)
+		(lt <> rt)
+
 instance Monoid AnalyzeEnv where
 	mempty = AnalyzeEnv mempty mempty mempty
-	AnalyzeEnv lenv lf lt `mappend` AnalyzeEnv renv rf rt = AnalyzeEnv
-		(mappend lenv renv)
-		(mappend lf rf)
-		(mappend lt rt)
+	mappend l r = l <> r
 
 moduleAnalyzeEnv :: Module -> AnalyzeEnv
 moduleAnalyzeEnv m = AnalyzeEnv
@@ -190,7 +194,7 @@ inspectDocs opts m = do
 	let
 		hdocsWorkaround = False
 	pdbs <- case view (moduleId . moduleLocation) m of
-		FileModule fpath _ -> searchPackageDbStack fpath
+		FileModule fpath mproj -> searchPackageDbStack (maybe CabalTool (view projectBuildTool) mproj) fpath
 		InstalledModule{} -> return userDb
 		_ -> return userDb
 	docsMap <- if hdocsWorkaround
@@ -223,11 +227,11 @@ inspectFile defines opts file mproj mcts = hsdevLiftIO $ do
 	unless ex $ hsdevError $ FileNotFound absFilename
 	runInspect (FileModule absFilename mproj) $ withInspection (sourceInspection absFilename mcts opts) $ do
 		p <- preload absFilename defines opts mcts
-		forced <- liftIO (E.handle onError (return $!! analyzePreloaded mempty p)) >>= either (hsdevError . InspectError) return
+		forced <- liftIO (E.handle onErr (return $!! analyzePreloaded mempty p)) >>= either (hsdevError . InspectError) return
 		return $ set (moduleId . moduleLocation) (FileModule absFilename mproj) forced
 	where
-		onError :: E.ErrorCall -> IO (Either String Module)
-		onError = return . Left . show
+		onErr :: E.ErrorCall -> IO (Either String Module)
+		onErr = return . Left . show
 
 -- | Source inspection data, differs whether there are contents provided
 sourceInspection :: Path -> Maybe Text -> [String] -> IO Inspection

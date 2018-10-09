@@ -1,8 +1,0 @@
-flags:
-  hsdev:
-    docs: False
-packages:
-- '.'
-- 'tests/test-package/'
-extra-deps: []
-resolver: lts-10.3

@@ -38,8 +38,10 @@ import Data.List (intercalate)
 import Data.Maybe (catMaybes)
 import Data.Maybe.JustIf
 import Data.Monoid (Any(..))
+import Data.Monoid hiding ((<>))
 import Data.Function
 import Data.Ord
+import Data.Semigroup
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Text (Text)
@@ -418,13 +420,16 @@ instance Show Inspection where
 instance Read POSIXTime where
 	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
 
-instance Monoid Inspection where
-	mempty = InspectionNone
-	mappend InspectionNone r = r
-	mappend l InspectionNone = l
-	mappend (InspectionAt ltm lopts) (InspectionAt rtm ropts)
+instance Semigroup Inspection where
+	InspectionNone <> r = r
+	l <> InspectionNone = l
+	InspectionAt ltm lopts <> InspectionAt rtm ropts
 		| ltm >= rtm = InspectionAt ltm lopts
 		| otherwise = InspectionAt rtm ropts
+
+instance Monoid Inspection where
+	mempty = InspectionNone
+	mappend l r = l <> r
 
 instance ToJSON Inspection where
 	toJSON InspectionNone = object ["inspected" .= False]

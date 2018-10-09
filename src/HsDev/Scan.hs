@@ -30,6 +30,7 @@ import Data.Text.Lens (unpacked)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Traversable (for)
+import Data.Semigroup
 import Data.String (IsString, fromString)
 import qualified Data.Set as S
 import System.Directory
@@ -67,12 +68,15 @@ data ScanContents = ScanContents {
 instance NFData ScanContents where
 	rnf (ScanContents ms ps ss) = rnf ms `seq` rnf ps `seq` rnf ss
 
-instance Monoid ScanContents where
-	mempty = ScanContents [] [] []
-	mappend (ScanContents lm lp ls) (ScanContents rm rp rs) = ScanContents
+instance Semigroup ScanContents where
+	ScanContents lm lp ls <> ScanContents rm rp rs = ScanContents
 		(uniqueBy (view _1) $ lm ++ rm)
 		(uniqueBy (view _1) $ lp ++ rp)
 		(ordNub $ ls ++ rs)
+
+instance Monoid ScanContents where
+	mempty = ScanContents [] [] []
+	mappend l r = l <> r
 
 instance Formattable ScanContents where
 	formattable (ScanContents ms ps cs) = formattable str where
@@ -167,7 +171,7 @@ enumDependent fpath = Log.scope "enum-dependent" $ do
 enumProject :: CommandMonad m => Project -> m ScanContents
 enumProject p = hsdevLiftIO $ do
 	p' <- liftIO $ loadProject p
-	pdbs <- inSessionGhc $ searchPackageDbStack (view projectPath p')
+	pdbs <- inSessionGhc $ searchPackageDbStack (view projectBuildTool p') (view projectPath p')
 	pkgs <- inSessionGhc $ liftM (S.fromList . map (view (package . packageName))) $ browsePackages [] pdbs
 	let
 		projOpts :: Path -> [Text]

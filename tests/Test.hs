@@ -13,7 +13,8 @@ import Data.List
 import Data.Maybe
 import Data.String (fromString)
 import qualified Data.Set as S
-import Data.Text (unpack)
+import Data.Text (Text, unpack)
+import qualified Data.Text as T
 import System.FilePath
 import System.Directory
 import Test.Hspec
@@ -30,19 +31,13 @@ send srv args = do
 			expectationFailure $ "command result error: " ++ displayException e
 			return Nothing
 
-exports :: Maybe Value -> S.Set String
-exports v = mkSet (v ^.. traverseArray . key "exports" . traverseArray . key "id" . key "name" . _Just)
+exports :: Maybe Value -> S.Set Text
+exports v = mkSet (v ^.. _Just . values . key "exports" . values . key "id" . key "name" . _String)
 
 imports :: Maybe Value -> S.Set Import
 imports v = mkSet $ do
-	is <- v ^.. traverseArray . key "imports" . traverseArray
-	maybeToList $ Import <$> pos (is ^. key "pos") <*> (is ^. key "name") <*> (is ^. key "qualified") <*> (is ^. key "as")
-
-rgn :: Maybe Value -> Maybe Region
-rgn v = Region <$> pos (v ^. key "from") <*> pos (v ^. key "to")
-
-pos :: Maybe Value -> Maybe Position
-pos v = Position <$> (v ^. key "line") <*> (v ^. key "column")
+	is <- v ^.. _Just . values . key "imports" . values
+	maybeToList $ Import <$> (is ^? key "pos" . _JSON) <*> (is ^? key "name" . _String) <*> (is ^? key "qualified" . _Bool) <*> pure (is ^? key "as" . _String)
 
 mkSet :: Ord a => [a] -> S.Set a
 mkSet = S.fromList
@@ -59,7 +54,7 @@ main = hspec $ do
 			inServer s $ mapM_ (execute_ . fromString) inserts
 
 		it "should scan project" $ do
-			void $ send s ["scan", "--project", dir </> "tests/test-package"]
+			void $ send s ["scan", "project", dir </> "tests/test-package", "--cabal", "--no-deps"]
 
 		it "should resolve export list" $ do
 			one <- send s ["module", "ModuleOne", "--exact"]
@@ -87,42 +82,43 @@ main = hspec $ do
 
 		it "should pass extensions when checks" $ do
 			checks <- send s ["check", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
-			(checks ^.. traverseArray . key "level" . _Just) `shouldSatisfy` (("error" :: String) `notElem`)
+			(checks ^.. _Just . values . key "level" . _String) `shouldSatisfy` (("error" :: Text) `notElem`)
 
 		it "should return types and docs" $ do
 			test' <- send s ["whois", "test", "--file", dir </> "tests/test-package/ModuleOne.hs"]
 			let
-				testType :: Maybe String
-				testType = test' ^. traverseArray . key "info" . key "type"
+				testType :: Maybe Text
+				testType = test' ^? _Just . values . key "info" . key "type" . _String
 			testType `shouldBe` Just "IO ()"
 
 		it "should infer types" $ do
 			ts <- send s ["types", "--file", dir </> "tests/test-package/ModuleOne.hs"]
 			let
 				untypedFooRgn = Region (Position 15 1) (Position 15 11)
-				exprs :: [(Region, String)]
+				exprs :: [(Region, Text)]
 				exprs = do
-					note' <- ts ^.. traverseArray
-					rgn' <- maybeToList $ rgn (note' ^. key "region")
-					return (rgn', note' ^. key "note" . key "type" . _Just)
+					note' <- ts ^.. _Just . values
+					rgn' <- maybeToList $ note' ^? key "region" . _JSON
+					ty' <- maybeToList $ note' ^? key "note" . key "type" . _String
+					return (rgn', ty')
 			lookup untypedFooRgn exprs `shouldBe` Just "a -> a -> a" -- FIXME: Where's Num constraint?
 
 		it "should return symbol under location" $ do
 			_ <- send s ["infer", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
 			who' <- send s ["whoat", "13", "15", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
 			let
-				whoName :: Maybe String
-				whoName = who' ^. traverseArray . key "id" . key "name"
-				whoType :: Maybe String
-				whoType = who' ^. traverseArray . key "info" . key "type"
+				whoName :: Maybe Text
+				whoName = who' ^? _Just . values . key "id" . key "name" . _String
+				whoType :: Maybe Text
+				whoType = who' ^? _Just . values . key "info" . key "type" . _String
 			whoName `shouldBe` Just "f"
 			whoType `shouldBe` Just "a -> a"
 
 		it "should distinguish between constructor and data" $ do
 			whoData <- send s ["whoat", "20", "9", "--file", dir </> "tests/test-package/ModuleOne.hs"]
 			whoCtor <- send s ["whoat", "21", "8", "--file", dir </> "tests/test-package/ModuleOne.hs"]
-			(whoData ^. traverseArray . key "info" . key "what" :: Maybe String) `shouldBe` Just "data"
-			(whoCtor ^. traverseArray . key "info" . key "what" :: Maybe String) `shouldBe` Just "ctor"
+			(whoData ^? _Just . values . key "info" . key "what" . _String) `shouldBe` Just "data"
+			(whoCtor ^? _Just . values . key "info" . key "what" . _String) `shouldBe` Just "ctor"
 
 		it "should use modified file contents" $ do
 			modifiedContents <- fmap unpack $ readFileUtf8 $ dir </> "tests/data/ModuleTwo.modified.hs"
@@ -136,17 +132,17 @@ main = hspec $ do
 
 		it "should use modified source in `check` command" $ do
 			checks <- send s ["check", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
-			(checks ^.. traverseArray . key "note" . key "message" . _Just) `shouldSatisfy` (any ("Defined but not used" `isPrefixOf`))
+			(checks ^.. _Just . values . key "note" . key "message" . _String) `shouldSatisfy` (any ("Defined but not used" `T.isPrefixOf`))
 
 		it "should get usages of symbol" $ do
 			-- Note, that source was modified
 			us <- send s ["usages", "2", "2", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
 			let
-				locs :: [(String, Region)]
+				locs :: [(Text, Region)]
 				locs = do
-					n <- us ^.. traverseArray
-					nm <- maybeToList $ n ^. key "in" . key "name"
-					p <- maybeToList $ rgn (n ^. key "at")
+					n <- us ^.. _Just . values
+					nm <- maybeToList $ n ^? key "in" . key "name" . _String
+					p <- maybeToList $ n ^? key "at" . _JSON
 					return (nm, p)
 			S.fromList locs `shouldBe` S.fromList [
 				("ModuleOne", Position 4 2 `region` Position 4 12),
@@ -161,8 +157,8 @@ main = hspec $ do
 			let
 				locs :: [Region]
 				locs = do
-					n <- us ^.. traverseArray
-					maybeToList $ rgn (n ^. key "at")
+					n <- us ^.. _Just . values
+					maybeToList $ n ^? key "at" . _JSON
 			S.fromList locs `shouldBe` S.fromList [
 				Position 14 7 `region` Position 14 8,
 				Position 14 11 `region` Position 14 12,
@@ -170,11 +166,11 @@ main = hspec $ do
 
 		it "should evaluate expression in context of module" $ do
 			vals <- send s ["ghc", "eval", "smth [1,2,3]", "--file", dir </> "tests/test-package/ModuleThree.hs"]
-			vals ^.. traverseArray . key @String "ok" . _Just `shouldBe` ["[3,4]"]
+			vals ^.. _Just . values . key "ok" . _String `shouldBe` ["[3,4]"]
 
 		it "should return type of expression in context of module" $ do
 			tys <- send s ["ghc", "type", "twice twice", "--file", dir </> "tests/test-package/ModuleTwo.hs"]
-			tys ^.. traverseArray . key @String "ok" . _Just `shouldBe` ["(a -> a) -> a -> a"]
+			tys ^.. _Just . values . key "ok" . _String `shouldBe` ["(a -> a) -> a -> a"]
 
 		it "shouldn't lose module info if unsaved source is broken" $ do
 			brokenContents <- fmap unpack $ readFileUtf8 $ dir </> "tests/data/ModuleTwo.broken.hs"
@@ -187,7 +183,7 @@ main = hspec $ do
 
 		it "should complete qualified names" $ do
 			comps <- send s ["complete", "T.o", "--file", dir </> "tests/test-package/ModuleThree.hs"]
-			comps ^.. traverseArray . key "id" . key @String "name" . _Just `shouldBe` ["overloadedStrings"]
+			comps ^.. _Just . values . key "id" . key "name" . _String `shouldBe` ["overloadedStrings"]
 
 		_ <- runIO $ send s ["exit"]
 		return ()

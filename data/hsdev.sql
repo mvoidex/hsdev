@@ -23,12 +23,22 @@ select package_db, package_name, max(package_version)
 from package_dbs
 group by package_db, package_name;
 
+-- sandboxes
+create table sandboxes (
+	type text not null, -- cabal/stack
+	path text not null, -- sandbox path, should include `.cabal-sandbox`/`.stack-work`
+	package_db_stack json -- list of package-db of sandbox
+);
+
+create unique index sandboxes_path_index on sandboxes (path);
+
 -- source projects
 create table projects (
 	id integer primary key autoincrement,
 	name text not null,
 	cabal text not null, -- path to `.cabal` file
 	version text,
+	build_tool text not null, -- cabal/stack
 	package_db_stack json -- list of package-db
 );
 

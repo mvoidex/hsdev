@@ -58,6 +58,7 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `listen` — connect to server and listen for its log (for debug)
 * `set-log` — set log level
 * `scan` — scan installed modules, cabal projects and files
+* `scan project`, `scan file`, `scan package-dbs` — same as above, but with additional options
 * `set-file-contents` — set data to use as file contents, used to work with unsaved files
 * `docs`, `infer` — scan docs or infer types for sources
 * `remove`, `remove-all` — unload data

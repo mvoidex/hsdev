@@ -40,9 +40,9 @@ hsdevLiftIO = hsdevLiftIOWith IOFailed
 
 -- | Rethrow IO exceptions
 hsdevLiftIOWith :: MonadCatch m => (String -> HsDevError) -> m a -> m a
-hsdevLiftIOWith ctor act = catch act onError where
-	onError :: MonadThrow m => IOException -> m a
-	onError = hsdevError . ctor . displayException
+hsdevLiftIOWith ctor act = catch act onErr where
+	onErr :: MonadThrow m => IOException -> m a
+	onErr = hsdevError . ctor . displayException
 
 -- | Ignore hsdev exception
 hsdevIgnore :: MonadCatch m => a -> m a -> m a

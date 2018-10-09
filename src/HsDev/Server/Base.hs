@@ -46,6 +46,7 @@ import Text.Format ((~~))
 import Control.Concurrent.Util
 import qualified Control.Concurrent.FiniteChan as F
 import Data.LookupTable
+import Data.Maybe.JustIf
 import System.Directory.Paths
 import qualified System.Directory.Watcher as Watcher
 
@@ -87,7 +88,7 @@ initLog sopts = do
 
 -- | Run server
 runServer :: ServerOpts -> ServerM IO () -> IO ()
-runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.withWatcher $ \watcher -> withLog (sessionLogger slog) $ do
+runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> maybeWithWatcher $ \mwatcher -> withLog (sessionLogger slog) $ do
 	waitSem <- liftIO $ newQSem 0
 	sqlDb <- liftIO $ SQLite.initialize (fromMaybe SQLite.sharedMemory $ serverDbFile sopts)
 	clientChan <- liftIO F.newChan
@@ -112,7 +113,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 					void $ postSessionUpdater $ do
 						Log.sendLog Log.Trace $ "setting file contents for {} with mtime = {}" ~~ fpath ~~ show tm
 						SQLite.execute "insert or replace into file_contents (file, contents, mtime) values (?, ?, ?);" (fpath, cts, (fromRational (toRational tm) :: Double))
-						unless notChanged' $ liftIO $
+						whenJustM (askSession sessionWatcher) $ \watcher -> unless notChanged' $ liftIO $
 							writeChan (W.watcherChan watcher) (W.WatchedModule, W.Event W.Modified (view path fpath) tm)
 
 		uw <- startWorker (withSession sess . withSqlConnection) id logAll
@@ -122,7 +123,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 			sqlDb
 			(fromMaybe SQLite.sharedMemory $ serverDbFile sopts)
 			slog
-			watcher
+			mwatcher
 			setFileCts
 #if mingw32_HOST_OS
 			mmapPool
@@ -141,10 +142,13 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 		emptyTask <- async $ return ()
 		updaterTask <- newMVar emptyTask
 		tasksVar <- newMVar []
-		Update.onEvents_ watcher $ \evs -> withSession session $
+		whenJust mwatcher $ \watcher -> Update.onEvents_ watcher $ \evs -> withSession session $
 			void $ Client.runClient def $ Update.processEvents (withSession session . inSessionUpdater . void . Client.runClient def . Update.applyUpdates def) updaterTask tasksVar evs
 	liftIO $ runReaderT (runServerM $ (watchDb >> act) `finally` closeSession) session
 	where
+		maybeWithWatcher fn
+			| serverWatchFS sopts = Watcher.withWatcher (fn . Just)
+			| otherwise = fn Nothing
 		closeSession = do
 			askSession sessionUpdater >>= liftIO . joinWorker
 			Log.sendLog Log.Info "updater worker stopped"
@@ -157,14 +161,14 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> Watcher.
 -- | Set initial watch: package-dbs, projects and standalone sources
 watchDb :: SessionMonad m => m ()
 watchDb = do
-	w <- askSession sessionWatcher
-	-- TODO: Implement watching package-dbs
-	cabals <- SQLite.query_ "select cabal from projects;"
-	projects <- mapM (SQLite.loadProject . SQLite.fromOnly) cabals
-	liftIO $ mapM_ (\proj -> W.watchProject w proj []) projects
+	whenJustM (askSession sessionWatcher) $ \w -> do
+		-- TODO: Implement watching package-dbs
+		cabals <- SQLite.query_ "select cabal from projects;"
+		projects <- mapM (SQLite.loadProject . SQLite.fromOnly) cabals
+		liftIO $ mapM_ (\proj -> W.watchProject w proj []) projects
 
-	files <- SQLite.query_ "select file from modules where file is not null and cabal is null;"
-	liftIO $ mapM_ (\(SQLite.Only f) -> W.watchModule w (FileModule f Nothing)) files
+		files <- SQLite.query_ "select file from modules where file is not null and cabal is null;"
+		liftIO $ mapM_ (\(SQLite.Only f) -> W.watchModule w (FileModule f Nothing)) files
 
 type Server = Worker (ServerM IO)
 

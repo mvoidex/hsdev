@@ -66,10 +66,43 @@ Args:
     - `<path>/.cabal-sandbox` — cabal sandbox
     - `<path>/.stack-work` — stack sandbox
   * `files` — list of `source-file` objects to scan
+  * `build-tool` — preferred build tool when scanning projects, `cabal` or `stack`
   * `paths` — list of directories to scan
   * `ghc-opts` — additional ghc options
   * `docs` — also get docs for sources (may be slow, you can do this by separate command)
   * `infer` — infer types for sources (slow, prefer separate command)
+Response: `{}`
+
+#### Scan project
+
+Scan project
+
+Command `scan project`
+Args:
+  * `project` — path to project
+  * `build-tool` — build tool to use, `cabal` or `stack`
+  * `scan-deps` — also scan dependent package-dbs
+Response: `{}`
+
+#### Scan file
+
+Scan file
+
+Command `scan file`
+Args:
+  * `file` — file path
+  * `build-tool` — build tool to use, `cabal` or `stack`
+  * `scan-project` — scan related project (if any)
+  * `scan-deps` — also scan dependent package-dbs
+Response: `{}`
+
+#### Scan package-dbs
+
+Scan list of package-db
+
+Command `scan package-dbs`
+Args:
+  * `package-db-stack` — list of `package-db`s in reverse order, i.e. `global-db` should be last
 Response: `{}`
 
 #### Set file contents
@@ -161,12 +194,12 @@ Response: `project` object
 
 #### Sandbox
 
-Get sandbox info
+Get sandboxes info
 
 Command: `sandbox`  
 Args:
-  * `path` — path to sandbox
-Response: `sandbox` object
+  * `path` — path to search sandbox in
+Response: list of `sandbox` object
 
 #### Lookup
 
@@ -412,7 +445,7 @@ Package db
 One of:
   * `"global-db"` — global package-db
   * `"user-db"` — user package-db
-  * `{"package-db":<path>}` — custom package-db
+  * `"package-db:<path>"` — custom package-db
 
 #### Sandbox
 

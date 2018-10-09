@@ -28,7 +28,6 @@ import Distribution.Compiler (CompilerFlavor(GHC))
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
 import qualified Distribution.ModuleName as PD (toFilePath)
-import Distribution.PackageDescription.Parse
 import Distribution.ModuleName (components)
 import Distribution.Text (display)
 import Language.Haskell.Extension
@@ -78,12 +77,12 @@ projectTargetFiles proj t = do
 -- | Analyze cabal file
 analyzeCabal :: String -> Either String ProjectDescription
 analyzeCabal source = case liftM flattenDescr $ parsePackageDesc source of
-	ParseOk _ r -> Right ProjectDescription {
+	Right r -> Right ProjectDescription {
 		_projectVersion = pack $ showVer $ P.pkgVersion $ PD.package r,
 		_projectLibrary = fmap toLibrary $ PD.library r,
 		_projectExecutables = fmap toExecutable $ PD.executables r,
 		_projectTests = fmap toTest $ PD.testSuites r }
-	ParseFailed e -> Left $ "Parse failed: " ++ show e
+	Left e -> Left $ "Parse failed: " ++ e
 	where
 		toLibrary lib = Library (map (map pack . components) $ PD.exposedModules lib) (toInfo $ PD.libBuildInfo lib)
 		toExecutable exe = Executable (componentName $ PD.exeName exe) (fromFilePath $ PD.modulePath exe) (toInfo $ PD.buildInfo exe)
@@ -135,7 +134,9 @@ readProject file' = do
 loadProject :: Project -> IO Project
 loadProject p
 	| isJust (_projectDescription p) = return p
-	| otherwise = readProject (_projectCabal p ^. path)
+	| otherwise = do
+		p' <- readProject (_projectCabal p ^. path)
+		return $ set projectBuildTool (view projectBuildTool p) p'
 
 -- | Extensions for target
 withExtensions :: a -> Info -> Extensions a

@@ -27,6 +27,7 @@ import qualified System.Log.Simple as Log
 import qualified System.Log.Simple.Base as Log
 import Text.Read (readMaybe)
 
+import Data.Maybe.JustIf
 import qualified System.Directory.Watcher as W
 import System.Directory.Paths
 import Text.Format
@@ -80,14 +81,20 @@ runCommand (SetLogLevel l) = case Log.level (pack l) of
 		lev' <- serverSetLogLevel lev
 		Log.sendLog Log.Debug $ "log level changed from '{}' to '{}'" ~~ show lev' ~~ show lev
 		Log.sendLog Log.Info $ "log level updated to: {}" ~~ show lev
-runCommand (Scan projs cabal sboxes fs paths' ghcs' docs' infer') = toValue $ do
+runCommand (Scan projs cabal sboxes fs paths' btool ghcs' docs' infer') = toValue $ do
 	sboxes' <- getSandboxes sboxes
 	updateProcess (Update.UpdateOptions [] ghcs' docs' infer') $ concat [
 		[Update.scanCabal ghcs' | cabal],
 		map (Update.scanSandbox ghcs') sboxes',
 		[Update.scanFiles (zip fs (repeat ghcs'))],
-		map (Update.scanProject ghcs') projs,
+		map (Update.scanProject ghcs' btool) projs,
 		map (Update.scanDirectory ghcs') paths']
+runCommand (ScanProject proj tool deps) = toValue $ updateProcess def [
+	(if deps then Update.scanProjectStack else Update.scanProject) [] tool proj]
+runCommand (ScanFile fpath tool scanProj deps) = toValue $ updateProcess def [
+	Update.scanFile [] fpath tool scanProj deps]
+runCommand (ScanPackageDbs pdbs) = toValue $ updateProcess def [
+	Update.scanPackageDbStack [] pdbs]
 runCommand (SetFileContents f mcts) = toValue $ serverSetFileContents f mcts
 runCommand (RefineDocs projs fs)
 	| HDocs.hdocsSupported = toValue $ do
@@ -127,7 +134,6 @@ runCommand (Remove projs cabal sboxes files) = toValue $ withSqlConnection $ SQL
 			return $ null $ filter (pdbs `isSubStack`) $ delete pdbs from'
 		-- Remove top of package-db stack if possible
 		removePackageDb' pdbs = do
-			w <- lift $ askSession sessionWatcher
 			can <- canRemove pdbs
 			when can $ do
 				State.modify (delete pdbs)
@@ -135,17 +141,18 @@ runCommand (Remove projs cabal sboxes files) = toValue $ withSqlConnection $ SQL
 					"select m.id from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version;"
 				removePackageDb (topPackageDb pdbs)
 				mapM_ SQLite.removeModule ms
-				liftIO $ unwatchPackageDb w $ topPackageDb pdbs
+				whenJustM (askSession sessionWatcher) $ \w ->
+					liftIO $ unwatchPackageDb w $ topPackageDb pdbs
 		-- Remove package-db stack when possible
 		removePackageDbStack = mapM_ removePackageDb' . packageDbStacks
-	w <- askSession sessionWatcher
 	projects <- traverse findProject projs
 	sboxes' <- getSandboxes sboxes
 	forM_ projects $ \proj -> do
 		ms <- liftM (map fromOnly) $ query "select id from modules where cabal == ?;" (Only $ proj ^. projectCabal)
 		SQLite.removeProject proj
 		mapM_ SQLite.removeModule ms
-		liftIO $ unwatchProject w proj
+		whenJustM (askSession sessionWatcher) $ \w ->
+			liftIO $ unwatchProject w proj
 
 	allPdbs <- liftM (map fromOnly) $ query_ @(Only PackageDb) "select package_db from package_dbs;"
 	dbPDbs <- inSessionGhc $ mapM restorePackageDbStack allPdbs
@@ -164,12 +171,13 @@ runCommand (Remove projs cabal sboxes files) = toValue $ withSqlConnection $ SQL
 			(Only file)
 		forM_ ms $ \(m :. Only i) -> do
 			SQLite.removeModule i
-			liftIO . unwatchModule w $ (m ^. moduleLocation)
+			whenJustM (askSession sessionWatcher) $ \w ->
+				liftIO . unwatchModule w $ (m ^. moduleLocation)
 runCommand RemoveAll = toValue $ do
 	SQLite.purge
-	w <- askSession sessionWatcher
-	wdirs <- liftIO $ readMVar (W.watcherDirs w)
-	liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir
+	whenJustM (askSession sessionWatcher) $ \w -> do
+		wdirs <- liftIO $ readMVar (W.watcherDirs w)
+		liftIO $ forM_ (M.toList wdirs) $ \(dir, (isTree, _)) -> (if isTree then W.unwatchTree else W.unwatchDir) w dir
 runCommand InfoPackages = toValue $
 	query_ @ModulePackage "select package_name, package_version from package_dbs;"
 runCommand InfoProjects = toValue $ do
@@ -225,7 +233,7 @@ runCommand (InfoModule sq filters h _) = toValue $ do
 			return $ Module mheader docs imports' exports' fixities' mempty Nothing
 runCommand (InfoProject (Left projName)) = toValue $ findProject projName
 runCommand (InfoProject (Right projPath)) = toValue $ liftIO $ searchProject (view path projPath)
-runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandbox sandbox'
+runCommand (InfoSandbox sandbox') = toValue $ liftIO $ searchSandboxes sandbox'
 runCommand (Lookup nm fpath) = toValue $
 	fmap (map (\(s :. m) -> ImportedSymbol s m)) $ query @_ @(Symbol :. ModuleId) (toQuery $ mconcat [
 		qSymbol,

@@ -22,6 +22,7 @@ import qualified Language.Haskell.Exts as H
 import Text.Format
 
 import System.Directory.Paths
+import HsDev.Display
 import HsDev.Symbols.Name
 import HsDev.Symbols.Location
 import HsDev.Symbols.Types
@@ -172,20 +173,33 @@ instance FromRow a => FromRow (Scoped a) where
 instance ToRow a => ToRow (Scoped a) where
 	toRow (Scoped q s) = toRow s ++ [toField q]
 
+instance ToField BuildTool where
+	toField CabalTool = toField @String "cabal"
+	toField StackTool = toField @String "stack"
+
+instance FromField BuildTool where
+	fromField = fromField @String >=> fromStr where
+		fromStr "cabal" = return CabalTool
+		fromStr "stack" = return StackTool
+		fromStr s = fail $ "Error parsing build tool: {}" ~~ s
+
+instance ToRow Sandbox where
+	toRow (Sandbox t p) = [toField t, toField p]
+
+instance FromRow Sandbox where
+	fromRow = Sandbox <$> field <*> field
+
 instance ToRow Project where
-	toRow (Project name _ cabal pdesc dbs) = [
-		toField name,
-		toField cabal,
-		toField $ pdesc ^? _Just . projectVersion,
-		toField dbs]
+	toRow (Project name _ cabal pdesc t dbs) = [toField name, toField cabal, toField $ pdesc ^? _Just . projectVersion, toField t, toField dbs]
 
 instance FromRow Project where
 	fromRow = do
 		name <- field
 		cabal <- field
 		ver <- field
+		tool <- field
 		dbs <- field
-		return $ Project name (takeDir cabal) cabal (fmap (\v -> ProjectDescription v Nothing [] []) ver) dbs
+		return $ Project name (takeDir cabal) cabal (fmap (\v -> ProjectDescription v Nothing [] []) ver) tool dbs
 
 instance FromRow Library where
 	fromRow = do
