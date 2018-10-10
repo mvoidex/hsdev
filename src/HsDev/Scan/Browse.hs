@@ -33,7 +33,6 @@ import HsDev.Error
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession, formatType)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub)
-import System.Directory.Paths (canonicalize)
 
 import qualified ConLike as GHC
 import qualified DataCon as GHC
@@ -72,7 +71,7 @@ listModules :: [String] -> PackageDbStack -> [ModulePackage] -> GhcM [ModuleLoca
 listModules opts dbs pkgs = do
 	tmpSession dbs (opts ++ packagesOpts)
 	ms <- packageDbModules
-	sequence [ghcModuleLocation p m e | (p, m, e) <- ms]
+	return [ghcModuleLocation p m e | (p, m, e) <- ms]
 	where
 		packagesOpts = ["-package " ++ show p | p <- pkgs]
 
@@ -88,18 +87,14 @@ browseModules opts dbs mlocs = do
 browseModules' :: [String] -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules' opts mlocs = do
 	ms <- packageDbModules
-	mlocsDb <- sequence [ghcModuleLocation p m e | (p, m, e) <- ms]
 	midTbl <- newLookupTable
 	sidTbl <- newLookupTable
 	let
-		lookupModuleId p' m' e' = do
-			mloc' <- ghcModuleLocation p' m' e'
-			modId' <- ghcModuleId p' m' e'
-			lookupTable mloc' modId' midTbl
-	liftM catMaybes $ sequence [browseModule' mloc lookupModuleId (cacheInTableM sidTbl) p m e | ((p, m, e), mloc) <- zip ms mlocsDb, mloc `S.member` mlocs']
+		lookupModuleId p' m' e' = lookupTable (ghcModuleLocation p' m' e') (ghcModuleId p' m' e') midTbl
+	liftM catMaybes $ sequence [browseModule' lookupModuleId (cacheInTableM sidTbl) p m e | (p, m, e) <- ms, ghcModuleLocation p m e `S.member` mlocs']
 	where
-		browseModule' :: ModuleLocation -> (GHC.PackageConfig -> GHC.Module -> Bool -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> Bool -> GhcM (Maybe InspectedModule)
-		browseModule' mloc modId' sym' p m e = tryT $ runInspect mloc $ inspect_ (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m e)
+		browseModule' :: (GHC.PackageConfig -> GHC.Module -> Bool -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> Bool -> GhcM (Maybe InspectedModule)
+		browseModule' modId' sym' p m e = tryT $ runInspect (ghcModuleLocation p m e) $ inspect_ (return $ InspectionAt 0 (map fromString opts)) (browseModule modId' sym' p m e)
 		mlocs' = S.fromList mlocs
 
 browseModule :: (GHC.PackageConfig -> GHC.Module -> Bool -> GhcM ModuleId) -> (GHC.Name -> GhcM Symbol -> GhcM Symbol) -> GHC.PackageConfig -> GHC.Module -> Bool -> GhcM Module
@@ -179,11 +174,11 @@ readPackageConfig pc = PackageConfig
 	(map (fromString . GHC.moduleNameString . Compat.exposedModuleName) $ GHC.exposedModules pc)
 	(GHC.exposed pc)
 
-ghcModuleLocation :: MonadIO m => GHC.PackageConfig -> GHC.Module -> Bool -> m ModuleLocation
-ghcModuleLocation p m = liftIO . canonicalize . InstalledModule (map fromString $ GHC.libraryDirs p) (readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
+ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> Bool -> ModuleLocation
+ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
 
-ghcModuleId :: MonadIO m => GHC.PackageConfig -> GHC.Module -> Bool -> m ModuleId
-ghcModuleId p m e = ModuleId (fromString mname') <$> (ghcModuleLocation p m e) where
+ghcModuleId :: GHC.PackageConfig -> GHC.Module -> Bool -> ModuleId
+ghcModuleId p m e = ModuleId (fromString mname') (ghcModuleLocation p m e) where
 	mname' = GHC.moduleNameString $ GHC.moduleName m
 
 packageConfigs :: GhcM [GHC.PackageConfig]
