@@ -344,10 +344,12 @@ scanPackageDb opts pdbs = runTask "scanning" (topPackageDb pdbs) $ Log.scope "pa
 			mlocs <- liftM
 				(filter (`S.member` packageDbMods)) $
 				(inSessionGhc $ listModules opts pdbs packages')
-			Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
+			let
+				umlocs = uniqueModuleLocations mlocs
+			Log.sendLog Log.Trace $ "{} modules found, {} unique" ~~ length mlocs ~~ length umlocs
 			let
 				packageDbMods' = SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only (topPackageDb pdbs))
-			scan packageDbMods' ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+			scan packageDbMods' ((,,) <$> umlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 				sendUpdateAction $ timer "updated package-db modules" $ do
@@ -375,10 +377,12 @@ scanPackageDbStack opts pdbs = runTask "scanning" pdbs $ Log.scope "package-db-s
 			mlocs <- liftM
 				(filter (`S.member` packageDbMods)) $
 				(inSessionGhc $ listModules opts pdbs packages')
-			Log.sendLog Log.Trace $ "{} modules found" ~~ length mlocs
+			let
+				umlocs = uniqueModuleLocations mlocs
+			Log.sendLog Log.Trace $ "{} modules found, {} unique" ~~ length mlocs ~~ length umlocs
 			let
 				packageDbStackMods = liftM concat $ forM (packageDbs pdbs) $ \pdb -> SQLite.query "select m.id, m.file, m.cabal, m.install_dirs, m.package_name, m.package_version, m.installed_name, m.exposed, m.other_location, m.inspection_time, m.inspection_opts from modules as m, package_dbs as ps where m.package_name == ps.package_name and m.package_version == ps.package_version and ps.package_db == ?;" (SQLite.Only pdb)
-			scan packageDbStackMods ((,,) <$> mlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
+			scan packageDbStackMods ((,,) <$> umlocs <*> pure [] <*> pure Nothing) opts $ \mlocs' -> do
 				ms <- inSessionGhc $ browseModules opts pdbs (mlocs' ^.. each . _1)
 				Log.sendLog Log.Trace $ "scanned {} modules" ~~ length ms
 				sendUpdateAction $ timer "updated package-db-stack modules" $ do

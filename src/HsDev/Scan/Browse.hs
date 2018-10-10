@@ -5,6 +5,7 @@ module HsDev.Scan.Browse (
 	listModules,
 	browseModules, browseModules',
 	-- * Helpers
+	uniqueModuleLocations,
 	readPackage, readPackageConfig, ghcModuleLocation,
 	packageConfigs, packageDbModules, lookupModule_,
 	modulesPackages, modulesPackagesGroups, withEachPackage,
@@ -32,7 +33,7 @@ import HsDev.Symbols
 import HsDev.Error
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession, formatType)
 import HsDev.Tools.Ghc.Compat as Compat
-import HsDev.Util (ordNub)
+import HsDev.Util (ordNub, uniqueBy)
 import System.Directory.Paths (fromFilePath, normalize)
 
 import qualified ConLike as GHC
@@ -82,7 +83,7 @@ listModules opts dbs pkgs = do
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
 	tmpSession dbs opts
-	liftM concat . withEachPackage (const $ browseModules' opts) $ ordNub $ mlocs
+	liftM concat . withEachPackage (const $ browseModules' opts) $ ordNub mlocs
 
 -- | Inspect installed modules, doesn't set session and package flags!
 browseModules' :: [String] -> [ModuleLocation] -> GhcM [InspectedModule]
@@ -165,6 +166,12 @@ browseModule modId lookSym package' m exposed' = do
 
 tryT :: MonadCatch m => m a -> m (Maybe a)
 tryT act = catch (fmap Just act) (const (return Nothing) . (id :: SomeException -> SomeException))
+
+-- | There can be same modules (same package name, version and module name) installed in different locations
+-- Select first one of such modules
+uniqueModuleLocations :: [ModuleLocation] -> [ModuleLocation]
+uniqueModuleLocations = uniqueBy nameId' where
+	nameId' mloc = (,) <$> (preview modulePackage mloc) <*> (preview installedModuleName mloc)
 
 readPackage :: GHC.PackageConfig -> ModulePackage
 readPackage pc = ModulePackage (fromString $ GHC.packageNameString pc) (fromString $ showVersion (GHC.packageVersion pc))

@@ -119,12 +119,12 @@ instance Eq ModuleLocation where
 instance Ord ModuleLocation where
 	compare l r = compare (locType l, locNames l) (locType r, locNames r) where
 		locType :: ModuleLocation -> Int
-		locType (FileModule _ _) = 0
-		locType (InstalledModule _ _ _ _) = 1
-		locType (OtherLocation _) = 2
+		locType FileModule{} = 0
+		locType InstalledModule{} = 1
+		locType OtherLocation{} = 2
 		locType NoLocation = 3
 		locNames (FileModule f _) = [f]
-		locNames (InstalledModule dirs _ nm _) = nm : dirs
+		locNames (InstalledModule dirs _ nm _) = nm : dirs  -- dirs already includes name of package
 		locNames (OtherLocation n) = [n]
 		locNames NoLocation = []
 
