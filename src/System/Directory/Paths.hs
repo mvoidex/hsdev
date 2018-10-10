@@ -8,7 +8,8 @@ module System.Directory.Paths (
 	Paths(..),
 	canonicalize,
 	absolutise,
-	relativise
+	relativise,
+	normalize
 	) where
 
 import Control.Lens
@@ -83,3 +84,11 @@ absolutise parent = over paths addRoot where
 -- | Relativise paths
 relativise :: Paths a => Path -> a -> a
 relativise parent = over paths (makeRelative (parent ^. path))
+
+-- | Normalize paths, with workaround for Windows drives
+normalize :: Paths a => a -> a
+normalize = over paths normalizePath' where
+	normalizePath' :: FilePath -> FilePath
+	normalizePath' = fixDrive . normalise
+	fixDrive :: FilePath -> FilePath
+	fixDrive = uncurry joinDrive . over _1 (addTrailingPathSeparator . dropWhileEnd isPathSeparator) . splitDrive
