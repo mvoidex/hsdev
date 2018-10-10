@@ -33,6 +33,7 @@ import HsDev.Error
 import HsDev.Tools.Ghc.Worker (GhcM, tmpSession, formatType)
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub)
+import System.Directory.Paths (fromFilePath, normalize)
 
 import qualified ConLike as GHC
 import qualified DataCon as GHC
@@ -175,7 +176,7 @@ readPackageConfig pc = PackageConfig
 	(GHC.exposed pc)
 
 ghcModuleLocation :: GHC.PackageConfig -> GHC.Module -> Bool -> ModuleLocation
-ghcModuleLocation p m = InstalledModule (map fromString $ GHC.libraryDirs p) (readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
+ghcModuleLocation p m = InstalledModule (map (normalize . fromFilePath) $ GHC.libraryDirs p) (readPackage p) (fromString $ GHC.moduleNameString $ GHC.moduleName m)
 
 ghcModuleId :: GHC.PackageConfig -> GHC.Module -> Bool -> ModuleId
 ghcModuleId p m e = ModuleId (fromString mname') (ghcModuleLocation p m e) where
