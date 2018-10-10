@@ -72,7 +72,7 @@ listModules :: [String] -> PackageDbStack -> [ModulePackage] -> GhcM [ModuleLoca
 listModules opts dbs pkgs = do
 	tmpSession dbs (opts ++ packagesOpts)
 	ms <- packageDbModules
-	return [ghcModuleLocation p m e | (p, m, e) <- ms]
+	return $ ordNub [ghcModuleLocation p m e | (p, m, e) <- ms]
 	where
 		packagesOpts = ["-package " ++ show p | p <- pkgs]
 
@@ -82,7 +82,7 @@ listModules opts dbs pkgs = do
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
 	tmpSession dbs opts
-	liftM concat . withEachPackage (const $ browseModules' opts) $ mlocs
+	liftM concat . withEachPackage (const $ browseModules' opts) $ ordNub $ mlocs
 
 -- | Inspect installed modules, doesn't set session and package flags!
 browseModules' :: [String] -> [ModuleLocation] -> GhcM [InspectedModule]
