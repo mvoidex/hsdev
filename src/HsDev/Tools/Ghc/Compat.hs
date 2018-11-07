@@ -14,7 +14,8 @@ module HsDev.Tools.Ghc.Compat (
 	exposedModuleName,
 	exprType,
 	modSummaries,
-	cleanTemps
+	cleanTemps,
+	mgArgTys, mgResTy
 	) where
 
 import qualified BasicTypes
@@ -234,4 +235,20 @@ cleanTemps _ = return ()
 cleanTemps df = do
 	SysTools.cleanTempFiles df
 	SysTools.cleanTempDirs df
+#endif
+
+mgArgTys :: GHC.MatchGroup TcId (GHC.LHsExpr TcId) -> Maybe [GHC.Type]
+#if __GLASGOW_HASKELL__ >= 806
+mgArgTys (GHC.MG{GHC.mg_ext=ext}) = Just $ GHC.mg_arg_tys ext
+mgArgTys _ = Nothing
+#else
+mgArgTys = Just . GHC.mg_arg_tys
+#endif
+
+mgResTy :: GHC.MatchGroup TcId (GHC.LHsExpr TcId) -> Maybe GHC.Type
+#if __GLASGOW_HASKELL__ >= 806
+mgResTy (GHC.MG{GHC.mg_ext=ext}) = Just $ GHC.mg_res_ty ext
+mgResTy _ = Nothing
+#else
+mgResTy = Just . GHC.mg_res_ty
 #endif

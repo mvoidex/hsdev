@@ -12,6 +12,7 @@ module HsDev.Tools.Ghc.MGhc (
 	) where
 
 import Control.Lens
+import Control.Monad.Fail as Fail
 import Control.Monad.Morph
 import Control.Monad.Catch
 import Control.Monad.Reader
@@ -80,13 +81,16 @@ instance ExceptionMonad m => ExceptionMonad (ReaderT r m) where
 
 -- | Multi-session ghc monad
 newtype MGhcT s d m a = MGhcT { unMGhcT :: GhcT (ReaderT (Maybe FilePath) (StateT (SessionState s d) m)) a }
-	deriving (Functor, Applicative, Monad, MonadIO, ExceptionMonad, HasDynFlags, GhcMonad, MonadState (SessionState s d), MonadReader (Maybe FilePath), MonadThrow, MonadCatch, MonadMask, MonadLog)
+	deriving (Functor, Applicative, Monad, MonadFail, MonadIO, ExceptionMonad, HasDynFlags, GhcMonad, MonadState (SessionState s d), MonadReader (Maybe FilePath), MonadThrow, MonadCatch, MonadMask, MonadLog)
 
 instance MonadTrans GhcT where
 	lift = liftGhcT
 
 instance MFunctor GhcT where
 	hoist fn = GhcT . (fn .) . unGhcT
+
+instance MonadFail m => MonadFail (GhcT m) where
+	fail = lift . Fail.fail
 
 instance MonadState st m => MonadState st (GhcT m) where
 	get = lift get

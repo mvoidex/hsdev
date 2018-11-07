@@ -1,5 +1,5 @@
 name:                hsdev
-version:             0.3.2.1
+version:             0.3.2.2
 synopsis:            Haskell development library
 description:
   Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
@@ -155,7 +155,7 @@ library
     build-depends:
       hdocs >= 0.5.2,
       haddock-api >= 2.17.4,
-      haddock-library >= 1.4.3 && < 1.7
+      haddock-library >= 1.4.3 && < 1.8
 
   if flag(hlint)
     build-depends:
@@ -198,7 +198,7 @@ library
     process                           >= 1.4.2.0 && < 1.7,
     regex-pcre-builtin                >= 0.94.4 && < 0.95,
     scientific                        >= 0.3.4.9 && < 0.4,
-    simple-log                        == 0.9.*,
+    simple-log                        >= 0.9.9 && < 0.10,
     sqlite-simple                     >= 0.4.13.0 && < 0.5,
     stm                               >= 2.4 && < 2.6,
     syb                               >= 0.6 && < 0.8,

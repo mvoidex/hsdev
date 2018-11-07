@@ -15,6 +15,7 @@ import Control.Lens (makeLenses)
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Except
+import Control.Monad.Fail (MonadFail)
 import Control.Monad.Morph
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -119,7 +120,7 @@ sendUpdateAction act = do
 	liftIO $ inWorker w act
 
 newtype UpdateM m a = UpdateM { runUpdateM :: ReaderT UpdateState (WriterT [ModuleLocation] (ClientM m)) a }
-	deriving (Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask, Functor, MonadReader UpdateState, MonadWriter [ModuleLocation])
+	deriving (Applicative, Alternative, Monad, MonadFail, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask, Functor, MonadReader UpdateState, MonadWriter [ModuleLocation])
 
 instance MonadTrans UpdateM where
 	lift = UpdateM . lift . lift . lift

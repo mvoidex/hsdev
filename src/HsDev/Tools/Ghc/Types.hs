@@ -9,6 +9,7 @@ module HsDev.Tools.Ghc.Types (
 import Control.DeepSeq
 import Control.Lens (over, view, set, each, preview, makeLenses, _Just)
 import Control.Monad
+import Control.Monad.Fail (MonadFail)
 import Control.Monad.IO.Class
 import Data.Aeson
 import Data.Generics
@@ -48,8 +49,10 @@ instance HasType (LHsExpr TcId) where
 			return (getLoc e, C.exprType ex)
 
 instance HasType (LHsBind TcId) where
-	getType (L _ FunBind { fun_id = fid, fun_matches = m}) = return $ Just (getLoc fid, typ) where
-		typ = mkFunTys (mg_arg_tys m) (mg_res_ty m)
+	getType (L _ FunBind { fun_id = fid, fun_matches = m}) = return $ do
+		argTys <- mgArgTys m
+		resTy <- mgResTy m
+		return (getLoc fid, mkFunTys argTys resTy)
 	getType _ = return Nothing
 
 instance HasType (LPat TcId) where
@@ -69,7 +72,7 @@ everythingTyped k z f x
 		nameSet :: NameSet -> Bool
 		nameSet = const True
 
-moduleTypes :: GhcMonad m => Path -> m [(SrcSpan, Type)]
+moduleTypes :: (MonadFail m, GhcMonad m) => Path -> m [(SrcSpan, Type)]
 moduleTypes fpath = do
 	fpath' <- liftIO $ canonicalize fpath
 	mg <- getModuleGraph
@@ -106,7 +109,7 @@ instance FromJSON TypedExpr where
 		v .:: "type"
 
 -- | Get all types in module
-fileTypes :: (MonadLog m, GhcMonad m) => Module -> Maybe Text -> m [Note TypedExpr]
+fileTypes :: (MonadLog m, MonadFail m, GhcMonad m) => Module -> Maybe Text -> m [Note TypedExpr]
 fileTypes m msrc = scope "types" $ case view (moduleId . moduleLocation) m of
 	FileModule file proj -> do
 		file' <- liftIO $ canonicalize file
@@ -145,5 +148,5 @@ setModuleTypes ts = over (moduleScope . each . each) setType . over (moduleExpor
 		return $ set (symbolInfo . functionType) (Just $ view (note . typedType) tnote) d
 
 -- | Infer types in module
-inferTypes :: (MonadLog m, GhcMonad m) => Module -> Maybe Text -> m Module
+inferTypes :: (MonadLog m, MonadFail m, GhcMonad m) => Module -> Maybe Text -> m Module
 inferTypes m msrc = scope "infer" $ liftM (`setModuleTypes` m) $ fileTypes m msrc

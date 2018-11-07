@@ -22,6 +22,7 @@ import Control.Lens (view, set)
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.Except
+import Control.Monad.Fail
 import Control.Monad.Morph
 import Control.Monad.Reader
 import Control.Monad.State
@@ -60,7 +61,7 @@ import HsDev.Util
 import System.Win32.FileMapping.NamePool (Pool)
 #endif
 
-type ServerMonadBase m = (MonadIO m, MonadMask m, MonadBaseControl IO m, Alternative m, MonadPlus m)
+type ServerMonadBase m = (MonadIO m, MonadFail m, MonadMask m, MonadBaseControl IO m, Alternative m, MonadPlus m)
 
 data SessionLog = SessionLog {
 	sessionLogger :: Log,
@@ -92,7 +93,7 @@ askSession :: SessionMonad m => (Session -> a) -> m a
 askSession f = liftM f getSession
 
 newtype ServerM m a = ServerM { runServerM :: ReaderT Session m a }
-	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadReader Session, MonadTrans, MonadThrow, MonadCatch, MonadMask)
+	deriving (Functor, Applicative, Alternative, Monad, MonadFail, MonadPlus, MonadIO, MonadReader Session, MonadTrans, MonadThrow, MonadCatch, MonadMask)
 
 instance (MonadIO m, MonadMask m) => MonadLog (ServerM m) where
 	askLog = ServerM $ asks (sessionLogger . sessionLog)
@@ -142,7 +143,7 @@ askOptions :: CommandMonad m => (CommandOptions -> a) -> m a
 askOptions f = liftM f getOptions
 
 newtype ClientM m a = ClientM { runClientM :: ServerM (ReaderT CommandOptions m) a }
-	deriving (Functor, Applicative, Alternative, Monad, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask)
+	deriving (Functor, Applicative, Alternative, Monad, MonadFail, MonadPlus, MonadIO, MonadThrow, MonadCatch, MonadMask)
 
 instance MonadTrans ClientM where
 	lift = ClientM . lift . lift
