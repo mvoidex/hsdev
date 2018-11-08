@@ -4,6 +4,4 @@ flags:
 packages:
 - '.'
 - 'tests/test-package/'
-extra-deps:
-- simple-log-0.9.9
-resolver: nightly-2018-11-07
+resolver: nightly-2018-11-08
