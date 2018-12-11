@@ -4,4 +4,4 @@ flags:
 packages:
 - '.'
 - 'tests/test-package/'
-resolver: nightly-2018-11-08
+resolver: nightly-2018-12-10

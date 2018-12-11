@@ -60,11 +60,16 @@ getDecl decl' = case decl' of
 	H.ClassDecl _ mctx h _ clsDecls -> mkSymbol nm (Class (tyArgs h) (getCtx mctx)) : concatMap (getClassDecl nm) (fromMaybe [] clsDecls) where
 		nm = tyName h
 	H.TypeSig _ ns tsig -> [mkSymbol n (Function (Just $ oneLinePrint tsig)) | n <- ns]
-	H.PatSynSig _ ns mas _ _ t -> [mkSymbol n (PatConstructor (maybe [] (map prp) mas) (Just $ oneLinePrint t)) | n <- ns'] where
-#if MIN_VERSION_haskell_src_exts(1,20,0)
-		ns' = ns
+#if MIN_VERSION_haskell_src_exts(1,21,0)
+	H.PatSynSig _ ns mas _ _ _ t ->
 #else
-		ns' = [ns]
+	H.PatSynSig _ ns mas _ _ t ->
+#endif
+		[mkSymbol n (PatConstructor (maybe [] (map prp) mas) (Just $ oneLinePrint t)) | n <- ns'] where
+#if MIN_VERSION_haskell_src_exts(1,20,0)
+			ns' = ns
+#else
+			ns' = [ns]
 #endif
 	H.FunBind _ ms -> [mkSymbol (matchName m) (Function Nothing) | m <- ms] where
 		matchName (H.Match _ n _ _ _) = n
@@ -101,13 +106,23 @@ getConDecl ptype (H.QualConDecl _ _ _ cdecl) = case cdecl of
 		[mkSymbol fn (Selector (Just $ prp ft) (prp ptype) [prp n]) | H.FieldDecl _ fns ft <- fs, fn <- fns]
 
 getGConDecl :: H.Name Ann -> H.GadtDecl Ann -> [Symbol]
-getGConDecl _ (H.GadtDecl _ n Nothing t) = [mkSymbol n (Constructor (map prp as) (prp res))] where
-	(as, res) = tyFunSplit t
-	tyFunSplit = go [] where
-		go as' (H.TyFun _ arg' res') = go (arg' : as') res'
-		go as' t' = (reverse as', t')
-getGConDecl ptype (H.GadtDecl _ n (Just fs) t) = mkSymbol n (Constructor [prp ft | H.FieldDecl _ _ ft <- fs] (prp t)) :
-	[mkSymbol fn (Selector (Just $ prp ft) (prp ptype) [prp n]) | H.FieldDecl _ fns ft <- fs, fn <- fns]
+#if MIN_VERSION_haskell_src_exts(1,21,0)
+getGConDecl _ (H.GadtDecl _ n _ _ Nothing t) =
+#else
+getGConDecl _ (H.GadtDecl _ n Nothing t) =
+#endif
+	[mkSymbol n (Constructor (map prp as) (prp res))] where
+		(as, res) = tyFunSplit t
+		tyFunSplit = go [] where
+			go as' (H.TyFun _ arg' res') = go (arg' : as') res'
+			go as' t' = (reverse as', t')
+#if MIN_VERSION_haskell_src_exts(1,21,0)
+getGConDecl ptype (H.GadtDecl _ n _ _ (Just fs) t) =
+#else
+getGConDecl ptype (H.GadtDecl _ n (Just fs) t) =
+#endif
+	mkSymbol n (Constructor [prp ft | H.FieldDecl _ _ ft <- fs] (prp t)) :
+		[mkSymbol fn (Selector (Just $ prp ft) (prp ptype) [prp n]) | H.FieldDecl _ fns ft <- fs, fn <- fns]
 
 getClassDecl :: H.Name Ann -> H.ClassDecl Ann -> [Symbol]
 getClassDecl pclass (H.ClsDecl _ (H.TypeSig _ ns tsig)) = [mkSymbol n (Method (Just $ oneLinePrint tsig) (prp pclass)) | n <- ns]

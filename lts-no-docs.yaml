@@ -1,7 +1,7 @@
 flags:
   hsdev:
     docs: False
-resolver: lts-12.12
+resolver: lts-12.22
 extra-package-dbs: []
 packages:
 - '.'
