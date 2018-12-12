@@ -7,5 +7,5 @@ extra-deps:
 - hdocs-0.5.3.1
 - haskell-src-exts-1.21.0
 - hlint-2.1.12
-- ../haskell-names
+- haskell-names-0.9.5
 resolver: nightly-2018-12-10
