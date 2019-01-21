@@ -1,13 +1,10 @@
 flags:
   hsdev:
     docs: False
-resolver: lts-12.22
+resolver: lts-13.4
 extra-package-dbs: []
 packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
-- hformat-0.3.3.1
-- simple-log-0.9.8
-- text-region-0.3.1.0
-- haskell-names-0.9.3
+- network-3.0.0.0

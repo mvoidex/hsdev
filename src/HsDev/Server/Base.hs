@@ -37,6 +37,7 @@ import Options.Applicative (info, progDesc)
 import System.Log.Simple hiding (Level(..), Message)
 import qualified System.Log.Simple.Base as Log (level_)
 import qualified System.Log.Simple as Log
+import qualified Network.HTTP.Client as HTTP
 import Network.Socket
 import qualified Network.Socket.ByteString.Lazy as Net (getContents, sendAll)
 import System.FilePath
@@ -118,6 +119,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> maybeWit
 
 		uw <- startWorker (withSession sess . withSqlConnection) id logAll
 		resolveEnvTable <- newLookupTable
+		httpManager <- HTTP.newManager HTTP.defaultManagerSettings
 
 		return $ Session
 			sqlDb
@@ -131,6 +133,7 @@ runServer sopts act = bracket (initLog sopts) sessionLogWait $ \slog -> maybeWit
 			ghcw
 			uw
 			resolveEnvTable
+			httpManager
 			(do
 				withLog (sessionLogger slog) $ Log.sendLog Log.Trace "stopping server"
 				signalQSem waitSem)
@@ -182,8 +185,8 @@ setupServer sopts = do
 		bracket (liftIO $ makeSocket (serverPort sopts)) (liftIO . close) $ \s -> do
 			liftIO $ do
 				setSocketOption s ReuseAddr 1
-				addr' <- inet_addr "127.0.0.1"
-				bind s (sockAddr (serverPort sopts) addr')
+				sockAddr':_ <- getAddrInfo (Just defaultHints) (Just "127.0.0.1") (Just $ show $ serverPort sopts)
+				bind s (addrAddress sockAddr')
 				listen s maxListenQueue
 			forever $ logAsync (Log.sendLog Log.Fatal . fromString) $ logIO "exception: " (Log.sendLog Log.Error . fromString) $ do
 				Log.sendLog Log.Trace "accepting connection..."

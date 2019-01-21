@@ -4,4 +4,6 @@ flags:
 packages:
 - '.'
 - 'tests/test-package/'
-resolver: nightly-2018-12-10
+resolver: nightly-2019-01-21
+extra-deps:
+- network-3.0.0.0

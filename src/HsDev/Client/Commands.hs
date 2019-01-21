@@ -388,9 +388,11 @@ runCommand (Complete input False fpath) = toValue $
 			"srcm.file == ?",
 			"c.completion like ? escape '\\'"]])
 		(fpath ^. path, likePattern (SearchQuery input SearchPrefix))
-runCommand (Hayoo hq p ps) = toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
-	(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
-	liftIO $ hsdevLift $ Hayoo.hayoo hq (Just i)
+runCommand (Hayoo hq p ps) = do
+	m <- askSession sessionHTTPManager
+	toValue $ liftM concat $ forM [p .. p + pred ps] $ \i -> liftM
+		(mapMaybe Hayoo.hayooAsSymbol . Hayoo.resultResult) $
+		liftIO $ hsdevLift $ Hayoo.hayoo m hq (Just i)
 runCommand (CabalList packages') = toValue $ liftIO $ hsdevLift $ Cabal.cabalList $ map unpack packages'
 runCommand (UnresolvedSymbols fs) = toValue $ liftM concat $ forM fs $ \f -> do
 	rs <- query @_ @(Maybe String, String, Int, Int) "select n.qualifier, n.name, n.line, n.column from modules as m, names as n where (m.id == n.module_id) and (m.file == ?) and (n.resolve_error is not null);"

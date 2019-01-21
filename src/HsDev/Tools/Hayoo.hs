@@ -22,7 +22,8 @@ import Data.Aeson
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Either
 import Data.Maybe (listToMaybe, fromJust)
-import Network.HTTP
+import Network.HTTP.Client
+import Network.URI (escapeURIString, isUnescapedInURIComponent)
 import Data.String (fromString)
 import qualified Data.Text as T (unpack, unlines)
 
@@ -126,10 +127,13 @@ hayooAsSymbol f
 		ctors = [("type", Type), ("newtype", NewType), ("data", Data), ("class", Class)]
 
 -- | Search hayoo
-hayoo :: String -> Maybe Int -> ExceptT String IO HayooResult
-hayoo q page = do
-	resp <- ExceptT $ (show +++ rspBody) <$> simpleHTTP (getRequest $ maybe id addPage page $ "http://hayoo.fh-wedel.de/json/?query=" ++ urlEncode q)
-	ExceptT $ return $ eitherDecode $ L.pack resp
+hayoo :: Manager -> String -> Maybe Int -> ExceptT String IO HayooResult
+hayoo m q page = do
+	resp <- liftIO $ do
+		req <- parseRequest $ maybe id addPage page $ "http://hayoo.fh-wedel.de/json/?query=" ++ escapeURIString isUnescapedInURIComponent q
+		resp <- httpLbs req m
+		return $ responseBody resp
+	ExceptT $ return $ eitherDecode resp
 	where
 		addPage :: Int -> String -> String
 		addPage p s = s ++ "&page=" ++ show p

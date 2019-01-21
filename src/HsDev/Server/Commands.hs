@@ -73,8 +73,8 @@ sendCommand copts noFile c onNotification = do
 			_ <- traverse parseData input -- FIXME: Not used!
 
 			s <- makeSocket (clientPort copts)
-			addr' <- inet_addr "127.0.0.1"
-			Net.connect s (sockAddr (clientPort copts) addr')
+			sockAddr':_ <- getAddrInfo (Just defaultHints) (Just "127.0.0.1") (Just $ show $ clientPort copts)
+			Net.connect s (addrAddress sockAddr')
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> do
 				L.hPutStrLn h $ encode $ Message Nothing $ Request c curDir noFile (clientTimeout copts) (clientSilent copts)
 				hFlush h
@@ -152,8 +152,8 @@ runServerCommand (Stop copts) = runServerCommand (Remote copts False Exit)
 runServerCommand (Connect copts) = do
 	curDir <- getCurrentDirectory
 	s <- makeSocket $ clientPort copts
-	addr' <- inet_addr "127.0.0.1"
-	Net.connect s $ sockAddr (clientPort copts) addr'
+	sockAddr':_ <- getAddrInfo (Just defaultHints) (Just "127.0.0.1") (Just $ show $ clientPort copts)
+	Net.connect s (addrAddress sockAddr')
 	bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [(1 :: Integer)..] $ \i -> ignoreIO $ do
 		input' <- hGetLineBS stdin
 		case decodeMsg input' of

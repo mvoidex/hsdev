@@ -1,5 +1,5 @@
 name:                hsdev
-version:             0.3.2.3
+version:             0.3.3.0
 synopsis:            Haskell development library
 description:
   Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
@@ -165,7 +165,6 @@ library
   -- Upper bound is set for GHC 8.4
   build-depends:
     base                              >= 4.9 && < 5,
-    HTTP                              >= 4000.3.7 && < 4000.4,
     aeson                             >= 1.2.4.0 && < 1.5,
     aeson-pretty                      >= 0.8.2 && < 0.9,
     array                             >= 0.5.1.1 && < 0.6,
@@ -187,13 +186,15 @@ library
     haskell-src-exts                  >= 1.19.1 && < 1.22.0,
     hformat                           >= 0.1.0.1 && < 0.4,
     hlint                             >= 2.0.11 && < 2.2,
+    http-client                    >= 0.5 && < 0.7,
     lens                              >= 4.14 && < 4.18,
     lifted-base                       >= 0.2.3.10 && < 0.3,
     mmorph                            >= 1.0.9 && < 1.2,
     monad-control                     >= 1.0.1.0 && < 1.1,
     monad-loops                       >= 0.4.3 && < 0.5,
     mtl                               >= 2.2.1 && < 2.3,
-    network                           >= 2.6.3.1 && < 2.9,
+    network                           >= 3.0 && < 3.1,
+    network-uri                      >= 2.6 && < 2.7,
     optparse-applicative              >= 0.12.1.0 && < 0.15,
     process                           >= 1.4.2.0 && < 1.7,
     regex-pcre-builtin                >= 0.94.4 && < 0.95,
@@ -208,7 +209,6 @@ library
     time                              >= 1.6.0.1 && < 1.9,
     transformers                      >= 0.5.2.0 && < 0.6,
     transformers-base                 >= 0.4.4 && < 0.5,
-    traverse-with-class               >= 1.0.0.0 && < 1.1,
     uniplate                          >= 1.6.12 && < 1.7,
     unordered-containers              >= 0.2.8.0 && < 0.3,
     vector                            >= 0.11.0.0 && < 0.13
@@ -231,7 +231,7 @@ executable hsdev
     filepath                          >= 1.4.1.0 && < 1.5,
     monad-loops                       >= 0.4.3 && < 0.5,
     mtl                               >= 2.2.1 && < 2.3,
-    network                           >= 2.6.3.1 && < 2.9,
+    network                           >= 3.0 && < 3.1,
     optparse-applicative              >= 0.12.1.0 && < 0.15,
     process                           >= 1.4.2.0 && < 1.7,
     text                              >= 1.2.2.2 && < 1.3,

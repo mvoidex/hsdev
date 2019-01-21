@@ -37,6 +37,7 @@ import Data.Foldable (asum)
 import Data.Text (Text)
 import Data.String (fromString)
 import qualified Database.SQLite.Simple as SQL
+import qualified Network.HTTP.Client as HTTP
 import Options.Applicative
 import System.Log.Simple as Log
 
@@ -80,6 +81,7 @@ data Session = Session {
 	sessionGhc :: GhcWorker,
 	sessionUpdater :: Worker (ServerM IO),
 	sessionResolveEnvironment :: LookupTable (Maybe Path) (Environment, FixitiesTable),
+	sessionHTTPManager :: HTTP.Manager,
 	sessionExit :: IO (),
 	sessionWait :: IO (),
 	sessionClients :: F.Chan (IO ()),

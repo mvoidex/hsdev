@@ -1,14 +1,10 @@
-resolver: lts-12.22
+resolver: lts-13.4
 extra-package-dbs: []
 packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
-- haddock-api-2.20.0
-- haddock-library-1.6.0
-- hdocs-0.5.3.0
-- hformat-0.3.3.1
-- text-region-0.3.1.0
-- haskell-names-0.9.3
-- simple-log-0.9.9
+- haddock-api-2.21.0
+- hdocs-0.5.3.1
+- network-3.0.0.0
 flags: {}
