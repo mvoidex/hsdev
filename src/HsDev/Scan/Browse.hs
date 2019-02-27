@@ -14,7 +14,7 @@ module HsDev.Scan.Browse (
 	) where
 
 import Control.Arrow
-import Control.Lens (preview)
+import Control.Lens (view, preview)
 import Control.Monad.Catch (MonadCatch, catch, SomeException)
 import Control.Monad.Except
 import Data.Function (on)
@@ -83,7 +83,7 @@ listModules opts dbs pkgs = do
 browseModules :: [String] -> PackageDbStack -> [ModuleLocation] -> GhcM [InspectedModule]
 browseModules opts dbs mlocs = do
 	tmpSession dbs opts
-	liftM concat . withEachPackage (const $ browseModules' opts) $ ordNub mlocs
+	liftM (uniqueInspectedModules . concat) . withEachPackage (const $ browseModules' opts) $ ordNub mlocs
 
 -- | Inspect installed modules, doesn't set session and package flags!
 browseModules' :: [String] -> [ModuleLocation] -> GhcM [InspectedModule]
@@ -171,6 +171,11 @@ tryT act = catch (fmap Just act) (const (return Nothing) . (id :: SomeException 
 -- Select first one of such modules
 uniqueModuleLocations :: [ModuleLocation] -> [ModuleLocation]
 uniqueModuleLocations = uniqueBy nameId' where
+	nameId' mloc = (,) <$> (preview modulePackage mloc) <*> (preview installedModuleName mloc)
+
+-- | There can be one module inspected via different packages, we can leave only one of them
+uniqueInspectedModules :: [InspectedModule] -> [InspectedModule]
+uniqueInspectedModules = uniqueBy (nameId' . view inspectedKey) where
 	nameId' mloc = (,) <$> (preview modulePackage mloc) <*> (preview installedModuleName mloc)
 
 readPackage :: GHC.PackageConfig -> ModulePackage
