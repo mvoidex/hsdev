@@ -1,4 +1,4 @@
-resolver: lts-13.9
+resolver: lts-13.15
 extra-package-dbs: []
 packages:
 - '.'
@@ -6,5 +6,5 @@ packages:
 extra-deps:
 - haddock-api-2.21.0
 - hdocs-0.5.3.1
-- network-3.0.0.0
+- network-3.0.1.1
 flags: {}
