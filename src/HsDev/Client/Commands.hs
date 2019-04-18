@@ -412,45 +412,7 @@ runCommand (CheckLint fs ghcs' lints clear) = toValue $ do
 	checkMsgs <- liftM concat $ mapM (runCheck ghcs' clear) fs'
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint lints (view path f) c) fs'
 	return $ checkMsgs ++ lintMsgs
-runCommand (Types fs ghcs' clear) = toValue $ do
-	liftM concat $ forM fs $ \fsrc@(FileSource file msrc) -> do
-		mcached' <- getCached file msrc
-		FileSource _ msrc' <- actualFileContents fsrc
-		maybe (updateTypes file msrc') return mcached'
-	where
-		getCached :: ServerMonadBase m => Path -> Maybe Text -> ClientM m (Maybe [Tools.Note Types.TypedExpr])
-		getCached _ (Just _) = return Nothing
-		getCached file' Nothing = do
-			actual' <- sourceUpToDate file'
-			mid <- query @_ @((Bool, Int) :. ModuleId)
-				(toQuery $ mconcat [
-					select_ ["json_extract(tags, '$.types') is 1", "mu.id"],
-					qModuleId,
-					where_ ["mu.file = ?"]])
-				(Only file')
-			when (length mid > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ file'
-			when (null mid) $ hsdevError $ NotInspected $ FileModule file' Nothing
-			let
-				[(hasTypes', mid') :. modId] = mid
-			if actual' && hasTypes'
-				then do
-					types' <- query @_ @(Region :. Types.TypedExpr) "select line, column, line_to, column_to, expr, type from types where module_id = ?;" (Only mid')
-					liftM Just $ forM types' $ \(rgn :. texpr) -> return Tools.Note {
-						Tools._noteSource = modId ^. moduleLocation,
-						Tools._noteRegion = rgn,
-						Tools._noteLevel = Nothing,
-						Tools._note = set Types.typedExpr Nothing texpr }
-				else return Nothing
-
-		updateTypes file msrc = do
-			sess <- getSession
-			m <- setFileSourceSession ghcs' file
-			types' <- inSessionGhc $ do
-				when clear clearTargets
-				Update.cacheGhcWarnings sess [m ^. moduleId . moduleLocation] $
-					Types.fileTypes m msrc
-			updateProcess def [Update.setModTypes (m ^. moduleId) types']
-			return $ set (each . Tools.note . Types.typedExpr) Nothing types'
+runCommand (Types fs ghcs' clear) = toValue $ liftM concat $ forM fs $ \f -> getFileTypes f ghcs' clear
 runCommand (AutoFix ns) = toValue $ return $ AutoFix.corrections ns
 runCommand (Refactor ns rest isPure) = toValue $ do
 	files <- liftM (ordNub . sort) $ mapM findPath $ mapMaybe (preview $ Tools.noteSource . moduleFile) ns
@@ -521,6 +483,46 @@ runCommand StopGhc = toValue $ do
 			deleteSession $ view sessionKey s
 runCommand Exit = toValue serverExit
 
+-- | Get file inferred types, infer them or get from cache
+getFileTypes :: ServerMonadBase m => FileSource -> [String] -> Bool -> ClientM m [Tools.Note Types.TypedExpr]
+getFileTypes fsrc@(FileSource file msrc) ghcs' clear = do
+	mcached' <- getCached file msrc
+	FileSource _ msrc' <- actualFileContents fsrc
+	maybe (updateTypes file msrc') return mcached'
+	where
+		getCached :: ServerMonadBase m => Path -> Maybe Text -> ClientM m (Maybe [Tools.Note Types.TypedExpr])
+		getCached _ (Just _) = return Nothing
+		getCached file' Nothing = do
+			actual' <- sourceUpToDate file'
+			mid <- query @_ @((Bool, Int) :. ModuleId)
+				(toQuery $ mconcat [
+					select_ ["json_extract(tags, '$.types') is 1", "mu.id"],
+					qModuleId,
+					where_ ["mu.file = ?"]])
+				(Only file')
+			when (length mid > 1) $ Log.sendLog Log.Warning $ "multiple modules with same file = {}" ~~ file'
+			when (null mid) $ hsdevError $ NotInspected $ FileModule file' Nothing
+			let
+				[(hasTypes', mid') :. modId] = mid
+			if actual' && hasTypes'
+				then do
+					types' <- query @_ @(Region :. Types.TypedExpr) "select line, column, line_to, column_to, expr, type from types where module_id = ?;" (Only mid')
+					liftM Just $ forM types' $ \(rgn :. texpr) -> return Tools.Note {
+						Tools._noteSource = modId ^. moduleLocation,
+						Tools._noteRegion = rgn,
+						Tools._noteLevel = Nothing,
+						Tools._note = set Types.typedExpr Nothing texpr }
+				else return Nothing
+
+		updateTypes file' msrc' = do
+			sess <- getSession
+			m <- setFileSourceSession ghcs' file'
+			types' <- inSessionGhc $ do
+				when clear clearTargets
+				Update.cacheGhcWarnings sess [m ^. moduleId . moduleLocation] $
+					Types.fileTypes m msrc'
+			updateProcess def [Update.setModTypes (m ^. moduleId) types']
+			return $ set (each . Tools.note . Types.typedExpr) Nothing types'
 
 targetFilter :: Text -> Maybe Text -> TargetFilter -> (Text, [NamedParam])
 targetFilter mtable _ (TargetProject proj) = (
