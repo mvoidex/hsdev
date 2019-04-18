@@ -16,8 +16,10 @@ import Control.Monad.Reader
 import qualified Control.Monad.State as State
 import Control.Monad.Catch (try, catch, bracket, SomeException(..))
 import Data.Aeson hiding (Result, Error)
+import Data.Function (on)
 import Data.List
 import Data.Maybe
+import Data.Ord (Ordering(..))
 import qualified Data.Map.Strict as M
 import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T (append, null)
@@ -412,6 +414,21 @@ runCommand (CheckLint fs ghcs' lints clear) = toValue $ do
 	checkMsgs <- liftM concat $ mapM (runCheck ghcs' clear) fs'
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint lints (view path f) c) fs'
 	return $ checkMsgs ++ lintMsgs
+runCommand (RegionType f rgn ghcs' clear) = toValue $ do
+	types' <- getFileTypes f ghcs' clear
+	return . listToMaybe . sortBy (smallerRegion `on` noteRegion') . filter (containsRegion . noteRegion') $ types'
+	where
+		noteRegion' = view (Tools.noteRegion @Types.TypedExpr)
+		containsRegion note = and [
+			view regionFrom rgn >= view regionFrom note,
+			view regionTo rgn <= view regionTo note]
+		smallerRegion :: Region -> Region -> Ordering
+		smallerRegion lhs rhs
+			| view regionFrom lhs > view regionFrom rhs = LT
+			| view regionFrom lhs < view regionFrom rhs = GT
+			| view regionTo lhs < view regionTo rhs = LT
+			| view regionTo lhs > view regionTo rhs = GT
+			| otherwise = EQ
 runCommand (Types fs ghcs' clear) = toValue $ liftM concat $ forM fs $ \f -> getFileTypes f ghcs' clear
 runCommand (AutoFix ns) = toValue $ return $ AutoFix.corrections ns
 runCommand (Refactor ns rest isPure) = toValue $ do

@@ -48,6 +48,7 @@ import Text.Format (Formattable(..), (~~))
 
 import HsDev.Error (hsdevError)
 import HsDev.Inspect.Types
+import HsDev.Symbols.Location (Region(..), Position(..))
 import HsDev.Server.Message
 import HsDev.Watcher.Types (Watcher)
 import HsDev.PackageDb.Types
@@ -503,6 +504,11 @@ data Command =
 		checkLintGhcOpts :: [String],
 		checkLintOpts :: [String],
 		checkLinkClear :: Bool } |
+	RegionType {
+		typeFile :: FileSource,
+		typeRegion :: Region,
+		typeGhcOpts :: [String],
+		typeClear :: Bool } |
 	Types {
 		typesFiles :: [FileSource],
 		typesGhcOpts :: [String],
@@ -566,6 +572,7 @@ instance Paths Command where
 	paths f (Lint fs lints) = Lint <$> traverse (paths f) fs <*> pure lints
 	paths f (Check fs ghcs c) = Check <$> traverse (paths f) fs <*> pure ghcs <*> pure c
 	paths f (CheckLint fs ghcs lints c) = CheckLint <$> traverse (paths f) fs <*> pure ghcs <*> pure lints <*> pure c
+	paths f (RegionType file' rgn ghcs c) = RegionType <$> paths f file' <*> pure rgn <*> pure ghcs <*> pure c
 	paths f (Types fs ghcs c) = Types <$> traverse (paths f) fs <*> pure ghcs <*> pure c
 	paths f (GhcEval e mf) = GhcEval e <$> traverse (paths f) mf
 	paths f (GhcType e mf) = GhcType e <$> traverse (paths f) mf
@@ -628,6 +635,13 @@ instance FromCmd Command where
 		cmd "lint" "lint source files or file contents" (Lint <$> many cmdP <*> lintOpts),
 		cmd "check" "check source files or file contents" (Check <$> many cmdP <*> ghcOpts <*> clearFlag),
 		cmd "check-lint" "check and lint source files or file contents" (CheckLint <$> many cmdP <*> ghcOpts <*> lintOpts <*> clearFlag),
+		cmd "type" "get type for region expression" (RegionType <$>
+			cmdP <*>
+			(Region <$>
+				(Position <$> argument auto (metavar "start-line") <*> argument auto (metavar "start-column")) <*>
+				(Position <$> argument auto (metavar "end-line") <*> argument auto (metavar "end-column"))) <*>
+			ghcOpts <*>
+			clearFlag),
 		cmd "types" "get types for file expressions" (Types <$> many cmdP <*> ghcOpts <*> clearFlag),
 		cmd "autofixes" "get autofixes by output messages" (AutoFix <$> option readJSON (long "data" <> metavar "message" <> help "messages to make fixes for")),
 		cmd "refactor" "apply some refactors and get rest updated" (Refactor <$>
@@ -793,6 +807,7 @@ instance ToJSON Command where
 	toJSON (Lint fs lints) = cmdJson "lint" ["files" .= fs, "lint-opts" .= lints]
 	toJSON (Check fs ghcs c) = cmdJson "check" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
 	toJSON (CheckLint fs ghcs lints c) = cmdJson "check-lint" ["files" .= fs, "ghc-opts" .= ghcs, "lint-opts" .= lints, "clear" .= c]
+	toJSON (RegionType file' rgn ghcs c) = cmdJson "type" ["file" .= file', "region" .= rgn, "ghc-opts" .= ghcs, "clear" .= c]
 	toJSON (Types fs ghcs c) = cmdJson "types" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
 	toJSON (AutoFix ns) = cmdJson "autofixes" ["messages" .= ns]
 	toJSON (Refactor ns rests pure') = cmdJson "refactor" ["messages" .= ns, "rest" .= rests, "pure" .= pure']
@@ -859,6 +874,7 @@ instance FromJSON Command where
 		guardCmd "lint" v *> (Lint <$> v .::?! "files" <*> v .::?! "lint-opts"),
 		guardCmd "check" v *> (Check <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
 		guardCmd "check-lint" v *> (CheckLint <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> v .::?! "lint-opts" <*> (v .:: "clear" <|> pure False)),
+		guardCmd "type" v *> (RegionType <$> v .:: "file" <*> v .:: "region" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
 		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
 		guardCmd "autofixes" v *> (AutoFix <$> v .:: "messages"),
 		guardCmd "refactor" v *> (Refactor <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True)),
