@@ -71,6 +71,7 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 * `hayoo` — search in hayoo
 * `cabal list` — search packages info
 * `lint`, `check`, `lint-check` — lint or check source files. These commands have some advantages over `ghc-mod` ones: `lint` uses `hlint` as library, `check` returns more precise source position and also uses project description to pass `-package` flags, these commands also can accept file contents
+* `type` — get type of expression by region
 * `types` — get types for all source spans
 * `flags`, `langs` — list ghc flags and language extensions
 * `ghc eval` — evaluate expression
