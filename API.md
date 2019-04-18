@@ -232,6 +232,18 @@ Args:
   * `file` — file name
 Response: list of `symbol` objects
 
+#### Type of region
+
+Get type of expression at region
+
+Command: `type`
+Args:
+  * `file` — `source-file` object
+  * `region` — `region` object
+  * `ghc-opts` — list of additional ghc options
+  * `clear` — set to clear targets before running commands
+Response: optional `note typed-expr` object
+
 #### Scope modules
 
 Resolve modules in scope of file (which can be imported)
@@ -565,6 +577,13 @@ Fields:
   * `region` — region of note, `region` object
   * `level` — severity of note, one of `error`/`warning`/`hint`
   * `note` — additional note info
+
+#### Typed expr
+
+Typed expression
+Fields:
+  * `expr` — expression, optional
+  * `type` — type of expression
 
 #### Output-message
 
