@@ -344,6 +344,8 @@ Command: `rename`
 Args:
   * `name` — symbol to rename
   * `new-name` — new name
+  * `line` — line of definition, required if symbol is local, otherwise optional
+  * `column` — column of definition, required if symbol is local, otherwise optional
   * `file` — symbol definition file
 Response: list of `note refact` objects
 

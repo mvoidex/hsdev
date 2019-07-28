@@ -509,7 +509,11 @@ data Command =
 		typesClear :: Bool } |
 	AutoFix [Note OutputMessage] |
 	Refactor [Note Refact] [Note Refact] Bool |
-	Rename Text Text Path |
+	Rename {
+		renameSymbol :: Text,
+		renameTo :: Text,
+		renameLocal :: Maybe (Int, Int),
+		renameContextFile :: Path } |
 	GhcEval { ghcEvalExpressions :: [String], ghcEvalSource :: Maybe FileSource } |
 	GhcType { ghcTypeExpressions :: [String], ghcTypeSource :: Maybe FileSource } |
 	Langs |
@@ -634,7 +638,7 @@ instance FromCmd Command where
 			option readJSON (long "data" <> metavar "message" <> help "messages to fix") <*>
 			option readJSON (long "rest" <> metavar "correction" <> short 'r' <> help "update corrections") <*>
 			pureFlag),
-		cmd "rename" "get rename refactors" (Rename <$> textArgument idm <*> textArgument idm <*> ctx),
+		cmd "rename" "get rename refactors" (Rename <$> textArgument idm <*> textArgument idm <*> (liftA2 (,) <$> optional lineArg <*> optional columnArg) <*> ctx),
 		cmd "ghc" "ghc commands" (
 				subparser (cmd "eval" "evaluate expression" (GhcEval <$> many (strArgument idm) <*> optional cmdP)) <|>
 				subparser (cmd "type" "expression type" (GhcType <$> many (strArgument idm) <*> optional cmdP))),
@@ -675,6 +679,7 @@ textArgument = fmap fromString . strArgument
 
 cabalFlag :: Parser Bool
 clearFlag :: Parser Bool
+columnArg :: Parser Int
 contentsArg :: Parser Text
 ctx :: Parser Path
 depProjArg :: Parser Bool
@@ -688,6 +693,7 @@ headerFlag :: Parser Bool
 holdFlag :: Parser Bool
 inferFlag :: Parser Bool
 inspectionFlag :: Parser Bool
+lineArg :: Parser Int
 lintOpts :: Parser [String]
 localsFlag :: Parser Bool
 moduleArg :: Parser Text
@@ -703,6 +709,7 @@ wideFlag :: Parser Bool
 
 cabalFlag = switch (long "cabal")
 clearFlag = switch (long "clear" <> short 'c' <> help "clear run, drop previous state")
+columnArg = option auto (long "column" <> short 'c' <> help "column of symbol definition, required only for local symbols")
 contentsArg = textOption (long "contents" <> help "text contents")
 ctx = fileArg
 depProjArg = fmap not $ switch (long "no-project" <> help "don't scan related project")
@@ -716,6 +723,7 @@ headerFlag = switch (long "header" <> short 'h' <> help "show only header of mod
 holdFlag = switch (long "hold" <> short 'h' <> help "don't return any response")
 inferFlag = switch (long "infer" <> help "infer types")
 inspectionFlag = switch (long "inspection" <> short 'i' <> help "return inspection data")
+lineArg = option auto (long "line" <> short 'l' <> help "line of symbol definition, required only for local symbols")
 lintOpts = many (strOption (long "lint" <> metavar "option" <> short 'l' <> help "options for hlint"))
 localsFlag = switch (long "locals" <> short 'l' <> help "look in local declarations")
 moduleArg = textOption (long "module" <> metavar "name" <> short 'm' <> help "module name")
@@ -796,7 +804,7 @@ instance ToJSON Command where
 	toJSON (Types fs ghcs c) = cmdJson "types" ["files" .= fs, "ghc-opts" .= ghcs, "clear" .= c]
 	toJSON (AutoFix ns) = cmdJson "autofixes" ["messages" .= ns]
 	toJSON (Refactor ns rests pure') = cmdJson "refactor" ["messages" .= ns, "rest" .= rests, "pure" .= pure']
-	toJSON (Rename n n' f) = cmdJson "rename" ["name" .= n, "new-name" .= n', "file" .= f]
+	toJSON (Rename n n' mloc f) = cmdJson "rename" ["name" .= n, "new-name" .= n', "line" .= fmap fst mloc, "column" .= fmap snd mloc, "file" .= f]
 	toJSON (GhcEval exprs f) = cmdJson "ghc eval" ["exprs" .= exprs, "file" .= f]
 	toJSON (GhcType exprs f) = cmdJson "ghc type" ["exprs" .= exprs, "file" .= f]
 	toJSON Langs = cmdJson "langs" []
@@ -862,7 +870,7 @@ instance FromJSON Command where
 		guardCmd "types" v *> (Types <$> v .::?! "files" <*> v .::?! "ghc-opts" <*> (v .:: "clear" <|> pure False)),
 		guardCmd "autofixes" v *> (AutoFix <$> v .:: "messages"),
 		guardCmd "refactor" v *> (Refactor <$> v .:: "messages" <*> v .::?! "rest" <*> (v .:: "pure" <|> pure True)),
-		guardCmd "rename" v *> (Rename <$> v .:: "name" <*> v .:: "new-name" <*> v .:: "file"),
+		guardCmd "rename" v *> (Rename <$> v .:: "name" <*> v .:: "new-name" <*> (liftA2 (,) <$> v .::? "line" <*> v .::? "column") <*> v .:: "file"),
 		guardCmd "ghc eval" v *> (GhcEval <$> v .::?! "exprs" <*> v .::? "file"),
 		guardCmd "ghc type" v *> (GhcType <$> v .::?! "exprs" <*> v .::? "file"),
 		guardCmd "langs" v *> pure Langs,

@@ -467,31 +467,39 @@ runCommand (Refactor ns rest isPure) = toValue $ do
 				fixRefacts' = fixCorrs' ^.. each . Tools.note
 				newCorrs' = AutoFix.update fixRefacts' upCorrs'
 	liftM concat $ mapM runFix files
-runCommand (Rename nm newName fpath) = toValue $ do
+runCommand (Rename nm newName mloc fpath) = toValue $ do
 	m <- refineSourceModule fpath
 	let
 		mname = m ^. moduleId . moduleName
-		makeNote mloc r = Tools.Note {
-			Tools._noteSource = mloc,
+		makeNote loc r = Tools.Note {
+			Tools._noteSource = loc,
 			Tools._noteRegion = r,
 			Tools._noteLevel = Nothing,
 			Tools._note = AutoFix.Refact "rename" (AutoFix.replace (AutoFix.fromRegion r) newName) }
 
-	defRenames <- do
-		-- FIXME: Doesn't take scope into account. If you have modules with same names in different project, it will rename symbols from both
-		defRegions <- query @_ @Region "select n.line, n.column, n.line_to, n.column_to from names as n, modules as m where m.id == n.module_id and m.name == ? and n.name == ? and def_line is not null;" (
-			mname,
-			nm)
-		return $ map (makeNote (m ^. moduleId . moduleLocation)) defRegions
-
-	usageRenames <- do
-		-- FIXME: Same as above: doesn't take scope into account
-		usageRegions <- query @_ @(Only Path :. Region) "select m.file, n.line, n.column, n.line_to, n.column_to from names as n, modules as m where n.module_id == m.id and m.file is not null and n.resolved_module == ? and n.resolved_name == ?;" (
-			mname,
-			nm)
-		return $ map (\(Only p :. r) -> makeNote (FileModule p Nothing) r) usageRegions
-
-	return $ ordNub $ defRenames ++ usageRenames
+	msum [
+		do
+			topRegions <- query @_ @Region "select n.line, n.column, n.line_to, n.column_to from names as n, modules as m where m.id == n.module_id and m.name == ? and n.name == ? and ((n.def_line is not null and n.def_column is not null) or (n.def_line == ? and n.def_column == ?)) and n.symbol_id is not null;" (
+				mname,
+				nm,
+				fmap fst mloc,
+				fmap snd mloc)
+			guard (not $ null topRegions)
+			let
+				defRenames = map (makeNote (m ^. moduleId . moduleLocation)) topRegions
+			usageRenames <- do
+				usageRegions <- query @_ @(Only Path :. Region) "select m.file, n.line, n.column, n.line_to, n.column_to from names as n, modules as m where n.module_id == m.id and m.file is not null and n.resolved_module == ? and n.resolved_name == ?;" (
+					mname,
+					nm)
+				return $ map (\(Only p :. r) -> makeNote (FileModule p Nothing) r) usageRegions
+			return $ ordNub (defRenames ++ usageRenames),
+		do
+			localRegions <- query @_ @Region "select n.line, n.column, n.line_to, n.column_to from names as n, modules as m where m.id == n.module_id and m.name == ? and n.name == ? and n.def_line == ? and n.def_column == ? and n.symbol_id is null;" (
+				mname,
+				nm,
+				fmap fst mloc,
+				fmap snd mloc)
+			return $ map (makeNote (m ^. moduleId . moduleLocation)) localRegions]
 runCommand (GhcEval exprs mfile) = toValue $ do
 	mfile' <- traverse actualFileContents mfile
 	case mfile' of
