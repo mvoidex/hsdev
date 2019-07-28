@@ -48,6 +48,9 @@ data Note a = Note {
 
 makeLenses ''Note
 
+instance Ord a => Ord (Note a) where
+	compare (Note lsrc lrgn llev lnote) (Note rsrc rrgn rlev rnote) = compare (lsrc, lrgn, llev, lnote) (rsrc, rrgn, rlev, rnote)
+
 instance Functor Note where
 	fmap f (Note s r l n) = Note s r l (f n)
 

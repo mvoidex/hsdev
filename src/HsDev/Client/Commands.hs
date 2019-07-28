@@ -491,7 +491,7 @@ runCommand (Rename nm newName fpath) = toValue $ do
 			nm)
 		return $ map (\(Only p :. r) -> makeNote (FileModule p Nothing) r) usageRegions
 
-	return $ defRenames ++ usageRenames
+	return $ ordNub $ defRenames ++ usageRenames
 runCommand (GhcEval exprs mfile) = toValue $ do
 	mfile' <- traverse actualFileContents mfile
 	case mfile' of

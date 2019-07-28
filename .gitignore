@@ -9,3 +9,5 @@ cabal.project.local
 cabal.sandbox.config
 dist-newstyle/
 dist/
+
+*.lock

@@ -23,6 +23,9 @@ data Refact = Refact {
 	_refactAction :: Replace Text }
 		deriving (Eq, Show)
 
+instance Ord Refact where
+	compare (Refact lmsg _) (Refact rmsg _) = compare lmsg rmsg
+
 instance ToJSON Refact where
 	toJSON (Refact msg cor) = object [
 		"message" .= msg,
