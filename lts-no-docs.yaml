@@ -1,10 +1,10 @@
+resolver: lts-13.29
 flags:
   hsdev:
     docs: False
-resolver: lts-13.4
 extra-package-dbs: []
 packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
-- network-3.0.0.0
+- network-3.0.1.1
