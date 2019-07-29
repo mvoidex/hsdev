@@ -637,20 +637,26 @@ cacheGhcWarnings sess mlocs act = Log.scope "cache-warnings" $ do
 			where
 				initTemp :: SessionMonad m => m ()
 				initTemp = do
-					SQLite.execute_ "create temporary table updating_ids (id integer not null unique);"
+					SQLite.execute_ "create temporary table updating_files (file text not null, mtime real not null);"
+					SQLite.execute_ "create index updating_files_index on updating_files (file);"
+					SQLite.execute_ "create temporary table updating_ids (id integer not null unique, mtime real);"
 					SQLite.execute_ "create temporary table updating_messages as select * from messages where 0;"
 					SQLite.execute_ "create index update_messages_module_id_index on updating_messages (module_id);"
 
 				dropTemp :: SessionMonad m => m ()
 				dropTemp = do
+					SQLite.execute_ "drop table if exists updating_files;"
 					SQLite.execute_ "drop table if exists updating_ids;"
 					SQLite.execute_ "drop table if exists updating_messages;"
 
 				fillTemp :: SessionMonad m => m ()
 				fillTemp = do
-					SQLite.executeMany "insert into updating_ids select distinct m.id from modules as m where (m.file = ?);" $ (map SQLite.Only $ mlocs' ^.. each . moduleFile)
+					mtimes <- forM (mlocs' ^.. each . moduleFile) $ \file' -> (,) <$> pure file' <*> liftIO (fileMTime file')
+					SQLite.executeMany "insert into updating_files values (?, ?);" mtimes
+					SQLite.execute_ "update updating_files set mtime = coalesce(max(mtime, (select c.mtime from file_contents as c where c.file == updating_files.file)), mtime);"
+					SQLite.execute_ "insert into updating_ids select distinct m.id, coalesce(max(u.mtime, m.inspection_time), u.mtime) from modules as m, updating_files as u where m.file = u.file;"
 					SQLite.executeMany "insert into updating_messages select (select m.id from modules as m where (m.file = ?)), ?, ?, ?, ?, ?, ?, ?;" msgs'
-					SQLite.execute_ "insert into updating_ids select distinct umsgs.module_id from updating_messages as umsgs where umsgs.module_id not in (select id from updating_ids);"
+					SQLite.execute_ "insert into updating_ids select distinct umsgs.module_id, m.inspection_time from updating_messages as umsgs, modules as m where umsgs.module_id = m.id and umsgs.module_id not in (select id from updating_ids);"
 
 				removeOutdated :: SessionMonad m => m ()
 				removeOutdated = SQLite.execute_ $ fromString $ unlines [
@@ -658,18 +664,13 @@ cacheGhcWarnings sess mlocs act = Log.scope "cache-warnings" $ do
 					"where",
 					" module_id in (",
 					"  select um.id",
-					"  from",
-					"   updating_ids as um, modules as m",
-					"  left outer join",
-					"   load_times as lt",
-					"  on",
-					"   lt.module_id = um.id",
+					"  from updating_ids as um",
+					"  left outer join load_times as lt",
+					"  on lt.module_id = um.id",
 					"  where",
-					"   um.id = m.id and (",
-					"    lt.load_time is null or",
-					"    lt.load_time <= m.inspection_time or",
-					"    um.id in (select distinct umsgs.module_id from updating_messages as umsgs)",
-					"   )",
+					"   lt.load_time is null or",
+					"   lt.load_time <= um.mtime or",
+					"   um.id in (select distinct umsgs.module_id from updating_messages as umsgs)",
 					" );"]
 
 				insertMessages :: SessionMonad m => m ()

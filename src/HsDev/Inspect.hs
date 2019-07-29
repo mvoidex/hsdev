@@ -6,7 +6,7 @@ module HsDev.Inspect (
 	analyzeResolve, analyzePreloaded,
 	inspectDocs, inspectDocsGhc,
 	inspectContents, contentsInspection,
-	inspectFile, sourceInspection, fileInspection, fileContentsInspection, fileContentsInspection_, installedInspection, moduleInspection,
+	inspectFile, sourceInspection, fileMTime, fileInspection, fileContentsInspection, fileContentsInspection_, installedInspection, moduleInspection,
 	projectDirs, projectSources,
 	getDefines,
 	preprocess, preprocess_,
@@ -238,11 +238,17 @@ sourceInspection :: Path -> Maybe Text -> [String] -> IO Inspection
 sourceInspection f Nothing = fileInspection f
 sourceInspection _ (Just _) = fileContentsInspection
 
+-- | File modification time as posix time
+fileMTime :: Path -> IO POSIXTime
+fileMTime f = do
+	tm <- Dir.getModificationTime (view path f)
+	return $ utcTimeToPOSIXSeconds tm
+
 -- | File inspection data
 fileInspection :: Path -> [String] -> IO Inspection
 fileInspection f opts = do
-	tm <- Dir.getModificationTime (view path f)
-	return $ InspectionAt (utcTimeToPOSIXSeconds tm) $ map fromString $ sort $ ordNub opts
+	mtime <- fileMTime f
+	return $ InspectionAt mtime $ map fromString $ sort $ ordNub opts
 
 -- | File contents inspection data
 fileContentsInspection :: [String] -> IO Inspection

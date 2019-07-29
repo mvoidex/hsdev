@@ -403,19 +403,19 @@ runCommand (UnresolvedSymbols fs) = toValue $ liftM concat $ forM fs $ \f -> do
 		"line" .= line,
 		"column" .= column]) rs
 runCommand (Lint fs lints) = toValue $ liftM concat $ forM fs $ \fsrc -> do
-	FileSource f c <- actualFileContents fsrc
+	FileSource f c <- getUpdateFileContents fsrc
 	liftIO $ hsdevLift $ HLint.hlint lints (view path f) c
 runCommand (Check fs ghcs' clear) = toValue $ Log.scope "check" $
 	liftM concat $ mapM (runCheck ghcs' clear) fs
 runCommand (CheckLint fs ghcs' lints clear) = toValue $ do
-	fs' <- mapM actualFileContents fs
+	fs' <- mapM getUpdateFileContents fs
 	checkMsgs <- liftM concat $ mapM (runCheck ghcs' clear) fs'
 	lintMsgs <- liftIO $ hsdevLift $ liftM concat $ mapM (\(FileSource f c) -> HLint.hlint lints (view path f) c) fs'
 	return $ checkMsgs ++ lintMsgs
 runCommand (Types fs ghcs' clear) = toValue $ do
 	liftM concat $ forM fs $ \fsrc@(FileSource file msrc) -> do
 		mcached' <- getCached file msrc
-		FileSource _ msrc' <- actualFileContents fsrc
+		FileSource _ msrc' <- getUpdateFileContents fsrc
 		maybe (updateTypes file msrc') return mcached'
 	where
 		getCached :: ServerMonadBase m => Path -> Maybe Text -> ClientM m (Maybe [Tools.Note Types.TypedExpr])
@@ -501,7 +501,7 @@ runCommand (Rename nm newName mloc fpath) = toValue $ do
 				fmap snd mloc)
 			return $ map (makeNote (m ^. moduleId . moduleLocation)) localRegions]
 runCommand (GhcEval exprs mfile) = toValue $ do
-	mfile' <- traverse actualFileContents mfile
+	mfile' <- traverse getUpdateFileContents mfile
 	case mfile' of
 		Nothing -> inSessionGhc ghciSession
 		Just (FileSource f mcts) -> do
@@ -509,7 +509,7 @@ runCommand (GhcEval exprs mfile) = toValue $ do
 			inSessionGhc $ interpretModule m mcts
 	inSessionGhc $ mapM (tryRepl . evaluate) exprs
 runCommand (GhcType exprs mfile) = toValue $ do
-	mfile' <- traverse actualFileContents mfile
+	mfile' <- traverse getUpdateFileContents mfile
 	case mfile' of
 		Nothing -> inSessionGhc ghciSession
 		Just (FileSource f mcts) -> do
@@ -586,7 +586,7 @@ instance FromJSON Log.Message where
 
 -- | Run check
 runCheck :: CommandMonad m => [String] -> Bool -> FileSource -> m [Tools.Note Tools.OutputMessage]
-runCheck ghcs' clear = actualFileContents >=> check' where
+runCheck ghcs' clear = getUpdateFileContents >=> check' where
 	check' (FileSource file mcts) = Log.scope "run-check" $ do
 		Log.sendLog Log.Trace $ "setting file source session for {}" ~~ file
 		sess <- getSession
@@ -598,6 +598,7 @@ runCheck ghcs' clear = actualFileContents >=> check' where
 				Check.check m mcts
 		if null ns
 			then do
+				inSessionUpdater $ return () -- wait until cache updated
 				ns' <- Update.cachedWarnings [m ^. moduleId . moduleLocation]
 				unless (null ns') $
 					Log.sendLog Log.Trace $ "returning {} cached warnings for {}" ~~ length ns' ~~ file
@@ -670,10 +671,12 @@ refineSourceModule fpath = do
 					proj' <- SQLite.loadProject cabal'
 					return $ set (moduleId . moduleLocation . moduleProject) (Just proj') m
 
--- | Get file contents
-actualFileContents :: CommandMonad m => FileSource -> m FileSource
-actualFileContents (FileSource fpath Nothing) = fmap (FileSource fpath . fmap snd) (getFileContents fpath)
-actualFileContents fcts = return fcts
+-- | Get update file contents
+getUpdateFileContents :: CommandMonad m => FileSource -> m FileSource
+getUpdateFileContents (FileSource fpath Nothing) = fmap (FileSource fpath . fmap snd) (getFileContents fpath)
+getUpdateFileContents fcts@(FileSource fpath mcts) = do
+	serverSetFileContents fpath mcts
+	return fcts
 
 -- | Set session by source
 setFileSourceSession :: CommandMonad m => [String] -> Path -> m Module
