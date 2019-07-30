@@ -149,7 +149,7 @@ withCurrentDirectory :: GhcMonad m => FilePath -> m a -> m a
 withCurrentDirectory dir act = gbracket (liftIO getCurrentDirectory) (liftIO . setCurrentDirectory) $
 	const (liftIO (setCurrentDirectory dir) >> act)
 
--- | Log  ghc warnings and errors as to chan
+-- | Log ghc warnings and errors as to chan
 -- You may have to apply recalcTabs on result notes
 logToChan :: Chan (Note OutputMessage) -> LogAction
 logToChan ch fs sev src msg
