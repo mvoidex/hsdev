@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, CPP #-}
 
 module HsDev.PackageDb (
 		module HsDev.PackageDb.Types,
@@ -14,7 +14,7 @@ import Data.Text (pack, unpack)
 import Data.Traversable
 import Distribution.InstalledPackageInfo
 import Distribution.Package
-import Distribution.Text (disp)
+import Distribution.Text (display)
 import System.FilePath
 
 import GHC.Paths
@@ -52,18 +52,25 @@ readPackageDb pdb = do
 		confs <- fmap (filter isConf) $ directoryContents (p ^. path)
 		fmap M.unions $ forM confs $ \conf -> do
 				cts <- readFileUtf8 conf
-				case parseInstalledPackageInfo (unpack cts) of
-						ParseFailed _ -> return M.empty  -- FIXME: Should log as warning
-						ParseOk _ res -> mapM (mapM canonicalize) $
+				case parseResult (parseInstalledPackageInfo (unpack cts)) of
+						Left _ -> return M.empty  -- FIXME: Should log as warning
+						Right (_, res) -> mapM (mapM canonicalize) $
 							over (each . each . moduleInstallDirs . each) (subst mlibdir) $ listMods res
 		where
+#if MIN_VERSION_Cabal(3,0,0)
+				parseResult = id
+#else
+				parseResult (ParseFailed e) = Left [show e]
+				parseResult (ParseOk ws res) = Right (map show ws, res)
+#endif
+
 				isConf f = takeExtension f == ".conf"
 				listMods pinfo = M.singleton pname pmods where
 						pname = ModulePackage
-								(pack . show . disp . pkgName $ sourcePackageId pinfo)
-								(pack . show . disp . pkgVersion $ sourcePackageId pinfo)
+								(pack . display . pkgName $ sourcePackageId pinfo)
+								(pack . display . pkgVersion $ sourcePackageId pinfo)
 						pmods = [InstalledModule (map fromFilePath $ libraryDirs pinfo) pname nm exposed' | (nm, exposed') <- names]
-						names = zip (map (pack . show . disp) (exposedModules pinfo)) (repeat True) ++ zip (map (pack . show . disp) (hiddenModules pinfo)) (repeat False)
+						names = zip (map (pack . display) (exposedModules pinfo)) (repeat True) ++ zip (map (pack . display) (hiddenModules pinfo)) (repeat False)
 				subst Nothing f = f
 				subst (Just libdir') f = case splitPaths f of
 						("$topdir":rest) -> joinPaths (fromFilePath libdir' : rest)

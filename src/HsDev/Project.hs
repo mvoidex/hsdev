@@ -25,6 +25,9 @@ import Data.Text (Text, pack, unpack)
 import qualified Data.Text as T (intercalate)
 import Data.Text.Lens (unpacked)
 import Distribution.Compiler (CompilerFlavor(GHC))
+#if MIN_VERSION_Cabal(3,0,0)
+import Distribution.Compiler (perCompilerFlavorToList)
+#endif
 import qualified Distribution.Package as P
 import qualified Distribution.PackageDescription as PD
 import qualified Distribution.ModuleName as PD (toFilePath)
@@ -95,12 +98,18 @@ analyzeCabal source = case liftM flattenDescr $ parsePackageDesc source of
 			_infoDepends = map pkgName (PD.targetBuildDepends info),
 			_infoLanguage = PD.defaultLanguage info,
 			_infoExtensions = PD.defaultExtensions info ++ PD.otherExtensions info ++ PD.oldExtensions info,
-			_infoGHCOptions = maybe [] (map pack) $ lookup GHC (PD.options info),
+			_infoGHCOptions = maybe [] (map pack) $ lookup GHC (pkgOptions info),
 			_infoSourceDirs = map pack $ PD.hsSourceDirs info,
 			_infoOtherModules = map (map pack . components) (PD.otherModules info) }
 
+#if MIN_VERSION_Cabal(3,0,0)
+		pkgOptions = perCompilerFlavorToList . PD.options
+#else
+		pkgOptions = PD.options
+#endif
+
 		pkgName :: P.Dependency -> Text
-		pkgName (P.Dependency dep _) = pack $ P.unPackageName dep
+		pkgName = pack . P.unPackageName . P.depPkgName
 
 		flattenDescr :: PD.GenericPackageDescription -> PD.PackageDescription
 		flattenDescr gpkg = pkg {

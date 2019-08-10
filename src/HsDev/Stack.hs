@@ -21,6 +21,7 @@ import Control.Monad.IO.Class
 import Data.Char
 import Data.Maybe
 import Data.Map.Strict (Map)
+import Data.Version (showVersion)
 import qualified Data.Map.Strict as M
 import Distribution.Compiler
 import Distribution.System
@@ -54,7 +55,7 @@ stackCompiler = do
 			Compat.pkgDatabase $ df
 		compiler = T.display buildCompilerFlavor
 		CompilerId _ version' = buildCompilerId
-		ver = maybe (T.display version') T.display $ lookup compiler res
+		ver = maybe (T.display version') showVersion $ lookup compiler res
 	return $ compiler ++ "-" ++ ver
 
 -- | Get arch for stack

@@ -62,7 +62,11 @@ import qualified Data.Text.Lazy as T
 import qualified Data.Text.Lazy.Encoding as T
 import Data.Time.Clock.POSIX
 import Distribution.Text (simpleParse)
-import qualified Distribution.Text (Text)
+#if MIN_VERSION_Cabal(3,0,0)
+import qualified Distribution.Parsec as DT
+#else
+import qualified Distribution.Text as DT
+#endif
 import Options.Applicative
 import qualified System.Directory as Dir
 import System.FilePath
@@ -303,7 +307,11 @@ version :: Maybe [Int]
 version = mapM readMaybe $ split (== '.') $cabalVersion
 
 -- | Parse Distribution.Text
-parseDT :: (Monad m, Distribution.Text.Text a) => String -> String -> m a
+#if MIN_VERSION_Cabal(3,0,0)
+parseDT :: (Monad m, DT.Parsec a) => String -> String -> m a
+#else
+parseDT :: (Monad m, DT.Text a) => String -> String -> m a
+#endif
 parseDT typeName v = maybe err return (simpleParse v) where
 	err = fail $ "Can't parse {}: {}" ~~ typeName ~~ v
 

@@ -14,8 +14,13 @@ import Distribution.Text (display)
 
 #if MIN_VERSION_Cabal(2,2,0)
 import Distribution.PackageDescription.Parsec
-import Distribution.Parsec.Common (showPError)
 import qualified Data.ByteString.Char8 as C8 (pack)
+#endif
+
+#if MIN_VERSION_Cabal(3,0,0)
+import Distribution.Parsec (showPError)
+#elif MIN_VERSION_Cabal(2,2,0)
+import Distribution.Parsec.Common (showPError)
 #else
 import Distribution.PackageDescription.Parse
 #endif

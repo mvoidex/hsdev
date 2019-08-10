@@ -10,8 +10,9 @@ module HsDev.Tools.Ghc.System (
 import Control.Arrow
 import qualified Data.Map as M
 import Data.Maybe
-import Distribution.Text (display)
+import Data.Version (showVersion)
 import Distribution.System (buildOS)
+import Distribution.Text (display)
 import qualified System.Info as Sys
 import Text.Format
 
@@ -34,7 +35,7 @@ buildInfo = BuildInfo Sys.arch Sys.os (display buildOS) Sys.compilerName . exami
 
 examineCompilerVersion :: DynFlags -> String
 examineCompilerVersion =
-	display .
+	showVersion .
 	fromMaybe Sys.compilerVersion .
 	M.lookup Sys.compilerName .
 	M.fromList .

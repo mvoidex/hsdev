@@ -1,0 +1,23 @@
+resolver: lts-14.0
+extra-package-dbs: []
+packages:
+- '.'
+- 'tests/test-package/'
+extra-deps:
+- network-3.0.1.1
+- Cabal-3.0.0.0
+- git: https://github.com/mvoidex/hdocs
+  commit: ce3abbfef07152083857f058155d9e65f47ab0b3
+- git: https://github.com/mvoidex/cabal-doctest
+  commit: 11da6b1a9b596e63777aaa016243683a721331be
+- git: https://github.com/mvoidex/ghc-paths
+  commit: 006a787dda37cad403307ffc1f484b59c763076e
+- git: https://github.com/mvoidex/haddock
+  commit: 0cce2dcd99b516ef420bc9788da325ac3bf3de0c
+  subdirs:
+    - haddock-api
+- git: https://github.com/simonmar/happy.git
+  commit: 66982277ac7aed23edbb36c5f7aa5a86e5bdf778
+- git: https://github.com/ekmett/lens.git
+  commit: 8fc321358d341bdc1fb8267846909151ef426b3a
+flags: {}
