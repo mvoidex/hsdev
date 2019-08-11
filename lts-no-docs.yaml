@@ -6,5 +6,3 @@ extra-package-dbs: []
 packages:
 - '.'
 - 'tests/test-package/'
-extra-deps:
-- network-3.0.1.1

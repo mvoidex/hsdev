@@ -5,5 +5,4 @@ packages:
 extra-deps:
 - haddock-api-2.21.0
 - hdocs-0.5.3.1
-- network-3.0.1.1
 resolver: nightly-2019-08-07

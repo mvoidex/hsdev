@@ -9,7 +9,7 @@ module HsDev.Server.Base (
 	findPath,
 	processRequest, processClient, processClientSocket,
 
-	unMmap, makeSocket, sockAddr,
+	unMmap, makeSocket, bindSocket, connectSocket,
 
 	module HsDev.Server.Types,
 	module HsDev.Server.Message
@@ -38,7 +38,7 @@ import System.Log.Simple hiding (Level(..), Message)
 import qualified System.Log.Simple.Base as Log (level_)
 import qualified System.Log.Simple as Log
 import qualified Network.HTTP.Client as HTTP
-import Network.Socket
+import Network.Socket hiding (bindSocket)
 import qualified Network.Socket.ByteString.Lazy as Net (getContents, sendAll)
 import System.FilePath
 import System.IO
@@ -185,8 +185,7 @@ setupServer sopts = do
 		bracket (liftIO $ makeSocket (serverPort sopts)) (liftIO . close) $ \s -> do
 			liftIO $ do
 				setSocketOption s ReuseAddr 1
-				sockAddr':_ <- getAddrInfo (Just defaultHints) (Just "127.0.0.1") (Just $ show $ serverPort sopts)
-				bind s (addrAddress sockAddr')
+				bindSocket s "127.0.0.1" (serverPort sopts)
 				listen s maxListenQueue
 			forever $ logAsync (Log.sendLog Log.Fatal . fromString) $ logIO "exception: " (Log.sendLog Log.Error . fromString) $ do
 				Log.sendLog Log.Trace "accepting connection..."
@@ -401,9 +400,21 @@ makeSocket :: ConnectionPort -> IO Socket
 makeSocket (NetworkPort _) = socket AF_INET Stream defaultProtocol
 makeSocket (UnixPort _) = socket AF_UNIX Stream defaultProtocol
 
-sockAddr :: ConnectionPort -> HostAddress -> SockAddr
-sockAddr (NetworkPort p) addr = SockAddrInet (fromIntegral p) addr
-sockAddr (UnixPort s) _ = SockAddrUnix s
+bindSocket :: Socket -> String -> ConnectionPort -> IO ()
+bindSocket s _ (UnixPort p) = bind s (SockAddrUnix p)
+bindSocket s host (NetworkPort p) = do
+	sockAddr':_ <- getAddrInfo (Just hints) (Just host) (Just $ show p)
+	bind s (addrAddress sockAddr')
+	where
+		hints = defaultHints { addrFlags = [AI_NUMERICHOST], addrSocketType = Stream }
+
+connectSocket :: Socket -> String -> ConnectionPort -> IO ()
+connectSocket s _ (UnixPort p) = connect s (SockAddrUnix p)
+connectSocket s host (NetworkPort p) = do
+	sockAddr':_ <- getAddrInfo (Just hints) (Just host) (Just $ show p)
+	connect s (addrAddress sockAddr')
+	where
+		hints = defaultHints { addrFlags = [AI_NUMERICHOST], addrSocketType = Stream }
 
 unlink :: ConnectionPort -> IO ()
 unlink (NetworkPort _) = return ()

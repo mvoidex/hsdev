@@ -21,7 +21,6 @@ import Data.Aeson.Encode.Pretty
 import qualified Data.ByteString.Lazy.Char8 as L
 import Data.Maybe
 import Network.Socket hiding (connect)
-import qualified Network.Socket as Net hiding (send)
 import System.Directory
 import System.Exit
 import System.IO
@@ -73,8 +72,7 @@ sendCommand copts noFile c onNotification = do
 			_ <- traverse parseData input -- FIXME: Not used!
 
 			s <- makeSocket (clientPort copts)
-			sockAddr':_ <- getAddrInfo (Just defaultHints) (Just "127.0.0.1") (Just $ show $ clientPort copts)
-			Net.connect s (addrAddress sockAddr')
+			connectSocket s "127.0.0.1" (clientPort copts)
 			bracket (socketToHandle s ReadWriteMode) hClose $ \h -> do
 				L.hPutStrLn h $ encode $ Message Nothing $ Request c curDir noFile (clientTimeout copts) (clientSilent copts)
 				hFlush h
@@ -152,8 +150,7 @@ runServerCommand (Stop copts) = runServerCommand (Remote copts False Exit)
 runServerCommand (Connect copts) = do
 	curDir <- getCurrentDirectory
 	s <- makeSocket $ clientPort copts
-	sockAddr':_ <- getAddrInfo (Just defaultHints) (Just "127.0.0.1") (Just $ show $ clientPort copts)
-	Net.connect s (addrAddress sockAddr')
+	connectSocket s "127.0.0.1" (clientPort copts)
 	bracket (socketToHandle s ReadWriteMode) hClose $ \h -> forM_ [(1 :: Integer)..] $ \i -> ignoreIO $ do
 		input' <- hGetLineBS stdin
 		case decodeMsg input' of

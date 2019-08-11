@@ -5,5 +5,3 @@ packages:
 - '.'
 - 'tests/test-package/'
 resolver: nightly-2019-08-07
-extra-deps:
-- network-3.0.1.1
