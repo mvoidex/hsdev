@@ -7,7 +7,7 @@ module HsDev.Scan.Browse (
 	-- * Helpers
 	uniqueModuleLocations,
 	readPackage, readPackageConfig, ghcModuleLocation,
-	packageConfigs, packageDbModules, lookupModule_,
+	packageConfigs, packageDbModules,
 	modulesPackages, modulesPackagesGroups, withEachPackage,
 
 	module Control.Monad.Except
@@ -204,15 +204,7 @@ packageDbModules = do
 	return [(p, m, exposed') |
 		p <- pkgs,
 		(mn, exposed') <- zip (map Compat.exposedModuleName (GHC.exposedModules p)) (repeat True) ++ zip (GHC.hiddenModules p) (repeat False),
-		m <- lookupModule_ dflags mn]
-
--- Lookup module everywhere
-lookupModule_ :: GHC.DynFlags -> GHC.ModuleName -> [GHC.Module]
-lookupModule_ d mn = case GHC.lookupModuleWithSuggestions d mn Nothing of
-	GHC.LookupFound m' _ -> [m']
-	GHC.LookupMultiple ms -> map fst ms
-	GHC.LookupHidden ls rs -> map fst $ ls ++ rs
-	GHC.LookupNotFound _ -> []
+		m <- Compat.lookupModule dflags mn]
 
 -- | Get modules packages
 modulesPackages :: [ModuleLocation] -> [ModulePackage]
