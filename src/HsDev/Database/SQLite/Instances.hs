@@ -80,7 +80,7 @@ instance FromRow ModuleLocation where
 		iexposed <- field
 		other <- field
 
-		maybe (fail $ "Can't parse module location: {}" ~~ show (file, cabal, dirs, pname, pver, iname, iexposed, other)) return $ msum [
+		maybe mzero return $ msum [
 			FileModule <$> file <*> pure (project <$> cabal),
 			InstalledModule <$> maybe (pure []) fromJSON' dirs <*> (ModulePackage <$> pname <*> pver) <*> iname <*> iexposed,
 			OtherLocation <$> other,
@@ -126,7 +126,7 @@ instance FromRow SymbolInfo where
 		assoc <- field
 		patTy <- field
 		patCtor <- field
-		maybe (fail $ "Can't parse symbol info: {}" ~~ show (what, ty, parent, ctors, args, ctx, assoc, patTy, patCtor)) return $ case what of
+		maybe mzero return $ case what of
 			"function" -> return $ Function ty
 			"method" -> Method <$> pure ty <*> parent
 			"selector" -> Selector <$> pure ty <*> parent <*> (fromJSON' =<< ctors)
@@ -181,7 +181,7 @@ instance FromField BuildTool where
 	fromField = fromField @String >=> fromStr where
 		fromStr "cabal" = return CabalTool
 		fromStr "stack" = return StackTool
-		fromStr s = fail $ "Error parsing build tool: {}" ~~ s
+		fromStr _ = mzero
 
 instance ToRow Sandbox where
 	toRow (Sandbox t p) = [toField t, toField p]
@@ -203,7 +203,7 @@ instance FromRow Project where
 
 instance FromRow Library where
 	fromRow = do
-		mods <- field >>= maybe (fail "Error parsing library modules") return . fromJSON'
+		mods <- field >>= maybe mzero return . fromJSON'
 		binfo <- fromRow
 		return $ Library mods binfo
 
@@ -215,17 +215,17 @@ instance FromRow Test where
 
 instance FromRow Info where
 	fromRow = Info <$>
-		(field >>= maybe (fail "Error parsing depends") return . fromJSON') <*>
+		(field >>= maybe mzero return . fromJSON') <*>
 		field <*>
-		(field >>= maybe (fail "Error parsing extensions") return . fromJSON') <*>
-		(field >>= maybe (fail "Error parsing ghc-options") return . fromJSON') <*>
-		(field >>= maybe (fail "Error parsing source-dirs") return . fromJSON') <*>
-		(field >>= maybe (fail "Error parsing other-modules") return . fromJSON')
+		(field >>= maybe mzero return . fromJSON') <*>
+		(field >>= maybe mzero return . fromJSON') <*>
+		(field >>= maybe mzero return . fromJSON') <*>
+		(field >>= maybe mzero return . fromJSON')
 
 instance FromField Language where
 	fromField fld = case fieldData fld of
 		SQLText txt -> parseDT "Language" (T.unpack txt)
-		_ -> fail "Can't parse language, invalid type"
+		_ -> mzero
 
 instance ToField PackageDb where
 	toField GlobalDb = toField ("global-db" :: String)
@@ -240,13 +240,13 @@ instance FromField PackageDb where
 			"user-db" -> return UserDb
 			_ -> case T.stripPrefix "package-db:" s of
 				Just p' -> return $ PackageDb p'
-				Nothing -> fail $ "Can't parse package-db, invalid string: " ++ T.unpack s
+				Nothing -> mzero
 
 instance ToField PackageDbStack where
 	toField = toField . toJSON . packageDbs
 
 instance FromField PackageDbStack where
-	fromField = fromField >=> maybe (fail "Error parsing package-db-stack") (return . mkPackageDbStack) . fromJSON'
+	fromField = fromField >=> maybe mzero (return . mkPackageDbStack) . fromJSON'
 
 instance FromRow SymbolUsage where
 	fromRow = SymbolUsage <$> fromRow <*> field <*> fromRow <*> fromRow
@@ -264,8 +264,8 @@ instance FromRow Inspection where
 		case (tm, opts) of
 			(Nothing, Nothing) -> return InspectionNone
 			(_, Just opts') -> InspectionAt (fromMaybe 0 tm) <$>
-				maybe (fail "Error parsing inspection opts") return (fromJSON' opts')
-			(Just _, Nothing) -> fail "Error parsing inspection data, time is set, but flags are null"
+				maybe mzero return (fromJSON' opts')
+			(Just _, Nothing) -> mzero
 
 instance ToRow Inspection where
 	toRow InspectionNone = [SQLNull, SQLNull]
@@ -306,7 +306,7 @@ instance FromRow N.Symbol where
 		let
 			m = toModuleName_ mname
 			n = toName_ name
-		maybe (fail $ "Can't parse symbol: {}" ~~ show (what, mname, name, parent, ctors, assoc, patType, patCtor)) return $ case what of
+		maybe mzero return $ case what of
 			"function" -> return $ N.Value m n
 			"method" -> N.Method m n <$> parent
 			"selector" -> N.Selector m n <$> parent <*> ctors
@@ -346,8 +346,7 @@ instance FromField Severity where
 		msum [
 			guard (s == "error") >> return Error,
 			guard (s == "warning") >> return Warning,
-			guard (s == "hint") >> return Hint,
-			fail ("Unknown severity: {}" ~~ s)]
+			guard (s == "hint") >> return Hint]
 
 instance ToField Severity where
 	toField Error = toField @String "error"

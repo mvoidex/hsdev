@@ -42,8 +42,7 @@ instance FromJSON Status where
 	parseJSON v = msum $ map ($ v) [
 		withText "status" $ \t -> guard (t == "working") $> StatusWorking,
 		withText "status" $ \t -> guard (t == "ok") $> StatusOk,
-		liftM StatusError . parseJSON,
-		fail "invalid status"]
+		liftM StatusError . parseJSON]
 
 data Progress = Progress {
 	progressCurrent :: Int,

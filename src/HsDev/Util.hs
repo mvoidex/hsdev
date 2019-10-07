@@ -308,7 +308,11 @@ version = mapM readMaybe $ split (== '.') $cabalVersion
 
 -- | Parse Distribution.Text
 #if MIN_VERSION_Cabal(3,0,0)
+#if __GLASGOW_HASKELL__ >= 808
+parseDT :: (MonadFail m, Monad m, DT.Parsec a) => String -> String -> m a
+#else
 parseDT :: (Monad m, DT.Parsec a) => String -> String -> m a
+#endif
 #else
 parseDT :: (Monad m, DT.Text a) => String -> String -> m a
 #endif

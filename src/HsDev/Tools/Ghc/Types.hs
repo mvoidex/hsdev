@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, RankNTypes, TemplateHaskell, OverloadedStrings #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, RankNTypes, TemplateHaskell, OverloadedStrings, CPP #-}
 
 module HsDev.Tools.Ghc.Types (
 	TypedExpr(..), typedExpr, typedType,
@@ -27,6 +27,7 @@ import Desugar (deSugarExpr)
 import TcHsSyn (hsPatType)
 import Outputable
 import PprTyThing
+import qualified SrcLoc
 import qualified Pretty
 
 import System.Directory.Paths
@@ -56,13 +57,31 @@ instance HasType (LHsBind TcId) where
 	getType _ = return Nothing
 
 instance HasType (LPat TcId) where
-	getType (L spn pat) = return $ Just (spn, hsPatType pat)
+#if __GLASGOW_HASKELL__ >= 808
+	getType = go . SrcLoc.decomposeSrcSpan where
+#else
+	getType = go where
+#endif
+		go (L spn pat) = return $ Just (spn, hsPatType pat)
 
 locatedTypes :: Typeable a => TypecheckedSource -> [Located a]
 locatedTypes = types' p where
 	types' :: Typeable r => (r -> Bool) -> GenericQ [r]
 	types' p' = everythingTyped (++) [] ([] `mkQ` (\x -> [x | p' x]))
 	p (L spn _) = isGoodSrcSpan spn
+
+#if __GLASGOW_HASKELL__ >= 808
+typeableTypes :: Typeable a => TypecheckedSource -> [a]
+typeableTypes = types' (const True) where
+	types' :: Typeable r => (r -> Bool) -> GenericQ [r]
+	types' p' = everythingTyped (++) [] ([] `mkQ` (\x -> [x | p' x]))
+
+locatedPats :: TypecheckedSource -> [LPat TcId]
+locatedPats = typeableTypes
+#else
+locatedPats :: TypecheckedSource -> [LPat TcId]
+locatedPats = locatedTypes
+#endif
 
 everythingTyped :: (r -> r -> r) -> r -> GenericQ r -> GenericQ r
 everythingTyped k z f x
@@ -86,7 +105,7 @@ moduleTypes fpath = do
 	liftM (catMaybes . concat) $ sequence [
 		mapM getType (locatedTypes ts :: [LHsExpr TcId]),
 		mapM getType (locatedTypes ts :: [LHsBind TcId]),
-		mapM getType (locatedTypes ts :: [LPat TcId])]
+		mapM getType (locatedPats ts)]
 
 data TypedExpr = TypedExpr {
 	_typedExpr :: Maybe Text,

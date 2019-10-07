@@ -3,6 +3,13 @@ packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
-- haddock-api-2.21.0
-- hdocs-0.5.3.1
-resolver: nightly-2019-08-07
+- Cabal-3.0.0.0
+- haddock-api-2.23.0
+- haddock-library-1.8.0
+- git: https://github.com/mvoidex/hdocs
+  commit: 7976a81f949c347fde70a025717b72a6e7bd1e86
+- direct-sqlite-2.3.24
+- git: https://github.com/mvoidex/sqlite-simple
+  commit: cc94f6e303b19aeaed2ac21cbccf6f5c7b74274d
+- semigroups-0.18.5
+resolver: nightly-2019-10-06

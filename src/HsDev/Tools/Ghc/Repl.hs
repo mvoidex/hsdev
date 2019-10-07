@@ -10,6 +10,7 @@ module HsDev.Tools.Ghc.Repl (
 	) where
 
 import Control.Monad
+import Control.Monad.IO.Class
 import Control.Monad.Catch
 import Data.Aeson
 import Data.Dynamic
@@ -18,6 +19,7 @@ import Text.Format
 import GhcMonad
 import GHC
 
+import HsDev.Error
 import HsDev.Tools.Ghc.Base
 import qualified HsDev.Tools.Ghc.Compat as C
 import HsDev.Util
@@ -32,8 +34,9 @@ preludeModules = ["Prelude", "Data.List", "Control.Monad", "HsDev.Tools.Ghc.Prel
 
 -- | Evaluate expression
 evaluate :: GhcMonad m => String -> m String
-evaluate expr = liftM fromDynamic (dynCompileExpr $ "show ({})" ~~ expr) >>=
-	maybe (fail "evaluate fail") return
+evaluate expr = do
+	v <- liftM fromDynamic (dynCompileExpr $ "show ({})" ~~ expr)
+	maybe (liftIO $ hsdevError $ OtherError "evaluate fail") return v
 
 -- | Get expression type as string
 expressionType :: GhcMonad m => String -> m String
