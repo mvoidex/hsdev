@@ -24,7 +24,7 @@ install:
  # install latest version of deps within sandbox
  - if [ ! $NEW_CABAL ]; then cabal sandbox init; fi
  # end
- - cabal install $MTL happy-$HAPPYVER alex-$ALEXVER
+ - cabal install $MTL happy-$HAPPYVER alex-$ALEXVER --project-file=
  - if [ $NEW_CABAL ]; then cabal new-configure --enable-tests $FLAGS; cabal new-build --only-dependencies; else cabal install --only-dependencies --enable-tests $FLAGS; cabal configure --enable-tests; fi
 
 script:
