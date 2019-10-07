@@ -14,6 +14,7 @@ module HsDev.Tools.Ghc.Compat (
 	exposedModuleName,
 	exprType,
 	modSummaries,
+	lookupModule,
 	cleanTemps,
 	mgArgTys, mgResTy
 	) where
@@ -226,6 +227,17 @@ modSummaries :: GHC.ModuleGraph -> [GHC.ModSummary]
 modSummaries = GHC.mgModSummaries
 #else
 modSummaries = id
+#endif
+
+-- Lookup module everywhere
+lookupModule :: GHC.DynFlags -> GHC.ModuleName -> [GHC.Module]
+lookupModule d mn = case GHC.lookupModuleWithSuggestions d mn Nothing of
+	GHC.LookupFound m' _ -> [m']
+	GHC.LookupMultiple ms -> map fst ms
+	GHC.LookupHidden ls rs -> map fst $ ls ++ rs
+	GHC.LookupNotFound _ -> []
+#if __GLASGOW_HASKELL__ >= 806
+	GHC.LookupUnusable _ -> []
 #endif
 
 cleanTemps :: GHC.DynFlags -> IO ()
