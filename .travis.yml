@@ -8,6 +8,8 @@ env:
  - CABALVER=2.2 GHCVER=8.4.3 ALEXVER=3.1.7 FLAGS=-f-docs HAPPYVER=1.19.9 MTL=
  - CABALVER=2.2 GHCVER=8.6.1 ALEXVER=3.1.7 FLAGS=-fdocs HAPPYVER=1.19.9 MTL=
  - CABALVER=2.2 GHCVER=8.6.1 ALEXVER=3.1.7 FLAGS=-f-docs HAPPYVER=1.19.9 MTL=
+ - CABALVER=3.0 GHCVER=8.8.1 ALEXVER=3.2.4 FLAGS=-fdocs HAPPYVER=1.19.12 MTL= NEW_CABAL=1 PREFIX=new-
+ - CABALVER=3.0 GHCVER=8.8.1 ALEXVER=3.2.4 FLAGS=-f-docs HAPPYVER=1.19.12 MTL= NEW_CABAL=1 PREFIX=new-
 
 before_install:
  - travis_retry sudo add-apt-repository -y ppa:hvr/ghc
@@ -20,13 +22,12 @@ install:
  - echo "$(ghc --version)"
  - travis_retry cabal update
  # install latest version of deps within sandbox
- - cabal sandbox init
+ - if [ ! $NEW_CABAL ]; then cabal sandbox init; fi
  # end
  - cabal install $MTL happy-$HAPPYVER alex-$ALEXVER
- - cabal install --only-dependencies --enable-tests $FLAGS
+ - if [ $NEW_CABAL ]; then cabal new-configure --enable-tests $FLAGS; cabal new-build --only-dependencies; else cabal install --only-dependencies --enable-tests $FLAGS; cabal configure --enable-tests; fi
 
 script:
- - cabal configure --enable-tests $FLAGS
- - cabal build
- - cabal test
- - cabal sdist
+ - cabal ${PREFIX}build
+ - cabal ${PREFIX}test
+ - cabal ${PREFIX}sdist
