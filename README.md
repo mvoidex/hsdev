@@ -10,6 +10,49 @@
 Haskell development library and tool with support of autocompletion, symbol info, go to declaration, find references, hayoo search etc.
 Uses [fsnotify](http://hackage.haskell.org/package/fsnotify) to watch for changes.
 
+## Installation
+
+#### Stack
+
+To install latest version with LTS resolver (14.10 should be fine), add these extra packages to your global stack project:
+<pre>
+resolver: lts-14.10
+extra-deps:
+- hsdev-0.3.3.5
+- haddock-api-2.21.0  # not required if you disable `docs` flag
+- hdocs-0.5.3.1  # not required if you disable `docs` flag
+</pre>
+
+And install with `stack install hsdev`
+
+If you want to use latest nightly resolver and `ghc-8.8`, then there are some more extra deps required:
+<pre>
+resolver: nightly-2019-10-19
+extra-deps:
+- hsdev-0.3.3.5
+- Cabal-3.0.0.0
+- haddock-api-2.23.0  # for `docs` flag
+- haddock-library-1.8.0  # for `docs` flag
+- hdocs-0.5.4.0  # for `docs` flag
+- direct-sqlite-2.3.24
+- git: https://github.com/mvoidex/sqlite-simple  # actual version is broken
+  commit: cc94f6e303b19aeaed2ac21cbccf6f5c7b74274d
+- semigroups-0.18.5
+</pre>
+
+Install with `stack install hsdev`
+
+Alternatively, you can `git clone https://github.com/mvoidex/hsdev` and install with `stack install` or `stack install --stack-yaml nightly.yaml`
+
+#### Cabal
+
+<pre>
+$ cabal sandbox init
+$ cabal new-install hsdev
+</pre>
+
+## Usage
+
 Main idea is to hold in memory scanned sourced and installed modules, so that getting info about symbols and modules is fast.
 It also doesn't require much work to integrate with some editor:
 
@@ -23,29 +66,33 @@ It also doesn't require much work to integrate with some editor:
 1. [SublimeText](https://www.sublimetext.com/): [SublimeHaskell](https://packagecontrol.io/packages/SublimeHaskell) plugin
 2. [Atom](https://atom.io/): work in progress, [atom-haskell-hsdev](https://github.com/mvoidex/atom-haskell-hsdev) plugin
 
-## Usage
+## Start server
 
-Use `hsdev start` to start remote server. Specify `--db`, where `hsdev` will store information (SQLite database, see [hsdev.sql](data/hsdev.sql) for schema).
+Use `hsdev start` to start remote server.  
+If you installed `hsdev` with `stack`, run server with `stack exec -- hsdev start` command, so that correct `$GHC_PACKAGE_PATH` is set where `hsdev` library installed.  
+Client commands then doesn't require running them with `stack exec`.  
+Specify `--db file.db`, where `hsdev` will store information (SQLite database, see [hsdev.sql](data/hsdev.sql) for schema).  
 Then you can connect to server and send requests (see [requests/responses](API.md)) or you can use `hsdev` itself. It will send command to server and outputs the response.
 Scan sources, installed modules and you're ready to request various information: scope, completions, info about symbols etc.
 
 Typical usage is:
 <pre>
-PS> hsdev start
+PS> stack exec -- hsdev start
 Server started at port 4567
-PS> hsdev scan --path /projects/haskell --project /projects/hsdev --cabal --silent
+PS> hsdev scan project ~/projects/hsdev --stack --silent
 []
-PS> hsdev complete runC -f ./src/HsDev/Server/Commands.hs | jq -r '.[] | .id.name + """ :: """ + .info.type'
+PS> hsdev complete runC -f ./src/HsDev/Server/Commands.hs | jq -r '.[] | .id.name + \" :: \" + .info.type'
 runClientM :: ServerM (ReaderT CommandOptions m) a
+runConcurrently :: Concurrently a -> IO a
 </pre>
 
 ## Stack support
 
 `hsdev` uses `stack` to build dependencies and to get corresponding package-dbs. As long as `hsdev` uses `ghc` as library, it passes `--compiler` and `--arch` options (since `0.1.7.2`) to `stack` in order to get compatible package-dbs built with same compiler.
 
-## Build without `haddock`/`hdocs` dependency
+## Building without `haddock`/`hdocs` dependency
 
-Disable flag `docs` to build without these dependencies: `cabal configure -f-docs`
+Disable flag `docs` to build without these dependencies: `cabal configure -f-docs` or `stack install --flag hsdev:-docs`
 
 ### Commands
 
@@ -83,9 +130,31 @@ Run `hsdev -?` to get list of all commands or `hsdev <command> -?` (`hsdev help 
 
 #### Scan
 
-Scans sources, projects, directories, sandboxes and installed modules. After scan hsdev watches for changes in directory and automatically rescans modifified sources.
+You can scan package-dbs, projects and files.
+
+To scan global and user package-dbs, run
 <pre>
-PS> hsdev scan --cabal --path path/to/projects --project path/to/some/project --file File.hs
+PS> hsdev scan package-dbs --global-db --user-db --silent
+[]
+PS> hsdev module -h -m System.IO | jq -r '.[].location.package'
+base-4.12.0.0
+</pre>
+
+To scan project use `scan project`, which will also scan dependens package-dbs (unless `--no-deps` flag set)
+<pre>
+PS> hsdev scan project ~/projects/hsdev --stack --silent
+[]
+PS> hsdev module -f ~/projects/hsdev/src/HsDev/Client/Commands.hs | jq -r '.[].exports[] | .id.name + \" :: \" + .info.type'
+runClient :: (ToJSON a, ServerMonadBase m) => CommandOptions -> ClientM m a -> ServerM m Result
+runCommand :: ServerMonadBase m => Command -> ClientM m Value
+</pre>
+
+To scan file use `scan file`:
+<pre>
+PS> hsdev scan file ~/projects/hs/Main.hs --stack --silent
+[]
+PS> hsdev module -f ~/projects/hs/Main.hs | jq -r '.[].exports[] | .id.name + \" :: \" + .info.type'
+main :: IO ()
 </pre>
 
 #### Whois/whoat

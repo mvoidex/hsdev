@@ -10,4 +10,4 @@ extra-deps:
 - git: https://github.com/mvoidex/sqlite-simple
   commit: cc94f6e303b19aeaed2ac21cbccf6f5c7b74274d
 - semigroups-0.18.5
-resolver: nightly-2019-10-06
+resolver: nightly-2019-10-19
