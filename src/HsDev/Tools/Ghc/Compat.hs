@@ -29,8 +29,13 @@ import qualified Name
 import qualified Packages as GHC
 import qualified PatSyn as GHC
 import qualified Pretty
-import qualified SysTools
 import Outputable
+
+#if __GLASGOW_HASKELL__ >= 804
+import FileCleanup (cleanTempDirs, cleanTempFiles)
+#else
+import SysTools (cleanTempDirs, cleanTempFiles)
+#endif
 
 #if __GLASGOW_HASKELL__ >= 800
 import Data.List (nub)
@@ -241,13 +246,9 @@ lookupModule d mn = case GHC.lookupModuleWithSuggestions d mn Nothing of
 #endif
 
 cleanTemps :: GHC.DynFlags -> IO ()
-#if __GLASGOW_HASKELL__ >= 804
-cleanTemps _ = return ()
-#else
 cleanTemps df = do
-	SysTools.cleanTempFiles df
-	SysTools.cleanTempDirs df
-#endif
+	cleanTempFiles df
+	cleanTempDirs df
 
 mgArgTys :: GHC.MatchGroup TcId (GHC.LHsExpr TcId) -> Maybe [GHC.Type]
 #if __GLASGOW_HASKELL__ >= 806
