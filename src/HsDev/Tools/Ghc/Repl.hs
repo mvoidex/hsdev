@@ -30,7 +30,7 @@ importModules mods = mapM parseImportDecl ["import " ++ m | m <- mods] >>= setCo
 
 -- | Default interpreter modules
 preludeModules :: [String]
-preludeModules = ["Prelude", "Data.List", "Control.Monad", "HsDev.Tools.Ghc.Prelude"]
+preludeModules = ["Prelude", "Data.List", "Control.Monad"]
 
 -- | Evaluate expression
 evaluate :: GhcMonad m => String -> m String
