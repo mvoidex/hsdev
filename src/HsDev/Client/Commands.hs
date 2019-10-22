@@ -97,33 +97,29 @@ runCommand (ScanPackageDbs pdbs) = toValue $ updateProcess def [
 	Update.scanPackageDbStack [] pdbs]
 runCommand (SetFileContents f mcts) = toValue $ serverSetFileContents f mcts
 runCommand (RefineDocs projs fs)
-	| HDocs.hdocsSupported = toValue $ do
+	| HDocs.hdocsSupported = toValue $ updateProcess def $ return $ do
 		projects <- traverse findProject projs
-		mods <- do
-			projMods <- liftM concat $ forM projects $ \proj -> do
-				ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.docs') is null"
-					(Only $ proj ^. projectCabal)
-				p <- SQLite.loadProject (proj ^. projectCabal)
-				return $ set (each . moduleId . moduleLocation . moduleProject) (Just p) ms
-			fileMods <- liftM concat $ forM fs $ \f ->
-				loadModules "select id from modules where file == ? and json_extract(tags, '$.docs') is null"
-					(Only f)
-			return $ projMods ++ fileMods
-		updateProcess def [Update.scanDocs mods]
-	| otherwise = hsdevError $ OtherError "docs not supported"
-runCommand (InferTypes projs fs) = toValue $ do
-	projects <- traverse findProject projs
-	mods <- do
 		projMods <- liftM concat $ forM projects $ \proj -> do
-			ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.types') is null"
+			ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.docs') is null"
 				(Only $ proj ^. projectCabal)
 			p <- SQLite.loadProject (proj ^. projectCabal)
 			return $ set (each . moduleId . moduleLocation . moduleProject) (Just p) ms
 		fileMods <- liftM concat $ forM fs $ \f ->
-			loadModules "select id from modules where file == ? and json_extract(tags, '$.types') is null"
+			loadModules "select id from modules where file == ? and json_extract(tags, '$.docs') is null"
 				(Only f)
-		return $ projMods ++ fileMods
-	updateProcess def [Update.inferModTypes mods]
+		Update.scanDocs $ projMods ++ fileMods
+	| otherwise = hsdevError $ OtherError "docs not supported"
+runCommand (InferTypes projs fs) = toValue $ updateProcess def $ return $ do
+	projects <- traverse findProject projs
+	projMods <- liftM concat $ forM projects $ \proj -> do
+		ms <- loadModules "select id from modules where cabal == ? and json_extract(tags, '$.types') is null"
+			(Only $ proj ^. projectCabal)
+		p <- SQLite.loadProject (proj ^. projectCabal)
+		return $ set (each . moduleId . moduleLocation . moduleProject) (Just p) ms
+	fileMods <- liftM concat $ forM fs $ \f ->
+		loadModules "select id from modules where file == ? and json_extract(tags, '$.types') is null"
+			(Only f)
+	Update.inferModTypes $ projMods ++ fileMods
 runCommand (Remove projs cabal sboxes files) = toValue $ withSqlConnection $ SQLite.transaction_ SQLite.Immediate $ do
 	let
 		-- We can safely remove package-db from db iff doesn't used by some of other package-dbs

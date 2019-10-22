@@ -93,6 +93,7 @@ workerSession ty pdbs opts = do
 	Log.sendLog Log.Trace $ "session: {}" ~~ SessionConfig ty pdbs
 	switchSession_ (SessionConfig ty pdbs) $ Just initialize
 	setSessionFlags
+	Log.sendLog Log.Trace "session set"
 	where
 		toKill (SessionConfig ty' pdbs') = or [
 			(ty == ty' && pdbs /= pdbs'),
