@@ -159,8 +159,28 @@ library
   if flag(docs)
     build-depends:
       hdocs >= 0.5.3,
-      haddock-api >= 2.17.4,
       haddock-library >= 1.4.3 && < 1.9
+
+    if impl(ghc >= 8.8) && impl(ghc < 8.9)
+      build-depends:
+        haddock-api >= 2.23
+
+    if impl(ghc >= 8.6) && impl(ghc < 8.7)
+      build-depends:
+        haddock-api >= 2.21 && < 2.23
+
+    if impl(ghc >= 8.4) && impl(ghc < 8.5)
+      build-depends:
+        haddock-api == 2.20.*
+
+    if impl(ghc >= 8.2) && impl(ghc < 8.3)
+      build-depends:
+        haddock-api == 2.18.*
+
+    if impl(ghc >= 8.0) && impl(ghc < 8.2)
+      build-depends:
+        haddock-api == 2.17.*
+
 
   if flag(hlint)
     build-depends:
