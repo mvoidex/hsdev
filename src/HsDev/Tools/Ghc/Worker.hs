@@ -30,6 +30,7 @@ import Text.Format hiding (withFlags)
 import Exception (ExceptionMonad(..), ghandle)
 import GHC hiding (Warning, Module)
 import GHC.Paths
+import Linker (initDynLinker)
 
 import Control.Concurrent.Worker
 import HsDev.PackageDb.Types
@@ -104,8 +105,8 @@ workerSession ty pdbs opts = do
 			setSessionData (First $ Just dflags)
 		run = case ty of
 			SessionGhci -> ghcRun pdbsOpts (importModules preludeModules)
-			SessionGhc -> ghcRun pdbsOpts (return ())
-			SessionTmp -> ghcRun pdbsOpts (return ())
+			SessionGhc -> ghcRun pdbsOpts (getSession >>= liftIO . initDynLinker)
+			SessionTmp -> ghcRun pdbsOpts (getSession >>= liftIO . initDynLinker)
 			SessionHaddock -> ghcRunWith noLinkFlags ("-haddock" : pdbsOpts) (return ())
 		setSessionFlags = do
 			Log.sendLog Log.Trace $ "setting flags: {}" ~~ unwords opts
