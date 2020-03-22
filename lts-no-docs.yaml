@@ -1,8 +1,10 @@
-resolver: lts-14.10
+resolver: lts-15.4
 flags:
   hsdev:
     docs: False
 extra-package-dbs: []
 packages:
 - '.'
-- 'tests/test-package/'
+extra-deps:
+- direct-sqlite-2.3.26
+- sqlite-simple-0.4.18.0
