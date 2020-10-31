@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, PackageImports #-}
 
 module HsDev.Version (
 	cabalVersion
@@ -7,7 +7,7 @@ module HsDev.Version (
 import Data.Char
 import Data.List
 import Data.Maybe
-import Language.Haskell.TH
+import "template-haskell" Language.Haskell.TH
 
 cabalVersion :: ExpQ
 cabalVersion = do

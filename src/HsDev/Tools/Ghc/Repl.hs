@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings, TypeApplications #-}
+{-# LANGUAGE OverloadedStrings, TypeApplications, PackageImports #-}
 
 module HsDev.Tools.Ghc.Repl (
 	importModules, preludeModules,
@@ -16,8 +16,8 @@ import Data.Aeson
 import Data.Dynamic
 import Text.Format
 
-import GhcMonad
-import GHC
+import "ghc" GhcMonad
+import "ghc" GHC
 
 import HsDev.Error
 import HsDev.Tools.Ghc.Base

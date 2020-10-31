@@ -1,4 +1,4 @@
-{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, RankNTypes, TemplateHaskell, OverloadedStrings, CPP #-}
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, RankNTypes, TemplateHaskell, OverloadedStrings, CPP, PackageImports #-}
 
 module HsDev.Tools.Ghc.Types (
 	TypedExpr(..), typedExpr, typedType,
@@ -19,16 +19,16 @@ import Data.String (fromString)
 import Data.Text (Text)
 import System.Log.Simple (MonadLog(..), scope)
 
-import GHC hiding (exprType, Module, moduleName)
-import GhcPlugins (mkFunTys)
-import CoreUtils as C
-import NameSet (NameSet)
-import Desugar (deSugarExpr)
-import TcHsSyn (hsPatType)
-import Outputable
-import PprTyThing
-import qualified SrcLoc
-import qualified Pretty
+import "ghc" GHC hiding (exprType, Module, moduleName)
+import "ghc" GhcPlugins (mkFunTys)
+import "ghc" CoreUtils as C
+import "ghc" NameSet (NameSet)
+import "ghc" Desugar (deSugarExpr)
+import "ghc" TcHsSyn (hsPatType)
+import "ghc" Outputable
+import "ghc" PprTyThing
+import qualified "ghc" SrcLoc
+import qualified "ghc" Pretty
 
 import System.Directory.Paths
 import HsDev.Error

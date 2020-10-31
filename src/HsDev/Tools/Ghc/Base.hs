@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE PatternGuards, PackageImports #-}
 
 module HsDev.Tools.Ghc.Base (
 	-- * Running Ghc
@@ -30,13 +30,13 @@ import qualified Data.Text as T
 import System.Directory (getCurrentDirectory, setCurrentDirectory)
 import System.FilePath
 
-import Exception (ExceptionMonad(..))
-import GHC hiding (Warning, Module)
-import Outputable
-import FastString (unpackFS)
-import StringBuffer
-import Type
-import qualified Pretty
+import "ghc" Exception (ExceptionMonad(..))
+import "ghc" GHC hiding (Warning, Module)
+import "ghc" Outputable
+import "ghc" FastString (unpackFS)
+import "ghc" StringBuffer
+import "ghc" Type
+import qualified "ghc" Pretty
 
 import Control.Concurrent.FiniteChan
 import System.Directory.Paths

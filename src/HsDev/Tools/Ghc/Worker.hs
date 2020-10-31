@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternGuards, OverloadedStrings, FlexibleContexts #-}
+{-# LANGUAGE PatternGuards, OverloadedStrings, FlexibleContexts, PackageImports #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Worker (
@@ -27,10 +27,10 @@ import qualified System.Log.Simple as Log
 import System.Log.Simple.Monad (MonadLog(..), LogT(..), withLog)
 import Text.Format hiding (withFlags)
 
-import Exception (ExceptionMonad(..), ghandle)
-import GHC hiding (Warning, Module)
+import "ghc" Exception (ExceptionMonad(..), ghandle)
+import "ghc" GHC hiding (Warning, Module)
+import "ghc" Linker (initDynLinker)
 import GHC.Paths
-import Linker (initDynLinker)
 
 import Control.Concurrent.Worker
 import HsDev.PackageDb.Types

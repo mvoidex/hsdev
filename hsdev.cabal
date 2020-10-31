@@ -184,7 +184,8 @@ library
 
   if flag(hlint)
     build-depends:
-      hlint >= 2.0.11 && < 2.3
+      hlint >= 3.0.0 && < 3.3.0,
+      ghc-lib-parser == 8.10.*
 
   -- Build dependency lower bound is set for GHC 8.0.1.
   -- Upper bound is set for GHC 8.4
@@ -210,7 +211,6 @@ library
     haskell-names                     >= 0.9.1 && < 0.10.0,
     haskell-src-exts                  >= 1.19.1 && < 1.24.0,
     hformat                           >= 0.1.0.1 && < 0.4,
-    hlint                             >= 2.0.11 && < 2.3,
     http-client                    >= 0.5 && < 0.7,
     lens                              >= 4.14 && < 4.19,
     lifted-base                       >= 0.2.3.10 && < 0.3,

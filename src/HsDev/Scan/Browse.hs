@@ -1,3 +1,5 @@
+{-# LANGUAGE PackageImports #-}
+
 module HsDev.Scan.Browse (
 	-- * List all packages
 	browsePackages, browsePackagesDeps,
@@ -36,19 +38,19 @@ import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Util (ordNub, uniqueBy)
 import System.Directory.Paths (fromFilePath, normalize)
 
-import qualified ConLike as GHC
-import qualified DataCon as GHC
-import qualified DynFlags as GHC
-import qualified GHC
-import qualified GHC.PackageDb as GHC
-import qualified GhcMonad as GHC (liftIO)
-import qualified Name as GHC
-import qualified IdInfo as GHC
-import qualified Packages as GHC
-import qualified PatSyn as GHC
-import qualified TyCon as GHC
-import qualified Type as GHC
-import qualified Var as GHC
+import qualified "ghc" ConLike as GHC
+import qualified "ghc" DataCon as GHC
+import qualified "ghc" DynFlags as GHC
+import qualified "ghc" GHC
+import qualified "ghc-boot" GHC.PackageDb as GHC
+import qualified "ghc" GhcMonad as GHC (liftIO)
+import qualified "ghc" Name as GHC
+import qualified "ghc" IdInfo as GHC
+import qualified "ghc" Packages as GHC
+import qualified "ghc" PatSyn as GHC
+import qualified "ghc" TyCon as GHC
+import qualified "ghc" Type as GHC
+import qualified "ghc" Var as GHC
 
 -- | Browse packages
 browsePackages :: [String] -> PackageDbStack -> GhcM [PackageConfig]

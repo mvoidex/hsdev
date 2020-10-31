@@ -1,4 +1,4 @@
-resolver: lts-16.7
+resolver: lts-16.20
 flags:
   hsdev:
     docs: False
@@ -7,6 +7,4 @@ packages:
 - '.'
 extra-deps:
 - direct-sqlite-2.3.26
-- ghc-lib-parser-ex-8.8.5.8
-- hlint-2.2.11
 - sqlite-simple-0.4.18.0

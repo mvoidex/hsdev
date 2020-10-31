@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, PackageImports #-}
 
 module HsDev.Tools.Ghc.System (
 	BuildInfo(..), buildInfo,
@@ -16,9 +16,9 @@ import Distribution.Text (display)
 import qualified System.Info as Sys
 import Text.Format
 
-import DynFlags (DynFlags)
-import PackageConfig as GHC
-import GHC (getSessionDynFlags)
+import "ghc" DynFlags (DynFlags)
+import "ghc" PackageConfig as GHC
+import "ghc" GHC (getSessionDynFlags)
 
 import HsDev.Tools.Ghc.Compat as Compat
 import HsDev.Tools.Ghc.Worker (GhcM)

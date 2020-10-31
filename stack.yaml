@@ -1,13 +1,11 @@
-resolver: lts-16.7
+resolver: lts-16.20
 extra-package-dbs: []
 packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
 - direct-sqlite-2.3.26
-- ghc-lib-parser-ex-8.8.5.8
 - haddock-api-2.23.1
 - hdocs-0.5.4.0
-- hlint-2.2.11
 - sqlite-simple-0.4.18.0
 flags: {}

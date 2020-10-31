@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, PackageImports #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.Compat (
@@ -19,37 +19,37 @@ module HsDev.Tools.Ghc.Compat (
 	mgArgTys, mgResTy
 	) where
 
-import qualified BasicTypes
-import qualified DynFlags as GHC
-import qualified ErrUtils
-import qualified InteractiveEval as Eval
-import qualified GHC
-import qualified Module
-import qualified Name
-import qualified Packages as GHC
-import qualified PatSyn as GHC
-import qualified Pretty
-import Outputable
+import qualified "ghc" BasicTypes
+import qualified "ghc" DynFlags as GHC
+import qualified "ghc" ErrUtils
+import qualified "ghc" InteractiveEval as Eval
+import qualified "ghc" GHC
+import qualified "ghc" Module
+import qualified "ghc" Name
+import qualified "ghc" Packages as GHC
+import qualified "ghc" PatSyn as GHC
+import qualified "ghc" Pretty
+import "ghc" Outputable
 
 #if __GLASGOW_HASKELL__ >= 804
-import FileCleanup (cleanTempDirs, cleanTempFiles)
+import "ghc" FileCleanup (cleanTempDirs, cleanTempFiles)
 #else
-import SysTools (cleanTempDirs, cleanTempFiles)
+import "ghc" SysTools (cleanTempDirs, cleanTempFiles)
 #endif
 
 #if __GLASGOW_HASKELL__ >= 800
 import Data.List (nub)
-import qualified IdInfo
-import TcRnDriver
+import qualified "ghc" IdInfo
+import "ghc" TcRnDriver
 #endif
 
 #if __GLASGOW_HASKELL__ == 710
-import Exception (ExceptionMonad)
+import "ghc" Exception (ExceptionMonad)
 import Control.Monad.Reader
 #endif
 
 #if __GLASGOW_HASKELL__ <= 800
-import qualified GHC.PackageDb as GHC
+import qualified "ghc" GHC.PackageDb as GHC
 #endif
 
 pkgDatabase :: GHC.DynFlags -> Maybe [GHC.PackageConfig]

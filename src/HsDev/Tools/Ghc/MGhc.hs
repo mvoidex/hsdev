@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, UnicodeSyntax, GeneralizedNewtypeDeriving, ScopedTypeVariables, FlexibleInstances, MultiParamTypeClasses, UndecidableInstances #-}
+{-# LANGUAGE CPP, UnicodeSyntax, GeneralizedNewtypeDeriving, ScopedTypeVariables, FlexibleInstances, MultiParamTypeClasses, UndecidableInstances, PackageImports #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module HsDev.Tools.Ghc.MGhc (
@@ -26,14 +26,14 @@ import System.Log.Simple.Monad (MonadLog(..))
 
 import HsDev.Tools.Ghc.Compat (cleanTemps)
 
-import DynFlags
-import Exception hiding (catch, mask, uninterruptibleMask, bracket, finally)
-import GHC
-import GHCi
-import GhcMonad hiding (Session(..))
-import qualified GhcMonad (Session(..))
-import HscTypes
-import Outputable
+import "ghc" DynFlags
+import "ghc" Exception hiding (catch, mask, uninterruptibleMask, bracket, finally)
+import "ghc" GHC
+import "ghc" GHCi
+import "ghc" GhcMonad hiding (Session(..))
+import qualified "ghc" GhcMonad (Session(..))
+import "ghc" HscTypes
+import "ghc" Outputable
 
 data Session s d = Session {
 	_sessionKey :: s,

@@ -1,4 +1,4 @@
-{-# LANGUAGE TemplateHaskell, RankNTypes #-}
+{-# LANGUAGE TemplateHaskell, RankNTypes, PackageImports #-}
 
 module HsDev.Stack (
 	stack, yaml,
@@ -32,8 +32,8 @@ import System.FilePath
 import qualified System.Log.Simple as Log
 import Text.Format (formats, (~%))
 
-import qualified GHC
-import qualified Packages as GHC
+import qualified "ghc" GHC
+import qualified "ghc" Packages as GHC
 
 import HsDev.Error
 import HsDev.PackageDb

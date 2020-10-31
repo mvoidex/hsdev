@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, OverloadedStrings #-}
+{-# LANGUAGE CPP, OverloadedStrings, PackageImports #-}
 
 module HsDev.Tools.HDocs (
 	hdocsy, hdocs, hdocsPackage, hdocsCabal,
@@ -34,10 +34,10 @@ import qualified Data.Text as T
 import qualified HDocs.Module as HDocs
 import qualified HDocs.Haddock as HDocs
 
-import qualified GHC
+import qualified "ghc" GHC
 #endif
 
-import qualified PackageConfig as P
+import qualified "ghc" PackageConfig as P
 
 import Data.LookupTable
 #ifndef NODOCS

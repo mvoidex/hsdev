@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, PackageImports #-}
 
 module HsDev.Tools.HLint (
 	hlint,
@@ -21,9 +21,11 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Text as T
 import Data.Ord
 import Data.String (fromString)
-import Language.Haskell.Exts.SrcLoc
-import Language.Haskell.HLint3 (argsSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
-import qualified Language.Haskell.HLint3 as HL (Severity(..))
+import Language.Haskell.HLint (argsSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
+import qualified Language.Haskell.HLint as HL (Severity(..))
+
+import "ghc-lib-parser" SrcLoc
+import "ghc-lib-parser" FastString (unpackFS)
 
 import System.Directory.Paths
 import HsDev.Symbols.Location
@@ -38,7 +40,7 @@ hlint opts file msrc = do
 	(flags, classify, hint) <- liftIO $ argsSettings opts
 	p <- liftIO $ parseModuleEx (flags { cppFlags = CppSimple }) file' (Just $ T.unpack cts)
 	m <- either (throwError . parseErrorMessage) return p
-	return $ map (recalcTabs cts 8 . indentIdea cts . fromIdea) $
+	return $ map (recalcTabs cts 8 . indentIdea cts) $ mapMaybe fromIdea $
 		filter (not . ignoreIdea) $
 		applyHints classify hint [m]
 #else
@@ -49,19 +51,19 @@ hlint _ _ _ = throwError "Compiled with no hlint support"
 ignoreIdea :: Idea -> Bool
 ignoreIdea idea = ideaSeverity idea == HL.Ignore
 
-fromIdea :: Idea -> Note OutputMessage
-fromIdea idea = Note {
-	_noteSource = FileModule (fromFilePath $ srcSpanFilename src) Nothing,
-	_noteRegion = Region (Position (srcSpanStartLine src) (srcSpanStartColumn src)) (Position (srcSpanEndLine src) (srcSpanEndColumn src)),
-	_noteLevel = Just $ case ideaSeverity idea of
-		HL.Warning -> Warning
-		HL.Error -> Error
-		_ -> Hint,
-	_note = OutputMessage {
-		_message = fromString $ ideaHint idea,
-		_messageSuggestion = fmap fromString $ ideaTo idea } }
-	where
-		src = ideaSpan idea
+fromIdea :: Idea -> Maybe (Note OutputMessage)
+fromIdea idea = case (ideaSpan idea) of
+	RealSrcSpan realSrc -> Just $ Note {
+		_noteSource = FileModule (fromFilePath $ unpackFS $ srcSpanFile realSrc) Nothing,
+		_noteRegion = Region (Position (srcSpanStartLine realSrc) (srcSpanStartCol realSrc)) (Position (srcSpanEndLine realSrc) (srcSpanEndCol realSrc)),
+		_noteLevel = Just $ case ideaSeverity idea of
+			HL.Warning -> Warning
+			HL.Error -> Error
+			_ -> Hint,
+		_note = OutputMessage {
+			_message = fromString $ ideaHint idea,
+			_messageSuggestion = fmap fromString $ ideaTo idea } }
+	_ -> Nothing
 
 indentIdea :: Text -> Note OutputMessage -> Note OutputMessage
 indentIdea cts idea = case analyzeIndent cts of

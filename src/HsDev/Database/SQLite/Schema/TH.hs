@@ -1,12 +1,12 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TemplateHaskell, PackageImports #-}
 
 module HsDev.Database.SQLite.Schema.TH (
 	schemaExp
 	) where
 
 import System.Directory
-import Language.Haskell.TH
-import Language.Haskell.TH.Syntax
+import "template-haskell" Language.Haskell.TH
+import "template-haskell" Language.Haskell.TH.Syntax
 
 schemaExp :: ExpQ
 schemaExp = do
