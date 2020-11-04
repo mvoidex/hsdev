@@ -11,7 +11,7 @@ maintainer:          voidex@live.com
 -- copyright:
 category:            Development
 build-type:          Simple
-cabal-version:       >=1.8
+cabal-version:       >=1.10
 extra-source-files:
   tests/test-package/*.hs
   tests/test-package/test-package.cabal
@@ -35,6 +35,7 @@ flag hlint
 library
   hs-source-dirs: src
   ghc-options: -Wall -fno-warn-tabs
+  default-language: Haskell2010
 
   if !flag(docs)
     cpp-options: -DNODOCS
@@ -250,6 +251,7 @@ library
 executable hsdev
   main-is: hsdev.hs
   hs-source-dirs: tools
+  default-language: Haskell2010
   ghc-options: -threaded -Wall -fno-warn-tabs "-with-rtsopts=-N4"
 
   build-depends:
@@ -275,6 +277,7 @@ executable hsdev
 test-suite test
   main-is: Test.hs
   hs-source-dirs: tests
+  default-language: Haskell2010
   ghc-options: -threaded -Wall -fno-warn-tabs
   type: exitcode-stdio-1.0
   build-depends:
