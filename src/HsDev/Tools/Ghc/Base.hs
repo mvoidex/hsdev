@@ -43,7 +43,7 @@ import System.Directory.Paths
 import HsDev.Symbols.Location (Position(..), Region(..), region, ModuleLocation(..))
 import HsDev.Tools.Types
 import HsDev.Tools.Ghc.Compat
-import qualified HsDev.Tools.Ghc.Compat as C (setLogAction, addLogAction, unqualStyle)
+import qualified HsDev.Tools.Ghc.Compat as C (setLogAction, addLogAction, unqualStyle, mkFunTy)
 
 -- | Run ghc
 ghcRun :: GhcMonad m => [String] -> m a -> m a
@@ -186,7 +186,7 @@ removeForAlls ty = removeForAlls' ty' tty' where
 removeForAlls' :: Type -> Maybe (Type, Type) -> Type
 removeForAlls' ty Nothing = ty
 removeForAlls' ty (Just (pre, ftype))
-	| isPredTy pre = mkFunTy pre (dropForAlls ftype)
+	| isPredTy pre = C.mkFunTy pre (dropForAlls ftype)
 	| otherwise = ty
 
 showOutputable :: Outputable a => DynFlags -> a -> String

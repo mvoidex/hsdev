@@ -16,7 +16,8 @@ module HsDev.Tools.Ghc.Compat (
 	modSummaries,
 	lookupModule,
 	cleanTemps,
-	mgArgTys, mgResTy
+	mgArgTys, mgResTy,
+	mkFunTy, mkFunTys
 	) where
 
 import qualified "ghc" BasicTypes
@@ -29,7 +30,13 @@ import qualified "ghc" Name
 import qualified "ghc" Packages as GHC
 import qualified "ghc" PatSyn as GHC
 import qualified "ghc" Pretty
+import qualified "ghc" TyCoRep
+import qualified "ghc" GhcPlugins as GHC
 import "ghc" Outputable
+
+#if __GLASGOW_HASKELL__ >= 810
+import qualified "ghc-boot" GHC.Platform as GHC
+#endif
 
 #if __GLASGOW_HASKELL__ >= 804
 import "ghc" FileCleanup (cleanTempDirs, cleanTempFiles)
@@ -203,7 +210,11 @@ getFixity (BasicTypes.Fixity i d) = (i, d)
 #endif
 
 languages :: [String]
+#if __GLASGOW_HASKELL__ >= 810
+languages = GHC.supportedLanguagesAndExtensions $ GHC.PlatformMini GHC.ArchUnknown GHC.OSUnknown
+#else
 languages = GHC.supportedLanguagesAndExtensions
+#endif
 
 unqualStyle :: GHC.DynFlags -> PprStyle
 #if __GLASGOW_HASKELL__ >= 802
@@ -264,4 +275,18 @@ mgResTy (GHC.MG{GHC.mg_ext=ext}) = Just $ GHC.mg_res_ty ext
 mgResTy _ = Nothing
 #else
 mgResTy = Just . GHC.mg_res_ty
+#endif
+
+mkFunTy :: GHC.Type -> GHC.Type -> GHC.Type
+#if __GLASGOW_HASKELL__ >= 810
+mkFunTy = TyCoRep.mkVisFunTy
+#else
+mkFunTy = TyCoRep.mkFunTy
+#endif
+
+mkFunTys :: [GHC.Type] -> GHC.Type -> GHC.Type
+#if __GLASGOW_HASKELL__ >= 810
+mkFunTys = TyCoRep.mkVisFunTys
+#else
+mkFunTys = GHC.mkFunTys
 #endif

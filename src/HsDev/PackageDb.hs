@@ -11,6 +11,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as M
 import Data.Maybe (listToMaybe)
 import Data.Text (pack, unpack)
+import qualified Data.Text.Encoding as E (encodeUtf8)
 import Data.Traversable
 import Distribution.InstalledPackageInfo
 import Distribution.Package
@@ -52,11 +53,17 @@ readPackageDb pdb = do
 		confs <- fmap (filter isConf) $ directoryContents (p ^. path)
 		fmap M.unions $ forM confs $ \conf -> do
 				cts <- readFileUtf8 conf
-				case parseResult (parseInstalledPackageInfo (unpack cts)) of
+				case parseResult (parseInstalledPackageInfo (unpackCts cts)) of
 						Left _ -> return M.empty  -- FIXME: Should log as warning
 						Right (_, res) -> mapM (mapM canonicalize) $
 							over (each . each . moduleInstallDirs . each) (subst mlibdir) $ listMods res
 		where
+#if MIN_VERSION_Cabal(3,2,0)
+				unpackCts = E.encodeUtf8
+#else
+				unpackCts = unpack
+#endif
+
 #if MIN_VERSION_Cabal(3,0,0)
 				parseResult = id
 #else

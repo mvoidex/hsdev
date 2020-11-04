@@ -15,6 +15,7 @@ import Distribution.Text (display)
 #if MIN_VERSION_Cabal(2,2,0)
 import Distribution.PackageDescription.Parsec
 import qualified Data.ByteString.Char8 as C8 (pack)
+import GHC.Exts (toList)
 #endif
 
 #if MIN_VERSION_Cabal(3,0,0)
@@ -27,7 +28,7 @@ import Distribution.PackageDescription.Parse
 
 #if MIN_VERSION_Cabal(2,0,0)
 import Distribution.Types.CondTree
-#else 
+#else
 import Distribution.PackageDescription (CondTree(..))
 #endif
 
@@ -71,7 +72,7 @@ flattenCondTree f (PD.CondNode x cs cmps) = f cs x `mappend` mconcat (concatMap 
 parsePackageDesc :: String -> Either String PD.GenericPackageDescription
 #if MIN_VERSION_Cabal(2,2,0)
 parsePackageDesc s = case snd . runParseResult . parseGenericPackageDescription . C8.pack $ s of
-	Left (_, errs) -> Left $ unlines $ map (showPError "cabal") errs
+	Left (_, errs) -> Left $ unlines $ map (showPError "cabal") $ toList errs
 	Right r -> Right r
 #elif MIN_VERSION_Cabal(2,0,0)
 parsePackageDesc s = case parseGenericPackageDescription s of

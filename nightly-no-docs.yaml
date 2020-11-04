@@ -5,7 +5,6 @@ packages:
 - '.'
 - 'tests/test-package/'
 extra-deps:
-- Cabal-3.0.0.0
 - direct-sqlite-2.3.26
 - sqlite-simple-0.4.18.0
-resolver: nightly-2020-03-21
+resolver: nightly-2020-11-04

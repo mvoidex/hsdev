@@ -20,7 +20,6 @@ import Data.Text (Text)
 import System.Log.Simple (MonadLog(..), scope)
 
 import "ghc" GHC hiding (exprType, Module, moduleName)
-import "ghc" GhcPlugins (mkFunTys)
 import "ghc" CoreUtils as C
 import "ghc" NameSet (NameSet)
 import "ghc" Desugar (deSugarExpr)
@@ -56,7 +55,11 @@ instance HasType (LHsBind TcId) where
 		return (getLoc fid, mkFunTys argTys resTy)
 	getType _ = return Nothing
 
+#if __GLASGOW_HASKELL__ >= 810
+instance HasType (Located (Pat GhcTcId)) where
+#else
 instance HasType (LPat TcId) where
+#endif
 #if __GLASGOW_HASKELL__ >= 808
 	getType = go . SrcLoc.decomposeSrcSpan where
 #else

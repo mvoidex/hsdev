@@ -21,11 +21,8 @@ import Data.Maybe (mapMaybe)
 import qualified Data.Text as T
 import Data.Ord
 import Data.String (fromString)
-import Language.Haskell.HLint (argsSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..))
+import Language.Haskell.HLint (argsSettings, parseModuleEx, applyHints, Idea(..), parseErrorMessage, ParseFlags(..), CppFlags(..), unpackSrcSpan)
 import qualified Language.Haskell.HLint as HL (Severity(..))
-
-import "ghc-lib-parser" SrcLoc
-import "ghc-lib-parser" FastString (unpackFS)
 
 import System.Directory.Paths
 import HsDev.Symbols.Location
@@ -52,10 +49,11 @@ ignoreIdea :: Idea -> Bool
 ignoreIdea idea = ideaSeverity idea == HL.Ignore
 
 fromIdea :: Idea -> Maybe (Note OutputMessage)
-fromIdea idea = case (ideaSpan idea) of
-	RealSrcSpan realSrc -> Just $ Note {
-		_noteSource = FileModule (fromFilePath $ unpackFS $ srcSpanFile realSrc) Nothing,
-		_noteRegion = Region (Position (srcSpanStartLine realSrc) (srcSpanStartCol realSrc)) (Position (srcSpanEndLine realSrc) (srcSpanEndCol realSrc)),
+fromIdea idea = do
+	(fpath, (startLine, startCol), (endLine, endCol)) <- unpackSrcSpan (ideaSpan idea)
+	return $ Note {
+		_noteSource = FileModule (fromFilePath fpath) Nothing,
+		_noteRegion = Region (Position startLine startCol) (Position endLine endCol),
 		_noteLevel = Just $ case ideaSeverity idea of
 			HL.Warning -> Warning
 			HL.Error -> Error
@@ -63,7 +61,6 @@ fromIdea idea = case (ideaSpan idea) of
 		_note = OutputMessage {
 			_message = fromString $ ideaHint idea,
 			_messageSuggestion = fmap fromString $ ideaTo idea } }
-	_ -> Nothing
 
 indentIdea :: Text -> Note OutputMessage -> Note OutputMessage
 indentIdea cts idea = case analyzeIndent cts of

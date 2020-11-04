@@ -417,9 +417,6 @@ instance Show Inspection where
 	show InspectionNone = "none"
 	show (InspectionAt tm fs) = "mtime " ++ show tm ++ ", flags [" ++ intercalate ", " (map T.unpack fs) ++ "]"
 
-instance Read POSIXTime where
-	readsPrec i = map (first (fromIntegral :: Integer -> POSIXTime)) . readsPrec i
-
 instance Semigroup Inspection where
 	InspectionNone <> r = r
 	l <> InspectionNone = l
